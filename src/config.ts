@@ -48,7 +48,7 @@ export function getApiUrl(): string {
 export function getToken(): string {
   const creds = loadCredentials();
   if (!creds?.token) {
-    console.error("Not authenticated. Run: voyagier auth set-token <token>");
+    console.error("Not authenticated. Run: voyagier auth setup");
     process.exit(1);
   }
   return creds.token;

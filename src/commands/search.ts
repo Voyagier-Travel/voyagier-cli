@@ -167,9 +167,9 @@ function parseToolResult(result: { content: Array<{ type: string; text?: string 
 function handleSearchError(err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
   if (message.includes("401") || message.includes("Unauthorized")) {
-    console.error(chalk.red("Authentication failed. Check your token: voyagier auth status"));
+    console.error(chalk.red("Authentication failed. Check your token: voyagier auth status\n  Need a token? Run: voyagier auth setup"));
   } else if (message.includes("ECONNREFUSED") || message.includes("fetch failed")) {
-    console.error(chalk.red("Could not connect to API. Check your API URL: voyagier auth status"));
+    console.error(chalk.red("Could not connect to API. Check your connection: voyagier auth status"));
   } else {
     console.error(chalk.red(`Search error: ${message}`));
   }

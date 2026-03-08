@@ -83,9 +83,9 @@ export function registerToolsCommands(program: Command): void {
 function handleToolsError(err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
   if (message.includes("401") || message.includes("Unauthorized")) {
-    console.error(chalk.red("Authentication failed. Run: voyagier auth set-token <token>"));
+    console.error(chalk.red("Authentication failed. Run: voyagier auth setup"));
   } else if (message.includes("ECONNREFUSED") || message.includes("fetch failed")) {
-    console.error(chalk.red("Could not connect to MCP endpoint. Check: voyagier auth status"));
+    console.error(chalk.red("Could not connect to MCP endpoint. Check: voyagier auth status\n  Need a token? Run: voyagier auth setup"));
   } else {
     console.error(chalk.red(`Error: ${message}`));
   }
