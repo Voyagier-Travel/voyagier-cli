@@ -14,23 +14,24 @@ export function registerSearchCommands(program: Command): void {
     .requiredOption("--date <date>", "Departure date (YYYY-MM-DD)")
     .option("--return <date>", "Return date (YYYY-MM-DD)")
     .option("--passengers <n>", "Number of passengers", "1")
-    .option("--cabin <class>", "Cabin class: economy, business, first", "economy")
     .action(async (opts) => {
+      let client;
       try {
         console.log(chalk.dim("Searching flights..."));
-        const client = await createMcpClient();
+        client = await createMcpClient();
 
         const args: Record<string, unknown> = {
-          title: `Flight search: ${opts.from} → ${opts.to}`,
-          origin: opts.from.toUpperCase(),
-          destination: opts.to.toUpperCase(),
-          departureDate: opts.date,
+          title: `Flight: ${opts.from.toUpperCase()} → ${opts.to.toUpperCase()}`,
           travellers: buildTravellers(parseInt(opts.passengers, 10)),
-          searchFlights: true,
-          searchHotels: false,
+          flights: [
+            {
+              origin: opts.from.toUpperCase(),
+              destination: opts.to.toUpperCase(),
+              departureDate: opts.date,
+              returnDate: opts.return,
+            },
+          ],
         };
-        if (opts.return) args.returnDate = opts.return;
-        if (opts.cabin) args.cabinClass = opts.cabin;
 
         const result = await callTool(client, "voyagier_plan_trip", args);
 
@@ -41,23 +42,38 @@ export function registerSearchCommands(program: Command): void {
         }
 
         const data = parseToolResult(result);
-        const flights = (data?.flights ?? []) as Array<Record<string, unknown>>;
+        const flightGroups = (data?.flights ?? []) as Array<Record<string, unknown>>;
 
-        if (flights.length === 0) {
+        // Each flight group has options array
+        const allOptions: Array<Record<string, unknown>> = [];
+        let selectionId: string | undefined;
+        for (const group of flightGroups) {
+          if (!selectionId && typeof group.selectionId === "string") {
+            selectionId = group.selectionId;
+          }
+          const opts = (group.options ?? []) as Array<Record<string, unknown>>;
+          allOptions.push(...opts);
+        }
+
+        if (allOptions.length === 0) {
           console.log(chalk.dim("\nNo flights found for this route and date."));
         } else {
-          console.log(chalk.bold(`\n${flights.length} flight option${flights.length > 1 ? "s" : ""} found:\n`));
-          console.log(formatFlights(flights));
+          console.log(chalk.bold(`\n${allOptions.length} flight option${allOptions.length > 1 ? "s" : ""} found:\n`));
+          console.log(formatFlights(allOptions));
         }
 
         if (data?.tripPlanId) {
           console.log(chalk.dim(`\nTrip plan: ${data.tripPlanId}`));
-          console.log(chalk.dim(`Select a flight: voyagier tools call voyagier_select_flight '{"tripPlanId":"${data.tripPlanId}","optionId":"<id>"}'`));
+        }
+        if (selectionId) {
+          console.log(chalk.dim(`Selection: ${selectionId}`));
+          console.log(chalk.dim(`Select: voyagier tools call voyagier_select_flight '{"selectionId":"${selectionId}","optionId":"<id>"}'`));
         }
 
-        await client.close();
       } catch (err) {
         handleSearchError(err);
+      } finally {
+        await client?.close();
       }
     });
 
@@ -68,21 +84,24 @@ export function registerSearchCommands(program: Command): void {
     .requiredOption("--checkin <date>", "Check-in date (YYYY-MM-DD)")
     .requiredOption("--checkout <date>", "Check-out date (YYYY-MM-DD)")
     .option("--guests <n>", "Number of guests", "1")
-    .option("--rooms <n>", "Number of rooms", "1")
     .action(async (opts) => {
+      let client;
       try {
         console.log(chalk.dim("Searching hotels..."));
-        const client = await createMcpClient();
+        client = await createMcpClient();
 
+        const adults = parseInt(opts.guests, 10);
         const args: Record<string, unknown> = {
-          title: `Hotel search: ${opts.location}`,
-          destination: opts.location,
-          checkInDate: opts.checkin,
-          checkOutDate: opts.checkout,
-          travellers: buildTravellers(parseInt(opts.guests, 10)),
-          searchFlights: false,
-          searchHotels: true,
-          rooms: parseInt(opts.rooms, 10),
+          title: `Hotel: ${opts.location}`,
+          travellers: buildTravellers(adults),
+          hotels: [
+            {
+              location: opts.location,
+              checkInDate: opts.checkin,
+              checkOutDate: opts.checkout,
+              adults,
+            },
+          ],
         };
 
         const result = await callTool(client, "voyagier_plan_trip", args);
@@ -94,22 +113,36 @@ export function registerSearchCommands(program: Command): void {
         }
 
         const data = parseToolResult(result);
-        const hotels = (data?.hotels ?? []) as Array<Record<string, unknown>>;
+        const hotelGroups = (data?.hotels ?? []) as Array<Record<string, unknown>>;
 
-        if (hotels.length === 0) {
+        const allOptions: Array<Record<string, unknown>> = [];
+        let selectionId: string | undefined;
+        for (const group of hotelGroups) {
+          if (!selectionId && typeof group.selectionId === "string") {
+            selectionId = group.selectionId;
+          }
+          const opts = (group.options ?? []) as Array<Record<string, unknown>>;
+          allOptions.push(...opts);
+        }
+
+        if (allOptions.length === 0) {
           console.log(chalk.dim("\nNo hotels found for this location and dates."));
         } else {
-          console.log(chalk.bold(`\n${hotels.length} hotel option${hotels.length > 1 ? "s" : ""} found:\n`));
-          console.log(formatHotels(hotels));
+          console.log(chalk.bold(`\n${allOptions.length} hotel option${allOptions.length > 1 ? "s" : ""} found:\n`));
+          console.log(formatHotels(allOptions));
         }
 
         if (data?.tripPlanId) {
           console.log(chalk.dim(`\nTrip plan: ${data.tripPlanId}`));
         }
-
-        await client.close();
+        if (selectionId) {
+          console.log(chalk.dim(`Selection: ${selectionId}`));
+          console.log(chalk.dim(`Select: voyagier tools call voyagier_select_hotel '{"selectionId":"${selectionId}","optionId":"<id>"}'`));
+        }
       } catch (err) {
         handleSearchError(err);
+      } finally {
+        await client?.close();
       }
     });
 }

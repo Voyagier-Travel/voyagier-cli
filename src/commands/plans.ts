@@ -46,7 +46,7 @@ const GET_PLAN = `
         id
         firstName
         lastName
-        type
+        declaredTravellerType
       }
       collaborators {
         id
@@ -87,7 +87,7 @@ interface TripPlanDetail {
     id: string;
     firstName: string;
     lastName: string;
-    type: string;
+    declaredTravellerType: string;
   }>;
   collaborators: Array<{
     id: string;
@@ -154,7 +154,7 @@ export function registerPlanCommands(program: Command): void {
         if (plan.travellers.length > 0) {
           console.log(chalk.bold("\nTravellers:"));
           for (const t of plan.travellers) {
-            console.log(`  • ${t.firstName} ${t.lastName} (${t.type})`);
+            console.log(`  • ${t.firstName} ${t.lastName}${t.declaredTravellerType ? ` (${t.declaredTravellerType})` : ""}`);
           }
         }
 

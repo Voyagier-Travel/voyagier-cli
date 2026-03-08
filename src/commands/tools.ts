@@ -9,13 +9,13 @@ export function registerToolsCommands(program: Command): void {
     .command("list")
     .description("List available MCP tools")
     .action(async () => {
+      let client;
       try {
-        const client = await createMcpClient();
+        client = await createMcpClient();
         const toolList = await listTools(client);
 
         if (toolList.length === 0) {
           console.log(chalk.dim("No tools available."));
-          await client.close();
           return;
         }
 
@@ -30,9 +30,10 @@ export function registerToolsCommands(program: Command): void {
         }
 
         console.log(chalk.dim(`Call a tool: voyagier tools call <name> '<json args>'`));
-        await client.close();
       } catch (err) {
         handleToolsError(err);
+      } finally {
+        await client?.close();
       }
     });
 
@@ -40,6 +41,7 @@ export function registerToolsCommands(program: Command): void {
     .command("call <name> [argsJson]")
     .description("Call an MCP tool with JSON arguments")
     .action(async (name: string, argsJson?: string) => {
+      let client;
       try {
         let args: Record<string, unknown> = {};
         if (argsJson) {
@@ -52,7 +54,7 @@ export function registerToolsCommands(program: Command): void {
         }
 
         console.log(chalk.dim(`Calling ${name}...`));
-        const client = await createMcpClient();
+        client = await createMcpClient();
         const result = await callTool(client, name, args);
 
         if (result.isError) {
@@ -70,9 +72,10 @@ export function registerToolsCommands(program: Command): void {
           }
         }
 
-        await client.close();
       } catch (err) {
         handleToolsError(err);
+      } finally {
+        await client?.close();
       }
     });
 }
