@@ -16,13 +16,20 @@ function ensureConfigDir(): void {
   }
 }
 
-export function saveCredentials(token: string, apiUrl: string = "https://api.voyagier.com"): void {
+export function saveCredentials(token: string, apiUrl: string = "https://voyagier.com"): void {
   ensureConfigDir();
   const creds: Credentials = { token, apiUrl };
   writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2), { mode: 0o600 });
 }
 
 export function loadCredentials(): Credentials | null {
+  // Environment variables take precedence over config file
+  const envToken = process.env.VOYAGIER_TOKEN;
+  const envUrl = process.env.VOYAGIER_API_URL;
+  if (envToken) {
+    return { token: envToken, apiUrl: envUrl ?? "https://voyagier.com" };
+  }
+
   if (!existsSync(CREDENTIALS_FILE)) return null;
   try {
     const raw = readFileSync(CREDENTIALS_FILE, "utf-8");
@@ -42,13 +49,13 @@ export function clearCredentials(): void {
 
 export function getApiUrl(): string {
   const creds = loadCredentials();
-  return creds?.apiUrl ?? "https://api.voyagier.com";
+  return creds?.apiUrl ?? "https://voyagier.com";
 }
 
 export function getToken(): string {
   const creds = loadCredentials();
   if (!creds?.token) {
-    console.error("Not authenticated. Run: voyagier auth setup");
+    process.stderr.write("Not authenticated. Run: voyagier auth setup\n");
     process.exit(1);
   }
   return creds.token;

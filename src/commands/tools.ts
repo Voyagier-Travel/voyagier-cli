@@ -8,14 +8,20 @@ export function registerToolsCommands(program: Command): void {
   tools
     .command("list")
     .description("List available MCP tools")
-    .action(async () => {
+    .option("--json", "Output raw JSON")
+    .action(async (opts: { json?: boolean }) => {
       let client;
       try {
         client = await createMcpClient();
         const toolList = await listTools(client);
 
+        if (opts.json) {
+          process.stdout.write(JSON.stringify(toolList, null, 2) + "\n");
+          return;
+        }
+
         if (toolList.length === 0) {
-          console.log(chalk.dim("No tools available."));
+          process.stderr.write(chalk.dim("No tools available.\n"));
           return;
         }
 
@@ -48,30 +54,36 @@ export function registerToolsCommands(program: Command): void {
           try {
             args = JSON.parse(argsJson) as Record<string, unknown>;
           } catch {
-            console.error(chalk.red("Invalid JSON arguments. Wrap in single quotes: '{\"key\":\"value\"}'"));
+            process.stderr.write(chalk.red("Invalid JSON. Wrap in single quotes: '{\"key\":\"value\"}'\n"));
             process.exit(1);
           }
         }
 
-        console.log(chalk.dim(`Calling ${name}...`));
+        if (!process.stdout.isTTY) {
+          // Piped — skip the status message
+        } else {
+          process.stderr.write(chalk.dim(`Calling ${name}...\n`));
+        }
+
         client = await createMcpClient();
         const result = await callTool(client, name, args);
 
         if (result.isError) {
-          console.error(chalk.red("\nTool returned an error:"));
+          process.stderr.write(chalk.red("Tool returned an error:\n"));
         }
 
         for (const part of result.content) {
           if (part.type === "text" && part.text) {
             try {
               const parsed = JSON.parse(part.text);
-              console.log(JSON.stringify(parsed, null, 2));
+              process.stdout.write(JSON.stringify(parsed, null, 2) + "\n");
             } catch {
-              console.log(part.text);
+              process.stdout.write(part.text + "\n");
             }
           }
         }
 
+        if (result.isError) process.exit(1);
       } catch (err) {
         handleToolsError(err);
       } finally {
@@ -83,10 +95,11 @@ export function registerToolsCommands(program: Command): void {
 function handleToolsError(err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
   if (message.includes("401") || message.includes("Unauthorized")) {
-    console.error(chalk.red("Authentication failed. Run: voyagier auth setup"));
+    process.stderr.write(chalk.red("Authentication failed. Run: voyagier auth setup\n"));
   } else if (message.includes("ECONNREFUSED") || message.includes("fetch failed")) {
-    console.error(chalk.red("Could not connect to MCP endpoint. Check: voyagier auth status\n  Need a token? Run: voyagier auth setup"));
+    process.stderr.write(chalk.red("Could not connect to MCP endpoint. Run: voyagier auth status\n"));
   } else {
-    console.error(chalk.red(`Error: ${message}`));
+    process.stderr.write(chalk.red(`Error: ${message}\n`));
   }
+  process.exit(1);
 }

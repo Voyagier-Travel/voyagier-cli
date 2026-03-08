@@ -14,6 +14,10 @@ ${chalk.bold("How to get your Personal Access Token:")}
 ${chalk.dim("Sandbox (Sabre test data, free):")}
   voyagier auth set-token voy_pat_xxx --url https://dev.voyagier.com
 
+${chalk.dim("Environment variables (for CI/scripts):")}
+  export VOYAGIER_TOKEN=voy_pat_xxx
+  export VOYAGIER_API_URL=https://dev.voyagier.com
+
 ${chalk.dim("Production (real flights/hotels):")}
   voyagier auth set-token voy_pat_xxx --url https://voyagier.com
 `;
@@ -59,7 +63,8 @@ export function registerAuthCommands(program: Command): void {
       const isSandbox = creds.apiUrl.includes("dev.");
       const env = isSandbox ? chalk.yellow("sandbox") : chalk.green("production");
 
-      console.log(chalk.green("✓ Token configured"));
+      const fromEnv = !!process.env.VOYAGIER_TOKEN;
+      console.log(chalk.green("✓ Token configured") + (fromEnv ? chalk.dim(" (from VOYAGIER_TOKEN)") : ""));
       console.log(`  ${chalk.dim("Token:")}  voy_pat_...${creds.token.slice(-4)}`);
       console.log(`  ${chalk.dim("API:")}    ${creds.apiUrl}`);
       console.log(`  ${chalk.dim("Env:")}    ${env}`);

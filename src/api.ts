@@ -23,7 +23,7 @@ export async function graphql<T = unknown>(
 
   if (!res.ok) {
     if (res.status === 401) {
-      console.error("Authentication failed. Your token may be invalid or expired.");
+      process.stderr.write("Authentication failed. Your token may be invalid or expired.\n");
       process.exit(1);
     }
     throw new Error(`API error: ${res.status} ${res.statusText}`);
@@ -81,7 +81,7 @@ export async function streamChat(
 
   if (!res.ok) {
     if (res.status === 401) {
-      console.error("Authentication failed.");
+      process.stderr.write("Authentication failed.\n");
       process.exit(1);
     }
     throw new Error(`Stream error: ${res.status} ${res.statusText}`);

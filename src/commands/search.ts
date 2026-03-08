@@ -14,10 +14,11 @@ export function registerSearchCommands(program: Command): void {
     .requiredOption("--date <date>", "Departure date (YYYY-MM-DD)")
     .option("--return <date>", "Return date (YYYY-MM-DD)")
     .option("--passengers <n>", "Number of passengers", "1")
+    .option("--json", "Output raw JSON (for piping)")
     .action(async (opts) => {
       let client;
       try {
-        console.log(chalk.dim("Searching flights..."));
+        if (!opts.json) process.stderr.write(chalk.dim("Searching flights...\n"));
         client = await createMcpClient();
 
         const args: Record<string, unknown> = {
@@ -37,39 +38,43 @@ export function registerSearchCommands(program: Command): void {
 
         if (result.isError) {
           const errText = result.content[0]?.text ?? "Unknown error";
-          console.error(chalk.red(`\nSearch failed: ${errText}`));
-          return;
+          process.stderr.write(chalk.red(`Search failed: ${errText}\n`));
+          process.exit(1);
         }
 
         const data = parseToolResult(result);
-        const flightGroups = (data?.flights ?? []) as Array<Record<string, unknown>>;
 
-        // Each flight group has options array
+        if (opts.json) {
+          process.stdout.write(JSON.stringify(data, null, 2) + "\n");
+          return;
+        }
+
+        const flightGroups = (data?.flights ?? []) as Array<Record<string, unknown>>;
         const allOptions: Array<Record<string, unknown>> = [];
         let selectionId: string | undefined;
         for (const group of flightGroups) {
           if (!selectionId && typeof group.selectionId === "string") {
             selectionId = group.selectionId;
           }
-          const opts = (group.options ?? []) as Array<Record<string, unknown>>;
-          allOptions.push(...opts);
+          const groupOpts = (group.options ?? []) as Array<Record<string, unknown>>;
+          allOptions.push(...groupOpts);
         }
 
         if (allOptions.length === 0) {
-          console.log(chalk.dim("\nNo flights found for this route and date."));
-        } else {
-          console.log(chalk.bold(`\n${allOptions.length} flight option${allOptions.length > 1 ? "s" : ""} found:\n`));
-          console.log(formatFlights(allOptions));
+          process.stderr.write(chalk.dim("No flights found for this route and date.\n"));
+          return;
         }
+
+        console.log(chalk.bold(`\n${allOptions.length} flight option${allOptions.length > 1 ? "s" : ""} found:\n`));
+        console.log(formatFlights(allOptions));
 
         if (data?.tripPlanId) {
           console.log(chalk.dim(`\nTrip plan: ${data.tripPlanId}`));
         }
         if (selectionId) {
           console.log(chalk.dim(`Selection: ${selectionId}`));
-          console.log(chalk.dim(`Select: voyagier tools call voyagier_select_flight '{"selectionId":"${selectionId}","optionId":"<id>"}'`));
+          console.log(chalk.dim(`\nNext: voyagier tools call voyagier_select_flight '{"selectionId":"${selectionId}","optionId":"<id>"}'`));
         }
-
       } catch (err) {
         handleSearchError(err);
       } finally {
@@ -84,10 +89,11 @@ export function registerSearchCommands(program: Command): void {
     .requiredOption("--checkin <date>", "Check-in date (YYYY-MM-DD)")
     .requiredOption("--checkout <date>", "Check-out date (YYYY-MM-DD)")
     .option("--guests <n>", "Number of guests", "1")
+    .option("--json", "Output raw JSON (for piping)")
     .action(async (opts) => {
       let client;
       try {
-        console.log(chalk.dim("Searching hotels..."));
+        if (!opts.json) process.stderr.write(chalk.dim("Searching hotels...\n"));
         client = await createMcpClient();
 
         const adults = parseInt(opts.guests, 10);
@@ -108,36 +114,42 @@ export function registerSearchCommands(program: Command): void {
 
         if (result.isError) {
           const errText = result.content[0]?.text ?? "Unknown error";
-          console.error(chalk.red(`\nSearch failed: ${errText}`));
-          return;
+          process.stderr.write(chalk.red(`Search failed: ${errText}\n`));
+          process.exit(1);
         }
 
         const data = parseToolResult(result);
-        const hotelGroups = (data?.hotels ?? []) as Array<Record<string, unknown>>;
 
+        if (opts.json) {
+          process.stdout.write(JSON.stringify(data, null, 2) + "\n");
+          return;
+        }
+
+        const hotelGroups = (data?.hotels ?? []) as Array<Record<string, unknown>>;
         const allOptions: Array<Record<string, unknown>> = [];
         let selectionId: string | undefined;
         for (const group of hotelGroups) {
           if (!selectionId && typeof group.selectionId === "string") {
             selectionId = group.selectionId;
           }
-          const opts = (group.options ?? []) as Array<Record<string, unknown>>;
-          allOptions.push(...opts);
+          const groupOpts = (group.options ?? []) as Array<Record<string, unknown>>;
+          allOptions.push(...groupOpts);
         }
 
         if (allOptions.length === 0) {
-          console.log(chalk.dim("\nNo hotels found for this location and dates."));
-        } else {
-          console.log(chalk.bold(`\n${allOptions.length} hotel option${allOptions.length > 1 ? "s" : ""} found:\n`));
-          console.log(formatHotels(allOptions));
+          process.stderr.write(chalk.dim("No hotels found for this location and dates.\n"));
+          return;
         }
+
+        console.log(chalk.bold(`\n${allOptions.length} hotel option${allOptions.length > 1 ? "s" : ""} found:\n`));
+        console.log(formatHotels(allOptions));
 
         if (data?.tripPlanId) {
           console.log(chalk.dim(`\nTrip plan: ${data.tripPlanId}`));
         }
         if (selectionId) {
           console.log(chalk.dim(`Selection: ${selectionId}`));
-          console.log(chalk.dim(`Select: voyagier tools call voyagier_select_hotel '{"selectionId":"${selectionId}","optionId":"<id>"}'`));
+          console.log(chalk.dim(`\nNext: voyagier tools call voyagier_select_hotel '{"selectionId":"${selectionId}","optionId":"<id>"}'`));
         }
       } catch (err) {
         handleSearchError(err);
@@ -167,10 +179,11 @@ function parseToolResult(result: { content: Array<{ type: string; text?: string 
 function handleSearchError(err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
   if (message.includes("401") || message.includes("Unauthorized")) {
-    console.error(chalk.red("Authentication failed. Check your token: voyagier auth status\n  Need a token? Run: voyagier auth setup"));
+    process.stderr.write(chalk.red("Authentication failed. Run: voyagier auth setup\n"));
   } else if (message.includes("ECONNREFUSED") || message.includes("fetch failed")) {
-    console.error(chalk.red("Could not connect to API. Check your connection: voyagier auth status"));
+    process.stderr.write(chalk.red("Could not connect to API. Run: voyagier auth status\n"));
   } else {
-    console.error(chalk.red(`Search error: ${message}`));
+    process.stderr.write(chalk.red(`Search error: ${message}\n`));
   }
+  process.exit(1);
 }

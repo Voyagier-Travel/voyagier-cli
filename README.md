@@ -1,57 +1,84 @@
-# @voyagier/cli
+# Voyagier CLI
 
-AI trip planning from your terminal. Authenticate with a Personal Access Token and interact with Voyagier's AI chat, search flights/hotels, and manage trip plans.
+AI trip planning from your terminal. Search flights, hotels, and plan trips using Voyagier's MCP-powered API.
 
-## Setup
+## Quick Start
 
 ```bash
-npm install -g @voyagier/cli
-# or
-npx @voyagier/cli
+# Install
+npx @voyagier/cli auth setup
+
+# Authenticate
+voyagier auth set-token voy_pat_xxx
+
+# Search flights
+voyagier search flights --from LAX --to NRT --date 2026-04-15
+
+# Search hotels
+voyagier search hotels --location Tokyo --checkin 2026-04-15 --checkout 2026-04-20
+
+# Interactive AI chat
+voyagier chat
 ```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `voyagier auth set-token <token>` | Set your Personal Access Token |
+| `voyagier auth setup` | Show how to get a token |
+| `voyagier auth status` | Check connection and token validity |
+| `voyagier auth logout` | Clear saved credentials |
+| `voyagier search flights` | Search for flights |
+| `voyagier search hotels` | Search for hotels |
+| `voyagier chat` | Interactive AI trip planning chat |
+| `voyagier chat --list` | List chat sessions |
+| `voyagier plans list` | List your trip plans |
+| `voyagier plans get <id>` | View trip plan details |
+| `voyagier tools list` | List available MCP tools |
+| `voyagier tools call <name> '<json>'` | Call an MCP tool directly |
 
 ## Authentication
 
-Get a PAT from **Settings → API Tokens** in the Voyagier web app, then:
+Get a Personal Access Token from your Voyagier account settings:
+
+- **Production:** https://voyagier.com/me/settings/tokens
+- **Sandbox:** https://dev.voyagier.com/me/settings/tokens (Sabre test data, free)
 
 ```bash
-voyagier auth set-token voy_pat_xxxxx
-voyagier auth status
+# Sandbox (recommended for testing)
+voyagier auth set-token voy_pat_xxx --url https://dev.voyagier.com
+
+# Production
+voyagier auth set-token voy_pat_xxx
 ```
 
-For dev/staging:
+### Environment Variables
+
+For CI/CD or scripts, use environment variables instead of the config file:
 
 ```bash
-voyagier auth set-token voy_pat_xxxxx --api-url https://dev.voyagier.com
+export VOYAGIER_TOKEN=voy_pat_xxx
+export VOYAGIER_API_URL=https://dev.voyagier.com  # optional, defaults to production
 ```
 
-## Chat (Interactive REPL)
+Environment variables take precedence over the config file (`~/.voyagier/credentials.json`).
+
+## Machine-Readable Output
+
+Use `--json` for piping and scripting:
 
 ```bash
-voyagier chat                    # New session
-voyagier chat --session <id>     # Resume session
-voyagier chat --list             # List sessions
+# Pipe flight results to jq
+voyagier search flights --from LAX --to NRT --date 2026-04-15 --json | jq '.flights[0].options'
+
+# List tools as JSON
+voyagier tools list --json
 ```
 
-## Trip Plans
+When `--json` is used, data goes to stdout and status messages go to stderr, so pipes work cleanly.
 
-```bash
-voyagier plans list              # List your trip plans
-voyagier plans get <id>          # Show plan details
-```
+## Requirements
 
-## Development
-
-```bash
-npm install
-npm run dev -- auth status       # Run with tsx
-npm run build                    # Compile to dist/
-```
-
-## Architecture
-
-Thin client over Voyagier's existing API:
-- **Auth:** PAT stored in `~/.voyagier/credentials.json` (mode 0600)
-- **Chat:** SSE streaming via `POST /chat/sessions/:id/stream` (Vercel AI SDK format)
-- **Data:** GraphQL for session/plan management
-- **Dependencies:** commander, chalk, ora (minimal footprint)
+- Node.js 18+
+- A Voyagier account with a Personal Access Token
