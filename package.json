@@ -19,11 +19,12 @@
   ],
   "license": "UNLICENSED",
   "private": true,
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "chalk": "^5.6.2",
-    "commander": "^14.0.3",
-    "eventsource": "^4.1.0",
-    "ora": "^9.3.0"
+    "commander": "^14.0.3"
   },
   "devDependencies": {
     "@types/node": "^25.3.5",

@@ -107,14 +107,14 @@ export function registerPlanCommands(program: Command): void {
           tripPlans: { items: TripPlan[]; count: number };
         }>(LIST_PLANS, { page: 1, limit: 20 });
 
-        const plans = data.tripPlans.items;
-        if (plans.length === 0) {
+        const items = data.tripPlans.items;
+        if (items.length === 0) {
           console.log(chalk.dim("No trip plans found."));
           return;
         }
 
         console.log(chalk.bold(`Trip Plans (${data.tripPlans.count} total):\n`));
-        for (const p of plans) {
+        for (const p of items) {
           const dates = p.startDate
             ? `${new Date(p.startDate).toLocaleDateString()} → ${p.endDate ? new Date(p.endDate).toLocaleDateString() : "?"}`
             : "No dates";
