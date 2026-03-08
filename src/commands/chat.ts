@@ -42,7 +42,6 @@ export function registerChatCommands(program: Command): void {
       let sessionId = opts.session;
 
       if (!sessionId) {
-        // Create new session, optionally tied to a trip plan
         try {
           const input = opts.plan ? { tripPlanId: opts.plan } : undefined;
           const data = await graphql<{ createChatSession: { id: string; title: string } }>(
@@ -109,8 +108,28 @@ async function chatRepl(sessionId: string): Promise<void> {
     process.stdout.write(chalk.blue("ai › "));
 
     try {
-      await streamChat(sessionId, message, (text) => {
-        process.stdout.write(text);
+      await streamChat(sessionId, message, {
+        onTextDelta(text) {
+          process.stdout.write(text);
+        },
+        onToolCall(toolName) {
+          process.stdout.write(chalk.dim(`\n  [calling ${toolName}...]`));
+        },
+        onToolResult(toolName, result) {
+          // Show a condensed summary of tool results inline
+          try {
+            const data = typeof result === "string" ? JSON.parse(result) : result;
+            const summary = summarizeToolResult(toolName, data);
+            if (summary) {
+              process.stdout.write(chalk.dim(`\n  [${summary}]`));
+            }
+          } catch {
+            // Skip formatting errors
+          }
+        },
+        onError(errorText) {
+          process.stdout.write(chalk.red(`\n  Error: ${errorText}`));
+        },
       });
       process.stdout.write("\n\n");
     } catch (err) {
@@ -124,4 +143,26 @@ async function chatRepl(sessionId: string): Promise<void> {
     console.log(chalk.dim("\nSession ended."));
     process.exit(0);
   });
+}
+
+function summarizeToolResult(toolName: string, data: Record<string, unknown>): string | null {
+  if (toolName.includes("flight") && Array.isArray(data.options)) {
+    return `${data.options.length} flight options found`;
+  }
+  if (toolName.includes("hotel") && Array.isArray(data.options)) {
+    return `${data.options.length} hotel options found`;
+  }
+  if (toolName === "voyagier_plan_trip") {
+    const parts: string[] = [];
+    if (data.tripPlanId) parts.push("plan created");
+    const flights = data.flights as unknown[] | undefined;
+    const hotels = data.hotels as unknown[] | undefined;
+    if (Array.isArray(flights) && flights.length > 0) parts.push(`${flights.length} flights`);
+    if (Array.isArray(hotels) && hotels.length > 0) parts.push(`${hotels.length} hotels`);
+    return parts.join(", ") || null;
+  }
+  if (toolName.includes("traveller") && Array.isArray(data.travellers)) {
+    return `${data.travellers.length} travellers`;
+  }
+  return null;
 }

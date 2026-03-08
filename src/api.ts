@@ -39,10 +39,27 @@ export async function graphql<T = unknown>(
   return json.data;
 }
 
+export interface StreamCallbacks {
+  onTextDelta(text: string): void;
+  onToolCall?(toolName: string, args?: Record<string, unknown>): void;
+  onToolResult?(toolName: string, result: unknown): void;
+  onError?(errorText: string): void;
+}
+
+interface StreamPart {
+  type: string;
+  textDelta?: string;
+  toolName?: string;
+  toolCallId?: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
+  errorText?: string;
+}
+
 export async function streamChat(
   sessionId: string,
   message: string,
-  onChunk: (text: string) => void
+  callbacks: StreamCallbacks
 ): Promise<void> {
   const apiUrl = getApiUrl();
   const token = getToken();
@@ -74,6 +91,9 @@ export async function streamChat(
     throw new Error("No response body");
   }
 
+  // Track tool calls to map toolCallId → toolName for result rendering
+  const toolCallMap = new Map<string, string>();
+
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -87,16 +107,68 @@ export async function streamChat(
     buffer = lines.pop() ?? "";
 
     for (const line of lines) {
-      if (!line.startsWith("0:")) continue;
-      // Vercel AI SDK format: 0:"text chunk"
-      try {
-        const text = JSON.parse(line.slice(2));
-        if (typeof text === "string") {
-          onChunk(text);
+      // UI Message Stream SSE format: "data: <json>" or "data: [DONE]"
+      if (line.startsWith("data: ")) {
+        const payload = line.slice(6);
+        if (payload === "[DONE]") continue;
+
+        try {
+          const part = JSON.parse(payload) as StreamPart;
+          handleStreamPart(part, callbacks, toolCallMap);
+        } catch {
+          // Skip malformed lines
         }
-      } catch {
-        // Skip non-text parts (tool calls, metadata, etc.)
+        continue;
+      }
+
+      // Legacy Vercel AI SDK data stream format: "0:\"text\""
+      if (line.startsWith("0:")) {
+        try {
+          const text = JSON.parse(line.slice(2)) as unknown;
+          if (typeof text === "string") {
+            callbacks.onTextDelta(text);
+          }
+        } catch {
+          // Skip
+        }
       }
     }
+  }
+}
+
+function handleStreamPart(
+  part: StreamPart,
+  callbacks: StreamCallbacks,
+  toolCallMap: Map<string, string>
+): void {
+  switch (part.type) {
+    case "text-delta":
+    case "text":
+      if (part.textDelta) {
+        callbacks.onTextDelta(part.textDelta);
+      }
+      break;
+
+    case "tool-call":
+      if (part.toolCallId && part.toolName) {
+        toolCallMap.set(part.toolCallId, part.toolName);
+      }
+      callbacks.onToolCall?.(part.toolName ?? "unknown", part.args);
+      break;
+
+    case "tool-result":
+      if (part.toolCallId) {
+        const toolName = toolCallMap.get(part.toolCallId) ?? "unknown";
+        callbacks.onToolResult?.(toolName, part.result);
+      }
+      break;
+
+    case "error":
+      callbacks.onError?.(part.errorText ?? "Unknown error");
+      break;
+
+    // Ignore step boundaries, reasoning, sources, etc.
+    default:
+      break;
   }
 }

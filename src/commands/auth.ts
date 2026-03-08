@@ -1,72 +1,90 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { saveCredentials, loadCredentials, clearCredentials } from "../config.js";
-import { graphql } from "../api.js";
+import { saveCredentials, loadCredentials, clearCredentials, getApiUrl } from "../config.js";
 
 export function registerAuthCommands(program: Command): void {
   const auth = program.command("auth").description("Manage authentication");
 
   auth
     .command("set-token <token>")
-    .description("Store a Personal Access Token")
-    .option("--api-url <url>", "API base URL", "https://api.voyagier.com")
-    .action(async (token: string, opts: { apiUrl: string }) => {
+    .description("Set your Personal Access Token")
+    .option("-u, --url <url>", "API URL", "https://api.voyagier.com")
+    .action((token: string, opts: { url: string }) => {
       if (!token.startsWith("voy_pat_")) {
-        console.error(chalk.red("Invalid token format. Expected: voy_pat_..."));
+        console.error(chalk.red("Token must start with voy_pat_"));
         process.exit(1);
       }
-
-      saveCredentials(token, opts.apiUrl);
-      console.log(chalk.green("✓ Token saved to ~/.voyagier/credentials.json"));
-
-      // Verify it works
-      try {
-        const data = await graphql<{ me: { name: string; email: string; isAdmin: boolean } }>(
-          `query { me { name email isAdmin } }`
-        );
-        if (data.me) {
-          console.log(chalk.dim(`  Authenticated as ${data.me.name} (${data.me.email})`));
-          if (data.me.isAdmin) {
-            console.log(chalk.dim("  Admin access: ✓"));
-          }
-        }
-      } catch {
-        console.warn(chalk.yellow("  ⚠ Could not verify token (API may be unreachable)"));
-      }
+      saveCredentials(token, opts.url);
+      console.log(chalk.green("✓ Token saved."));
+      console.log(chalk.dim(`  API: ${opts.url}`));
     });
 
   auth
     .command("status")
-    .description("Show current authentication status")
+    .description("Check authentication status")
     .action(async () => {
       const creds = loadCredentials();
-      if (!creds) {
-        console.log(chalk.yellow("Not authenticated."));
-        console.log(chalk.dim("Run: voyagier auth set-token <token>"));
+      if (!creds?.token) {
+        console.log(chalk.red("✗ Not authenticated."));
+        console.log(chalk.dim("  Run: voyagier auth set-token <token>"));
         return;
       }
 
-      console.log(chalk.dim(`API: ${creds.apiUrl}`));
-      console.log(chalk.dim(`Token: ••••${creds.token.slice(-4)}`));
+      console.log(chalk.green("✓ Token configured"));
+      console.log(`  ${chalk.dim("Token:")} voy_pat_...${creds.token.slice(-4)}`);
+      console.log(`  ${chalk.dim("API:")}   ${creds.apiUrl}`);
 
+      // Check GraphQL connectivity
       try {
-        const data = await graphql<{ me: { name: string; email: string; isAdmin: boolean } }>(
-          `query { me { name email isAdmin } }`
-        );
-        if (data.me) {
-          console.log(chalk.green(`✓ ${data.me.name} (${data.me.email})`));
-          console.log(chalk.dim(`  Admin: ${data.me.isAdmin ? "yes" : "no"}`));
+        const res = await fetch(`${creds.apiUrl}/graphql`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${creds.token}`,
+          },
+          body: JSON.stringify({ query: "{ __typename }" }),
+        });
+        if (res.ok) {
+          console.log(`  ${chalk.dim("GraphQL:")} ${chalk.green("✓ reachable")}`);
+        } else if (res.status === 401) {
+          console.log(`  ${chalk.dim("GraphQL:")} ${chalk.red("✗ token rejected (401)")}`);
+        } else {
+          console.log(`  ${chalk.dim("GraphQL:")} ${chalk.yellow(`⚠ ${res.status}`)}`);
         }
       } catch {
-        console.error(chalk.red("✗ Token is invalid or API is unreachable"));
+        console.log(`  ${chalk.dim("GraphQL:")} ${chalk.red("✗ unreachable")}`);
+      }
+
+      // Check MCP connectivity
+      const mcpUrl = `${creds.apiUrl}/mcp`;
+      try {
+        const res = await fetch(mcpUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${creds.token}`,
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1, params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "voyagier-cli", version: "0.2.0" } } }),
+        });
+        if (res.ok) {
+          console.log(`  ${chalk.dim("MCP:")}     ${chalk.green("✓ reachable")}`);
+        } else if (res.status === 401) {
+          console.log(`  ${chalk.dim("MCP:")}     ${chalk.red("✗ token rejected (401)")}`);
+        } else if (res.status === 404) {
+          console.log(`  ${chalk.dim("MCP:")}     ${chalk.yellow("⚠ endpoint not found (MCP module not deployed?)")}`);
+        } else {
+          console.log(`  ${chalk.dim("MCP:")}     ${chalk.yellow(`⚠ ${res.status}`)}`);
+        }
+      } catch {
+        console.log(`  ${chalk.dim("MCP:")}     ${chalk.red("✗ unreachable")}`);
       }
     });
 
   auth
     .command("logout")
-    .description("Clear stored credentials")
+    .description("Clear saved credentials")
     .action(() => {
       clearCredentials();
-      console.log(chalk.green("✓ Credentials cleared."));
+      console.log(chalk.dim("Credentials cleared."));
     });
 }
