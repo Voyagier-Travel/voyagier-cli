@@ -4,8 +4,8 @@ import { createInterface } from "readline";
 import { graphql, streamChat } from "../api.js";
 
 const CREATE_SESSION = `
-  mutation CreateChatSession {
-    createChatSession {
+  mutation CreateChatSession($input: CreateSessionInput) {
+    createChatSession(input: $input) {
       id
       title
     }
@@ -13,11 +13,15 @@ const CREATE_SESSION = `
 `;
 
 const LIST_SESSIONS = `
-  query ChatSessions {
-    chatSessions {
-      id
-      title
-      updatedAt
+  query ChatSessions($page: Int, $limit: Int) {
+    chatSessions(page: $page, limit: $limit) {
+      items {
+        id
+        title
+        updatedAt
+      }
+      count
+      page
     }
   }
 `;
@@ -27,8 +31,9 @@ export function registerChatCommands(program: Command): void {
     .command("chat")
     .description("Interactive AI trip planning chat")
     .option("-s, --session <id>", "Resume an existing session")
+    .option("-p, --plan <id>", "Chat about a specific trip plan")
     .option("-l, --list", "List existing sessions")
-    .action(async (opts: { session?: string; list?: boolean }) => {
+    .action(async (opts: { session?: string; plan?: string; list?: boolean }) => {
       if (opts.list) {
         await listSessions();
         return;
@@ -37,10 +42,12 @@ export function registerChatCommands(program: Command): void {
       let sessionId = opts.session;
 
       if (!sessionId) {
-        // Create new session
+        // Create new session, optionally tied to a trip plan
         try {
+          const input = opts.plan ? { tripPlanId: opts.plan } : undefined;
           const data = await graphql<{ createChatSession: { id: string; title: string } }>(
-            CREATE_SESSION
+            CREATE_SESSION,
+            input ? { input } : undefined
           );
           sessionId = data.createChatSession.id;
           console.log(chalk.dim(`New session: ${sessionId}`));
@@ -60,16 +67,19 @@ export function registerChatCommands(program: Command): void {
 async function listSessions(): Promise<void> {
   try {
     const data = await graphql<{
-      chatSessions: Array<{ id: string; title: string; updatedAt: string }>;
-    }>(LIST_SESSIONS);
+      chatSessions: {
+        items: Array<{ id: string; title: string; updatedAt: string }>;
+        count: number;
+      };
+    }>(LIST_SESSIONS, { page: 1, limit: 20 });
 
-    const sessions = data.chatSessions;
+    const sessions = data.chatSessions.items;
     if (sessions.length === 0) {
       console.log(chalk.dim("No chat sessions found."));
       return;
     }
 
-    console.log(chalk.bold("Chat Sessions:\n"));
+    console.log(chalk.bold(`Chat Sessions (${data.chatSessions.count} total):\n`));
     for (const s of sessions) {
       const date = new Date(s.updatedAt).toLocaleDateString();
       console.log(`  ${chalk.cyan(s.id.slice(0, 8))}  ${s.title || "(untitled)"}  ${chalk.dim(date)}`);

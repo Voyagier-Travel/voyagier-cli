@@ -3,17 +3,21 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 
 const LIST_PLANS = `
-  query MyTripPlans {
-    myTripPlans {
-      id
-      title
-      status
-      startDate
-      endDate
-      updatedAt
+  query TripPlans($page: Int, $limit: Int) {
+    tripPlans(page: $page, limit: $limit) {
       items {
         id
+        title
+        startDate
+        endDate
+        updatedAt
+        items {
+          id
+          type
+        }
       }
+      count
+      page
     }
   }
 `;
@@ -23,7 +27,7 @@ const GET_PLAN = `
     tripPlan(id: $id) {
       id
       title
-      status
+      description
       startDate
       endDate
       createdAt
@@ -32,16 +36,21 @@ const GET_PLAN = `
         id
         type
         title
-        status
-        startDate
-        endDate
-        metadata
+        subtitle
+        date
+        startTime
+        endTime
+        day
       }
       travellers {
         id
         firstName
         lastName
         type
+      }
+      collaborators {
+        id
+        role
       }
     }
   }
@@ -50,17 +59,16 @@ const GET_PLAN = `
 interface TripPlan {
   id: string;
   title: string;
-  status: string;
   startDate?: string;
   endDate?: string;
   updatedAt: string;
-  items: Array<{ id: string }>;
+  items: Array<{ id: string; type: string }>;
 }
 
 interface TripPlanDetail {
   id: string;
   title: string;
-  status: string;
+  description?: string;
   startDate?: string;
   endDate?: string;
   createdAt: string;
@@ -69,16 +77,21 @@ interface TripPlanDetail {
     id: string;
     type: string;
     title: string;
-    status: string;
-    startDate?: string;
-    endDate?: string;
-    metadata?: unknown;
+    subtitle?: string;
+    date?: string;
+    startTime?: string;
+    endTime?: string;
+    day?: number;
   }>;
   travellers: Array<{
     id: string;
     firstName: string;
     lastName: string;
     type: string;
+  }>;
+  collaborators: Array<{
+    id: string;
+    role: string;
   }>;
 }
 
@@ -90,15 +103,17 @@ export function registerPlanCommands(program: Command): void {
     .description("List your trip plans")
     .action(async () => {
       try {
-        const data = await graphql<{ myTripPlans: TripPlan[] }>(LIST_PLANS);
-        const plans = data.myTripPlans;
+        const data = await graphql<{
+          tripPlans: { items: TripPlan[]; count: number };
+        }>(LIST_PLANS, { page: 1, limit: 20 });
 
+        const plans = data.tripPlans.items;
         if (plans.length === 0) {
           console.log(chalk.dim("No trip plans found."));
           return;
         }
 
-        console.log(chalk.bold("Trip Plans:\n"));
+        console.log(chalk.bold(`Trip Plans (${data.tripPlans.count} total):\n`));
         for (const p of plans) {
           const dates = p.startDate
             ? `${new Date(p.startDate).toLocaleDateString()} → ${p.endDate ? new Date(p.endDate).toLocaleDateString() : "?"}`
@@ -106,7 +121,7 @@ export function registerPlanCommands(program: Command): void {
           const itemCount = p.items.length;
 
           console.log(
-            `  ${chalk.cyan(p.id.slice(0, 8))}  ${chalk.bold(p.title || "(untitled)")}  ${chalk.dim(dates)}  ${chalk.dim(`${itemCount} items`)}  ${statusBadge(p.status)}`
+            `  ${chalk.cyan(p.id.slice(0, 8))}  ${chalk.bold(p.title || "(untitled)")}  ${chalk.dim(dates)}  ${chalk.dim(`${itemCount} items`)}`
           );
         }
         console.log(chalk.dim(`\nView details: voyagier plans get <id>`));
@@ -125,7 +140,10 @@ export function registerPlanCommands(program: Command): void {
 
         console.log(chalk.bold.blue(`\n${plan.title || "(untitled)"}`));
         console.log(chalk.dim(`ID: ${plan.id}`));
-        console.log(`Status: ${statusBadge(plan.status)}`);
+
+        if (plan.description) {
+          console.log(chalk.dim(plan.description));
+        }
 
         if (plan.startDate) {
           console.log(
@@ -143,38 +161,26 @@ export function registerPlanCommands(program: Command): void {
         if (plan.items.length > 0) {
           console.log(chalk.bold("\nItems:"));
           for (const item of plan.items) {
-            const dates = item.startDate
-              ? ` ${new Date(item.startDate).toLocaleDateString()}`
+            const time = item.startTime
+              ? ` ${item.startTime}${item.endTime ? `–${item.endTime}` : ""}`
               : "";
+            const day = item.day ? `Day ${item.day}` : "";
             console.log(
-              `  ${typeIcon(item.type)} ${item.title || "(untitled)"}${chalk.dim(dates)}  ${statusBadge(item.status)}`
+              `  ${typeIcon(item.type)} ${item.title || "(untitled)"}${chalk.dim(time)}  ${chalk.dim(day)}`
             );
+            if (item.subtitle) {
+              console.log(`    ${chalk.dim(item.subtitle)}`);
+            }
           }
         }
 
         console.log(
-          chalk.dim(`\nChat about this plan: voyagier chat --session <session-id>`)
+          chalk.dim(`\nChat about this plan: voyagier chat --plan ${plan.id}`)
         );
       } catch (err) {
         console.error(chalk.red(`Failed to get plan: ${err}`));
       }
     });
-}
-
-function statusBadge(status: string): string {
-  switch (status?.toLowerCase()) {
-    case "draft":
-      return chalk.yellow("● Draft");
-    case "active":
-    case "confirmed":
-      return chalk.green("● Active");
-    case "completed":
-      return chalk.blue("● Completed");
-    case "cancelled":
-      return chalk.red("● Cancelled");
-    default:
-      return chalk.dim(`● ${status || "Unknown"}`);
-  }
 }
 
 function typeIcon(type: string): string {
