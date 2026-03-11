@@ -7,6 +7,9 @@ import { registerPlanCommands } from "./commands/plans.js";
 import { registerSearchCommands } from "./commands/search.js";
 import { registerSelectCommands } from "./commands/select.js";
 import { registerTravellerCommands } from "./commands/travellers.js";
+import { registerCartCommands } from "./commands/cart.js";
+import { registerOptionsCommands } from "./commands/options.js";
+import { registerBookCommands } from "./commands/book.js";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")) as { version: string };
 
@@ -19,5 +22,8 @@ registerPlanCommands(program);
 registerSearchCommands(program);
 registerSelectCommands(program);
 registerTravellerCommands(program);
+registerCartCommands(program);
+registerOptionsCommands(program);
+registerBookCommands(program);
 
 program.parse();

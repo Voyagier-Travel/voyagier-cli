@@ -1,118 +1,84 @@
----
-name: voyagier-booking
-version: 1.0.0
-description: "Voyagier: End-to-end trip planning and booking workflow."
-metadata:
-  openclaw:
-    category: travel
-    requires:
-      bins:
-        - voyagier
----
+# Voyagier Booking Workflow
 
-# voyagier-booking
-
-End-to-end trip planning workflow using the Voyagier CLI.
-
-PREREQUISITE: Read ../voyagier-shared/SKILL.md for auth, global flags, and security rules.
+End-to-end trip booking via CLI. Read `voyagier-shared/SKILL.md` first for auth and global flags.
 
 ## Full Workflow
 
 ### 1. Create a trip plan
-
 ```bash
-voyagier plans create --title "Client Name — Destination" --start 2026-04-15 --end 2026-04-22 --json
+voyagier plans create --title "Smith Family — Punta Cana" --start 2026-06-01 --end 2026-06-08 --json
 ```
-
-Save the `id` from the response — you'll use it for all subsequent commands.
+Save the `id` from the response.
 
 ### 2. Add travellers
-
 ```bash
-voyagier travellers add --plan <PLAN_ID> --first John --last Smith --type ADULT --json
+voyagier travellers add --plan <planId> --first John --last Smith --type ADULT --json
+voyagier travellers add --plan <planId> --first Jane --last Smith --type ADULT --json
 ```
 
-Add one traveller per person. At least one is required before searching.
-
-### 3. Search flights
-
+### 3. Search and select flights
 ```bash
-voyagier search flights --plan <PLAN_ID> --from LAX --to NRT --date 2026-04-15 --json
+voyagier search flights --plan <planId> --from JFK --to PUJ --date 2026-06-01 --return 2026-06-08 --json
+voyagier select 1 --json      # select departure flight
+voyagier select 2 --json      # select return flight (prompted automatically for round-trip)
 ```
 
-For round-trip, add `--return 2026-04-22`.
-
-### 4. Select a flight
-
+### 4. Search and select hotels
 ```bash
-voyagier select 1 --json
+voyagier search hotels --plan <planId> --location "Punta Cana" --checkin 2026-06-01 --checkout 2026-06-08 --json
+voyagier select 1 --json      # select hotel
 ```
 
-For round-trip: this selects the departure. Return options will be displayed — run `voyagier select <n>` again.
-
-### 5. Search hotels
-
+### 5. Pick sub-options (cabin class, room type)
 ```bash
-voyagier search hotels --plan <PLAN_ID> --location Tokyo --checkin 2026-04-15 --checkout 2026-04-22 --json
+voyagier options <planId> --json    # see what needs sub-selection choices
+voyagier options select 1 --json    # pick cabin class or room type by number
 ```
 
-### 6. Select a hotel
-
+If sub-options need refreshing:
 ```bash
-voyagier select 1 --json
+voyagier options <planId> --refresh --json
 ```
 
-### 7. Review the plan
-
+### 6. Review cart
 ```bash
-voyagier plans get <PLAN_ID> --json
+voyagier cart <planId> --json
 ```
+Verify all items are present, no pending sub-selections, total looks correct.
 
-### 8. Share with client
-
-The plan URL is shown in every command's output:
-```
-https://voyagier.com/plans/<PLAN_ID>
-```
-
-Send this to the client. They can view flights, hotels, and all selections in the web app.
-
-## Tips
-
-- Use `--json` on every command when automating. Parse output with `jq`.
-- `voyagier select --info <n>` shows full details before committing.
-- If search results are stale (>2 hours), re-search for current pricing.
-- One trip plan per client trip. Add multiple flights/hotels to the same plan.
-
-## Example: Scripted Booking
-
+### 7. Book (checkout via Stripe)
 ```bash
-#!/bin/bash
-set -e
+# Preview what would be charged:
+voyagier book <planId> --dry-run --json
 
-# Create plan
-PLAN=$(voyagier plans create --title "Johnson — Bali" --start 2026-06-01 --end 2026-06-10 --json | jq -r '.id')
-
-# Add traveller
-voyagier travellers add --plan $PLAN --first Sarah --last Johnson --type ADULT --json
-
-# Search and select flight
-voyagier search flights --plan $PLAN --from SFO --to DPS --date 2026-06-01 --return 2026-06-10 --json
-voyagier select 1 --json  # departure
-voyagier select 1 --json  # return
-
-# Search and select hotel
-voyagier search hotels --plan $PLAN --location Bali --checkin 2026-06-01 --checkout 2026-06-10 --json
-voyagier select 1 --json
-
-# Review
-voyagier plans get $PLAN
-echo "Plan ready: https://voyagier.com/plans/$PLAN"
+# Create checkout and open Stripe payment page:
+voyagier book <planId> --json
 ```
 
-## Related Skills
+### 8. Check booking status
+```bash
+voyagier book <planId> --status --json
+```
 
-- [voyagier-shared](../voyagier-shared/SKILL.md) — Auth and global flags
-- [voyagier-plans](../voyagier-plans/SKILL.md) — Plan management
-- [voyagier-travellers](../voyagier-travellers/SKILL.md) — Traveller management
-- [voyagier-search](../voyagier-search/SKILL.md) — Search and select details
+## Command Reference
+
+| Step | Command | Key Flags |
+|------|---------|-----------|
+| Plan | `plans create` | `--title`, `--start`, `--end` |
+| Travellers | `travellers add` | `--plan`, `--first`, `--last`, `--type` |
+| Search flights | `search flights` | `--plan`, `--from`, `--to`, `--date`, `--return` |
+| Search hotels | `search hotels` | `--plan`, `--location`, `--checkin`, `--checkout` |
+| Select | `select <n>` | index from last search |
+| Sub-options | `options <planId>` | `--refresh` to re-fetch from provider |
+| Pick sub-option | `options select <n>` | index from `options` output |
+| Cart | `cart <planId>` | review before booking |
+| Book | `book <planId>` | `--dry-run`, `--status` |
+
+## Important Notes
+
+- **Sub-selections matter:** After selecting a flight, you may need to pick a cabin class. After selecting a hotel, you may need to pick a room type. The `options` command shows what's needed.
+- **Cart must be complete** before `book` will proceed. It checks for empty cart and missing sub-selections.
+- **Stripe handles payment.** The `book` command opens a Stripe-hosted checkout page in the browser.
+- **Flight prices are reserved** when you run `book`. The Sabre fare is locked at checkout time.
+- **6% travel fee** is added automatically at checkout.
+- **Everything syncs to the web.** View at `https://voyagier.com/plans/<planId>` at any time.
