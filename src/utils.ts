@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { exec } from "child_process";
 
 /**
  * Extract a flight token from a booking data JSONB blob.
@@ -75,5 +76,101 @@ export function validateIata(value: string, flagName: string): void {
   if (!/^[A-Z]{3}$/.test(upper)) {
     process.stderr.write(chalk.red(`Invalid IATA code for ${flagName}: "${value}". Expected 3-letter code (e.g., LAX, NRT).\n`));
     process.exit(1);
+  }
+}
+
+// --- Shared types for sub-selection checking ---
+
+export interface PlanItemForSubCheck {
+  id: string;
+  title: string;
+  selection?: {
+    id: string;
+    isLocked: boolean;
+    selectedOption?: {
+      id: string;
+      name: string;
+      price?: number;
+      status: string;
+      subSelections?: Array<{
+        id: string;
+        type: string;
+        selectedOptionId?: string;
+        options: Array<{ id: string }>;
+      }>;
+    };
+  };
+}
+
+export interface PendingSubSelection {
+  itemTitle: string;
+  parentOptionName: string;
+  subSelectionType: string;
+  subSelectionId: string;
+  optionCount: number;
+}
+
+/**
+ * Find items that have sub-selections needing a choice (no selectedOptionId).
+ * Skips locked selections (already paid/booked).
+ */
+export function findPendingSubSelections(items: PlanItemForSubCheck[]): PendingSubSelection[] {
+  const pending: PendingSubSelection[] = [];
+  for (const item of items) {
+    if (!item.selection?.selectedOption?.subSelections) continue;
+    if (item.selection.isLocked) continue;
+    for (const sub of item.selection.selectedOption.subSelections) {
+      if (!sub.selectedOptionId && sub.options.length > 0) {
+        pending.push({
+          itemTitle: item.title,
+          parentOptionName: item.selection.selectedOption.name,
+          subSelectionType: sub.type,
+          subSelectionId: sub.id,
+          optionCount: sub.options.length,
+        });
+      }
+    }
+  }
+  return pending;
+}
+
+/**
+ * Human-readable label for a sub-selection type.
+ */
+export function subSelectionLabel(type: string): string {
+  switch (type) {
+    case "FLIGHT_CLASS": return "cabin class";
+    case "HOTEL_ROOM": return "room type";
+    case "ACTIVITY_BOOKABLE_ITEM": return "activity option";
+    default: return type.toLowerCase().replace(/_/g, " ");
+  }
+}
+
+/**
+ * Open a URL in the user's default browser. Fails silently.
+ */
+export function openBrowser(url: string): void {
+  const cmd = process.platform === "darwin" ? "open" :
+              process.platform === "win32" ? "start" : "xdg-open";
+  try {
+    exec(`${cmd} "${url}"`, () => {});
+  } catch {
+    // User can open URL manually
+  }
+}
+
+/**
+ * Derive a web base URL from the API URL.
+ * https://dev.voyagier.com → https://dev.voyagier.com
+ * https://voyagier.com → https://voyagier.com
+ */
+export function deriveBaseUrl(apiUrl: string): string {
+  try {
+    const url = new URL(apiUrl);
+    // Strip /graphql or similar API paths
+    url.pathname = "";
+    return url.origin;
+  } catch {
+    return "https://voyagier.com";
   }
 }
