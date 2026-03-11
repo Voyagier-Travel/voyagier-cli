@@ -5,6 +5,7 @@ import { getApiUrl } from "../config.js";
 import { loadSearchState, saveSearchState, clearSearchState, isSearchStateStale } from "../state.js";
 import { formatFlights } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, deriveBaseUrl } from "../utils.js";
+import { hintFlightSelected, hintHotelSelected } from "../hints.js";
 
 interface SelectionResponse {
   id: string;
@@ -116,6 +117,7 @@ export function registerSelectCommands(program: Command): void {
             }, null, 2) + "\n");
           } else {
             console.log(chalk.green(`\n✓ Departure selected: ${selected.summary}`));
+            console.log(hintFlightSelected());
           }
 
           // Save return options to state
@@ -170,6 +172,7 @@ export function registerSelectCommands(program: Command): void {
           } else {
             console.log(chalk.green(`\n✓ Return flight selected: ${selected.summary}`));
             console.log(chalk.dim(`\n  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`));
+            console.log(hintFlightSelected());
             console.log(chalk.dim(`  Next: voyagier plans get ${state.tripPlanId}`));
           }
 
@@ -203,6 +206,11 @@ export function registerSelectCommands(program: Command): void {
         } else {
           const icon = state.type === "flights" ? "✈️" : "🏨";
           console.log(chalk.green(`\n✓ ${icon} Selected: ${selected.summary}`));
+          if (state.type === "flights") {
+            console.log(hintFlightSelected());
+          } else {
+            console.log(hintHotelSelected());
+          }
           console.log(chalk.dim(`\n  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`));
           console.log(chalk.dim(`  Next: voyagier plans get ${state.tripPlanId}`));
         }

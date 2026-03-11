@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
 import { formatPrice, subSelectionLabel, deriveBaseUrl } from "../utils.js";
+import { hintCabinClass, hintHotelRoom } from "../hints.js";
 import { saveOptionsState, loadOptionsState, clearOptionsState } from "../state.js";
 import { GET_PLAN_DEEP, SET_SUB_SELECTION, REFRESH_SUB_SELECTION } from "../queries.js";
 
@@ -202,7 +203,13 @@ export function registerOptionsCommands(program: Command): void {
           timestamp: new Date().toISOString(),
         });
 
-        console.log(chalk.dim(`  Select with: voyagier pick <number>`));
+        // Show hint based on what types of sub-selections are present
+        const hasFlightClass = allSubs.some(s => s.subSelection.type === "FLIGHT_CLASS");
+        const hasHotelRoom = allSubs.some(s => s.subSelection.type === "HOTEL_ROOM");
+        if (hasFlightClass) console.log(hintCabinClass());
+        if (hasHotelRoom) console.log(hintHotelRoom());
+
+        console.log(chalk.dim(`\n  Select with: voyagier pick <number>`));
         console.log(chalk.dim(`  Example: voyagier pick 1`));
         console.log(chalk.dim(`  Plan: ${baseUrl}/plans/${planId}\n`));
       } catch (err) {

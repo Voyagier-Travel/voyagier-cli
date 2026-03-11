@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
 import { formatPrice, findPendingSubSelections, subSelectionLabel, openBrowser, deriveBaseUrl, PlanItemForSubCheck } from "../utils.js";
+import { hintCheckoutCreated, hintBookingConfirmed, hintBookingPending, hintDryRun } from "../hints.js";
 import { GET_CART, GET_PLAN_DEEP, CREATE_CHECKOUT, GET_PAYMENT_CHECKOUTS } from "../queries.js";
 
 interface CartItem {
@@ -109,6 +110,7 @@ export function registerBookCommands(program: Command): void {
           console.log(`  Subtotal:      ${formatPrice(subtotal)}`);
           console.log(`  Travel fee:    ${formatPrice(travelFee)} ${chalk.dim("(6% est.)")}`);
           console.log(chalk.bold(`  Est. total:    ${formatPrice(total)}`));
+          console.log(hintDryRun());
           console.log(chalk.dim("\n  [dry-run] Would create Stripe Checkout Session\n"));
           return;
         }
@@ -151,7 +153,8 @@ export function registerBookCommands(program: Command): void {
 
         openBrowser(checkoutUrl);
 
-        console.log(chalk.dim(`  After payment, check status: voyagier book ${planId} --status`));
+        console.log(hintCheckoutCreated());
+        console.log(chalk.dim(`\n  After payment, check status: voyagier book ${planId} --status`));
         console.log(chalk.dim(`  Plan: ${baseUrl}/plans/${planId}\n`));
 
       } catch (err) {
@@ -203,5 +206,14 @@ async function showBookingStatus(planId: string, baseUrl: string, json: boolean)
     console.log();
   }
 
-  console.log(chalk.dim(`  Plan: ${baseUrl}/plans/${planId}\n`));
+  // Show contextual hints based on status
+  const hasConfirmed = checkouts.some(co => co.bookingRecords.some(r => r.status === "CONFIRMED"));
+  const hasPending = checkouts.some(co => co.bookingRecords.some(r => r.status === "PENDING"));
+  if (hasConfirmed) {
+    console.log(hintBookingConfirmed());
+  } else if (hasPending) {
+    console.log(hintBookingPending());
+  }
+
+  console.log(chalk.dim(`\n  Plan: ${baseUrl}/plans/${planId}\n`));
 }
