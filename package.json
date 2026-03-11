@@ -1,7 +1,7 @@
 {
   "name": "@voyagier/cli",
-  "version": "0.2.0",
-  "description": "Voyagier CLI — AI trip planning from your terminal",
+  "version": "1.0.0",
+  "description": "Voyagier CLI \u2014 AI trip planning from your terminal",
   "type": "module",
   "bin": {
     "voyagier": "./dist/index.js"
@@ -9,7 +9,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "voyagier",
@@ -18,12 +19,11 @@
     "ai"
   ],
   "license": "UNLICENSED",
-  "private": true,
+  "private": false,
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
     "chalk": "^5.6.2",
     "commander": "^14.0.3"
   },
@@ -31,5 +31,10 @@
     "@types/node": "^25.3.5",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
-  }
+  },
+  "files": [
+    "dist",
+    "skills",
+    "README.md"
+  ]
 }

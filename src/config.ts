@@ -60,3 +60,8 @@ export function getToken(): string {
   }
   return creds.token;
 }
+
+export function credentialsExist(): boolean {
+  if (process.env.VOYAGIER_TOKEN) return true;
+  return existsSync(CREDENTIALS_FILE);
+}

@@ -2,183 +2,262 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
 
-const LIST_PLANS = `
-  query TripPlans($page: Int, $limit: Int) {
-    tripPlans(page: $page, limit: $limit) {
-      items {
-        id
-        title
-        startDate
-        endDate
-        updatedAt
-        items {
-          id
-          type
-        }
-      }
-      count
-      page
-    }
-  }
-`;
-
-const GET_PLAN = `
-  query TripPlan($id: String!) {
-    tripPlan(id: $id) {
-      id
-      title
-      description
-      startDate
-      endDate
-      createdAt
-      updatedAt
-      items {
-        id
-        type
-        title
-        subtitle
-        date
-        startTime
-        endTime
-        day
-      }
-      travellers {
-        id
-        firstName
-        lastName
-        declaredTravellerType
-      }
-      collaborators {
-        id
-        role
-      }
-    }
-  }
-`;
-
 interface TripPlan {
-  id: string;
-  title: string;
-  startDate?: string;
-  endDate?: string;
-  updatedAt: string;
-  items: Array<{ id: string; type: string }>;
-}
-
-interface TripPlanDetail {
   id: string;
   title: string;
   description?: string;
   startDate?: string;
   endDate?: string;
-  createdAt: string;
-  updatedAt: string;
-  items: Array<{
-    id: string;
-    type: string;
-    title: string;
-    subtitle?: string;
-    date?: string;
-    startTime?: string;
-    endTime?: string;
-    day?: number;
-  }>;
-  travellers: Array<{
-    id: string;
-    firstName: string;
-    lastName: string;
-    declaredTravellerType: string;
-  }>;
-  collaborators: Array<{
-    id: string;
-    role: string;
-  }>;
+  itemCount?: number;
+}
+
+interface TripPlanItem {
+  id: string;
+  type: string;
+  title: string;
+  date?: string;
+  startTime?: string;
+  endTime?: string;
+  day?: number;
+}
+
+interface TripPlanUser {
+  id: string;
+  user: { id: string; name?: string; email?: string };
+}
+
+interface Traveller {
+  id: string;
+  firstName: string;
+  lastName: string;
+  declaredTravellerType?: string;
+}
+
+interface PaginatedTripPlans {
+  tripPlans: {
+    items: TripPlan[];
+    total: number;
+    page: number;
+    limit: number;
+  };
+}
+
+interface TripPlanDetail {
+  tripPlan: TripPlan & {
+    items: TripPlanItem[];
+    users: TripPlanUser[];
+    travellers: Traveller[];
+  };
+}
+
+function planUrl(id: string): string {
+  return `https://voyagier.com/plans/${id}`;
 }
 
 export function registerPlanCommands(program: Command): void {
   const plans = program.command("plans").description("Manage trip plans");
 
   plans
+    .command("create")
+    .description("Create a new trip plan")
+    .requiredOption("--title <title>", "Trip plan title")
+    .option("--start <date>", "Start date (YYYY-MM-DD)")
+    .option("--end <date>", "End date (YYYY-MM-DD)")
+    .option("--description <text>", "Description")
+    .option("--json", "Output raw JSON")
+    .action(async (opts) => {
+      try {
+        const input: Record<string, unknown> = { title: opts.title };
+        if (opts.start) input.startDate = opts.start;
+        if (opts.end) input.endDate = opts.end;
+        if (opts.description) input.description = opts.description;
+
+        const data = await graphql<{ createTripPlan: TripPlan }>(
+          `mutation CreateTripPlan($input: CreateTripPlanInput!) {
+            createTripPlan(input: $input) { id title startDate endDate description }
+          }`,
+          { input }
+        );
+
+        const plan = data.createTripPlan;
+
+        if (opts.json) {
+          process.stdout.write(JSON.stringify({ ...plan, url: planUrl(plan.id) }, null, 2) + "\n");
+          return;
+        }
+
+        console.log(chalk.green(`✓ Created trip plan: ${plan.title}`));
+        console.log(chalk.dim(`  ID:  ${plan.id}`));
+        console.log(chalk.dim(`  URL: ${planUrl(plan.id)}`));
+        if (plan.startDate || plan.endDate) {
+          console.log(chalk.dim(`  Dates: ${plan.startDate ?? "?"} → ${plan.endDate ?? "?"}`));
+        }
+        console.log(chalk.dim(`\n  Next: voyagier travellers add --plan ${plan.id} --first <name> --last <name> --type ADULT`));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.red(`Failed to create plan: ${message}\n`));
+        process.exit(1);
+      }
+    });
+
+  plans
     .command("list")
     .description("List your trip plans")
-    .action(async () => {
+    .option("--json", "Output raw JSON")
+    .action(async (opts) => {
       try {
-        const data = await graphql<{
-          tripPlans: { items: TripPlan[]; count: number };
-        }>(LIST_PLANS, { page: 1, limit: 20 });
+        const data = await graphql<PaginatedTripPlans>(
+          `query TripPlans {
+            tripPlans(page: 1, limit: 20) {
+              items {
+                id
+                title
+                startDate
+                endDate
+                itemCount
+              }
+              total
+              page
+              limit
+            }
+          }`
+        );
 
-        const items = data.tripPlans.items;
+        const { items, total } = data.tripPlans;
+
+        if (opts.json) {
+          process.stdout.write(JSON.stringify(items.map((p) => ({ ...p, url: planUrl(p.id) })), null, 2) + "\n");
+          return;
+        }
+
         if (items.length === 0) {
           console.log(chalk.dim("No trip plans found."));
           return;
         }
 
-        console.log(chalk.bold(`Trip Plans (${data.tripPlans.count} total):\n`));
-        for (const p of items) {
-          const dates = p.startDate
-            ? `${new Date(p.startDate).toLocaleDateString()} → ${p.endDate ? new Date(p.endDate).toLocaleDateString() : "?"}`
-            : "No dates";
-          const itemCount = p.items.length;
-
-          console.log(
-            `  ${chalk.cyan(p.id.slice(0, 8))}  ${chalk.bold(p.title || "(untitled)")}  ${chalk.dim(dates)}  ${chalk.dim(`${itemCount} items`)}`
-          );
+        console.log(chalk.bold(`\n${total} trip plan${total > 1 ? "s" : ""}${total > 20 ? ` (showing first 20)` : ""}:\n`));
+        for (const plan of items) {
+          const dates = plan.startDate ? `${plan.startDate}${plan.endDate ? ` → ${plan.endDate}` : ""}` : "";
+          const items_count = plan.itemCount ? `${plan.itemCount} items` : "empty";
+          console.log(`  📋  ${chalk.white(plan.title)}  ${chalk.dim(dates)}`);
+          console.log(chalk.dim(`      ${plan.id}  ·  ${items_count}`));
         }
-        console.log(chalk.dim(`\nView details: voyagier plans get <id>`));
+        console.log();
       } catch (err) {
-        console.error(chalk.red(`Failed to list plans: ${err}`));
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.red(`Failed to list plans: ${message}\n`));
+        process.exit(1);
       }
     });
 
   plans
     .command("get <id>")
     .description("Show trip plan details")
-    .action(async (id: string) => {
+    .option("--json", "Output raw JSON")
+    .action(async (id: string, opts) => {
       try {
-        const data = await graphql<{ tripPlan: TripPlanDetail }>(GET_PLAN, { id });
+        const data = await graphql<TripPlanDetail>(
+          `query TripPlan($id: String!) {
+            tripPlan(id: $id) {
+              id
+              title
+              description
+              startDate
+              endDate
+              items {
+                id
+                type
+                title
+                date
+                startTime
+                endTime
+                day
+              }
+              users {
+                id
+                user { id name email }
+              }
+              travellers {
+                id
+                firstName
+                lastName
+                declaredTravellerType
+              }
+            }
+          }`,
+          { id }
+        );
+
         const plan = data.tripPlan;
 
-        console.log(chalk.bold.blue(`\n${plan.title || "(untitled)"}`));
-        console.log(chalk.dim(`ID: ${plan.id}`));
-
-        if (plan.description) {
-          console.log(chalk.dim(plan.description));
+        if (opts.json) {
+          process.stdout.write(JSON.stringify({ ...plan, url: planUrl(plan.id) }, null, 2) + "\n");
+          return;
         }
 
-        if (plan.startDate) {
-          console.log(
-            `Dates: ${new Date(plan.startDate).toLocaleDateString()} → ${plan.endDate ? new Date(plan.endDate).toLocaleDateString() : "TBD"}`
-          );
+        console.log(chalk.bold(`\n${plan.title}`));
+        console.log(chalk.dim(`  ID:  ${plan.id}`));
+        console.log(chalk.dim(`  URL: ${planUrl(plan.id)}`));
+        if (plan.startDate || plan.endDate) {
+          console.log(chalk.dim(`  Dates: ${plan.startDate ?? "?"} → ${plan.endDate ?? "?"}`));
         }
+        if (plan.description) console.log(chalk.dim(`  ${plan.description}`));
 
-        if (plan.travellers.length > 0) {
-          console.log(chalk.bold("\nTravellers:"));
+        if (plan.travellers?.length) {
+          console.log(chalk.bold(`\n  Travellers:`));
           for (const t of plan.travellers) {
-            console.log(`  • ${t.firstName} ${t.lastName}${t.declaredTravellerType ? ` (${t.declaredTravellerType})` : ""}`);
+            console.log(`    👤  ${t.firstName} ${t.lastName}  ·  ${t.declaredTravellerType ?? "ADULT"}`);
           }
         }
 
-        if (plan.items.length > 0) {
-          console.log(chalk.bold("\nItems:"));
+        if (plan.items?.length) {
+          console.log(chalk.bold(`\n  Items (${plan.items.length}):`));
           for (const item of plan.items) {
-            const time = item.startTime
-              ? ` ${item.startTime}${item.endTime ? `–${item.endTime}` : ""}`
-              : "";
-            const day = item.day ? `Day ${item.day}` : "";
-            console.log(
-              `  ${typeIcon(item.type)} ${item.title || "(untitled)"}${chalk.dim(time)}  ${chalk.dim(day)}`
-            );
-            if (item.subtitle) {
-              console.log(`    ${chalk.dim(item.subtitle)}`);
-            }
+            const icon = typeIcon(item.type);
+            const time = item.startTime ? ` at ${item.startTime}` : "";
+            const day = item.day ? ` Day ${item.day}` : "";
+            console.log(`    ${icon}  ${item.title}${day}${time}`);
           }
         }
 
-        console.log(
-          chalk.dim(`\nChat about this plan: voyagier chat --plan ${plan.id}`)
-        );
+        if (plan.users?.length) {
+          console.log(chalk.bold(`\n  Collaborators:`));
+          for (const u of plan.users) {
+            console.log(`    👥  ${u.user.name ?? u.user.email ?? u.user.id}`);
+          }
+        }
+
+        console.log();
       } catch (err) {
-        console.error(chalk.red(`Failed to get plan: ${err}`));
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.red(`Failed to get plan: ${message}\n`));
+        process.exit(1);
+      }
+    });
+
+  plans
+    .command("delete <id>")
+    .description("Delete a trip plan")
+    .option("--json", "Output raw JSON")
+    .action(async (id: string, opts) => {
+      try {
+        await graphql<{ deleteTripPlan: boolean }>(
+          `mutation DeleteTripPlan($id: String!) {
+            deleteTripPlan(id: $id)
+          }`,
+          { id }
+        );
+
+        if (opts.json) {
+          process.stdout.write(JSON.stringify({ success: true, id }) + "\n");
+          return;
+        }
+
+        console.log(chalk.green(`✓ Deleted trip plan ${id}`));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.red(`Failed to delete plan: ${message}\n`));
+        process.exit(1);
       }
     });
 }
@@ -186,18 +265,14 @@ export function registerPlanCommands(program: Command): void {
 function typeIcon(type: string): string {
   switch (type?.toLowerCase()) {
     case "flight":
+    case "selection":
       return "✈️";
     case "hotel":
-    case "lodging":
       return "🏨";
     case "activity":
-    case "tour":
       return "🎯";
     case "transport":
-    case "transfer":
       return "🚗";
-    case "restaurant":
-      return "🍽️";
     default:
       return "📌";
   }
