@@ -1,5 +1,5 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { extractFlightToken, buildFlightSummary, buildHotelSummary, formatPrice, validateDate, validateIata } from "./utils.js";
+import { extractFlightToken, buildFlightSummary, buildHotelSummary, formatPrice, validateDate, validateIata, findPendingSubSelections, subSelectionLabel, deriveBaseUrl, openBrowser } from "./utils.js";
 
 describe("extractFlightToken", () => {
   it("should return undefined when bookingData is undefined", () => {
@@ -208,5 +208,131 @@ describe("validateIata", () => {
     validateIata("X", "--to");
     const output = String((stderrSpy.mock.calls[0] as any[])[0]);
     expect(output).toContain("--to");
+  });
+});
+
+describe("findPendingSubSelections", () => {
+
+  it("returns empty array when no items", () => {
+    expect(findPendingSubSelections([])).toEqual([]);
+  });
+
+  it("returns empty array when no sub-selections exist", () => {
+    const items = [{
+      id: "item1",
+      title: "Flight",
+      selection: { selectedOption: { subSelections: [] } },
+    }];
+    expect(findPendingSubSelections(items as any)).toEqual([]);
+  });
+
+  it("returns pending sub-selections (no selectedOptionId)", () => {
+    const items = [{
+      id: "item1",
+      title: "Flight JFK→NRT",
+      selection: {
+        id: "sel1",
+        isLocked: false,
+        selectedOption: {
+          id: "opt1",
+          name: "AA175",
+          price: 500,
+          status: "ACTIVE",
+          subSelections: [{
+            id: "sub1",
+            type: "FLIGHT_CLASS",
+            options: [{ id: "opt1" }],
+          }],
+        },
+      },
+    }];
+    const result = findPendingSubSelections(items as any);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      itemTitle: "Flight JFK→NRT",
+      parentOptionName: "AA175",
+      subSelectionType: "FLIGHT_CLASS",
+      subSelectionId: "sub1",
+      optionCount: 1,
+    });
+  });
+
+  it("skips sub-selections that already have a selectedOptionId", () => {
+    const items = [{
+      id: "item1",
+      title: "Hotel",
+      selection: {
+        id: "sel1",
+        isLocked: false,
+        selectedOption: {
+          id: "opt1",
+          name: "Park Hyatt",
+          price: 300,
+          status: "ACTIVE",
+          subSelections: [{
+            id: "sub1",
+            type: "HOTEL_ROOM",
+            selectedOptionId: "opt1",
+            options: [{ id: "opt1" }, { id: "opt2" }],
+          }],
+        },
+      },
+    }];
+    expect(findPendingSubSelections(items as any)).toEqual([]);
+  });
+
+  it("handles items with no selection", () => {
+    const items = [{ id: "item1", title: "Tour", selection: null }];
+    expect(findPendingSubSelections(items as any)).toEqual([]);
+  });
+});
+
+describe("subSelectionLabel", () => {
+
+  it("returns human-readable label for FLIGHT_CLASS", () => {
+    expect(subSelectionLabel("FLIGHT_CLASS")).toBe("cabin class");
+  });
+
+  it("returns human-readable label for HOTEL_ROOM", () => {
+    expect(subSelectionLabel("HOTEL_ROOM")).toBe("room type");
+  });
+
+  it("lowercases and formats unknown types", () => {
+    expect(subSelectionLabel("ACTIVITY_BOOKABLE_ITEM")).toBe("activity option");
+  });
+});
+
+describe("deriveBaseUrl", () => {
+
+  it("strips /graphql suffix", () => {
+    expect(deriveBaseUrl("https://voyagier.com/graphql")).toBe("https://voyagier.com");
+  });
+
+  it("strips /api suffix", () => {
+    expect(deriveBaseUrl("https://dev.voyagier.com/api")).toBe("https://dev.voyagier.com");
+  });
+
+  it("strips trailing slash", () => {
+    expect(deriveBaseUrl("https://voyagier.com/")).toBe("https://voyagier.com");
+  });
+
+  it("passes through clean URLs", () => {
+    expect(deriveBaseUrl("https://voyagier.com")).toBe("https://voyagier.com");
+  });
+
+  it("handles dev URLs", () => {
+    expect(deriveBaseUrl("https://dev.voyagier.com")).toBe("https://dev.voyagier.com");
+  });
+
+  it("handles malformed URLs gracefully", () => {
+    expect(deriveBaseUrl("not-a-url")).toBe("https://voyagier.com");
+  });
+});
+
+describe("openBrowser", () => {
+
+  it("does not throw on any platform", () => {
+    // openBrowser swallows errors — just verify it doesn't throw
+    expect(() => openBrowser("https://example.com")).not.toThrow();
   });
 });

@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { exec } from "child_process";
+import { spawn } from "child_process";
 
 /**
  * Extract a flight token from a booking data JSONB blob.
@@ -150,10 +150,15 @@ export function subSelectionLabel(type: string): string {
  * Open a URL in the user's default browser. Fails silently.
  */
 export function openBrowser(url: string): void {
-  const cmd = process.platform === "darwin" ? "open" :
-              process.platform === "win32" ? "start" : "xdg-open";
   try {
-    exec(`${cmd} "${url}"`, () => {});
+    const platform = process.platform;
+    if (platform === "darwin") {
+      spawn("open", [url], { stdio: "ignore", detached: true }).unref();
+    } else if (platform === "win32") {
+      spawn("cmd", ["/c", "start", "", url], { stdio: "ignore", detached: true }).unref();
+    } else {
+      spawn("xdg-open", [url], { stdio: "ignore", detached: true }).unref();
+    }
   } catch {
     // User can open URL manually
   }

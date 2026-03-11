@@ -87,11 +87,10 @@ export function registerOptionsCommands(program: Command): void {
         }>(GET_PLAN_DEEP, { id: planId });
 
         const plan = data.tripPlan;
-        const baseUrl = deriveBaseUrl(getApiUrl());
         const allSubs = findAllSubSelections(plan.items);
 
         // If --refresh, refresh all sub-selections first
-        if (opts.refresh && !opts.json) {
+        if (opts.refresh) {
           process.stderr.write(chalk.dim("Refreshing options from provider...\n"));
           for (const entry of allSubs) {
             try {
@@ -109,7 +108,6 @@ export function registerOptionsCommands(program: Command): void {
         }
 
         // Build global index map
-        let globalIndex = 1;
         const optionMap: Array<{ subSelectionId: string; optionId: string; summary: string }> = [];
 
         for (const entry of allSubs) {
@@ -120,12 +118,22 @@ export function registerOptionsCommands(program: Command): void {
               optionId: opt.id,
               summary: `${opt.name}${opt.price != null ? ` · ${formatPrice(opt.price)}` : ""}`,
             });
-            globalIndex++;
           }
         }
 
+        // Save options state so `pick` works in both human and scripted flows
+        saveOptionsState({
+          tripPlanId: plan.id,
+          results: optionMap.map((entry, i) => ({
+            index: i + 1,
+            subSelectionId: entry.subSelectionId,
+            optionId: entry.optionId,
+            summary: entry.summary,
+          })),
+          timestamp: new Date().toISOString(),
+        });
+
         if (opts.json) {
-          // Use global indices in JSON to match what `pick` expects
           let jsonIdx = 1;
           process.stdout.write(JSON.stringify({
             planId: plan.id,
@@ -188,18 +196,6 @@ export function registerOptionsCommands(program: Command): void {
           }
           console.log();
         }
-
-        // Save to separate options state file (does NOT clobber search state)
-        saveOptionsState({
-          tripPlanId: planId,
-          results: optionMap.map((o, i) => ({
-            index: i + 1,
-            subSelectionId: o.subSelectionId,
-            optionId: o.optionId,
-            summary: o.summary,
-          })),
-          timestamp: new Date().toISOString(),
-        });
 
         console.log(chalk.dim(`  Select with: voyagier pick <number>`));
         console.log(chalk.dim(`  Example: voyagier pick 1\n`));
