@@ -1,5 +1,5 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { existsSync, unlinkSync } from "fs";
+import { existsSync, unlinkSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { saveCredentials, CONFIG_DIR } from "./config.js";
 import { graphql } from "./api.js";
@@ -17,7 +17,7 @@ describe("graphql", () => {
     global.fetch = mockFetch;
     // Back up and set test credentials
     if (existsSync(credFile)) {
-      originalCreds = require("fs").readFileSync(credFile, "utf-8");
+      originalCreds = readFileSync(credFile, "utf-8");
     } else {
       originalCreds = null;
     }
@@ -27,7 +27,7 @@ describe("graphql", () => {
   afterEach(() => {
     // Restore
     if (originalCreds !== null) {
-      require("fs").writeFileSync(credFile, originalCreds, { mode: 0o600 });
+      writeFileSync(credFile, originalCreds, { mode: 0o600 });
     } else if (existsSync(credFile)) {
       unlinkSync(credFile);
     }
