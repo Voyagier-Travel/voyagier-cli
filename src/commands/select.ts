@@ -2,7 +2,8 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
 import { loadSearchState, saveSearchState, clearSearchState, isSearchStateStale } from "../state.js";
-import { formatFlights, formatHotels } from "../formatters.js";
+import { formatFlights } from "../formatters.js";
+import { extractFlightToken, buildFlightSummary } from "../utils.js";
 
 interface SelectionResponse {
   id: string;
@@ -214,21 +215,6 @@ export function registerSelectCommands(program: Command): void {
     });
 }
 
-function extractFlightToken(bookingData?: Record<string, unknown>): string | undefined {
-  if (!bookingData) return undefined;
-  const flights = bookingData.flights as Array<Record<string, unknown>> | undefined;
-  if (flights?.[0]?.flightToken) return flights[0].flightToken as string;
-  // Also check top-level flightToken
-  if (typeof bookingData.flightToken === "string") return bookingData.flightToken;
-  // Check priceToken as alternative
-  if (typeof bookingData.priceToken === "string") return bookingData.priceToken;
-  return undefined;
-}
 
-function buildFlightSummary(opt: { name: string; price?: number; airline?: string; duration?: string }): string {
-  const parts = [opt.name];
-  if (opt.airline) parts.push(opt.airline);
-  if (opt.price) parts.push(`$${opt.price}`);
-  if (opt.duration) parts.push(opt.duration);
-  return parts.join(" · ");
-}
+
+

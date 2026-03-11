@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
+import { validateDate } from "../utils.js";
 
 interface Traveller {
   id: string;
@@ -34,7 +35,10 @@ export function registerTravellerCommands(program: Command): void {
           declaredTravellerType: opts.type.toUpperCase(),
         };
         if (opts.email) input.email = opts.email;
-        if (opts.dob) input.dateOfBirth = opts.dob;
+        if (opts.dob) {
+          validateDate(opts.dob, "--dob");
+          input.dateOfBirth = opts.dob;
+        }
         if (opts.gender) input.gender = opts.gender.toUpperCase();
 
         const data = await graphql<{ createTripPlanTraveller: Traveller }>(

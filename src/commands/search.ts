@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels } from "../formatters.js";
+import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, validateIata } from "../utils.js";
 
 interface SelectOption {
   id: string;
@@ -51,14 +52,7 @@ function resolvePlanId(opts: { plan?: string }): string {
   process.exit(1);
 }
 
-function extractFlightToken(bookingData?: Record<string, unknown>): string | undefined {
-  if (!bookingData) return undefined;
-  const flights = bookingData.flights as Array<Record<string, unknown>> | undefined;
-  if (flights?.[0]?.flightToken) return flights[0].flightToken as string;
-  if (typeof bookingData.flightToken === "string") return bookingData.flightToken;
-  if (typeof bookingData.priceToken === "string") return bookingData.priceToken;
-  return undefined;
-}
+
 
 function parseDurationMinutes(duration?: string): number {
   if (!duration) return Infinity;
@@ -110,6 +104,11 @@ export function registerSearchCommands(program: Command): void {
     .option("--dry-run", "Show the GraphQL query without executing")
     .action(async (opts) => {
       try {
+        validateIata(opts.from, "--from");
+        validateIata(opts.to, "--to");
+        validateDate(opts.date, "--date");
+        if (opts.return) validateDate(opts.return, "--return");
+
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
 
@@ -218,6 +217,9 @@ export function registerSearchCommands(program: Command): void {
     .option("--dry-run", "Show the GraphQL query without executing")
     .action(async (opts) => {
       try {
+        validateDate(opts.checkin, "--checkin");
+        validateDate(opts.checkout, "--checkout");
+
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
 
@@ -303,23 +305,9 @@ export function registerSearchCommands(program: Command): void {
     });
 }
 
-function buildFlightSummary(
-  opt: { name: string; price?: number; airline?: string; duration?: string },
-  origin: string,
-  destination: string
-): string {
-  const parts = [`${origin}→${destination}`];
-  if (opt.airline) parts.push(opt.airline);
-  if (opt.price) parts.push(`$${opt.price}`);
-  if (opt.duration) parts.push(opt.duration);
-  return parts.join(" · ");
-}
 
-function buildHotelSummary(opt: { name: string; price?: number }): string {
-  const parts = [opt.name];
-  if (opt.price) parts.push(`$${opt.price}/night`);
-  return parts.join(" · ");
-}
+
+
 
 function handleSearchError(err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);

@@ -1,8 +1,8 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
-const CONFIG_DIR = join(homedir(), ".voyagier");
+export const CONFIG_DIR = join(homedir(), ".voyagier");
 const CREDENTIALS_FILE = join(CONFIG_DIR, "credentials.json");
 
 interface Credentials {
@@ -43,7 +43,7 @@ export function loadCredentials(): Credentials | null {
 
 export function clearCredentials(): void {
   if (existsSync(CREDENTIALS_FILE)) {
-    writeFileSync(CREDENTIALS_FILE, "{}", { mode: 0o600 });
+    unlinkSync(CREDENTIALS_FILE);
   }
 }
 

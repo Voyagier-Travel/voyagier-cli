@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
+import { CONFIG_DIR } from "./config.js";
 
 export interface SearchResult {
   index: number;
@@ -19,12 +19,11 @@ export interface SearchState {
   timestamp: string;
 }
 
-const STATE_DIR = join(homedir(), ".voyagier");
-const STATE_FILE = join(STATE_DIR, "last-search.json");
+const STATE_FILE = join(CONFIG_DIR, "last-search.json");
 const DEFAULT_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 export function saveSearchState(state: SearchState): void {
-  mkdirSync(STATE_DIR, { recursive: true });
+  mkdirSync(CONFIG_DIR, { recursive: true });
   writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
 }
 

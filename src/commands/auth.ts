@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { createServer } from "http";
+import { exec } from "child_process";
 import { saveCredentials, getToken, getApiUrl, clearCredentials, credentialsExist } from "../config.js";
 import { graphql } from "../api.js";
 
@@ -119,13 +120,13 @@ export function registerAuthCommands(program: Command): void {
           // Try to open browser automatically
           const openCmd = process.platform === "darwin" ? "open" :
                           process.platform === "win32" ? "start" : "xdg-open";
-          import("child_process").then(({ exec }) => {
+          try {
             exec(`${openCmd} "${loginUrl}"`, () => {
               // Silently ignore errors — user can open URL manually
             });
-          }).catch(() => {
-            // No child_process available
-          });
+          } catch {
+            // exec not available — user can open URL manually
+          }
         });
 
         server.on("error", (err) => {

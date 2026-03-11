@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { formatPrice } from "./utils.js";
 
 interface FlightOption {
   id?: string;
@@ -25,7 +26,7 @@ export function formatFlights(options: FlightOption[]): string {
       const idx = chalk.bold.cyan(`[${i + 1}]`);
       const airline = opt.airline ? chalk.white(opt.airline) : "";
       const name = chalk.white(opt.name);
-      const price = opt.price ? chalk.green(`$${opt.price}`) : "";
+      const price = opt.price != null ? chalk.green(formatPrice(opt.price)) : "";
       const duration = opt.duration ? chalk.dim(opt.duration) : "";
       const time = opt.time ? chalk.dim(opt.time) : "";
 
@@ -45,7 +46,7 @@ export function formatHotels(options: HotelOption[]): string {
     .map((opt, i) => {
       const idx = chalk.bold.cyan(`[${i + 1}]`);
       const name = chalk.white(opt.name);
-      const price = opt.price ? chalk.green(`$${opt.price}/night`) : "";
+      const price = opt.price != null ? chalk.green(`${formatPrice(opt.price)}/night`) : "";
 
       let line = `  🏨  ${idx}  ${name}`;
       if (price) line += `  ·  ${price}`;

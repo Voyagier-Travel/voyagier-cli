@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
+import { validateDate, formatPrice } from "../utils.js";
 
 interface TripPlan {
   id: string;
@@ -77,6 +78,9 @@ export function registerPlanCommands(program: Command): void {
     .option("--dry-run", "Show the GraphQL query without executing")
     .action(async (opts) => {
       try {
+        if (opts.start) validateDate(opts.start, "--start");
+        if (opts.end) validateDate(opts.end, "--end");
+
         const input: Record<string, unknown> = { title: opts.title };
         if (opts.start) input.startDate = opts.start;
         if (opts.end) input.endDate = opts.end;
@@ -222,7 +226,7 @@ export function registerPlanCommands(program: Command): void {
 
             if (item.selection?.selectedOption) {
               const sel = item.selection.selectedOption;
-              const price = sel.price ? ` · $${sel.price}` : "";
+              const price = sel.price != null ? ` · ${formatPrice(sel.price)}` : "";
               const status = sel.status && sel.status !== "NONE" ? ` [${sel.status}]` : "";
               line += chalk.green(`  → ${sel.name}${price}${status}`);
             } else if (item.selection) {

@@ -51,7 +51,7 @@ export function registerChatCommands(program: Command): void {
           sessionId = data.createChatSession.id;
           console.log(chalk.dim(`New session: ${sessionId}`));
         } catch (err) {
-          console.error(chalk.red(`Failed to create session: ${err}`));
+          process.stderr.write(chalk.red(`Failed to create session: ${err}\n`));
           process.exit(1);
         }
       }
@@ -85,7 +85,7 @@ async function listSessions(): Promise<void> {
     }
     console.log(chalk.dim(`\nResume with: voyagier chat --session <id>`));
   } catch (err) {
-    console.error(chalk.red(`Failed to list sessions: ${err}`));
+    process.stderr.write(chalk.red(`Failed to list sessions: ${err}\n`));
   }
 }
 
@@ -133,7 +133,7 @@ async function chatRepl(sessionId: string): Promise<void> {
       });
       process.stdout.write("\n\n");
     } catch (err) {
-      console.error(chalk.red(`\nError: ${err}`));
+      process.stderr.write(chalk.red(`\nError: ${err}\n`));
     }
 
     rl.prompt();
@@ -152,17 +152,13 @@ function summarizeToolResult(toolName: string, data: Record<string, unknown>): s
   if (toolName.includes("hotel") && Array.isArray(data.options)) {
     return `${data.options.length} hotel options found`;
   }
-  if (toolName === "voyagier_plan_trip") {
-    const parts: string[] = [];
-    if (data.tripPlanId) parts.push("plan created");
-    const flights = data.flights as unknown[] | undefined;
-    const hotels = data.hotels as unknown[] | undefined;
-    if (Array.isArray(flights) && flights.length > 0) parts.push(`${flights.length} flights`);
-    if (Array.isArray(hotels) && hotels.length > 0) parts.push(`${hotels.length} hotels`);
-    return parts.join(", ") || null;
+  if (toolName.includes("createTripPlan") || toolName.includes("create_trip_plan")) {
+    return data.title ? `plan created: ${data.title}` : "plan created";
   }
-  if (toolName.includes("traveller") && Array.isArray(data.travellers)) {
-    return `${data.travellers.length} travellers`;
+  if (toolName.includes("Traveller") || toolName.includes("traveller")) {
+    if (Array.isArray(data.travellers)) return `${data.travellers.length} travellers`;
+    if (data.firstName) return `added ${data.firstName} ${data.lastName ?? ""}`.trim();
+    return "traveller updated";
   }
   return null;
 }
