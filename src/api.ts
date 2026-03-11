@@ -5,12 +5,27 @@ interface GraphQLResponse<T = unknown> {
   errors?: Array<{ message: string }>;
 }
 
+export interface GraphQLOptions {
+  dryRun?: boolean;
+}
+
 export async function graphql<T = unknown>(
   query: string,
-  variables?: Record<string, unknown>
+  variables?: Record<string, unknown>,
+  options?: GraphQLOptions
 ): Promise<T> {
   const apiUrl = getApiUrl();
   const token = getToken();
+
+  if (options?.dryRun) {
+    const body = { query, variables };
+    process.stderr.write("\n--- DRY RUN ---\n");
+    process.stderr.write(`POST ${apiUrl}/graphql\n`);
+    process.stderr.write(`Authorization: Bearer ${token.slice(0, 8)}••••\n\n`);
+    process.stderr.write(JSON.stringify(body, null, 2) + "\n");
+    process.stderr.write("--- END DRY RUN ---\n\n");
+    process.exit(0);
+  }
 
   const res = await fetch(`${apiUrl}/graphql`, {
     method: "POST",
@@ -91,9 +106,7 @@ export async function streamChat(
     throw new Error("No response body");
   }
 
-  // Track tool calls to map toolCallId → toolName for result rendering
   const toolCallMap = new Map<string, string>();
-
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -107,11 +120,9 @@ export async function streamChat(
     buffer = lines.pop() ?? "";
 
     for (const line of lines) {
-      // UI Message Stream SSE format: "data: <json>" or "data: [DONE]"
       if (line.startsWith("data: ")) {
         const payload = line.slice(6);
         if (payload === "[DONE]") continue;
-
         try {
           const part = JSON.parse(payload) as StreamPart;
           handleStreamPart(part, callbacks, toolCallMap);
@@ -120,8 +131,6 @@ export async function streamChat(
         }
         continue;
       }
-
-      // Legacy Vercel AI SDK data stream format: "0:\"text\""
       if (line.startsWith("0:")) {
         try {
           const text = JSON.parse(line.slice(2)) as unknown;
@@ -144,30 +153,21 @@ function handleStreamPart(
   switch (part.type) {
     case "text-delta":
     case "text":
-      if (part.textDelta) {
-        callbacks.onTextDelta(part.textDelta);
-      }
+      if (part.textDelta) callbacks.onTextDelta(part.textDelta);
       break;
-
     case "tool-call":
-      if (part.toolCallId && part.toolName) {
-        toolCallMap.set(part.toolCallId, part.toolName);
-      }
+      if (part.toolCallId && part.toolName) toolCallMap.set(part.toolCallId, part.toolName);
       callbacks.onToolCall?.(part.toolName ?? "unknown", part.args);
       break;
-
     case "tool-result":
       if (part.toolCallId) {
         const toolName = toolCallMap.get(part.toolCallId) ?? "unknown";
         callbacks.onToolResult?.(toolName, part.result);
       }
       break;
-
     case "error":
       callbacks.onError?.(part.errorText ?? "Unknown error");
       break;
-
-    // Ignore step boundaries, reasoning, sources, etc.
     default:
       break;
   }

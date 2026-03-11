@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import chalk from "chalk";
+import { createServer } from "http";
 import { saveCredentials, getToken, getApiUrl, clearCredentials, credentialsExist } from "../config.js";
 import { graphql } from "../api.js";
 
@@ -41,7 +42,6 @@ export function registerAuthCommands(program: Command): void {
       console.log(`  Token:   ${chalk.dim(masked)}`);
       console.log(`  API URL: ${chalk.dim(apiUrl)}`);
 
-      // Test GraphQL connectivity + get user info
       try {
         const data = await graphql<{ me: { email: string; name?: string } }>(
           `{ me { email name } }`
@@ -62,6 +62,102 @@ export function registerAuthCommands(program: Command): void {
     });
 
   auth
+    .command("login")
+    .description("Log in via browser (opens browser, receives token via callback)")
+    .option("--url <apiUrl>", "API base URL", "https://voyagier.com")
+    .option("--port <port>", "Local callback port", "9876")
+    .action(async (opts) => {
+      const port = parseInt(opts.port, 10);
+      const apiUrl = opts.url as string;
+
+      console.log(chalk.bold("\nVoyagier CLI Login\n"));
+      console.log(chalk.dim("Starting local server to receive auth callback...\n"));
+
+      const tokenPromise = new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          server.close();
+          reject(new Error("Login timed out after 5 minutes."));
+        }, 5 * 60 * 1000);
+
+        const server = createServer((req, res) => {
+          const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+
+          // Handle the callback with token
+          if (url.pathname === "/callback") {
+            const token = url.searchParams.get("token");
+
+            if (token) {
+              res.writeHead(200, { "Content-Type": "text/html" });
+              res.end(`
+                <html><body style="font-family: system-ui; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+                  <div style="text-align: center;">
+                    <h1>✓ Authenticated</h1>
+                    <p>You can close this window and return to the terminal.</p>
+                  </div>
+                </body></html>
+              `);
+              clearTimeout(timeout);
+              server.close();
+              resolve(token);
+            } else {
+              res.writeHead(400, { "Content-Type": "text/plain" });
+              res.end("Missing token parameter.");
+            }
+            return;
+          }
+
+          res.writeHead(404, { "Content-Type": "text/plain" });
+          res.end("Not found");
+        });
+
+        server.listen(port, () => {
+          const loginUrl = `${apiUrl}/auth/cli?callback=http://localhost:${port}/callback`;
+          console.log(`  Open this URL in your browser:\n`);
+          console.log(chalk.cyan(`  ${loginUrl}\n`));
+          console.log(chalk.dim("  Waiting for authentication...\n"));
+
+          // Try to open browser automatically
+          const openCmd = process.platform === "darwin" ? "open" :
+                          process.platform === "win32" ? "start" : "xdg-open";
+          import("child_process").then(({ exec }) => {
+            exec(`${openCmd} "${loginUrl}"`, () => {
+              // Silently ignore errors — user can open URL manually
+            });
+          }).catch(() => {
+            // No child_process available
+          });
+        });
+
+        server.on("error", (err) => {
+          clearTimeout(timeout);
+          reject(new Error(`Could not start local server on port ${port}: ${err.message}`));
+        });
+      });
+
+      try {
+        const token = await tokenPromise;
+        saveCredentials(token, apiUrl);
+        console.log(chalk.green("✓ Login successful! Token saved.\n"));
+
+        // Verify
+        try {
+          const data = await graphql<{ me: { email: string; name?: string } }>(
+            `{ me { email name } }`
+          );
+          const user = data.me;
+          const displayName = user.name ? `${user.name} (${user.email})` : user.email;
+          console.log(`  Authenticated as: ${chalk.green(displayName)}`);
+        } catch {
+          console.log(chalk.dim("  Token saved. Run: voyagier auth status"));
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.red(`Login failed: ${message}\n`));
+        process.exit(1);
+      }
+    });
+
+  auth
     .command("logout")
     .description("Clear saved credentials")
     .action(() => {
@@ -74,12 +170,15 @@ export function registerAuthCommands(program: Command): void {
     .description("How to get started")
     .action(() => {
       console.log(chalk.bold("\nVoyagier CLI Setup\n"));
+      console.log("  Option 1: Browser login (recommended)\n");
+      console.log(chalk.cyan("     voyagier auth login\n"));
+      console.log("  Option 2: Personal Access Token\n");
       console.log("  1. Log in to voyagier.com");
       console.log("  2. Go to Settings → Personal Access Tokens");
       console.log("  3. Create a new token");
       console.log("  4. Run:\n");
       console.log(chalk.cyan("     voyagier auth set-token <your-token>\n"));
-      console.log("  Or set environment variables:\n");
+      console.log("  Option 3: Environment variables (CI/scripts)\n");
       console.log(chalk.dim("     export VOYAGIER_TOKEN=voy_pat_xxxxx"));
       console.log(chalk.dim("     export VOYAGIER_API_URL=https://voyagier.com  # optional\n"));
     });

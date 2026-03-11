@@ -33,6 +33,15 @@ interface Traveller {
   declaredTravellerType?: string;
 }
 
+interface SelectionInfo {
+  id: string;
+  selectedOption?: { id: string; name: string; price?: number; status: string };
+}
+
+interface TripPlanItemDetail extends TripPlanItem {
+  selection?: SelectionInfo;
+}
+
 interface PaginatedTripPlans {
   tripPlans: {
     items: TripPlan[];
@@ -44,7 +53,7 @@ interface PaginatedTripPlans {
 
 interface TripPlanDetail {
   tripPlan: TripPlan & {
-    items: TripPlanItem[];
+    items: TripPlanItemDetail[];
     users: TripPlanUser[];
     travellers: Traveller[];
   };
@@ -65,6 +74,7 @@ export function registerPlanCommands(program: Command): void {
     .option("--end <date>", "End date (YYYY-MM-DD)")
     .option("--description <text>", "Description")
     .option("--json", "Output raw JSON")
+    .option("--dry-run", "Show the GraphQL query without executing")
     .action(async (opts) => {
       try {
         const input: Record<string, unknown> = { title: opts.title };
@@ -76,7 +86,8 @@ export function registerPlanCommands(program: Command): void {
           `mutation CreateTripPlan($input: CreateTripPlanInput!) {
             createTripPlan(input: $input) { id title startDate endDate description }
           }`,
-          { input }
+          { input },
+          { dryRun: opts.dryRun }
         );
 
         const plan = data.createTripPlan;
@@ -103,30 +114,33 @@ export function registerPlanCommands(program: Command): void {
   plans
     .command("list")
     .description("List your trip plans")
+    .option("--page <n>", "Page number", "1")
+    .option("--limit <n>", "Results per page", "20")
     .option("--json", "Output raw JSON")
     .action(async (opts) => {
       try {
+        const page = parseInt(opts.page, 10);
+        const limit = parseInt(opts.limit, 10);
+
         const data = await graphql<PaginatedTripPlans>(
-          `query TripPlans {
-            tripPlans(page: 1, limit: 20) {
-              items {
-                id
-                title
-                startDate
-                endDate
-                itemCount
-              }
-              total
-              page
-              limit
+          `query TripPlans($page: Int!, $limit: Int!) {
+            tripPlans(page: $page, limit: $limit) {
+              items { id title startDate endDate itemCount }
+              total page limit
             }
-          }`
+          }`,
+          { page, limit }
         );
 
         const { items, total } = data.tripPlans;
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify(items.map((p) => ({ ...p, url: planUrl(p.id) })), null, 2) + "\n");
+          process.stdout.write(JSON.stringify({
+            items: items.map((p) => ({ ...p, url: planUrl(p.id) })),
+            total,
+            page,
+            limit,
+          }, null, 2) + "\n");
           return;
         }
 
@@ -135,12 +149,17 @@ export function registerPlanCommands(program: Command): void {
           return;
         }
 
-        console.log(chalk.bold(`\n${total} trip plan${total > 1 ? "s" : ""}${total > 20 ? ` (showing first 20)` : ""}:\n`));
+        const pageInfo = total > limit ? ` (page ${page}, showing ${items.length} of ${total})` : "";
+        console.log(chalk.bold(`\n${total} trip plan${total > 1 ? "s" : ""}${pageInfo}:\n`));
         for (const plan of items) {
           const dates = plan.startDate ? `${plan.startDate}${plan.endDate ? ` → ${plan.endDate}` : ""}` : "";
-          const items_count = plan.itemCount ? `${plan.itemCount} items` : "empty";
+          const itemsLabel = plan.itemCount ? `${plan.itemCount} items` : "empty";
           console.log(`  📋  ${chalk.white(plan.title)}  ${chalk.dim(dates)}`);
-          console.log(chalk.dim(`      ${plan.id}  ·  ${items_count}`));
+          console.log(chalk.dim(`      ${plan.id}  ·  ${itemsLabel}`));
+        }
+
+        if (total > page * limit) {
+          console.log(chalk.dim(`\n  Next page: voyagier plans list --page ${page + 1}`));
         }
         console.log();
       } catch (err) {
@@ -159,30 +178,13 @@ export function registerPlanCommands(program: Command): void {
         const data = await graphql<TripPlanDetail>(
           `query TripPlan($id: String!) {
             tripPlan(id: $id) {
-              id
-              title
-              description
-              startDate
-              endDate
+              id title description startDate endDate
               items {
-                id
-                type
-                title
-                date
-                startTime
-                endTime
-                day
+                id type title date startTime endTime day
+                selection { id selectedOption { id name price status } }
               }
-              users {
-                id
-                user { id name email }
-              }
-              travellers {
-                id
-                firstName
-                lastName
-                declaredTravellerType
-              }
+              users { id user { id name email } }
+              travellers { id firstName lastName declaredTravellerType }
             }
           }`,
           { id }
@@ -216,7 +218,18 @@ export function registerPlanCommands(program: Command): void {
             const icon = typeIcon(item.type);
             const time = item.startTime ? ` at ${item.startTime}` : "";
             const day = item.day ? ` Day ${item.day}` : "";
-            console.log(`    ${icon}  ${item.title}${day}${time}`);
+            let line = `    ${icon}  ${item.title}${day}${time}`;
+
+            if (item.selection?.selectedOption) {
+              const sel = item.selection.selectedOption;
+              const price = sel.price ? ` · $${sel.price}` : "";
+              const status = sel.status && sel.status !== "NONE" ? ` [${sel.status}]` : "";
+              line += chalk.green(`  → ${sel.name}${price}${status}`);
+            } else if (item.selection) {
+              line += chalk.yellow("  → awaiting selection");
+            }
+
+            console.log(line);
           }
         }
 
@@ -236,15 +249,94 @@ export function registerPlanCommands(program: Command): void {
     });
 
   plans
+    .command("summary <id>")
+    .description("Compact one-screen summary of a trip plan")
+    .option("--json", "Output raw JSON")
+    .action(async (id: string, opts) => {
+      try {
+        const data = await graphql<TripPlanDetail>(
+          `query TripPlan($id: String!) {
+            tripPlan(id: $id) {
+              id title startDate endDate
+              items {
+                id type title day
+                selection { id selectedOption { id name price status } }
+              }
+              travellers { id firstName lastName declaredTravellerType }
+            }
+          }`,
+          { id }
+        );
+
+        const plan = data.tripPlan;
+
+        if (opts.json) {
+          const summary = {
+            id: plan.id,
+            title: plan.title,
+            url: planUrl(plan.id),
+            dates: plan.startDate && plan.endDate ? `${plan.startDate} → ${plan.endDate}` : null,
+            travellers: (plan.travellers ?? []).map((t) => `${t.firstName} ${t.lastName} (${t.declaredTravellerType ?? "ADULT"})`),
+            items: (plan.items ?? []).map((item) => ({
+              type: item.type,
+              title: item.title,
+              selected: item.selection?.selectedOption?.name ?? null,
+              price: item.selection?.selectedOption?.price ?? null,
+              status: item.selection?.selectedOption?.status ?? null,
+            })),
+          };
+          process.stdout.write(JSON.stringify(summary, null, 2) + "\n");
+          return;
+        }
+
+        const dates = plan.startDate && plan.endDate ? `  ${chalk.dim(`${plan.startDate} → ${plan.endDate}`)}` : "";
+        console.log(chalk.bold(`\n${plan.title}`) + dates);
+        console.log(chalk.dim(`${planUrl(plan.id)}\n`));
+
+        // Travellers line
+        const travellers = plan.travellers ?? [];
+        if (travellers.length > 0) {
+          const names = travellers.map((t) => `${t.firstName} ${t.lastName}`).join(", ");
+          console.log(`  👤  ${names}`);
+        }
+
+        // Items
+        const items = plan.items ?? [];
+        if (items.length > 0) {
+          console.log();
+          for (const item of items) {
+            const icon = typeIcon(item.type);
+            const sel = item.selection?.selectedOption;
+            if (sel) {
+              const price = sel.price ? chalk.green(` $${sel.price}`) : "";
+              const status = sel.status && sel.status !== "NONE" ? chalk.dim(` [${sel.status}]`) : "";
+              console.log(`  ${icon}  ${sel.name}${price}${status}`);
+            } else if (item.selection) {
+              console.log(`  ${icon}  ${item.title}  ${chalk.yellow("⏳ pending")}`);
+            } else {
+              console.log(`  ${icon}  ${item.title}`);
+            }
+          }
+        } else {
+          console.log(chalk.dim("  No items yet."));
+        }
+
+        console.log();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.red(`Failed to get plan summary: ${message}\n`));
+        process.exit(1);
+      }
+    });
+
+  plans
     .command("delete <id>")
     .description("Delete a trip plan")
     .option("--json", "Output raw JSON")
     .action(async (id: string, opts) => {
       try {
         await graphql<{ deleteTripPlan: boolean }>(
-          `mutation DeleteTripPlan($id: String!) {
-            deleteTripPlan(id: $id)
-          }`,
+          `mutation DeleteTripPlan($id: String!) { deleteTripPlan(id: $id) }`,
           { id }
         );
 
