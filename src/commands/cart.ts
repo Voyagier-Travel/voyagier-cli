@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
 import { formatPrice, findPendingSubSelections, subSelectionLabel, deriveBaseUrl, PlanItemForSubCheck } from "../utils.js";
+import { hintCartCheckout } from "../hints.js";
 import { GET_CART, GET_PLAN_DEEP } from "../queries.js";
 
 interface CartItem {
@@ -94,7 +95,8 @@ export function registerCartCommands(program: Command): void {
 
         if (pending.length === 0 && cart.itemCount > 0) {
           console.log(chalk.green("  ✓ Ready to book!"));
-          console.log(chalk.dim(`  Run: voyagier book ${planId}\n`));
+          console.log(hintCartCheckout());
+          console.log(chalk.dim(`\n  Run: voyagier book ${planId}\n`));
         }
 
         console.log(chalk.dim(`  Plan: ${baseUrl}/plans/${planId}`));
