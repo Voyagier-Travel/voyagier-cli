@@ -1,9 +1,10 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
+import { getApiUrl } from "../config.js";
 import { loadSearchState, saveSearchState, clearSearchState, isSearchStateStale } from "../state.js";
 import { formatFlights } from "../formatters.js";
-import { extractFlightToken, buildFlightSummary } from "../utils.js";
+import { extractFlightToken, buildFlightSummary, deriveBaseUrl } from "../utils.js";
 
 interface SelectionResponse {
   id: string;
@@ -111,7 +112,7 @@ export function registerSelectCommands(program: Command): void {
               type: "departure_selected",
               selected: selected.summary,
               returnOptions,
-              tripPlanUrl: `https://voyagier.com/plans/${state.tripPlanId}`,
+              tripPlanUrl: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
             }, null, 2) + "\n");
           } else {
             console.log(chalk.green(`\n✓ Departure selected: ${selected.summary}`));
@@ -164,11 +165,11 @@ export function registerSelectCommands(program: Command): void {
               success: true,
               type: "return_selected",
               selected: selected.summary,
-              tripPlanUrl: `https://voyagier.com/plans/${state.tripPlanId}`,
+              tripPlanUrl: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
             }, null, 2) + "\n");
           } else {
             console.log(chalk.green(`\n✓ Return flight selected: ${selected.summary}`));
-            console.log(chalk.dim(`\n  Plan: https://voyagier.com/plans/${state.tripPlanId}`));
+            console.log(chalk.dim(`\n  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`));
             console.log(chalk.dim(`  Next: voyagier plans get ${state.tripPlanId}`));
           }
 
@@ -197,12 +198,12 @@ export function registerSelectCommands(program: Command): void {
             type: state.type === "flights" ? "flight_selected" : "hotel_selected",
             selected: selected.summary,
             selectionId: result.id,
-            tripPlanUrl: `https://voyagier.com/plans/${state.tripPlanId}`,
+            tripPlanUrl: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
           }, null, 2) + "\n");
         } else {
           const icon = state.type === "flights" ? "✈️" : "🏨";
           console.log(chalk.green(`\n✓ ${icon} Selected: ${selected.summary}`));
-          console.log(chalk.dim(`\n  Plan: https://voyagier.com/plans/${state.tripPlanId}`));
+          console.log(chalk.dim(`\n  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`));
           console.log(chalk.dim(`  Next: voyagier plans get ${state.tripPlanId}`));
         }
 
