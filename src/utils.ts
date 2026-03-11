@@ -1,0 +1,181 @@
+import chalk from "chalk";
+import { spawn } from "child_process";
+
+/**
+ * Extract a flight token from a booking data JSONB blob.
+ * Checks multiple paths since Sabre data structure varies.
+ */
+export function extractFlightToken(bookingData?: Record<string, unknown>): string | undefined {
+  if (!bookingData) return undefined;
+  // Check nested flights array first
+  const flights = bookingData.flights as Array<Record<string, unknown>> | undefined;
+  if (flights?.[0]?.flightToken) return flights[0].flightToken as string;
+  // Check top-level flightToken
+  if (typeof bookingData.flightToken === "string") return bookingData.flightToken;
+  // Check priceToken as alternative key
+  if (typeof bookingData.priceToken === "string") return bookingData.priceToken;
+  return undefined;
+}
+
+/**
+ * Build a human-readable one-line flight summary.
+ */
+export function buildFlightSummary(
+  opt: { name: string; price?: number; airline?: string; duration?: string },
+  origin?: string,
+  destination?: string
+): string {
+  const parts: string[] = [];
+  if (origin && destination) parts.push(`${origin}→${destination}`);
+  else parts.push(opt.name);
+  if (opt.airline) parts.push(opt.airline);
+  if (opt.price != null) parts.push(formatPrice(opt.price));
+  if (opt.duration) parts.push(opt.duration);
+  return parts.join(" · ");
+}
+
+/**
+ * Build a human-readable one-line hotel summary.
+ */
+export function buildHotelSummary(opt: { name: string; price?: number }): string {
+  const parts = [opt.name];
+  if (opt.price != null) parts.push(`${formatPrice(opt.price)}/night`);
+  return parts.join(" · ");
+}
+
+/**
+ * Format a price with commas and 2 decimal places.
+ * e.g. 1234.5 → "$1,234.50"
+ */
+export function formatPrice(price: number): string {
+  return "$" + price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/**
+ * Validate a YYYY-MM-DD date string.
+ * Exits with a helpful error if invalid.
+ */
+export function validateDate(value: string, flagName: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    process.stderr.write(chalk.red(`Invalid date for ${flagName}: "${value}". Expected format: YYYY-MM-DD\n`));
+    process.exit(1);
+  }
+  const [year, month, day] = value.split("-").map(Number);
+  if (month < 1 || month > 12 || day < 1 || day > 31 || year < 2000 || year > 2100) {
+    process.stderr.write(chalk.red(`Invalid date for ${flagName}: "${value}". Month must be 1-12, day must be 1-31.\n`));
+    process.exit(1);
+  }
+}
+
+/**
+ * Validate a 3-letter IATA airport code.
+ * Exits with a helpful error if invalid.
+ */
+export function validateIata(value: string, flagName: string): void {
+  const upper = value.toUpperCase();
+  if (!/^[A-Z]{3}$/.test(upper)) {
+    process.stderr.write(chalk.red(`Invalid IATA code for ${flagName}: "${value}". Expected 3-letter code (e.g., LAX, NRT).\n`));
+    process.exit(1);
+  }
+}
+
+// --- Shared types for sub-selection checking ---
+
+export interface PlanItemForSubCheck {
+  id: string;
+  title: string;
+  selection?: {
+    id: string;
+    isLocked: boolean;
+    selectedOption?: {
+      id: string;
+      name: string;
+      price?: number;
+      status: string;
+      subSelections?: Array<{
+        id: string;
+        type: string;
+        selectedOptionId?: string;
+        options: Array<{ id: string }>;
+      }>;
+    };
+  };
+}
+
+export interface PendingSubSelection {
+  itemTitle: string;
+  parentOptionName: string;
+  subSelectionType: string;
+  subSelectionId: string;
+  optionCount: number;
+}
+
+/**
+ * Find items that have sub-selections needing a choice (no selectedOptionId).
+ * Skips locked selections (already paid/booked).
+ */
+export function findPendingSubSelections(items: PlanItemForSubCheck[]): PendingSubSelection[] {
+  const pending: PendingSubSelection[] = [];
+  for (const item of items) {
+    if (!item.selection?.selectedOption?.subSelections) continue;
+    if (item.selection.isLocked) continue;
+    for (const sub of item.selection.selectedOption.subSelections) {
+      if (!sub.selectedOptionId && sub.options.length > 0) {
+        pending.push({
+          itemTitle: item.title,
+          parentOptionName: item.selection.selectedOption.name,
+          subSelectionType: sub.type,
+          subSelectionId: sub.id,
+          optionCount: sub.options.length,
+        });
+      }
+    }
+  }
+  return pending;
+}
+
+/**
+ * Human-readable label for a sub-selection type.
+ */
+export function subSelectionLabel(type: string): string {
+  switch (type) {
+    case "FLIGHT_CLASS": return "cabin class";
+    case "HOTEL_ROOM": return "room type";
+    case "ACTIVITY_BOOKABLE_ITEM": return "activity option";
+    default: return type.toLowerCase().replace(/_/g, " ");
+  }
+}
+
+/**
+ * Open a URL in the user's default browser. Fails silently.
+ */
+export function openBrowser(url: string): void {
+  try {
+    const platform = process.platform;
+    if (platform === "darwin") {
+      spawn("open", [url], { stdio: "ignore", detached: true }).unref();
+    } else if (platform === "win32") {
+      spawn("cmd", ["/c", "start", "", url], { stdio: "ignore", detached: true }).unref();
+    } else {
+      spawn("xdg-open", [url], { stdio: "ignore", detached: true }).unref();
+    }
+  } catch {
+    // User can open URL manually
+  }
+}
+
+/**
+ * Derive a web base URL from the API URL.
+ * https://dev.voyagier.com → https://dev.voyagier.com
+ * https://voyagier.com → https://voyagier.com
+ */
+export function deriveBaseUrl(apiUrl: string): string {
+  try {
+    const url = new URL(apiUrl);
+    // Strip /graphql or similar API paths
+    url.pathname = "";
+    return url.origin;
+  } catch {
+    return "https://voyagier.com";
+  }
+}

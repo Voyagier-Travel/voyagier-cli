@@ -1,120 +1,153 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { saveCredentials, loadCredentials, clearCredentials } from "../config.js";
+import { createServer } from "http";
+import { openBrowser } from "../utils.js";
 
-const TOKEN_HELP = `
-${chalk.bold("How to get your Personal Access Token:")}
-
-  1. Go to ${chalk.cyan("https://voyagier.com/me/settings/tokens")}
-     (or ${chalk.cyan("https://dev.voyagier.com/me/settings/tokens")} for sandbox)
-  2. Click ${chalk.bold("Create Token")} and give it a name
-  3. Copy the token (starts with ${chalk.yellow("voy_pat_")})
-  4. Run: ${chalk.green("voyagier auth set-token <token>")}
-
-${chalk.dim("Sandbox (Sabre test data, free):")}
-  voyagier auth set-token voy_pat_xxx --url https://dev.voyagier.com
-
-${chalk.dim("Environment variables (for CI/scripts):")}
-  export VOYAGIER_TOKEN=voy_pat_xxx
-  export VOYAGIER_API_URL=https://dev.voyagier.com
-
-${chalk.dim("Production (real flights/hotels):")}
-  voyagier auth set-token voy_pat_xxx --url https://voyagier.com
-`;
+import { saveCredentials, getToken, getApiUrl, clearCredentials, credentialsExist } from "../config.js";
+import { graphql } from "../api.js";
 
 export function registerAuthCommands(program: Command): void {
   const auth = program.command("auth").description("Manage authentication");
 
   auth
     .command("set-token <token>")
-    .description("Set your Personal Access Token")
-    .option("-u, --url <url>", "API URL (default: https://voyagier.com)")
-    .action((token: string, opts: { url?: string }) => {
+    .description("Save a personal access token")
+    .option("--url <apiUrl>", "API base URL", "https://voyagier.com")
+    .action((token: string, opts) => {
       if (!token.startsWith("voy_pat_")) {
-        console.error(chalk.red("Token must start with voy_pat_\n"));
-        console.log(TOKEN_HELP);
-        process.exit(1);
+        process.stderr.write(
+          chalk.yellow("⚠ Token doesn't start with voy_pat_ — this may not be a valid Voyagier PAT.\n")
+        );
       }
-      const apiUrl = opts.url ?? "https://voyagier.com";
-      saveCredentials(token, apiUrl);
-      console.log(chalk.green("✓ Token saved."));
-      console.log(`  ${chalk.dim("API:")} ${apiUrl}`);
-      console.log(chalk.dim("\n  Check connection: voyagier auth status"));
-    });
 
-  auth
-    .command("setup")
-    .description("Show how to get started with the CLI")
-    .action(() => {
-      console.log(TOKEN_HELP);
+      saveCredentials(token, opts.url);
+      console.log(chalk.green("✓ Token saved."));
+      console.log(chalk.dim(`  API URL: ${opts.url}`));
+      console.log(chalk.dim("  Run: voyagier auth status"));
     });
 
   auth
     .command("status")
-    .description("Check authentication and connectivity")
+    .description("Check authentication status")
     .action(async () => {
-      const creds = loadCredentials();
-      if (!creds?.token) {
-        console.log(chalk.red("✗ Not authenticated.\n"));
-        console.log(TOKEN_HELP);
+      if (!credentialsExist()) {
+        console.log(chalk.red("✗ Not authenticated."));
+        console.log(chalk.dim("  Run: voyagier auth setup"));
         return;
       }
 
-      const isSandbox = creds.apiUrl.includes("dev.");
-      const env = isSandbox ? chalk.yellow("sandbox") : chalk.green("production");
+      const apiUrl = getApiUrl();
+      const token = getToken();
+      const masked = token.length > 12 ? token.slice(0, 8) + "••••" + token.slice(-4) : "••••";
 
-      const fromEnv = !!process.env.VOYAGIER_TOKEN;
-      console.log(chalk.green("✓ Token configured") + (fromEnv ? chalk.dim(" (from VOYAGIER_TOKEN)") : ""));
-      console.log(`  ${chalk.dim("Token:")}  voy_pat_...${creds.token.slice(-4)}`);
-      console.log(`  ${chalk.dim("API:")}    ${creds.apiUrl}`);
-      console.log(`  ${chalk.dim("Env:")}    ${env}`);
-      console.log(`  ${chalk.dim("Manage:")} ${creds.apiUrl}/me/settings/tokens`);
+      console.log(chalk.bold("\nVoyagier CLI Status\n"));
+      console.log(`  Token:   ${chalk.dim(masked)}`);
+      console.log(`  API URL: ${chalk.dim(apiUrl)}`);
 
-      // Check GraphQL connectivity
       try {
-        const res = await fetch(`${creds.apiUrl}/graphql`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${creds.token}`,
-          },
-          body: JSON.stringify({ query: "{ __typename }" }),
-        });
-        if (res.ok) {
-          console.log(`  ${chalk.dim("GraphQL:")} ${chalk.green("✓ connected")}`);
-        } else if (res.status === 401) {
-          console.log(`  ${chalk.dim("GraphQL:")} ${chalk.red("✗ token rejected — regenerate at")} ${creds.apiUrl}/me/settings/tokens`);
+        const data = await graphql<{ me: { email: string; name?: string } }>(
+          `{ me { email name } }`
+        );
+        const user = data.me;
+        const displayName = user.name ? `${user.name} (${user.email})` : user.email;
+        console.log(`  User:    ${chalk.green(displayName)}`);
+        console.log(`\n  ${chalk.green("✓")} GraphQL: connected`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes("401") || message.includes("Authentication")) {
+          console.log(`\n  ${chalk.red("✗")} GraphQL: authentication failed`);
         } else {
-          console.log(`  ${chalk.dim("GraphQL:")} ${chalk.yellow(`⚠ HTTP ${res.status}`)}`);
+          console.log(`\n  ${chalk.red("✗")} GraphQL: ${message}`);
         }
-      } catch {
-        console.log(`  ${chalk.dim("GraphQL:")} ${chalk.red("✗ unreachable")}`);
       }
+      console.log();
+    });
 
-      // Check MCP connectivity
-      try {
-        const res = await fetch(`${creds.apiUrl}/mcp`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${creds.token}`,
-          },
-          body: JSON.stringify({
-            jsonrpc: "2.0", method: "initialize", id: 1,
-            params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "voyagier-cli", version: "0.2.0" } },
-          }),
+  auth
+    .command("login")
+    .description("Log in via browser (opens browser, receives token via callback)")
+    .option("--url <apiUrl>", "API base URL", "https://voyagier.com")
+    .option("--port <port>", "Local callback port", "9876")
+    .action(async (opts) => {
+      const port = parseInt(opts.port, 10);
+      const apiUrl = opts.url as string;
+
+      console.log(chalk.bold("\nVoyagier CLI Login\n"));
+      console.log(chalk.dim("Starting local server to receive auth callback...\n"));
+
+      const tokenPromise = new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          server.close();
+          reject(new Error("Login timed out after 5 minutes."));
+        }, 5 * 60 * 1000);
+
+        const server = createServer((req, res) => {
+          const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+
+          // Handle the callback with token
+          if (url.pathname === "/callback") {
+            const token = url.searchParams.get("token");
+
+            if (token) {
+              res.writeHead(200, { "Content-Type": "text/html" });
+              res.end(`
+                <html><body style="font-family: system-ui; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+                  <div style="text-align: center;">
+                    <h1>✓ Authenticated</h1>
+                    <p>You can close this window and return to the terminal.</p>
+                  </div>
+                </body></html>
+              `);
+              clearTimeout(timeout);
+              server.close();
+              resolve(token);
+            } else {
+              res.writeHead(400, { "Content-Type": "text/plain" });
+              res.end("Missing token parameter.");
+            }
+            return;
+          }
+
+          res.writeHead(404, { "Content-Type": "text/plain" });
+          res.end("Not found");
         });
-        if (res.ok) {
-          console.log(`  ${chalk.dim("MCP:")}     ${chalk.green("✓ connected")}`);
-        } else if (res.status === 401) {
-          console.log(`  ${chalk.dim("MCP:")}     ${chalk.red("✗ token rejected")}`);
-        } else if (res.status === 404) {
-          console.log(`  ${chalk.dim("MCP:")}     ${chalk.yellow("⚠ not available (MCP module not deployed yet)")}`);
-        } else {
-          console.log(`  ${chalk.dim("MCP:")}     ${chalk.yellow(`⚠ HTTP ${res.status}`)}`);
+
+        server.listen(port, () => {
+          const loginUrl = `${apiUrl}/auth/cli?callback=http://localhost:${port}/callback`;
+          console.log(`  Open this URL in your browser:\n`);
+          console.log(chalk.cyan(`  ${loginUrl}\n`));
+          console.log(chalk.dim("  Waiting for authentication...\n"));
+
+          // Try to open browser automatically
+          openBrowser(loginUrl);
+        });
+
+        server.on("error", (err) => {
+          clearTimeout(timeout);
+          reject(new Error(`Could not start local server on port ${port}: ${err.message}`));
+        });
+      });
+
+      try {
+        const token = await tokenPromise;
+        saveCredentials(token, apiUrl);
+        console.log(chalk.green("✓ Login successful! Token saved.\n"));
+
+        // Verify
+        try {
+          const data = await graphql<{ me: { email: string; name?: string } }>(
+            `{ me { email name } }`
+          );
+          const user = data.me;
+          const displayName = user.name ? `${user.name} (${user.email})` : user.email;
+          console.log(`  Authenticated as: ${chalk.green(displayName)}`);
+        } catch {
+          console.log(chalk.dim("  Token saved. Run: voyagier auth status"));
         }
-      } catch {
-        console.log(`  ${chalk.dim("MCP:")}     ${chalk.red("✗ unreachable")}`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.red(`Login failed: ${message}\n`));
+        process.exit(1);
       }
     });
 
@@ -123,6 +156,24 @@ export function registerAuthCommands(program: Command): void {
     .description("Clear saved credentials")
     .action(() => {
       clearCredentials();
-      console.log(chalk.dim("Credentials cleared."));
+      console.log(chalk.green("✓ Credentials cleared."));
+    });
+
+  auth
+    .command("setup")
+    .description("How to get started")
+    .action(() => {
+      console.log(chalk.bold("\nVoyagier CLI Setup\n"));
+      console.log("  Option 1: Browser login (recommended)\n");
+      console.log(chalk.cyan("     voyagier auth login\n"));
+      console.log("  Option 2: Personal Access Token\n");
+      console.log("  1. Log in to voyagier.com");
+      console.log("  2. Go to Settings → Personal Access Tokens");
+      console.log("  3. Create a new token");
+      console.log("  4. Run:\n");
+      console.log(chalk.cyan("     voyagier auth set-token <your-token>\n"));
+      console.log("  Option 3: Environment variables (CI/scripts)\n");
+      console.log(chalk.dim("     export VOYAGIER_TOKEN=voy_pat_xxxxx"));
+      console.log(chalk.dim("     export VOYAGIER_API_URL=https://voyagier.com  # optional\n"));
     });
 }

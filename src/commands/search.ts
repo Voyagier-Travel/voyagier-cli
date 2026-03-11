@@ -1,7 +1,92 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { createMcpClient, callTool } from "../mcp.js";
+import { graphql } from "../api.js";
+import { getApiUrl } from "../config.js";
+import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels } from "../formatters.js";
+import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, validateIata, deriveBaseUrl } from "../utils.js";
+
+interface SelectOption {
+  id: string;
+  name: string;
+  price?: number;
+  time?: string;
+  airline?: string;
+  duration?: string;
+  bookingData?: Record<string, unknown>;
+  sortOrder: number;
+}
+
+interface SelectionResult {
+  item: { id: string; title: string; tripPlanId: string };
+  selection: { id: string };
+  options: SelectOption[];
+}
+
+interface Traveller {
+  id: string;
+  firstName: string;
+  lastName: string;
+}
+
+type SortField = "price" | "duration" | "stops" | "default";
+
+async function resolveTravellerIds(tripPlanId: string): Promise<string[]> {
+  const data = await graphql<{ tripPlanTravellers: Traveller[] }>(
+    `query Travellers($tripPlanId: String!) {
+      tripPlanTravellers(tripPlanId: $tripPlanId) { id firstName lastName }
+    }`,
+    { tripPlanId }
+  );
+  return data.tripPlanTravellers.map((t) => t.id);
+}
+
+function resolvePlanId(opts: { plan?: string }): string {
+  if (opts.plan) return opts.plan;
+  const state = loadSearchState();
+  if (state?.tripPlanId) {
+    process.stderr.write(chalk.dim(`Using plan from last search: ${state.tripPlanId}\n`));
+    return state.tripPlanId;
+  }
+  process.stderr.write(chalk.red("--plan <id> is required. Create one first:\n"));
+  process.stderr.write(chalk.dim('  voyagier plans create --title "My Trip"\n'));
+  process.exit(1);
+}
+
+
+
+function parseDurationMinutes(duration?: string): number {
+  if (!duration) return Infinity;
+  const match = duration.match(/(\d+)h\s*(\d+)?m?/);
+  if (match) return parseInt(match[1], 10) * 60 + (parseInt(match[2] ?? "0", 10));
+  const minOnly = duration.match(/(\d+)\s*m/);
+  if (minOnly) return parseInt(minOnly[1], 10);
+  return Infinity;
+}
+
+function parseStops(bookingData?: Record<string, unknown>): number {
+  if (!bookingData) return Infinity;
+  if (typeof bookingData.stops === "number") return bookingData.stops;
+  const segments = bookingData.segments as unknown[] | undefined;
+  if (segments) return Math.max(0, segments.length - 1);
+  return Infinity;
+}
+
+function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[] {
+  if (sortBy === "default") return options;
+  return [...options].sort((a, b) => {
+    switch (sortBy) {
+      case "price":
+        return (a.price ?? Infinity) - (b.price ?? Infinity);
+      case "duration":
+        return parseDurationMinutes(a.duration) - parseDurationMinutes(b.duration);
+      case "stops":
+        return parseStops(a.bookingData) - parseStops(b.bookingData);
+      default:
+        return 0;
+    }
+  });
+}
 
 export function registerSearchCommands(program: Command): void {
   const search = program.command("search").description("Search flights and hotels");
@@ -9,172 +94,221 @@ export function registerSearchCommands(program: Command): void {
   search
     .command("flights")
     .description("Search for flights")
+    .option("--plan <id>", "Trip plan ID (or auto-resolved from last search)")
     .requiredOption("--from <code>", "Origin airport code (e.g., LAX)")
     .requiredOption("--to <code>", "Destination airport code (e.g., NRT)")
     .requiredOption("--date <date>", "Departure date (YYYY-MM-DD)")
-    .option("--return <date>", "Return date (YYYY-MM-DD)")
-    .option("--passengers <n>", "Number of passengers", "1")
-    .option("--json", "Output raw JSON (for piping)")
+    .option("--return <date>", "Return date (YYYY-MM-DD) for round-trip")
+    .option("--max-stops <n>", "Maximum number of stops")
+    .option("--sort <field>", "Sort by: price, duration, stops, default", "default")
+    .option("--json", "Output raw JSON")
+    .option("--dry-run", "Show the GraphQL query without executing")
     .action(async (opts) => {
-      let client;
       try {
-        if (!opts.json) process.stderr.write(chalk.dim("Searching flights...\n"));
-        client = await createMcpClient();
+        validateIata(opts.from, "--from");
+        validateIata(opts.to, "--to");
+        validateDate(opts.date, "--date");
+        if (opts.return) validateDate(opts.return, "--return");
 
-        const args: Record<string, unknown> = {
-          title: `Flight: ${opts.from.toUpperCase()} → ${opts.to.toUpperCase()}`,
-          travellers: buildTravellers(parseInt(opts.passengers, 10)),
-          flights: [
-            {
-              origin: opts.from.toUpperCase(),
-              destination: opts.to.toUpperCase(),
-              departureDate: opts.date,
-              returnDate: opts.return,
-            },
-          ],
-        };
+        const tripPlanId = resolvePlanId(opts);
+        const dryRun = !!opts.dryRun;
 
-        const result = await callTool(client, "voyagier_plan_trip", args);
+        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Resolving travellers...\n"));
 
-        if (result.isError) {
-          const errText = result.content[0]?.text ?? "Unknown error";
-          process.stderr.write(chalk.red(`Search failed: ${errText}\n`));
+        const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
+        if (!dryRun && travellerIds.length === 0) {
+          process.stderr.write(chalk.red("No travellers on this plan. Add one first:\n"));
+          process.stderr.write(chalk.dim(`  voyagier travellers add --plan ${tripPlanId} --first <name> --last <name> --type ADULT\n`));
           process.exit(1);
         }
 
-        const data = parseToolResult(result);
+        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Searching flights...\n"));
+
+        const origin = opts.from.toUpperCase();
+        const destination = opts.to.toUpperCase();
+        const isRoundTrip = !!opts.return;
+
+        const input: Record<string, unknown> = {
+          origin,
+          destination,
+          departureDate: opts.date,
+          travellerIds,
+          title: `Flight: ${origin} → ${destination}`,
+        };
+        if (opts.return) input.returnDate = opts.return;
+        if (opts.maxStops) input.maxStops = parseInt(opts.maxStops, 10);
+
+        const query = `mutation CreateFlightSelection($tripPlanId: String!, $input: CreateFlightSelectionInput!) {
+            createTripPlanFlightSelection(tripPlanId: $tripPlanId, input: $input) {
+              item { id title tripPlanId }
+              selection { id }
+              options { id name price time airline duration bookingData sortOrder }
+            }
+          }`;
+
+        const data = await graphql<{ createTripPlanFlightSelection: SelectionResult }>(
+          query,
+          { tripPlanId, input },
+          { dryRun }
+        );
+
+        const result = data.createTripPlanFlightSelection;
+        const sortBy = (opts.sort ?? "default") as SortField;
+        const options = sortOptions(
+          result.options.sort((a, b) => a.sortOrder - b.sortOrder),
+          sortBy
+        );
+
+        const searchResults = options.map((opt, i) => ({
+          index: i + 1,
+          optionId: opt.id,
+          flightToken: extractFlightToken(opt.bookingData),
+          summary: buildFlightSummary(opt, origin, destination),
+        }));
+
+        saveSearchState({
+          type: "flights",
+          tripPlanId: result.item.tripPlanId,
+          selectionId: result.selection.id,
+          isRoundTrip,
+          results: searchResults,
+          timestamp: new Date().toISOString(),
+        });
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify(data, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({
+            tripPlanId: result.item.tripPlanId,
+            selectionId: result.selection.id,
+            isRoundTrip,
+            options: options.map((opt, i) => ({ index: i + 1, ...opt })),
+            url: `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`,
+          }, null, 2) + "\n");
           return;
         }
 
-        const flightGroups = (data?.flights ?? []) as Array<Record<string, unknown>>;
-        const allOptions: Array<Record<string, unknown>> = [];
-        let selectionId: string | undefined;
-        for (const group of flightGroups) {
-          if (!selectionId && typeof group.selectionId === "string") {
-            selectionId = group.selectionId;
-          }
-          const groupOpts = (group.options ?? []) as Array<Record<string, unknown>>;
-          allOptions.push(...groupOpts);
-        }
-
-        if (allOptions.length === 0) {
+        if (options.length === 0) {
           process.stderr.write(chalk.dim("No flights found for this route and date.\n"));
           return;
         }
 
-        console.log(chalk.bold(`\n${allOptions.length} flight option${allOptions.length > 1 ? "s" : ""} found:\n`));
-        console.log(formatFlights(allOptions));
-
-        if (data?.tripPlanId) {
-          console.log(chalk.dim(`\nTrip plan: ${data.tripPlanId}`));
+        const sortLabel = sortBy !== "default" ? ` (sorted by ${sortBy})` : "";
+        console.log(chalk.bold(`\n${options.length} flight option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
+        console.log(formatFlights(options));
+        console.log(chalk.dim(`\n  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`));
+        if (isRoundTrip) {
+          console.log(chalk.dim(`  Note: Select departure first, then return.`));
         }
-        if (selectionId) {
-          console.log(chalk.dim(`Selection: ${selectionId}`));
-          console.log(chalk.dim(`\nNext: voyagier tools call voyagier_select_flight '{"selectionId":"${selectionId}","optionId":"<id>"}'`));
-        }
+        console.log(chalk.dim(`  Next: voyagier select <number>`));
       } catch (err) {
         handleSearchError(err);
-      } finally {
-        await client?.close();
       }
     });
 
   search
     .command("hotels")
     .description("Search for hotels")
-    .requiredOption("--location <place>", "Destination (city or airport code)")
+    .option("--plan <id>", "Trip plan ID (or auto-resolved from last search)")
+    .requiredOption("--location <place>", "Destination (city name)")
     .requiredOption("--checkin <date>", "Check-in date (YYYY-MM-DD)")
     .requiredOption("--checkout <date>", "Check-out date (YYYY-MM-DD)")
-    .option("--guests <n>", "Number of guests", "1")
-    .option("--json", "Output raw JSON (for piping)")
+    .option("--currency <code>", "Currency code", "USD")
+    .option("--guests <n>", "Number of adult guests", "1")
+    .option("--sort <field>", "Sort by: price, default", "default")
+    .option("--json", "Output raw JSON")
+    .option("--dry-run", "Show the GraphQL query without executing")
     .action(async (opts) => {
-      let client;
       try {
-        if (!opts.json) process.stderr.write(chalk.dim("Searching hotels...\n"));
-        client = await createMcpClient();
+        validateDate(opts.checkin, "--checkin");
+        validateDate(opts.checkout, "--checkout");
 
-        const adults = parseInt(opts.guests, 10);
-        const args: Record<string, unknown> = {
-          title: `Hotel: ${opts.location}`,
-          travellers: buildTravellers(adults),
-          hotels: [
-            {
-              location: opts.location,
-              checkInDate: opts.checkin,
-              checkOutDate: opts.checkout,
-              adults,
-            },
-          ],
-        };
+        const tripPlanId = resolvePlanId(opts);
+        const dryRun = !!opts.dryRun;
 
-        const result = await callTool(client, "voyagier_plan_trip", args);
+        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Resolving travellers...\n"));
 
-        if (result.isError) {
-          const errText = result.content[0]?.text ?? "Unknown error";
-          process.stderr.write(chalk.red(`Search failed: ${errText}\n`));
+        const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
+        if (!dryRun && travellerIds.length === 0) {
+          process.stderr.write(chalk.red("No travellers on this plan. Add one first:\n"));
+          process.stderr.write(chalk.dim(`  voyagier travellers add --plan ${tripPlanId} --first <name> --last <name> --type ADULT\n`));
           process.exit(1);
         }
 
-        const data = parseToolResult(result);
+        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Searching hotels...\n"));
+
+        const adults = parseInt(opts.guests, 10);
+        const input: Record<string, unknown> = {
+          location: opts.location,
+          checkInDate: opts.checkin,
+          checkOutDate: opts.checkout,
+          currency: opts.currency,
+          travellerIds,
+          guests: { adults },
+          title: `Hotel: ${opts.location}`,
+        };
+
+        const query = `mutation CreateHotelSelection($tripPlanId: String!, $input: CreateHotelSelectionInput!) {
+            createTripPlanHotelSelection(tripPlanId: $tripPlanId, input: $input) {
+              item { id title tripPlanId }
+              selection { id }
+              options { id name price time duration bookingData sortOrder }
+            }
+          }`;
+
+        const data = await graphql<{ createTripPlanHotelSelection: SelectionResult }>(
+          query,
+          { tripPlanId, input },
+          { dryRun }
+        );
+
+        const result = data.createTripPlanHotelSelection;
+        const sortBy = (opts.sort ?? "default") as SortField;
+        const options = sortBy === "price"
+          ? [...result.options].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity))
+          : result.options.sort((a, b) => a.sortOrder - b.sortOrder);
+
+        const searchResults = options.map((opt, i) => ({
+          index: i + 1,
+          optionId: opt.id,
+          summary: buildHotelSummary(opt),
+        }));
+
+        saveSearchState({
+          type: "hotels",
+          tripPlanId: result.item.tripPlanId,
+          selectionId: result.selection.id,
+          results: searchResults,
+          timestamp: new Date().toISOString(),
+        });
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify(data, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({
+            tripPlanId: result.item.tripPlanId,
+            selectionId: result.selection.id,
+            options: options.map((opt, i) => ({ index: i + 1, ...opt })),
+            url: `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`,
+          }, null, 2) + "\n");
           return;
         }
 
-        const hotelGroups = (data?.hotels ?? []) as Array<Record<string, unknown>>;
-        const allOptions: Array<Record<string, unknown>> = [];
-        let selectionId: string | undefined;
-        for (const group of hotelGroups) {
-          if (!selectionId && typeof group.selectionId === "string") {
-            selectionId = group.selectionId;
-          }
-          const groupOpts = (group.options ?? []) as Array<Record<string, unknown>>;
-          allOptions.push(...groupOpts);
-        }
-
-        if (allOptions.length === 0) {
+        if (options.length === 0) {
           process.stderr.write(chalk.dim("No hotels found for this location and dates.\n"));
           return;
         }
 
-        console.log(chalk.bold(`\n${allOptions.length} hotel option${allOptions.length > 1 ? "s" : ""} found:\n`));
-        console.log(formatHotels(allOptions));
-
-        if (data?.tripPlanId) {
-          console.log(chalk.dim(`\nTrip plan: ${data.tripPlanId}`));
-        }
-        if (selectionId) {
-          console.log(chalk.dim(`Selection: ${selectionId}`));
-          console.log(chalk.dim(`\nNext: voyagier tools call voyagier_select_hotel '{"selectionId":"${selectionId}","optionId":"<id>"}'`));
-        }
+        const sortLabel = sortBy !== "default" ? ` (sorted by ${sortBy})` : "";
+        console.log(chalk.bold(`\n${options.length} hotel option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
+        console.log(formatHotels(options));
+        console.log(chalk.dim(`\n  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`));
+        console.log(chalk.dim(`  Next: voyagier select <number>`));
       } catch (err) {
         handleSearchError(err);
-      } finally {
-        await client?.close();
       }
     });
 }
 
-function buildTravellers(count: number): Array<{ firstName: string; lastName: string }> {
-  return Array.from({ length: count }, (_, i) => ({
-    firstName: `Traveller`,
-    lastName: `${i + 1}`,
-  }));
-}
 
-function parseToolResult(result: { content: Array<{ type: string; text?: string }> }): Record<string, unknown> | null {
-  const textPart = result.content.find((c) => c.type === "text" && c.text);
-  if (!textPart?.text) return null;
-  try {
-    return JSON.parse(textPart.text) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
+
+
 
 function handleSearchError(err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);

@@ -1,84 +1,149 @@
-# Voyagier CLI
+# @voyagier/cli
 
-AI trip planning from your terminal. Search flights, hotels, and plan trips using Voyagier's MCP-powered API.
+One CLI for Voyagier — built for humans and AI agents.
+
+Search flights, book hotels, manage trip plans from your terminal. Everything syncs to the web app at [voyagier.com](https://voyagier.com).
+
+```bash
+npm install -g @voyagier/cli
+```
 
 ## Quick Start
 
 ```bash
-# Install
-npx @voyagier/cli auth setup
-
 # Authenticate
-voyagier auth set-token voy_pat_xxx
+voyagier auth set-token voy_pat_xxxxx
+
+# Create a trip plan
+voyagier plans create --title "Tokyo Trip" --start 2026-04-15 --end 2026-04-22
+
+# Add a traveller
+voyagier travellers add --plan <PLAN_ID> --first John --last Smith --type ADULT
 
 # Search flights
-voyagier search flights --from LAX --to NRT --date 2026-04-15
+voyagier search flights --plan <PLAN_ID> --from LAX --to NRT --date 2026-04-15
+
+# Select from results
+voyagier select 1
 
 # Search hotels
-voyagier search hotels --location Tokyo --checkin 2026-04-15 --checkout 2026-04-20
+voyagier search hotels --plan <PLAN_ID> --location Tokyo --checkin 2026-04-15 --checkout 2026-04-22
 
-# Interactive AI chat
-voyagier chat
+# Select hotel
+voyagier select 1
+
+# View plan
+voyagier plans get <PLAN_ID>
+# → https://voyagier.com/plans/<PLAN_ID>
 ```
 
 ## Commands
 
+### Auth
+
 | Command | Description |
 |---------|-------------|
-| `voyagier auth set-token <token>` | Set your Personal Access Token |
-| `voyagier auth setup` | Show how to get a token |
-| `voyagier auth status` | Check connection and token validity |
-| `voyagier auth logout` | Clear saved credentials |
-| `voyagier search flights` | Search for flights |
-| `voyagier search hotels` | Search for hotels |
-| `voyagier chat` | Interactive AI trip planning chat |
+| `voyagier auth set-token <token>` | Save a personal access token |
+| `voyagier auth status` | Check connection and show authenticated user |
+| `voyagier auth logout` | Clear credentials |
+| `voyagier auth setup` | How to get a token |
+
+### Trip Plans
+
+| Command | Description |
+|---------|-------------|
+| `voyagier plans create --title <title>` | Create a new plan |
+| `voyagier plans list` | List your plans |
+| `voyagier plans get <id>` | Show plan details |
+| `voyagier plans delete <id>` | Delete a plan |
+
+### Travellers
+
+| Command | Description |
+|---------|-------------|
+| `voyagier travellers add --plan <id> --first <name> --last <name>` | Add a traveller |
+| `voyagier travellers list --plan <id>` | List travellers |
+| `voyagier travellers remove <id>` | Remove a traveller |
+
+### Search
+
+| Command | Description |
+|---------|-------------|
+| `voyagier search flights --plan <id> --from <IATA> --to <IATA> --date <date>` | Search flights |
+| `voyagier search hotels --plan <id> --location <city> --checkin <date> --checkout <date>` | Search hotels |
+
+### Select
+
+| Command | Description |
+|---------|-------------|
+| `voyagier select <number>` | Select option from last search |
+| `voyagier select --info <number>` | Show details without selecting |
+| `voyagier select --clear` | Clear search cache |
+
+### Chat
+
+| Command | Description |
+|---------|-------------|
+| `voyagier chat` | Start an AI chat session |
+| `voyagier chat --plan <id>` | Chat about a specific plan |
 | `voyagier chat --list` | List chat sessions |
-| `voyagier plans list` | List your trip plans |
-| `voyagier plans get <id>` | View trip plan details |
-| `voyagier tools list` | List available MCP tools |
-| `voyagier tools call <name> '<json>'` | Call an MCP tool directly |
 
-## Authentication
+## JSON Output
 
-Get a Personal Access Token from your Voyagier account settings:
-
-- **Production:** https://voyagier.com/me/settings/tokens
-- **Sandbox:** https://dev.voyagier.com/me/settings/tokens (Sabre test data, free)
+Every command supports `--json` for structured output:
 
 ```bash
-# Sandbox (recommended for testing)
-voyagier auth set-token voy_pat_xxx --url https://dev.voyagier.com
+# Create plan and capture ID
+PLAN=$(voyagier plans create --title "My Trip" --json | jq -r '.id')
 
-# Production
-voyagier auth set-token voy_pat_xxx
+# Search and pipe to jq
+voyagier search flights --plan $PLAN --from LAX --to NRT --date 2026-04-15 --json | jq '.options[].name'
 ```
 
-### Environment Variables
+## Environment Variables
 
-For CI/CD or scripts, use environment variables instead of the config file:
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VOYAGIER_TOKEN` | Personal access token (overrides config file) | — |
+| `VOYAGIER_API_URL` | API base URL | `https://voyagier.com` |
+
+## Agent Skills
+
+This package ships with [agent skills](./skills/) — structured instructions that teach AI agents how to use the CLI.
+
+### OpenClaw
 
 ```bash
-export VOYAGIER_TOKEN=voy_pat_xxx
-export VOYAGIER_API_URL=https://dev.voyagier.com  # optional, defaults to production
+# Symlink all skills
+ln -s $(npm root -g)/@voyagier/cli/skills/voyagier-* ~/.openclaw/skills/
+
+# Or copy specific ones
+cp -r $(npm root -g)/@voyagier/cli/skills/voyagier-booking ~/.openclaw/skills/
 ```
 
-Environment variables take precedence over the config file (`~/.voyagier/credentials.json`).
+### Any Agent
 
-## Machine-Readable Output
+The skills are SKILL.md files that any agent with shell access can read and follow. No MCP required. The agent reads the skill, calls CLI commands, and parses JSON output.
 
-Use `--json` for piping and scripting:
+### Available Skills
 
-```bash
-# Pipe flight results to jq
-voyagier search flights --from LAX --to NRT --date 2026-04-15 --json | jq '.flights[0].options'
+| Skill | Description |
+|-------|-------------|
+| `voyagier-shared` | Auth, global flags, output formatting |
+| `voyagier-plans` | Create, list, get, delete trip plans |
+| `voyagier-travellers` | Add, list, remove travellers |
+| `voyagier-search` | Search flights/hotels, select options |
+| `voyagier-booking` | End-to-end booking workflow |
 
-# List tools as JSON
-voyagier tools list --json
+## How It Works
+
+The CLI is a thin client over Voyagier's GraphQL API — the same API the web app uses. Everything you do in the CLI shows up in the web app and vice versa.
+
+```
+CLI  →  Voyagier GraphQL API  →  Trip Plans (visible at voyagier.com)
+                               →  Sabre GDS (flight/hotel search)
 ```
 
-When `--json` is used, data goes to stdout and status messages go to stderr, so pipes work cleanly.
+## License
 
-## Requirements
-
-- Node.js 18+
-- A Voyagier account with a Personal Access Token
+UNLICENSED — proprietary.
