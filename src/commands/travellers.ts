@@ -1,7 +1,8 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
-import { validateDate } from "../utils.js";
+import { getApiUrl } from "../config.js";
+import { validateDate, deriveBaseUrl } from "../utils.js";
 
 interface Traveller {
   id: string;
@@ -51,9 +52,11 @@ export function registerTravellerCommands(program: Command): void {
         );
 
         const t = data.createTripPlanTraveller;
+        const baseUrl = deriveBaseUrl(getApiUrl());
+        const planUrl = `${baseUrl}/plans/${opts.plan}`;
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify(t, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({ ...t, tripPlanUrl: planUrl }, null, 2) + "\n");
           return;
         }
 
@@ -61,6 +64,7 @@ export function registerTravellerCommands(program: Command): void {
         console.log(chalk.dim(`  ID: ${t.id}`));
         console.log(chalk.dim(`  Type: ${t.declaredTravellerType ?? "ADULT"}`));
         if (t.email) console.log(chalk.dim(`  Email: ${t.email}`));
+        console.log(chalk.dim(`  Plan: ${planUrl}`));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         process.stderr.write(chalk.red(`Failed to add traveller: ${message}\n`));
@@ -85,15 +89,18 @@ export function registerTravellerCommands(program: Command): void {
         );
 
         const list = data.tripPlanTravellers;
+        const baseUrl = deriveBaseUrl(getApiUrl());
+        const planUrl = `${baseUrl}/plans/${opts.plan}`;
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify(list, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({ travellers: list, tripPlanUrl: planUrl }, null, 2) + "\n");
           return;
         }
 
         if (list.length === 0) {
           console.log(chalk.dim("No travellers on this plan."));
           console.log(chalk.dim(`Add one: voyagier travellers add --plan ${opts.plan} --first <name> --last <name> --type ADULT`));
+          console.log(chalk.dim(`Plan: ${planUrl}`));
           return;
         }
 
@@ -103,7 +110,7 @@ export function registerTravellerCommands(program: Command): void {
           console.log(`  👤  ${t.firstName} ${t.lastName}  ·  ${type}`);
           console.log(chalk.dim(`      ID: ${t.id}${t.email ? `  ·  ${t.email}` : ""}`));
         }
-        console.log();
+        console.log(chalk.dim(`\n  Plan: ${planUrl}\n`));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         process.stderr.write(chalk.red(`Failed to list travellers: ${message}\n`));

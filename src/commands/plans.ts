@@ -1,7 +1,8 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
-import { validateDate, formatPrice } from "../utils.js";
+import { getApiUrl } from "../config.js";
+import { validateDate, formatPrice, deriveBaseUrl } from "../utils.js";
 
 interface TripPlan {
   id: string;
@@ -61,7 +62,8 @@ interface TripPlanDetail {
 }
 
 function planUrl(id: string): string {
-  return `https://voyagier.com/plans/${id}`;
+  const baseUrl = deriveBaseUrl(getApiUrl());
+  return `${baseUrl}/plans/${id}`;
 }
 
 export function registerPlanCommands(program: Command): void {

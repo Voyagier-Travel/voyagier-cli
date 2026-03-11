@@ -154,7 +154,8 @@ export function registerOptionsCommands(program: Command): void {
 
         if (allSubs.length === 0) {
           console.log(chalk.dim("  No sub-selection choices needed. All items are ready."));
-          console.log(chalk.dim(`  Run: voyagier cart ${planId}\n`));
+          console.log(chalk.dim(`  Run: voyagier cart ${planId}`));
+          console.log(chalk.dim(`  Plan: ${baseUrl}/plans/${planId}\n`));
           return;
         }
 
@@ -202,7 +203,8 @@ export function registerOptionsCommands(program: Command): void {
         });
 
         console.log(chalk.dim(`  Select with: voyagier pick <number>`));
-        console.log(chalk.dim(`  Example: voyagier pick 1\n`));
+        console.log(chalk.dim(`  Example: voyagier pick 1`));
+        console.log(chalk.dim(`  Plan: ${baseUrl}/plans/${planId}\n`));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         process.stderr.write(chalk.red(`Failed to load options: ${message}\n`));

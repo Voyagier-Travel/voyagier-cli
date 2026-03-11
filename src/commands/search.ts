@@ -1,9 +1,10 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
+import { getApiUrl } from "../config.js";
 import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels } from "../formatters.js";
-import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, validateIata } from "../utils.js";
+import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, validateIata, deriveBaseUrl } from "../utils.js";
 
 interface SelectOption {
   id: string;
@@ -180,7 +181,7 @@ export function registerSearchCommands(program: Command): void {
             selectionId: result.selection.id,
             isRoundTrip,
             options: options.map((opt, i) => ({ index: i + 1, ...opt })),
-            url: `https://voyagier.com/plans/${result.item.tripPlanId}`,
+            url: `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`,
           }, null, 2) + "\n");
           return;
         }
@@ -193,7 +194,7 @@ export function registerSearchCommands(program: Command): void {
         const sortLabel = sortBy !== "default" ? ` (sorted by ${sortBy})` : "";
         console.log(chalk.bold(`\n${options.length} flight option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
         console.log(formatFlights(options));
-        console.log(chalk.dim(`\n  Plan: https://voyagier.com/plans/${result.item.tripPlanId}`));
+        console.log(chalk.dim(`\n  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`));
         if (isRoundTrip) {
           console.log(chalk.dim(`  Note: Select departure first, then return.`));
         }
@@ -284,7 +285,7 @@ export function registerSearchCommands(program: Command): void {
             tripPlanId: result.item.tripPlanId,
             selectionId: result.selection.id,
             options: options.map((opt, i) => ({ index: i + 1, ...opt })),
-            url: `https://voyagier.com/plans/${result.item.tripPlanId}`,
+            url: `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`,
           }, null, 2) + "\n");
           return;
         }
@@ -297,7 +298,7 @@ export function registerSearchCommands(program: Command): void {
         const sortLabel = sortBy !== "default" ? ` (sorted by ${sortBy})` : "";
         console.log(chalk.bold(`\n${options.length} hotel option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
         console.log(formatHotels(options));
-        console.log(chalk.dim(`\n  Plan: https://voyagier.com/plans/${result.item.tripPlanId}`));
+        console.log(chalk.dim(`\n  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`));
         console.log(chalk.dim(`  Next: voyagier select <number>`));
       } catch (err) {
         handleSearchError(err);
