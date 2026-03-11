@@ -1,8 +1,9 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { exec } from "child_process";
 import { graphql } from "../api.js";
-import { formatPrice } from "../utils.js";
+import { getApiUrl } from "../config.js";
+import { formatPrice, findPendingSubSelections, subSelectionLabel, openBrowser, deriveBaseUrl, PlanItemForSubCheck } from "../utils.js";
+import { GET_CART, GET_PLAN_DEEP, CREATE_CHECKOUT, GET_PAYMENT_CHECKOUTS } from "../queries.js";
 
 interface CartItem {
   id: string;
@@ -18,29 +19,6 @@ interface Cart {
   itemCount: number;
 }
 
-interface PlanItem {
-  id: string;
-  title: string;
-  selection?: {
-    id: string;
-    isLocked: boolean;
-    selectedOption?: {
-      id: string;
-      status: string;
-      subSelections?: Array<{
-        id: string;
-        type: string;
-        selectedOptionId?: string;
-        options: Array<{ id: string }>;
-      }>;
-    };
-  };
-}
-
-interface CheckoutResponse {
-  url: string;
-}
-
 interface PaymentCheckout {
   id: string;
   status: string;
@@ -52,97 +30,8 @@ interface PaymentCheckout {
     status: string;
     pnr?: string;
     providerReference?: string;
-    amount: number;
+    amount: number; // stored in cents
   }>;
-}
-
-const GET_CART = `
-  query TripPlanCart($tripPlanId: String!) {
-    getTripPlanCart(tripPlanId: $tripPlanId) {
-      items { id name description price type }
-      itemCount
-      total
-    }
-  }
-`;
-
-const GET_PLAN_ITEMS = `
-  query TripPlanItems($id: String!) {
-    tripPlan(id: $id) {
-      id
-      title
-      items {
-        id
-        title
-        selection {
-          id
-          isLocked
-          selectedOption {
-            id
-            status
-            subSelections {
-              id
-              type
-              selectedOptionId
-              options { id }
-            }
-          }
-        }
-      }
-    }
-  }
-`;
-
-const CREATE_CHECKOUT = `
-  mutation CreateTripPlanCheckout($input: CreateTripPlanCheckoutInput!) {
-    createTripPlanCheckout(input: $input) {
-      url
-    }
-  }
-`;
-
-const GET_PAYMENT_CHECKOUTS = `
-  query TripPlanPaymentCheckouts($tripPlanId: String!) {
-    tripPlanPaymentCheckouts(tripPlanId: $tripPlanId) {
-      id
-      status
-      checkoutUrl
-      createdAt
-      bookingRecords {
-        id
-        type
-        status
-        pnr
-        providerReference
-        amount
-      }
-    }
-  }
-`;
-
-function findMissingSubSelections(items: PlanItem[]): string[] {
-  const missing: string[] = [];
-  for (const item of items) {
-    if (!item.selection?.selectedOption?.subSelections) continue;
-    if (item.selection.isLocked) continue;
-    for (const sub of item.selection.selectedOption.subSelections) {
-      if (!sub.selectedOptionId && sub.options.length > 0) {
-        const label = sub.type === "FLIGHT_CLASS" ? "cabin class" : sub.type === "HOTEL_ROOM" ? "room type" : sub.type;
-        missing.push(`${item.title} — pick ${label}`);
-      }
-    }
-  }
-  return missing;
-}
-
-function openBrowser(url: string): void {
-  const cmd = process.platform === "darwin" ? "open" :
-              process.platform === "win32" ? "start" : "xdg-open";
-  try {
-    exec(`${cmd} "${url}"`, () => {});
-  } catch {
-    // User can open manually
-  }
 }
 
 export function registerBookCommands(program: Command): void {
@@ -154,41 +43,42 @@ export function registerBookCommands(program: Command): void {
     .option("--status", "Check payment and booking status")
     .action(async (planId: string, opts) => {
       try {
+        const baseUrl = deriveBaseUrl(getApiUrl());
+
         // --status mode
         if (opts.status) {
-          await showBookingStatus(planId, opts.json);
+          await showBookingStatus(planId, baseUrl, opts.json);
           return;
         }
 
-        // Fetch cart + plan data
         process.stderr.write(chalk.dim("Loading cart...\n"));
 
         const [cartData, planData] = await Promise.all([
-          graphql<{ getTripPlanCart: Cart }>(GET_CART, { tripPlanId: planId }),
-          graphql<{ tripPlan: { id: string; title: string; items: PlanItem[] } }>(GET_PLAN_ITEMS, { id: planId }),
+          graphql<{ getTripPlanCart: { items: CartItem[]; total: number; itemCount: number } }>(GET_CART, { tripPlanId: planId }),
+          graphql<{ tripPlan: { id: string; title: string; items: PlanItemForSubCheck[] } }>(GET_PLAN_DEEP, { id: planId }),
         ]);
 
         const cart = cartData.getTripPlanCart;
         const plan = planData.tripPlan;
 
-        // Pre-flight checks
+        // Pre-flight: cart not empty
         if (cart.itemCount === 0) {
           process.stderr.write(chalk.red("Cart is empty. Nothing to book.\n"));
           process.stderr.write(chalk.dim(`Select flights or hotels first: voyagier search flights --plan ${planId} ...\n`));
           process.exit(1);
         }
 
-        const missingSubSelections = findMissingSubSelections(plan.items);
-        if (missingSubSelections.length > 0) {
+        // Pre-flight: no missing sub-selections
+        const pending = findPendingSubSelections(plan.items);
+        if (pending.length > 0) {
           process.stderr.write(chalk.red("Cannot checkout — items need sub-selection choices:\n\n"));
-          for (const msg of missingSubSelections) {
-            process.stderr.write(chalk.yellow(`  • ${msg}\n`));
+          for (const p of pending) {
+            process.stderr.write(chalk.yellow(`  • ${p.itemTitle} — pick ${subSelectionLabel(p.subSelectionType)}\n`));
           }
           process.stderr.write(chalk.dim(`\nRun: voyagier options ${planId}\n`));
           process.exit(1);
         }
 
-        // Calculate totals
         const subtotal = cart.total;
         const travelFee = Math.round(subtotal * 0.06 * 100) / 100;
         const total = Math.round((subtotal + travelFee) * 100) / 100;
@@ -202,8 +92,8 @@ export function registerBookCommands(program: Command): void {
               title: plan.title,
               items: cart.items.map(i => ({ name: i.name, price: i.price, type: i.type })),
               subtotal,
-              travelFee,
-              total,
+              estimatedTravelFee: travelFee,
+              estimatedTotal: total,
               message: "Would create Stripe Checkout Session",
             }, null, 2) + "\n");
             return;
@@ -216,9 +106,9 @@ export function registerBookCommands(program: Command): void {
           }
           console.log();
           console.log(chalk.dim("  ─────────────────────────────────"));
-          console.log(`  Subtotal:    ${formatPrice(subtotal)}`);
-          console.log(`  Travel fee:  ${formatPrice(travelFee)} ${chalk.dim("(6%)")}`);
-          console.log(chalk.bold(`  Total:       ${formatPrice(total)}`));
+          console.log(`  Subtotal:      ${formatPrice(subtotal)}`);
+          console.log(`  Travel fee:    ${formatPrice(travelFee)} ${chalk.dim("(6% est.)")}`);
+          console.log(chalk.bold(`  Est. total:    ${formatPrice(total)}`));
           console.log(chalk.dim("\n  [dry-run] Would create Stripe Checkout Session\n"));
           return;
         }
@@ -226,8 +116,7 @@ export function registerBookCommands(program: Command): void {
         // Create checkout
         process.stderr.write(chalk.dim("Creating checkout session...\n"));
 
-        const baseUrl = "https://voyagier.com";
-        const checkoutData = await graphql<{ createTripPlanCheckout: CheckoutResponse }>(
+        const checkoutData = await graphql<{ createTripPlanCheckout: { url: string } }>(
           CREATE_CHECKOUT,
           {
             input: {
@@ -246,16 +135,16 @@ export function registerBookCommands(program: Command): void {
             title: plan.title,
             checkoutUrl,
             subtotal,
-            travelFee,
-            total,
+            estimatedTravelFee: travelFee,
+            estimatedTotal: total,
             tripPlanUrl: `${baseUrl}/plans/${planId}`,
           }, null, 2) + "\n");
           return;
         }
 
         console.log(chalk.green.bold("\n  ✓ Checkout session created!\n"));
-        console.log(`  Items:       ${cart.itemCount}`);
-        console.log(`  Total:       ${chalk.bold(formatPrice(total))} ${chalk.dim(`(includes ${formatPrice(travelFee)} travel fee)`)}`);
+        console.log(`  Items:         ${cart.itemCount}`);
+        console.log(`  Est. total:    ${chalk.bold(formatPrice(total))} ${chalk.dim(`(includes ~${formatPrice(travelFee)} travel fee)`)}`);
         console.log();
         console.log(chalk.bold("  Opening Stripe checkout in your browser..."));
         console.log(chalk.dim(`  ${checkoutUrl}\n`));
@@ -273,7 +162,7 @@ export function registerBookCommands(program: Command): void {
     });
 }
 
-async function showBookingStatus(planId: string, json: boolean): Promise<void> {
+async function showBookingStatus(planId: string, baseUrl: string, json: boolean): Promise<void> {
   const data = await graphql<{ tripPlanPaymentCheckouts: PaymentCheckout[] }>(
     GET_PAYMENT_CHECKOUTS,
     { tripPlanId: planId }
@@ -306,12 +195,13 @@ async function showBookingStatus(planId: string, json: boolean): Promise<void> {
                            chalk.red("✗ " + record.status.toLowerCase());
       const ref = record.pnr ? chalk.white(`PNR: ${record.pnr}`) :
                   record.providerReference ? chalk.white(`Ref: ${record.providerReference}`) : "";
-      const amount = formatPrice(record.amount / 100); // stored in cents
+      // amount is stored in cents in BookingRecord
+      const amount = formatPrice(record.amount / 100);
 
       console.log(`    ${record.type.replace(/_/g, " ").toLowerCase()}  ${recordStatus}  ${ref}  ${amount}`);
     }
     console.log();
   }
 
-  console.log(chalk.dim(`  Plan: https://voyagier.com/plans/${planId}\n`));
+  console.log(chalk.dim(`  Plan: ${baseUrl}/plans/${planId}\n`));
 }
