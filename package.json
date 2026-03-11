@@ -1,7 +1,7 @@
 {
   "name": "@voyagier/cli",
   "version": "1.0.0",
-  "description": "Voyagier CLI \u2014 AI trip planning from your terminal",
+  "description": "Voyagier CLI — AI trip planning from your terminal",
   "type": "module",
   "bin": {
     "voyagier": "./dist/index.js"
@@ -10,7 +10,10 @@
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "test": "NODE_OPTIONS=\"--experimental-vm-modules\" jest",
+    "test:watch": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --watch",
+    "test:cov": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --coverage"
   },
   "keywords": [
     "voyagier",
@@ -28,7 +31,12 @@
     "commander": "^14.0.3"
   },
   "devDependencies": {
+    "@golevelup/ts-jest": "^1.2.1",
+    "@jest/globals": "^30.3.0",
+    "@types/jest": "^30.0.0",
     "@types/node": "^25.3.5",
+    "jest": "^30.3.0",
+    "ts-jest": "^29.4.6",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },

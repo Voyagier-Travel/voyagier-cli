@@ -11,5 +11,12 @@
     "declaration": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "src/**/*.spec.ts",
+    "dist",
+    "node_modules"
+  ]
 }
