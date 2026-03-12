@@ -10,6 +10,8 @@ import { registerTravellerCommands } from "./commands/travellers.js";
 import { registerCartCommands } from "./commands/cart.js";
 import { registerOptionsCommands } from "./commands/options.js";
 import { registerBookCommands } from "./commands/book.js";
+import { registerTelemetryCommands } from "./commands/telemetry.js";
+import { trackCommand, getTraceId, isTelemetryEnabled } from "./telemetry.js";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")) as { version: string };
 
@@ -25,5 +27,36 @@ registerTravellerCommands(program);
 registerCartCommands(program);
 registerOptionsCommands(program);
 registerBookCommands(program);
+registerTelemetryCommands(program);
+
+// Instrument all commands with telemetry
+function instrumentCommands(cmd: Command): void {
+  cmd.commands.forEach((sub) => {
+    instrumentCommands(sub);
+    const originalAction = (sub as unknown as { _actionHandler?: (...args: unknown[]) => Promise<void> })._actionHandler;
+    if (originalAction) {
+      const commandPath = sub.parent?.name() ?? "";
+      const subName = sub.name();
+      (sub as unknown as { _actionHandler: (...args: unknown[]) => Promise<void> })._actionHandler = async (...args: unknown[]) => {
+        const start = Date.now();
+        const traceId = getTraceId();
+        try {
+          await originalAction.apply(sub, args);
+          if (isTelemetryEnabled()) {
+            trackCommand({ command: commandPath, subcommand: subName, durationMs: Date.now() - start, success: true, traceId });
+          }
+        } catch (err) {
+          if (isTelemetryEnabled()) {
+            const msg = err instanceof Error ? err.message : String(err);
+            trackCommand({ command: commandPath, subcommand: subName, durationMs: Date.now() - start, success: false, error: msg, traceId });
+          }
+          throw err;
+        }
+      };
+    }
+  });
+}
+
+instrumentCommands(program);
 
 program.parse();

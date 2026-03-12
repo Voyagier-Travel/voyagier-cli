@@ -1,4 +1,5 @@
 import { getApiUrl, getToken } from "./config.js";
+import { getTraceId } from "./telemetry.js";
 
 interface GraphQLResponse<T = unknown> {
   data?: T;
@@ -32,6 +33,8 @@ export async function graphql<T = unknown>(
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
+      "x-request-id": getTraceId(),
+      "x-datadog-trace-id": getTraceId(),
     },
     body: JSON.stringify({ query, variables }),
   });
@@ -86,6 +89,8 @@ export async function streamChat(
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
+      "x-request-id": getTraceId(),
+      "x-datadog-trace-id": getTraceId(),
     },
     body: JSON.stringify({
       id: messageId,

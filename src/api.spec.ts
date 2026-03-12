@@ -50,10 +50,10 @@ describe("graphql", () => {
       "https://api.test.voyagier.com/graphql",
       expect.objectContaining({
         method: "POST",
-        headers: {
+        headers: expect.objectContaining({
           "Content-Type": "application/json",
           Authorization: "Bearer test-token-abc",
-        },
+        }),
       })
     );
     expect(result).toEqual({ user: { id: "1", name: "Test" } });
