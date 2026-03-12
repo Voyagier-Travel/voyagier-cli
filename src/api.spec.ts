@@ -1,5 +1,5 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { existsSync, unlinkSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, unlinkSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { saveCredentials, CONFIG_DIR } from "./config.js";
 import { graphql } from "./api.js";
@@ -146,7 +146,6 @@ describe("graphql", () => {
     stderrSpy.mockRestore();
   });
 
-  });
 
   describe("streamChat", () => {
     // Import streamChat  
