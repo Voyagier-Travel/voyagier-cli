@@ -1,7 +1,7 @@
-import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { existsSync, unlinkSync } from "fs";
+import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
+import { existsSync, unlinkSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
-import { saveSearchState, loadSearchState, clearSearchState, isSearchStateStale, SearchState } from "./state.js";
+import { saveSearchState, loadSearchState, clearSearchState, isSearchStateStale, SearchState, saveOptionsState, loadOptionsState, clearOptionsState } from "./state.js";
 import { CONFIG_DIR } from "./config.js";
 
 const STATE_FILE = join(CONFIG_DIR, "last-search.json");
@@ -25,7 +25,7 @@ describe("state", () => {
   beforeEach(() => {
     // Back up existing state
     if (existsSync(STATE_FILE)) {
-      originalState = require("fs").readFileSync(STATE_FILE, "utf-8");
+      originalState = readFileSync(STATE_FILE, "utf-8");
       unlinkSync(STATE_FILE);
     } else {
       originalState = null;
@@ -37,7 +37,7 @@ describe("state", () => {
     if (existsSync(STATE_FILE)) unlinkSync(STATE_FILE);
     // Restore original state
     if (originalState !== null) {
-      require("fs").writeFileSync(STATE_FILE, originalState, { mode: 0o600 });
+      writeFileSync(STATE_FILE, originalState, { mode: 0o600 });
     }
   });
 
@@ -122,5 +122,46 @@ describe("state", () => {
       };
       expect(isSearchStateStale(recent, 5 * 60 * 1000)).toBe(true);
     });
+  });
+});
+
+describe("OptionsState", () => {
+  const testState = {
+    tripPlanId: "plan-abc",
+    results: [
+      { index: 1, subSelectionId: "sub1", optionId: "opt1", summary: "Economy · $500" },
+      { index: 2, subSelectionId: "sub1", optionId: "opt2", summary: "Business · $1,200" },
+    ],
+    timestamp: new Date().toISOString(),
+  };
+
+  afterEach(() => {
+    clearOptionsState();
+  });
+
+  it("saves and loads options state", () => {
+    saveOptionsState(testState);
+    const loaded = loadOptionsState();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.tripPlanId).toBe("plan-abc");
+    expect(loaded!.results).toHaveLength(2);
+    expect(loaded!.results[0].summary).toBe("Economy · $500");
+  });
+
+  it("returns null when no options state file exists", () => {
+    expect(loadOptionsState()).toBeNull();
+  });
+
+  it("clears options state", () => {
+    saveOptionsState(testState);
+    expect(loadOptionsState()).not.toBeNull();
+    clearOptionsState();
+    expect(loadOptionsState()).toBeNull();
+  });
+
+  it("returns null on invalid JSON", () => {
+    // Write garbage to the options state file
+    writeFileSync(join(CONFIG_DIR, "last-options.json"), "not valid json");
+    expect(loadOptionsState()).toBeNull();
   });
 });

@@ -88,11 +88,10 @@ export function registerOptionsCommands(program: Command): void {
         }>(GET_PLAN_DEEP, { id: planId });
 
         const plan = data.tripPlan;
-        const baseUrl = deriveBaseUrl(getApiUrl());
         const allSubs = findAllSubSelections(plan.items);
 
         // If --refresh, refresh all sub-selections first
-        if (opts.refresh && !opts.json) {
+        if (opts.refresh) {
           process.stderr.write(chalk.dim("Refreshing options from provider...\n"));
           for (const entry of allSubs) {
             try {
@@ -110,7 +109,6 @@ export function registerOptionsCommands(program: Command): void {
         }
 
         // Build global index map
-        let globalIndex = 1;
         const optionMap: Array<{ subSelectionId: string; optionId: string; summary: string }> = [];
 
         for (const entry of allSubs) {
@@ -121,12 +119,23 @@ export function registerOptionsCommands(program: Command): void {
               optionId: opt.id,
               summary: `${opt.name}${opt.price != null ? ` · ${formatPrice(opt.price)}` : ""}`,
             });
-            globalIndex++;
           }
         }
 
+        // Save options state so `pick` works in both human and scripted flows
+        const stateToSave = {
+          tripPlanId: plan.id,
+          results: optionMap.map((entry, i) => ({
+            index: i + 1,
+            subSelectionId: entry.subSelectionId,
+            optionId: entry.optionId,
+            summary: entry.summary,
+          })),
+          timestamp: new Date().toISOString(),
+        };
+        saveOptionsState(stateToSave);
+
         if (opts.json) {
-          // Use global indices in JSON to match what `pick` expects
           let jsonIdx = 1;
           process.stdout.write(JSON.stringify({
             planId: plan.id,
@@ -156,7 +165,7 @@ export function registerOptionsCommands(program: Command): void {
         if (allSubs.length === 0) {
           console.log(chalk.dim("  No sub-selection choices needed. All items are ready."));
           console.log(chalk.dim(`  Run: voyagier cart ${planId}`));
-          console.log(chalk.dim(`  Plan: ${baseUrl}/plans/${planId}\n`));
+          console.log(chalk.dim(`  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${planId}\n`));
           return;
         }
 
@@ -191,18 +200,6 @@ export function registerOptionsCommands(program: Command): void {
           console.log();
         }
 
-        // Save to separate options state file (does NOT clobber search state)
-        saveOptionsState({
-          tripPlanId: planId,
-          results: optionMap.map((o, i) => ({
-            index: i + 1,
-            subSelectionId: o.subSelectionId,
-            optionId: o.optionId,
-            summary: o.summary,
-          })),
-          timestamp: new Date().toISOString(),
-        });
-
         // Show hint based on what types of sub-selections are present
         const hasFlightClass = allSubs.some(s => s.subSelection.type === "FLIGHT_CLASS");
         const hasHotelRoom = allSubs.some(s => s.subSelection.type === "HOTEL_ROOM");
@@ -211,7 +208,7 @@ export function registerOptionsCommands(program: Command): void {
 
         console.log(chalk.dim(`\n  Select with: voyagier pick <number>`));
         console.log(chalk.dim(`  Example: voyagier pick 1`));
-        console.log(chalk.dim(`  Plan: ${baseUrl}/plans/${planId}\n`));
+        console.log(chalk.dim(`  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${planId}\n`));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         process.stderr.write(chalk.red(`Failed to load options: ${message}\n`));
