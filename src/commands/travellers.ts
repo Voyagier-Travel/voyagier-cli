@@ -33,7 +33,7 @@ export function registerTravellerCommands(program: Command): void {
         const input: Record<string, unknown> = {
           firstName: opts.first,
           lastName: opts.last,
-          declaredTravellerType: opts.type.toUpperCase(),
+          declaredTravellerType: opts.type.charAt(0).toUpperCase() + opts.type.slice(1).toLowerCase(),
         };
         if (opts.email) input.email = opts.email;
         if (opts.dob) {
