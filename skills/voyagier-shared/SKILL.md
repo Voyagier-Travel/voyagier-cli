@@ -30,7 +30,7 @@ voyagier auth set-token <PAT>
 voyagier auth status
 
 # Or use environment variables (CI/scripts)
-export VOYAGIER_TOKEN=voy_pat_xxxxx
+export VOYAGIER_TOKEN=<your-token>
 export VOYAGIER_API_URL=https://voyagier.com  # optional
 ```
 

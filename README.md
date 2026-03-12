@@ -12,7 +12,7 @@ npm install -g @voyagier/cli
 
 ```bash
 # Authenticate
-voyagier auth set-token voy_pat_xxxxx
+voyagier auth set-token <your-token>
 
 # Create a trip plan
 voyagier plans create --title "Tokyo Trip" --start 2026-04-15 --end 2026-04-22
