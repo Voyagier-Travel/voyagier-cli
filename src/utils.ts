@@ -169,8 +169,7 @@ export function openBrowser(url: string): void {
 
 /**
  * Derive a web base URL from the API URL.
- * https://dev.voyagier.com → https://dev.voyagier.com
- * https://voyagier.com → https://voyagier.com
+ * Strips /graphql, /api, or trailing slashes from the configured API endpoint.
  */
 export function deriveBaseUrl(apiUrl: string): string {
   try {
