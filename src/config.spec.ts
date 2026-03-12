@@ -1,7 +1,7 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
-import { loadCredentials, saveCredentials, clearCredentials, credentialsExist, getToken, getApiUrl, CONFIG_DIR } from "./config.js";
+import { loadCredentials, saveCredentials, clearCredentials, credentialsExist, getToken, getApiUrl, CONFIG_DIR, saveUserContext, getUserContext, getHomeAirports, getPreferredCabin } from "./config.js";
 
 const credFile = join(CONFIG_DIR, "credentials.json");
 
@@ -146,4 +146,91 @@ describe("config", () => {
       expect(url).toBe("https://voyagier.com");
     });
   });
+
+  describe("saveUserContext / getUserContext", () => {
+    it("saves and retrieves user context", () => {
+      saveCredentials("tok_test", "https://test.com");
+      const user = {
+        id: "u1",
+        name: "Test User",
+        email: "test@test.com",
+        homeAirports: ["BWI", "DCA"],
+        preferredCabin: "business" as const,
+      };
+      saveUserContext(user);
+      const ctx = getUserContext();
+      expect(ctx).not.toBeNull();
+      expect(ctx!.name).toBe("Test User");
+      expect(ctx!.homeAirports).toEqual(["BWI", "DCA"]);
+      expect(ctx!.preferredCabin).toBe("business");
+    });
+
+    it("returns null when no user context saved", () => {
+      saveCredentials("tok_test", "https://test.com");
+      expect(getUserContext()).toBeNull();
+    });
+
+    it("throws when not authenticated", () => {
+      expect(() => saveUserContext({
+        id: "u1", name: "X", email: "x@x.com", homeAirports: [],
+      })).toThrow("Not authenticated");
+    });
+
+    it("preserves user context when saveCredentials is called", () => {
+      saveCredentials("tok_old", "https://test.com");
+      saveUserContext({
+        id: "u1", name: "Test", email: "t@t.com", homeAirports: ["JFK"],
+      });
+      // Re-save credentials (simulating set-token)
+      saveCredentials("tok_new", "https://test2.com");
+      const ctx = getUserContext();
+      expect(ctx).not.toBeNull();
+      expect(ctx!.homeAirports).toEqual(["JFK"]);
+    });
+
+    it("does not persist env token to disk via saveUserContext", () => {
+      // Write file credentials first
+      saveCredentials("tok_file", "https://test.com");
+      // Set env override
+      process.env.VOYAGIER_TOKEN = "tok_env";
+      // Save user context — should use file token, not env
+      saveUserContext({
+        id: "u1", name: "Test", email: "t@t.com", homeAirports: ["BWI"],
+      });
+      delete process.env.VOYAGIER_TOKEN;
+      // Read back — token should still be file token
+      const creds = loadCredentials();
+      expect(creds!.token).toBe("tok_file");
+    });
+  });
+
+  describe("getHomeAirports", () => {
+    it("returns empty array when no context", () => {
+      expect(getHomeAirports()).toEqual([]);
+    });
+
+    it("returns airports from saved context", () => {
+      saveCredentials("tok", "https://test.com");
+      saveUserContext({
+        id: "u1", name: "T", email: "t@t.com", homeAirports: ["BWI", "IAD", "DCA"],
+      });
+      expect(getHomeAirports()).toEqual(["BWI", "IAD", "DCA"]);
+    });
+  });
+
+  describe("getPreferredCabin", () => {
+    it("returns null when no context", () => {
+      expect(getPreferredCabin()).toBeNull();
+    });
+
+    it("returns cabin from saved context", () => {
+      saveCredentials("tok", "https://test.com");
+      saveUserContext({
+        id: "u1", name: "T", email: "t@t.com", homeAirports: [],
+        preferredCabin: "first",
+      });
+      expect(getPreferredCabin()).toBe("first");
+    });
+  });
+
 });
