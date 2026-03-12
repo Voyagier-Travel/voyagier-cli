@@ -86,7 +86,7 @@ voyagier select 1
 
 ## Notes
 
-- Search results expire after ~2 hours (Sabre offer TTL). Re-search for current pricing.
+- Search results expire after ~2 hours (GDS offer TTL). Re-search for current pricing.
 - Each search creates a selection item on the trip plan, visible in the web app.
 - `--json` output includes `tripPlanId`, `selectionId`, and full option details.
 

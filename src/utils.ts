@@ -3,7 +3,7 @@ import { spawn } from "child_process";
 
 /**
  * Extract a flight token from a booking data JSONB blob.
- * Checks multiple paths since Sabre data structure varies.
+ * Checks multiple paths since GDS data structure varies.
  */
 export function extractFlightToken(bookingData?: Record<string, unknown>): string | undefined {
   if (!bookingData) return undefined;
