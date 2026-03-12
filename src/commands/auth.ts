@@ -76,15 +76,21 @@ export function registerAuthCommands(program: Command): void {
       console.log(chalk.dim("Starting local server to receive auth callback...\n"));
 
       const tokenPromise = new Promise<string>((resolve, reject) => {
+        // Declare server before timeout so the reference is valid in the callback
+        let server: ReturnType<typeof createServer>;
+
         const timeout = setTimeout(() => {
-          server.close();
+          server?.close();
           reject(new Error("Login timed out after 5 minutes."));
         }, 5 * 60 * 1000);
 
-        const server = createServer((req, res) => {
+        server = createServer((req, res) => {
           const url = new URL(req.url ?? "/", `http://localhost:${port}`);
 
           // Handle the callback with token
+          // TODO: Token-in-URL is a temporary approach. When the backend supports it,
+          // switch to auth-code exchange (code in URL → POST to /auth/token → receive PAT)
+          // and add CSRF state param validation. See: https://datatracker.ietf.org/doc/html/rfc6749#section-4.1
           if (url.pathname === "/callback") {
             const token = url.searchParams.get("token");
 

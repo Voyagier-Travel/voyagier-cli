@@ -1,5 +1,5 @@
-import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { existsSync, unlinkSync, writeFileSync } from "fs";
+import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
+import { existsSync, unlinkSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 import { saveSearchState, loadSearchState, clearSearchState, isSearchStateStale, SearchState, saveOptionsState, loadOptionsState, clearOptionsState } from "./state.js";
 import { CONFIG_DIR } from "./config.js";
@@ -25,7 +25,7 @@ describe("state", () => {
   beforeEach(() => {
     // Back up existing state
     if (existsSync(STATE_FILE)) {
-      originalState = require("fs").readFileSync(STATE_FILE, "utf-8");
+      originalState = readFileSync(STATE_FILE, "utf-8");
       unlinkSync(STATE_FILE);
     } else {
       originalState = null;
@@ -37,7 +37,7 @@ describe("state", () => {
     if (existsSync(STATE_FILE)) unlinkSync(STATE_FILE);
     // Restore original state
     if (originalState !== null) {
-      require("fs").writeFileSync(STATE_FILE, originalState, { mode: 0o600 });
+      writeFileSync(STATE_FILE, originalState, { mode: 0o600 });
     }
   });
 

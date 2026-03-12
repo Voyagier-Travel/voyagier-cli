@@ -136,7 +136,14 @@ export function registerSearchCommands(program: Command): void {
           title: `Flight: ${origin} → ${destination}`,
         };
         if (opts.return) input.returnDate = opts.return;
-        if (opts.maxStops) input.maxStops = parseInt(opts.maxStops, 10);
+        if (opts.maxStops) {
+          const maxStops = parseInt(opts.maxStops, 10);
+          if (!Number.isFinite(maxStops) || maxStops < 0) {
+            process.stderr.write(chalk.red("--max-stops must be a non-negative integer.\n"));
+            process.exit(1);
+          }
+          input.maxStops = maxStops;
+        }
 
         const query = `mutation CreateFlightSelection($tripPlanId: String!, $input: CreateFlightSelectionInput!) {
             createTripPlanFlightSelection(tripPlanId: $tripPlanId, input: $input) {
@@ -236,6 +243,10 @@ export function registerSearchCommands(program: Command): void {
         if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Searching hotels...\n"));
 
         const adults = parseInt(opts.guests, 10);
+        if (!Number.isFinite(adults) || adults < 1) {
+          process.stderr.write(chalk.red("--guests must be an integer ≥ 1.\n"));
+          process.exit(1);
+        }
         const input: Record<string, unknown> = {
           location: opts.location,
           checkInDate: opts.checkin,

@@ -157,6 +157,26 @@ describe("validateDate", () => {
     validateDate("2026-01-32", "--date");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
+
+  it("should reject Feb 30", () => {
+    validateDate("2026-02-30", "--date");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("should reject Feb 29 in non-leap year", () => {
+    validateDate("2025-02-29", "--date");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("should accept Feb 29 in leap year", () => {
+    validateDate("2024-02-29", "--date");
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("should reject Apr 31", () => {
+    validateDate("2026-04-31", "--date");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
 });
 
 describe("validateIata", () => {

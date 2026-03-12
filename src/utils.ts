@@ -61,8 +61,10 @@ export function validateDate(value: string, flagName: string): void {
     process.exit(1);
   }
   const [year, month, day] = value.split("-").map(Number);
-  if (month < 1 || month > 12 || day < 1 || day > 31 || year < 2000 || year > 2100) {
-    process.stderr.write(chalk.red(`Invalid date for ${flagName}: "${value}". Month must be 1-12, day must be 1-31.\n`));
+  // Round-trip through Date to catch impossible dates (Feb 31, etc.)
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
+    process.stderr.write(chalk.red(`Invalid date for ${flagName}: "${value}". Date does not exist.\n`));
     process.exit(1);
   }
 }
@@ -155,7 +157,8 @@ export function openBrowser(url: string): void {
     if (platform === "darwin") {
       spawn("open", [url], { stdio: "ignore", detached: true }).unref();
     } else if (platform === "win32") {
-      spawn("cmd", ["/c", "start", "", url], { stdio: "ignore", detached: true }).unref();
+      spawn("powershell", ["-NoProfile", "-Command", `Start-Process '${url.replace(/'/g, "''")}'`],
+        { stdio: "ignore", detached: true }).unref();
     } else {
       spawn("xdg-open", [url], { stdio: "ignore", detached: true }).unref();
     }

@@ -123,7 +123,7 @@ export function registerOptionsCommands(program: Command): void {
         }
 
         // Save options state so `pick` works in both human and scripted flows
-        saveOptionsState({
+        const stateToSave = {
           tripPlanId: plan.id,
           results: optionMap.map((entry, i) => ({
             index: i + 1,
@@ -132,7 +132,8 @@ export function registerOptionsCommands(program: Command): void {
             summary: entry.summary,
           })),
           timestamp: new Date().toISOString(),
-        });
+        };
+        saveOptionsState(stateToSave);
 
         if (opts.json) {
           let jsonIdx = 1;
@@ -198,18 +199,6 @@ export function registerOptionsCommands(program: Command): void {
           }
           console.log();
         }
-
-        // Save to separate options state file (does NOT clobber search state)
-        saveOptionsState({
-          tripPlanId: planId,
-          results: optionMap.map((o, i) => ({
-            index: i + 1,
-            subSelectionId: o.subSelectionId,
-            optionId: o.optionId,
-            summary: o.summary,
-          })),
-          timestamp: new Date().toISOString(),
-        });
 
         // Show hint based on what types of sub-selections are present
         const hasFlightClass = allSubs.some(s => s.subSelection.type === "FLIGHT_CLASS");
