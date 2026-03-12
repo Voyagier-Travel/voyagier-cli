@@ -32,7 +32,7 @@ voyagier select 1 --json      # select hotel
 ### 5. Pick sub-options (cabin class, room type)
 ```bash
 voyagier options <planId> --json    # see what needs sub-selection choices
-voyagier options select 1 --json    # pick cabin class or room type by number
+voyagier pick 1 --json              # pick cabin class or room type by number
 ```
 
 If sub-options need refreshing:
@@ -52,7 +52,7 @@ Verify all items are present, no pending sub-selections, total looks correct.
 voyagier book <planId> --dry-run --json
 
 # Create checkout and open Stripe payment page:
-voyagier book <planId> --json
+voyagier book <planId>
 ```
 
 ### 8. Check booking status
@@ -70,7 +70,7 @@ voyagier book <planId> --status --json
 | Search hotels | `search hotels` | `--plan`, `--location`, `--checkin`, `--checkout` |
 | Select | `select <n>` | index from last search |
 | Sub-options | `options <planId>` | `--refresh` to re-fetch from provider |
-| Pick sub-option | `options select <n>` | index from `options` output |
+| Pick sub-option | `pick <n>` | index from `options` output |
 | Cart | `cart <planId>` | review before booking |
 | Book | `book <planId>` | `--dry-run`, `--status` |
 

@@ -128,6 +128,15 @@ export function registerPlanCommands(program: Command): void {
         const page = parseInt(opts.page, 10);
         const limit = parseInt(opts.limit, 10);
 
+        if (!Number.isFinite(page) || page < 1) {
+          process.stderr.write(chalk.red("--page must be an integer ≥ 1.\n"));
+          process.exit(1);
+        }
+        if (!Number.isFinite(limit) || limit < 1) {
+          process.stderr.write(chalk.red("--limit must be an integer ≥ 1.\n"));
+          process.exit(1);
+        }
+
         const data = await graphql<PaginatedTripPlans>(
           `query TripPlans($page: Int!, $limit: Int!) {
             tripPlans(page: $page, limit: $limit) {
@@ -314,7 +323,7 @@ export function registerPlanCommands(program: Command): void {
             const icon = typeIcon(item.type);
             const sel = item.selection?.selectedOption;
             if (sel) {
-              const price = sel.price ? chalk.green(` $${sel.price}`) : "";
+              const price = sel.price != null ? chalk.green(` ${formatPrice(sel.price)}`) : "";
               const status = sel.status && sel.status !== "NONE" ? chalk.dim(` [${sel.status}]`) : "";
               console.log(`  ${icon}  ${sel.name}${price}${status}`);
             } else if (item.selection) {
