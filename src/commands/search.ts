@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
-import { getApiUrl } from "../config.js";
+import { getApiUrl, getHomeAirports } from "../config.js";
 import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, validateIata, deriveBaseUrl } from "../utils.js";
@@ -95,7 +95,7 @@ export function registerSearchCommands(program: Command): void {
     .command("flights")
     .description("Search for flights")
     .option("--plan <id>", "Trip plan ID (or auto-resolved from last search)")
-    .requiredOption("--from <code>", "Origin airport code (e.g., LAX)")
+    .option("--from <code>", "Origin airport code (e.g., LAX)")
     .requiredOption("--to <code>", "Destination airport code (e.g., NRT)")
     .requiredOption("--date <date>", "Departure date (YYYY-MM-DD)")
     .option("--return <date>", "Return date (YYYY-MM-DD) for round-trip")
@@ -105,7 +105,23 @@ export function registerSearchCommands(program: Command): void {
     .option("--dry-run", "Show the GraphQL query without executing")
     .action(async (opts) => {
       try {
-        validateIata(opts.from, "--from");
+        // Resolve origin: explicit --from, or home airport default
+        let origin: string;
+        if (opts.from) {
+          validateIata(opts.from, "--from");
+          origin = opts.from.toUpperCase();
+        } else {
+          const homeAirports = getHomeAirports();
+          if (homeAirports.length > 0) {
+            origin = homeAirports[0].toUpperCase();
+            validateIata(origin, "--from (home airport)");
+            process.stderr.write(chalk.dim(`Using home airport: ${origin} (from profile)\n`));
+          } else {
+            process.stderr.write(chalk.red("No origin specified. Run: voyagier auth setup (or use --from <code>)\n"));
+            process.exit(1);
+          }
+        }
+
         validateIata(opts.to, "--to");
         validateDate(opts.date, "--date");
         if (opts.return) validateDate(opts.return, "--return");
@@ -123,8 +139,6 @@ export function registerSearchCommands(program: Command): void {
         }
 
         if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Searching flights...\n"));
-
-        const origin = opts.from.toUpperCase();
         const destination = opts.to.toUpperCase();
         const isRoundTrip = !!opts.return;
 
