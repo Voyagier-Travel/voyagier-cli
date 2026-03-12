@@ -38,10 +38,24 @@ function ensureConfigDir(): void {
   }
 }
 
+// Load credentials directly from file, ignoring environment variables.
+// Used when we need to preserve/merge on-disk data (user context).
+function loadFileCredentials(): Credentials | null {
+  if (!existsSync(CREDENTIALS_FILE)) return null;
+  try {
+    const raw = readFileSync(CREDENTIALS_FILE, "utf-8");
+    const creds = JSON.parse(raw) as Credentials;
+    if (!creds.token) return null;
+    return creds;
+  } catch {
+    return null;
+  }
+}
+
 export function saveCredentials(token: string, apiUrl: string = "https://voyagier.com"): void {
   ensureConfigDir();
-  // Preserve existing user context if present
-  const existing = loadCredentials();
+  // Preserve existing user context from file (not env vars)
+  const existing = loadFileCredentials();
   const creds: Credentials = { token, apiUrl };
   if (existing?.user) creds.user = existing.user;
   writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2), { mode: 0o600 });
@@ -49,7 +63,8 @@ export function saveCredentials(token: string, apiUrl: string = "https://voyagie
 
 export function saveUserContext(user: UserContext): void {
   ensureConfigDir();
-  const existing = loadCredentials();
+  // Read from file only — don't persist env-based tokens to disk
+  const existing = loadFileCredentials();
   if (!existing) {
     throw new Error("Not authenticated. Run: voyagier auth set-token <token>");
   }

@@ -113,7 +113,8 @@ export function registerSearchCommands(program: Command): void {
         } else {
           const homeAirports = getHomeAirports();
           if (homeAirports.length > 0) {
-            origin = homeAirports[0];
+            origin = homeAirports[0].toUpperCase();
+            validateIata(origin, "--from (home airport)");
             process.stderr.write(chalk.dim(`Using home airport: ${origin} (from profile)\n`));
           } else {
             process.stderr.write(chalk.red("No origin specified. Run: voyagier auth setup (or use --from <code>)\n"));

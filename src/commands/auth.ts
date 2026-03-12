@@ -297,7 +297,7 @@ export function registerAuthCommands(program: Command): void {
         homeAirports: [],
       };
 
-      const isInteractive = !opts.airports;
+      const isInteractive = process.stdin.isTTY === true && !process.env.CI;
       let rl: ReturnType<typeof createInterface> | null = null;
       if (isInteractive) {
         rl = createInterface({ input: stdin, output: stdout });
