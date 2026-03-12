@@ -141,7 +141,7 @@ The CLI is a thin client over Voyagier's GraphQL API — the same API the web ap
 
 ```
 CLI  →  Voyagier GraphQL API  →  Trip Plans (visible at voyagier.com)
-                               →  Sabre GDS (flight/hotel search)
+                               →  GDS (flight/hotel search)
 ```
 
 ## License
