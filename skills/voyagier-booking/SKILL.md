@@ -80,5 +80,5 @@ voyagier book <planId> --status --json
 - **Cart must be complete** before `book` will proceed. It checks for empty cart and missing sub-selections.
 - **Stripe handles payment.** The `book` command opens a Stripe-hosted checkout page in the browser.
 - **Flight prices are reserved** when you run `book`. The fare is locked with the provider at checkout time.
-- **6% travel fee** is added automatically at checkout.
+- A travel fee is added automatically at checkout.
 - **Everything syncs to the web.** View at `https://voyagier.com/plans/<planId>` at any time.

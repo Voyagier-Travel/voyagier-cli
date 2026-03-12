@@ -14,11 +14,7 @@ export function registerAuthCommands(program: Command): void {
     .description("Save a personal access token")
     .option("--url <apiUrl>", "API base URL", "https://voyagier.com")
     .action((token: string, opts) => {
-      if (!token.startsWith("voy_pat_")) {
-        process.stderr.write(
-          chalk.yellow("⚠ Token doesn't start with voy_pat_ — this may not be a valid Voyagier PAT.\n")
-        );
-      }
+
 
       saveCredentials(token, opts.url);
       console.log(chalk.green("✓ Token saved."));
@@ -179,7 +175,7 @@ export function registerAuthCommands(program: Command): void {
       console.log("  4. Run:\n");
       console.log(chalk.cyan("     voyagier auth set-token <your-token>\n"));
       console.log("  Option 3: Environment variables (CI/scripts)\n");
-      console.log(chalk.dim("     export VOYAGIER_TOKEN=voy_pat_xxxxx"));
+      console.log(chalk.dim("     export VOYAGIER_TOKEN=<your-token>"));
       console.log(chalk.dim("     export VOYAGIER_API_URL=https://voyagier.com  # optional\n"));
     });
 }

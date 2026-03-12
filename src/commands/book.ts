@@ -81,8 +81,6 @@ export function registerBookCommands(program: Command): void {
         }
 
         const subtotal = cart.total;
-        const travelFee = Math.round(subtotal * 0.06 * 100) / 100;
-        const total = Math.round((subtotal + travelFee) * 100) / 100;
 
         // --dry-run mode
         if (opts.dryRun) {
@@ -93,8 +91,7 @@ export function registerBookCommands(program: Command): void {
               title: plan.title,
               items: cart.items.map(i => ({ name: i.name, price: i.price, type: i.type })),
               subtotal,
-              estimatedTravelFee: travelFee,
-              estimatedTotal: total,
+              note: "Travel fee added at checkout",
               message: "Would create Stripe Checkout Session",
             }, null, 2) + "\n");
             return;
@@ -108,8 +105,7 @@ export function registerBookCommands(program: Command): void {
           console.log();
           console.log(chalk.dim("  ─────────────────────────────────"));
           console.log(`  Subtotal:      ${formatPrice(subtotal)}`);
-          console.log(`  Travel fee:    ${formatPrice(travelFee)} ${chalk.dim("(6% est.)")}`);
-          console.log(chalk.bold(`  Est. total:    ${formatPrice(total)}`));
+          console.log(`  Travel fee:    ${chalk.dim("added at checkout")}`);
           console.log(hintDryRun());
           console.log(chalk.dim("\n  [dry-run] Would create Stripe Checkout Session\n"));
           return;
@@ -137,8 +133,7 @@ export function registerBookCommands(program: Command): void {
             title: plan.title,
             checkoutUrl,
             subtotal,
-            estimatedTravelFee: travelFee,
-            estimatedTotal: total,
+            note: "Final total (with travel fee) shown on Stripe checkout page",
             tripPlanUrl: `${baseUrl}/plans/${planId}`,
           }, null, 2) + "\n");
           return;
@@ -146,7 +141,8 @@ export function registerBookCommands(program: Command): void {
 
         console.log(chalk.green.bold("\n  ✓ Checkout session created!\n"));
         console.log(`  Items:         ${cart.itemCount}`);
-        console.log(`  Est. total:    ${chalk.bold(formatPrice(total))} ${chalk.dim(`(includes ~${formatPrice(travelFee)} travel fee)`)}`);
+        console.log(`  Subtotal:      ${chalk.bold(formatPrice(subtotal))}`);
+        console.log(`  Travel fee:    ${chalk.dim("included on checkout page")}`);
         console.log();
         console.log(chalk.bold("  Opening Stripe checkout in your browser..."));
         console.log(chalk.dim(`  ${checkoutUrl}\n`));

@@ -40,7 +40,6 @@ export function registerCartCommands(program: Command): void {
         const pending = findPendingSubSelections(plan.items);
 
         if (opts.json) {
-          const travelFee = cart.total > 0 ? Math.round(cart.total * 0.06 * 100) / 100 : 0;
           process.stdout.write(JSON.stringify({
             cart,
             pendingSubSelections: pending.map(p => ({
@@ -48,8 +47,7 @@ export function registerCartCommands(program: Command): void {
               type: subSelectionLabel(p.subSelectionType),
               optionCount: p.optionCount,
             })),
-            travelFee,
-            estimatedTotal: cart.total > 0 ? Math.round((cart.total + travelFee) * 100) / 100 : 0,
+            note: "Travel fee added at checkout",
             tripPlanUrl: `${baseUrl}/plans/${planId}`,
           }, null, 2) + "\n");
           return;
@@ -82,14 +80,9 @@ export function registerCartCommands(program: Command): void {
             console.log();
           }
 
-          const subtotal = cart.total;
-          const travelFee = Math.round(subtotal * 0.06 * 100) / 100;
-          const total = Math.round((subtotal + travelFee) * 100) / 100;
-
           console.log(chalk.dim("  ─────────────────────────────────"));
-          console.log(`  Subtotal:      ${chalk.white(formatPrice(subtotal))}`);
-          console.log(`  Travel fee:    ${chalk.dim(formatPrice(travelFee))} ${chalk.dim("(6% est.)")}`);
-          console.log(chalk.bold(`  Est. total:    ${formatPrice(total)}`));
+          console.log(`  Subtotal:      ${chalk.white(formatPrice(cart.total))}`);
+          console.log(`  Travel fee:    ${chalk.dim("added at checkout")}`);
           console.log();
         }
 
