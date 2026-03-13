@@ -79,9 +79,15 @@ export function registerSelectCommands(program: Command): void {
       }
 
       const idx = parseInt(number, 10);
+      if (isNaN(idx) || idx < 1) {
+        process.stderr.write(chalk.red(`Invalid selection: "${number}". Please specify a number (1-${state.results.length}).\n`));
+        process.exit(1);
+      }
       const selected = state.results.find((r) => r.index === idx);
       if (!selected) {
         process.stderr.write(chalk.red(`No option [${idx}]. Valid range: 1-${state.results.length}\n`));
+        const searchType = state.type === "flights" ? "flights" : "hotels";
+        process.stderr.write(chalk.dim(`  Tip: voyagier search ${searchType} --plan ${state.tripPlanId} ... to refresh results\n`));
         process.exit(1);
       }
 
