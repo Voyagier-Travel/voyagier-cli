@@ -23,11 +23,6 @@ interface TripPlanItem {
   day?: number;
 }
 
-interface TripPlanUser {
-  id: string;
-  user: { id: string; name?: string; email?: string };
-}
-
 interface Traveller {
   id: string;
   firstName: string;
@@ -56,7 +51,6 @@ interface PaginatedTripPlans {
 interface TripPlanDetail {
   tripPlan: TripPlan & {
     items: TripPlanItemDetail[];
-    users: TripPlanUser[];
     travellers: Traveller[];
   };
 }
@@ -198,7 +192,6 @@ export function registerPlanCommands(program: Command): void {
                 id type title date startTime endTime day
                 selection { id selectedOption { id name price status } }
               }
-              users { id user { id name email } }
               travellers { id firstName lastName declaredTravellerType }
             }
           }`,
@@ -245,13 +238,6 @@ export function registerPlanCommands(program: Command): void {
             }
 
             console.log(line);
-          }
-        }
-
-        if (plan.users?.length) {
-          console.log(chalk.bold(`\n  Collaborators:`));
-          for (const u of plan.users) {
-            console.log(`    👥  ${u.user.name ?? u.user.email ?? u.user.id}`);
           }
         }
 
