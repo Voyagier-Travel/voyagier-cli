@@ -558,14 +558,19 @@ export function registerPlanCommands(program: Command): void {
           fatal("At least one of --title, --start, --end, --description must be provided.");
         }
 
-        const data = await graphql<{ updateTripPlan: TripPlan }>(
+        await graphql<{ updateTripPlan: { id: string } }>(
           `mutation UpdateTripPlan($id: String!, $input: UpdateTripPlanInput!) {
-            updateTripPlan(id: $id, input: $input) { id title startDate endDate description }
+            updateTripPlan(id: $id, input: $input) { id }
           }`,
           { id, input }
         );
 
-        const plan = data.updateTripPlan;
+        // Re-fetch to get the updated fields (mutation return is incomplete)
+        const refetch = await graphql<{ tripPlan: TripPlan }>(
+          `query GetPlan($id: String!) { tripPlan(id: $id) { id title startDate endDate } }`,
+          { id }
+        );
+        const plan = refetch.tripPlan;
 
         if (opts.json) {
           jsonOutput({ ...plan, url: planUrl(plan.id) });
@@ -900,12 +905,23 @@ export function registerPlanCommands(program: Command): void {
 
         const feedbackType = opts.down ? "Downvote" : "Upvote";
 
-        await graphql<{ updateTripPlanItemFeedback: unknown }>(
-          `mutation Vote($itemId: String!, $feedbackType: FeedbackType!) {
-            updateTripPlanItemFeedback(itemId: $itemId, feedbackType: $feedbackType) { id }
-          }`,
-          { itemId, feedbackType }
-        );
+        // Try create first (first vote), fall back to update (changing existing vote)
+        try {
+          await graphql<{ createTripPlanItemFeedback: unknown }>(
+            `mutation CreateVote($itemId: String!, $input: CreateFeedbackInput!) {
+              createTripPlanItemFeedback(itemId: $itemId, input: $input) { id }
+            }`,
+            { itemId, input: { feedbackType } }
+          );
+        } catch {
+          // Already voted — update instead
+          await graphql<{ updateTripPlanItemFeedback: unknown }>(
+            `mutation UpdateVote($itemId: String!, $feedbackType: FeedbackType!) {
+              updateTripPlanItemFeedback(itemId: $itemId, feedbackType: $feedbackType) { id }
+            }`,
+            { itemId, feedbackType }
+          );
+        }
 
         if (opts.json) {
           process.stdout.write(JSON.stringify({ success: true, action: feedbackType.toLowerCase(), itemId }, null, 2) + "\n");
