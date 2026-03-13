@@ -324,6 +324,9 @@ export function registerPlanTripCommand(program: Command): void {
           const firstFlight = flightResult.options[0];
           if (firstFlight?.flightToken) {
             nextSteps.selectFlight = `voyagier select --selection-id ${flightResult.selectionId} --flight-token ${firstFlight.flightToken} --phase departure`;
+          } else if (firstFlight) {
+            // One-way flights may not have flightToken — use option ID selection
+            nextSteps.selectFlight = `voyagier select --selection-id ${flightResult.selectionId} --option-id ${firstFlight.id}`;
           }
         }
         if (hotelResult) {
