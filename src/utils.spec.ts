@@ -1,5 +1,5 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { extractFlightToken, buildFlightSummary, buildHotelSummary, formatPrice, validateDate, validateIata, findPendingSubSelections, subSelectionLabel, deriveBaseUrl, openBrowser, validateDateRange } from "./utils.js";
+import { extractFlightToken, buildFlightSummary, buildHotelSummary, formatPrice, validateDate, validateIata, findPendingSubSelections, subSelectionLabel, deriveBaseUrl, openBrowser, warnPastDate } from "./utils.js";
 
 describe("extractFlightToken", () => {
   it("should return undefined when bookingData is undefined", () => {
@@ -356,33 +356,25 @@ describe("openBrowser", () => {
     expect(() => openBrowser("https://example.com")).not.toThrow();
   });
 
-  describe("validateDateRange", () => {
-    let exitSpy: ReturnType<typeof jest.spyOn>;
+  describe("warnPastDate", () => {
     let stderrSpy: ReturnType<typeof jest.spyOn>;
 
     beforeEach(() => {
-      exitSpy = jest.spyOn(process, "exit").mockImplementation(() => undefined as never);
       stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
     });
 
     afterEach(() => {
-      exitSpy.mockRestore();
       stderrSpy.mockRestore();
     });
 
-    it("accepts valid range", () => {
-      validateDateRange("2026-06-01", "2026-06-05", "--start", "--end");
-      expect(exitSpy).not.toHaveBeenCalled();
+    it("warns on past date", () => {
+      warnPastDate("2020-01-01", "--date");
+      expect(stderrSpy).toHaveBeenCalled();
     });
 
-    it("accepts same date", () => {
-      validateDateRange("2026-06-01", "2026-06-01", "--start", "--end");
-      expect(exitSpy).not.toHaveBeenCalled();
-    });
-
-    it("exits on invalid range", () => {
-      validateDateRange("2026-06-10", "2026-06-05", "--start", "--end");
-      expect(exitSpy).toHaveBeenCalledWith(1);
+    it("does not warn on future date", () => {
+      warnPastDate("2099-12-31", "--date");
+      expect(stderrSpy).not.toHaveBeenCalled();
     });
   });
 
