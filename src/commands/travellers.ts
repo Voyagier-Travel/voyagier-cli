@@ -4,6 +4,11 @@ import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
 import { validateDate, deriveBaseUrl } from "../utils.js";
 
+/** Convert an enum value to PascalCase (e.g. "adult" → "Adult", "MALE" → "Male"). */
+function toPascalCase(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
 interface Traveller {
   id: string;
   firstName: string;
@@ -33,14 +38,14 @@ export function registerTravellerCommands(program: Command): void {
         const input: Record<string, unknown> = {
           firstName: opts.first,
           lastName: opts.last,
-          declaredTravellerType: opts.type.charAt(0).toUpperCase() + opts.type.slice(1).toLowerCase(),
+          declaredTravellerType: toPascalCase(opts.type),
         };
         if (opts.email) input.email = opts.email;
         if (opts.dob) {
           validateDate(opts.dob, "--dob");
           input.dateOfBirth = opts.dob;
         }
-        if (opts.gender) input.gender = opts.gender.toUpperCase();
+        if (opts.gender) input.gender = toPascalCase(opts.gender);
 
         const data = await graphql<{ createTripPlanTraveller: Traveller }>(
           `mutation CreateTraveller($tripPlanId: String!, $input: CreateTravellerInput!) {
