@@ -2,7 +2,6 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { createInterface } from "readline/promises";
 import { stdin, stdout } from "process";
-import { createServer } from "http";
 import { openBrowser } from "../utils.js";
 
 import { saveCredentials, getToken, getApiUrl, clearCredentials, credentialsExist, saveUserContext, getUserContext } from "../config.js";
@@ -158,82 +157,68 @@ export function registerAuthCommands(program: Command): void {
 
       console.log();
     });
-
   auth
     .command("login")
-    .description("Log in via browser (opens browser, receives token via callback)")
+    .description("Log in to Voyagier")
     .option("--url <apiUrl>", "API base URL", "https://voyagier.com")
-    .option("--port <port>", "Local callback port", "9876")
     .action(async (opts) => {
-      const port = parseInt(opts.port, 10);
       const apiUrl = opts.url as string;
+      const isInteractive = process.stdin.isTTY === true && !process.env.CI;
 
       console.log(chalk.bold("\nVoyagier CLI Login\n"));
-      console.log(chalk.dim("Starting local server to receive auth callback...\n"));
 
-      const tokenPromise = new Promise<string>((resolve, reject) => {
-        let server: ReturnType<typeof createServer>;
+      if (!isInteractive) {
+        // Non-interactive: just show instructions
+        console.log("  Generate a Personal Access Token at:\n");
+        console.log(chalk.cyan(`    ${apiUrl}/settings\n`));
+        console.log("  Then run:\n");
+        console.log(chalk.cyan("    voyagier auth set-token <your-token>\n"));
+        return;
+      }
 
-        const timeout = setTimeout(() => {
-          server?.close();
-          reject(new Error("Login timed out after 5 minutes."));
-        }, 5 * 60 * 1000);
+      // Interactive: open browser + prompt for token
+      const settingsUrl = `${apiUrl}/settings`;
+      console.log(`  1. Go to ${chalk.cyan(settingsUrl)}`);
+      console.log(`  2. Generate a Personal Access Token`);
+      console.log(`  3. Paste it below\n`);
+      openBrowser(settingsUrl);
 
-        server = createServer((req, res) => {
-          const url = new URL(req.url ?? "/", `http://localhost:${port}`);
-
-          if (url.pathname === "/callback") {
-            const token = url.searchParams.get("token");
-
-            if (token) {
-              res.writeHead(200, { "Content-Type": "text/html" });
-              res.end(`
-                <html><body style="font-family: system-ui; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
-                  <div style="text-align: center;">
-                    <h1>✓ Authenticated</h1>
-                    <p>You can close this window and return to the terminal.</p>
-                  </div>
-                </body></html>
-              `);
-              clearTimeout(timeout);
-              server.close();
-              resolve(token);
-            } else {
-              res.writeHead(400, { "Content-Type": "text/plain" });
-              res.end("Missing token parameter.");
-            }
-            return;
-          }
-
-          res.writeHead(404, { "Content-Type": "text/plain" });
-          res.end("Not found");
-        });
-
-        server.listen(port, () => {
-          const loginUrl = `${apiUrl}/auth/cli?callback=http://localhost:${port}/callback`;
-          console.log(`  Open this URL in your browser:\n`);
-          console.log(chalk.cyan(`  ${loginUrl}\n`));
-          console.log(chalk.dim("  Waiting for authentication...\n"));
-          openBrowser(loginUrl);
-        });
-
-        server.on("error", (err) => {
-          clearTimeout(timeout);
-          reject(new Error(`Could not start local server on port ${port}: ${err.message}`));
-        });
-      });
-
+      const rl = createInterface({ input: stdin, output: stdout });
       try {
-        const token = await tokenPromise;
+        const token = (await rl.question(chalk.bold("  Token: "))).trim();
+        if (!token) {
+          console.log(chalk.dim("\n  Cancelled.\n"));
+          return;
+        }
+
         saveCredentials(token, apiUrl);
-        console.log(chalk.green("✓ Login successful! Token saved.\n"));
-        console.log(chalk.dim("  Next: voyagier auth setup"));
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Login failed: ${message}\n`));
-        process.exit(1);
+
+        // Verify
+        try {
+          const data = await graphql<{ me: { id: string; firstName: string; lastName: string; email: string } }>(
+            `{ me { id firstName lastName email } }`
+          );
+          const user = data.me;
+          const displayName = `${user.firstName} ${user.lastName}`.trim() || user.email;
+          console.log(chalk.green(`\n  ✓ Logged in as ${chalk.bold(displayName)} (${user.email})\n`));
+
+          const existingCtx = getUserContext();
+          console.log(chalk.dim("  Next steps:"));
+          if (!existingCtx || existingCtx.homeAirports.length === 0) {
+            console.log(chalk.cyan("    voyagier auth setup          — set home airports & preferences"));
+          }
+          console.log(chalk.dim("    voyagier plans list          — see your trip plans"));
+          console.log(chalk.dim("    voyagier plan-trip --help    — create a new trip"));
+          console.log();
+        } catch {
+          console.log(chalk.green("\n  ✓ Token saved.\n"));
+          console.log(chalk.yellow("  ⚠ Could not verify — token may be invalid. Check: voyagier auth status\n"));
+        }
+      } finally {
+        rl.close();
       }
     });
+
 
   auth
     .command("logout")

@@ -6,6 +6,7 @@ import { formatPrice, subSelectionLabel, deriveBaseUrl } from "../utils.js";
 import { hintCabinClass, hintHotelRoom } from "../hints.js";
 import { saveOptionsState, loadOptionsState, clearOptionsState } from "../state.js";
 import { GET_PLAN_DEEP, SET_SUB_SELECTION, REFRESH_SUB_SELECTION } from "../queries.js";
+import { progress, jsonOutput, jsonError } from "../output.js";
 
 interface SubSelectionOption {
   id: string;
@@ -92,7 +93,7 @@ export function registerOptionsCommands(program: Command): void {
 
         // If --refresh, refresh all sub-selections first
         if (opts.refresh) {
-          process.stderr.write(chalk.dim("Refreshing options from provider...\n"));
+          progress("Refreshing options from provider...");
           for (const entry of allSubs) {
             try {
               const refreshed = await graphql<{
@@ -220,8 +221,49 @@ export function registerOptionsCommands(program: Command): void {
   program
     .command("pick <number>")
     .description("Select a sub-option by number (from `voyagier options`)")
+    .option("--sub-selection-id <id>", "Explicit sub-selection ID (direct mode, skips state file)")
+    .option("--option-id <id>", "Explicit option ID (direct mode)")
     .option("--json", "Output raw JSON")
     .action(async (numberStr: string, opts) => {
+      // Direct mode: --sub-selection-id + --option-id
+      if (opts.subSelectionId && opts.optionId) {
+        try {
+          const data = await graphql<{
+            setTripPlanSubSelectionOption: {
+              id: string;
+              selectedOptionId: string;
+              selectedOption: { id: string; name: string; price?: number };
+            };
+          }>(SET_SUB_SELECTION, { subSelectionId: opts.subSelectionId, optionId: opts.optionId });
+
+          const selected = data.setTripPlanSubSelectionOption.selectedOption;
+
+          if (opts.json) {
+            jsonOutput({
+              subSelectionId: opts.subSelectionId,
+              selected: {
+                id: selected.id,
+                name: selected.name,
+                price: selected.price,
+              },
+            });
+          } else {
+            const price = selected.price != null ? ` · ${formatPrice(selected.price)}` : "";
+            console.log(chalk.green(`\n  ✓ Selected: ${selected.name}${price}\n`));
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (opts.json) {
+            jsonError(message, "PICK_FAILED");
+          } else {
+            process.stderr.write(chalk.red(`Failed to select option: ${message}\n`));
+            process.exit(1);
+          }
+        }
+        return;
+      }
+
+      // Indexed mode: use state file
       const num = parseInt(numberStr, 10);
       if (isNaN(num) || num < 1) {
         process.stderr.write(chalk.red("Invalid selection number. Run `voyagier options <planId>` first.\n"));

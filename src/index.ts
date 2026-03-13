@@ -11,7 +11,11 @@ import { registerCartCommands } from "./commands/cart.js";
 import { registerOptionsCommands } from "./commands/options.js";
 import { registerBookCommands } from "./commands/book.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
+import { registerBookingsCommands } from "./commands/bookings.js";
+import { registerPlanTripCommand } from "./commands/plan-trip.js";
 import { trackCommand, getTraceId, isTelemetryEnabled } from "./telemetry.js";
+import { credentialsExist } from "./config.js";
+import chalk from "chalk";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")) as { version: string };
 
@@ -28,6 +32,8 @@ registerCartCommands(program);
 registerOptionsCommands(program);
 registerBookCommands(program);
 registerTelemetryCommands(program);
+registerBookingsCommands(program);
+registerPlanTripCommand(program);
 
 // Instrument all commands with telemetry
 function instrumentCommands(cmd: Command): void {
@@ -58,5 +64,24 @@ function instrumentCommands(cmd: Command): void {
 }
 
 instrumentCommands(program);
+
+// Top-level "login" shortcut → "auth login"
+const userArgs = process.argv.slice(2);
+if (userArgs[0] === "login") {
+  process.argv.splice(2, 1, "auth", "login");
+}
+
+// Show welcome screen for unauthenticated users with no args
+if (userArgs.length === 0 && !credentialsExist()) {
+  console.log(chalk.bold("\n  Welcome to Voyagier CLI! 🌍\n"));
+  console.log("  Plan and book travel from the command line.\n");
+  console.log("  Get started:\n");
+  console.log(chalk.cyan("    voyagier login") + chalk.dim("                     — log in (opens browser)"));
+  console.log();
+  console.log(chalk.dim("  Already have a token?\n"));
+  console.log(chalk.cyan("    voyagier auth set-token <token>"));
+  console.log();
+  process.exit(0);
+}
 
 program.parse();
