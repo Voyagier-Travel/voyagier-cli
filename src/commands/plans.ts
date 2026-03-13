@@ -230,7 +230,7 @@ export function registerPlanCommands(program: Command): void {
         if (plan.items?.length) {
           console.log(chalk.bold(`\n  Items (${plan.items.length}):`));
           for (const item of plan.items) {
-            const icon = typeIcon(item.type);
+            const icon = typeIcon(item.type, item.title);
             const time = item.startTime ? ` at ${item.startTime}` : "";
             const day = item.day ? ` Day ${item.day}` : "";
             let line = `    ${icon}  ${item.title}${day}${time}`;
@@ -320,7 +320,7 @@ export function registerPlanCommands(program: Command): void {
         if (items.length > 0) {
           console.log();
           for (const item of items) {
-            const icon = typeIcon(item.type);
+            const icon = typeIcon(item.type, item.title);
             const sel = item.selection?.selectedOption;
             if (sel) {
               const price = sel.price != null ? chalk.green(` ${formatPrice(sel.price)}`) : "";
@@ -369,10 +369,17 @@ export function registerPlanCommands(program: Command): void {
     });
 }
 
-function typeIcon(type: string): string {
-  switch (type?.toLowerCase()) {
+function typeIcon(type: string, title?: string): string {
+  const t = (type ?? "").toLowerCase();
+  // API returns "Selection" for all search-created items — infer from title
+  if (t === "selection" && title) {
+    const titleLower = title.toLowerCase();
+    if (titleLower.includes("hotel")) return "🏨";
+    if (titleLower.includes("flight")) return "✈️";
+    return "📋";
+  }
+  switch (t) {
     case "flight":
-    case "selection":
       return "✈️";
     case "hotel":
       return "🏨";
