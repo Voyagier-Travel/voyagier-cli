@@ -4,7 +4,7 @@ import { graphql } from "../api.js";
 import { getApiUrl, getHomeAirports } from "../config.js";
 import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels } from "../formatters.js";
-import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, validateIata, deriveBaseUrl } from "../utils.js";
+import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, validateDateRange, validateIata, deriveBaseUrl } from "../utils.js";
 
 interface SelectOption {
   id: string;
@@ -125,6 +125,7 @@ export function registerSearchCommands(program: Command): void {
         validateIata(opts.to, "--to");
         validateDate(opts.date, "--date");
         if (opts.return) validateDate(opts.return, "--return");
+        if (opts.return) validateDateRange(opts.date, opts.return, "--date", "--return");
 
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
@@ -241,6 +242,7 @@ export function registerSearchCommands(program: Command): void {
       try {
         validateDate(opts.checkin, "--checkin");
         validateDate(opts.checkout, "--checkout");
+        validateDateRange(opts.checkin, opts.checkout, "--checkin", "--checkout");
 
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
