@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
 import { validateDate, deriveBaseUrl } from "../utils.js";
-import { fatal } from "../output.js";
+import { jsonOutput } from "../output.js";
 
 /** Convert an enum value to PascalCase (e.g. "adult" → "Adult", "MALE" → "Male"). */
 function toPascalCase(value: string): string {
@@ -146,6 +146,56 @@ export function registerTravellerCommands(program: Command): void {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         process.stderr.write(chalk.red(`Failed to remove traveller: ${message}\n`));
+        process.exit(1);
+      }
+    });
+
+  travellers
+    .command("update <id>")
+    .description("Update a traveller's details")
+    .option("--first <name>", "First name")
+    .option("--last <name>", "Last name")
+    .option("--dob <date>", "Date of birth (YYYY-MM-DD)")
+    .option("--gender <gender>", "Gender: male, female, unspecified")
+    .option("--email <email>", "Email address")
+    .option("--type <type>", "Traveller type: adult, child, infant")
+    .option("--json", "Output raw JSON")
+    .action(async (id: string, opts) => {
+      try {
+        const input: Record<string, unknown> = {};
+        if (opts.first) input.firstName = opts.first;
+        if (opts.last) input.lastName = opts.last;
+        if (opts.email) input.email = opts.email;
+        if (opts.dob) {
+          validateDate(opts.dob, "--dob");
+          input.dateOfBirth = opts.dob;
+        }
+        if (opts.gender) input.gender = toPascalCase(opts.gender);
+        if (opts.type) input.declaredTravellerType = toPascalCase(opts.type);
+
+        const data = await graphql<{ updateTripPlanTraveller: Traveller }>(
+          `mutation UpdateTraveller($id: String!, $input: UpdateTravellerInput!) {
+            updateTripPlanTraveller(id: $id, input: $input) {
+              id firstName lastName email dateOfBirth gender declaredTravellerType
+            }
+          }`,
+          { id, input }
+        );
+
+        const t = data.updateTripPlanTraveller;
+
+        if (opts.json) {
+          jsonOutput(t);
+          return;
+        }
+
+        console.log(chalk.green(`✓ Updated traveller: ${t.firstName} ${t.lastName}`));
+        console.log(chalk.dim(`  ID: ${t.id}`));
+        console.log(chalk.dim(`  Type: ${t.declaredTravellerType ?? "ADULT"}`));
+        if (t.email) console.log(chalk.dim(`  Email: ${t.email}`));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.red(`Failed to update traveller: ${message}\n`));
         process.exit(1);
       }
     });
