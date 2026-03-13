@@ -1,7 +1,7 @@
 {
   "name": "@voyagier/cli",
   "version": "1.0.0",
-  "description": "Voyagier CLI — AI trip planning from your terminal",
+  "description": "Voyagier CLI \u2014 AI trip planning from your terminal",
   "type": "module",
   "bin": {
     "voyagier": "./dist/index.js"
@@ -21,7 +21,7 @@
     "cli",
     "ai"
   ],
-  "license": "UNLICENSED",
+  "license": "SEE LICENSE IN LICENSE.md",
   "private": false,
   "engines": {
     "node": ">=18"
