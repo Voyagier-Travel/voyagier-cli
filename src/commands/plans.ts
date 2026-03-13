@@ -577,7 +577,7 @@ export function registerPlanCommands(program: Command): void {
 
         // Re-fetch to get the updated fields (mutation return is incomplete)
         const refetch = await graphql<{ tripPlan: TripPlan }>(
-          `query GetPlan($id: String!) { tripPlan(id: $id) { id title startDate endDate } }`,
+          `query GetPlan($id: String!) { tripPlan(id: $id) { id title startDate endDate description } }`,
           { id }
         );
         const plan = refetch.tripPlan;
@@ -929,14 +929,19 @@ export function registerPlanCommands(program: Command): void {
             }`,
             { itemId, input: { feedbackType } }
           );
-        } catch {
-          // Already voted — update instead
-          await graphql<{ updateTripPlanItemFeedback: unknown }>(
-            `mutation UpdateVote($itemId: String!, $feedbackType: FeedbackType!) {
-              updateTripPlanItemFeedback(itemId: $itemId, feedbackType: $feedbackType) { id }
-            }`,
-            { itemId, feedbackType }
-          );
+        } catch (createErr) {
+          // Only fall back to update if it looks like an "already exists" error
+          const msg = createErr instanceof Error ? createErr.message : String(createErr);
+          if (msg.includes("already") || msg.includes("duplicate") || msg.includes("exists") || msg.includes("conflict")) {
+            await graphql<{ updateTripPlanItemFeedback: unknown }>(
+              `mutation UpdateVote($itemId: String!, $feedbackType: FeedbackType!) {
+                updateTripPlanItemFeedback(itemId: $itemId, feedbackType: $feedbackType) { id }
+              }`,
+              { itemId, feedbackType }
+            );
+          } else {
+            throw createErr;
+          }
         }
 
         if (opts.json) {
