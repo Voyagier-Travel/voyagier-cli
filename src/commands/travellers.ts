@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
 import { validateDate, deriveBaseUrl } from "../utils.js";
-import { jsonOutput } from "../output.js";
+import { jsonOutput, fatal } from "../output.js";
 
 /** Convert an enum value to PascalCase (e.g. "adult" → "Adult", "MALE" → "Male"). */
 function toPascalCase(value: string): string {
@@ -172,6 +172,10 @@ export function registerTravellerCommands(program: Command): void {
         }
         if (opts.gender) input.gender = toPascalCase(opts.gender);
         if (opts.type) input.declaredTravellerType = toPascalCase(opts.type);
+
+        if (Object.keys(input).length === 0) {
+          fatal("Nothing to update. Provide at least one of: --first, --last, --email, --dob, --gender, --type");
+        }
 
         const data = await graphql<{ updateTripPlanTraveller: Traveller }>(
           `mutation UpdateTraveller($id: String!, $input: UpdateTravellerInput!) {

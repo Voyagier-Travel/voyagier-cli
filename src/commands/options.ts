@@ -6,7 +6,7 @@ import { formatPrice, subSelectionLabel, deriveBaseUrl } from "../utils.js";
 import { hintCabinClass, hintHotelRoom } from "../hints.js";
 import { saveOptionsState, loadOptionsState, clearOptionsState } from "../state.js";
 import { GET_PLAN_DEEP, SET_SUB_SELECTION, REFRESH_SUB_SELECTION } from "../queries.js";
-import { progress, jsonOutput, jsonError } from "../output.js";
+import { progress, fatal, jsonOutput, jsonError } from "../output.js";
 
 interface SubSelectionOption {
   id: string;
@@ -226,6 +226,13 @@ export function registerOptionsCommands(program: Command): void {
     .option("--json", "Output raw JSON")
     .action(async (numberStr: string, opts) => {
       // Direct mode: --sub-selection-id + --option-id
+      if ((opts.subSelectionId && !opts.optionId) || (!opts.subSelectionId && opts.optionId)) {
+        if (opts.json) {
+          jsonError("Direct mode requires both --sub-selection-id and --option-id.", "INCOMPLETE_DIRECT_MODE");
+        } else {
+          fatal("Direct mode requires both --sub-selection-id and --option-id.");
+        }
+      }
       if (opts.subSelectionId && opts.optionId) {
         try {
           const data = await graphql<{
