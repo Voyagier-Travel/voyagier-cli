@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "fs";
+import chalk from "chalk";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -119,7 +120,8 @@ export function getApiUrl(): string {
 export function getToken(): string {
   const creds = loadCredentials();
   if (!creds?.token) {
-    process.stderr.write("Not authenticated. Run: voyagier auth setup\n");
+    process.stderr.write(chalk.red("Not authenticated.\n"));
+    process.stderr.write(chalk.dim("  Run: voyagier login\n"));
     process.exit(1);
   }
   return creds.token;
