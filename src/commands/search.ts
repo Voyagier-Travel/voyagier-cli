@@ -4,7 +4,7 @@ import { graphql } from "../api.js";
 import { getApiUrl, getHomeAirports } from "../config.js";
 import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels } from "../formatters.js";
-import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, validateDateRange, validateIata, deriveBaseUrl } from "../utils.js";
+import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, warnPastDate, validateIata, deriveBaseUrl } from "../utils.js";
 
 interface SelectOption {
   id: string;
@@ -124,8 +124,12 @@ export function registerSearchCommands(program: Command): void {
 
         validateIata(opts.to, "--to");
         validateDate(opts.date, "--date");
-        if (opts.return) validateDate(opts.return, "--return");
-        if (opts.return) validateDateRange(opts.date, opts.return, "--date", "--return");
+        warnPastDate(opts.date, "--date");
+        warnPastDate(opts.date, "--date");
+        if (opts.return) {
+          validateDate(opts.return, "--return");
+          warnPastDate(opts.return, "--return");
+        }
 
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
@@ -241,8 +245,11 @@ export function registerSearchCommands(program: Command): void {
     .action(async (opts) => {
       try {
         validateDate(opts.checkin, "--checkin");
+        warnPastDate(opts.checkin, "--checkin");
+        warnPastDate(opts.checkin, "--checkin");
         validateDate(opts.checkout, "--checkout");
-        validateDateRange(opts.checkin, opts.checkout, "--checkin", "--checkout");
+        warnPastDate(opts.checkout, "--checkout");
+        warnPastDate(opts.checkout, "--checkout");
 
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
