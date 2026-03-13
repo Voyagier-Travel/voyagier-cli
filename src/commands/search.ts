@@ -4,7 +4,7 @@ import { graphql } from "../api.js";
 import { getApiUrl, getHomeAirports } from "../config.js";
 import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels } from "../formatters.js";
-import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, warnPastDate, validateIata, deriveBaseUrl } from "../utils.js";
+import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode } from "../utils.js";
 
 interface SelectOption {
   id: string;
@@ -242,6 +242,7 @@ export function registerSearchCommands(program: Command): void {
     .option("--sort <field>", "Sort by: price, default", "default")
     .option("--json", "Output raw JSON")
     .option("--dry-run", "Show the GraphQL query without executing")
+    .option("--verbose", "Show request details sent to the API")
     .action(async (opts) => {
       try {
         validateDate(opts.checkin, "--checkin");
@@ -264,6 +265,9 @@ export function registerSearchCommands(program: Command): void {
         }
 
         if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Searching hotels...\n"));
+        if (!dryRun && opts.verbose) {
+          process.stderr.write(chalk.dim(`API request — location: "${opts.location}", check-in: ${opts.checkin}, check-out: ${opts.checkout}\n`));
+        }
 
         const adults = parseInt(opts.guests, 10);
         if (!Number.isFinite(adults) || adults < 1) {
@@ -325,7 +329,19 @@ export function registerSearchCommands(program: Command): void {
         }
 
         if (options.length === 0) {
-          process.stderr.write(chalk.dim("No hotels found for this location and dates.\n"));
+          const loc = opts.location as string;
+          process.stderr.write(chalk.yellow(`No hotels found for "${loc}" on these dates.\n\n`));
+          process.stderr.write(chalk.dim("Suggestions:\n"));
+          if (looksLikeAirportCode(loc)) {
+            process.stderr.write(chalk.dim(`  • "${loc.toUpperCase()}" looks like an airport code — the API needs a city name\n`));
+            process.stderr.write(chalk.dim(`    e.g. try "Kota Kinabalu" instead of "BKI", "Kuala Lumpur" instead of "KUL"\n`));
+          } else {
+            process.stderr.write(chalk.dim(`  • Try a different location format: full city name, region, or country\n`));
+          }
+          process.stderr.write(chalk.dim(`  • Try a nearby major city with more hotel inventory\n`));
+          process.stderr.write(chalk.dim(`  • Use --verbose to see exactly what location was sent to the API\n`));
+          process.stderr.write(chalk.dim(`  • Check the web UI for expanded search options:\n`));
+          process.stderr.write(chalk.dim(`    ${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}\n`));
           return;
         }
 
