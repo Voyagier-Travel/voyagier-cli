@@ -359,6 +359,341 @@ export function registerPlanCommands(program: Command): void {
         process.exit(1);
       }
     });
+
+  plans
+    .command("share <planId>")
+    .description("Invite a collaborator to a trip plan")
+    .requiredOption("--user <username>", "Username of the person to invite")
+    .option("--role <role>", "Role: viewer, editor, agent", "viewer")
+    .option("--json", "Output raw JSON")
+    .action(async (planId: string, opts) => {
+      try {
+        // Look up user by username
+        const userData = await graphql<{ userPublicProfile: { id: string; name: string; username: string } | null }>(
+          `query LookupUser($username: String!) { userPublicProfile(username: $username) { id name username } }`,
+          { username: opts.user }
+        );
+
+        const user = userData.userPublicProfile;
+        if (!user) {
+          process.stderr.write(chalk.red(`User "${opts.user}" not found.\n`));
+          process.exit(1);
+        }
+
+        // Resolve role name to ID
+        const rolesData = await graphql<{ tripPlanRoles: Array<{ id: string; name: string }> }>(
+          `{ tripPlanRoles { id name } }`
+        );
+
+        const roleName = opts.role.charAt(0).toUpperCase() + opts.role.slice(1).toLowerCase();
+        const role = rolesData.tripPlanRoles.find(r => r.name === roleName);
+        if (!role) {
+          const valid = rolesData.tripPlanRoles.map(r => r.name.toLowerCase()).join(", ");
+          process.stderr.write(chalk.red(`Invalid role "${opts.role}". Valid: ${valid}\n`));
+          process.exit(1);
+        }
+
+        await graphql<{ inviteTripPlanCollaborator: unknown }>(
+          `mutation Invite($tripPlanId: String!, $input: InviteCollaboratorInput!) {
+            inviteTripPlanCollaborator(tripPlanId: $tripPlanId, input: $input) { id }
+          }`,
+          { tripPlanId: planId, input: { invitedUserId: user.id, roleId: role.id } }
+        );
+
+        if (opts.json) {
+          process.stdout.write(JSON.stringify({
+            success: true,
+            planId,
+            invitedUser: { id: user.id, username: user.username, name: user.name },
+            role: role.name,
+          }, null, 2) + "\n");
+          return;
+        }
+
+        console.log(chalk.green(`\n  ✓ Invited ${chalk.bold(user.name ?? user.username)} as ${role.name}\n`));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.red(`Failed to share plan: ${message}\n`));
+        process.exit(1);
+      }
+    });
+
+  plans
+    .command("collaborators <planId>")
+    .description("List collaborators on a trip plan")
+    .option("--json", "Output raw JSON")
+    .action(async (planId: string, opts) => {
+      try {
+        const data = await graphql<{
+          tripPlanCollaborators: Array<{
+            id: string;
+            userId: string;
+            roleId: string;
+            role: { id: string; name: string };
+            user: { id: string; firstName: string; lastName: string; email: string };
+          }>;
+        }>(
+          `query Collaborators($tripPlanId: String!) {
+            tripPlanCollaborators(tripPlanId: $tripPlanId) {
+              id userId roleId
+              role { id name }
+              user { id firstName lastName email }
+            }
+          }`,
+          { tripPlanId: planId }
+        );
+
+        const collabs = data.tripPlanCollaborators;
+
+        if (opts.json) {
+          process.stdout.write(JSON.stringify({ planId, collaborators: collabs }, null, 2) + "\n");
+          return;
+        }
+
+        if (collabs.length === 0) {
+          console.log(chalk.dim("\n  No collaborators on this plan.\n"));
+          return;
+        }
+
+        console.log(chalk.bold(`\n  👥 Collaborators (${collabs.length})\n`));
+        for (const c of collabs) {
+          const name = `${c.user.firstName} ${c.user.lastName}`.trim();
+          const role = c.role?.name ?? "Unknown";
+          const roleColor = role === "Owner" ? chalk.yellow : role === "Editor" ? chalk.cyan : chalk.dim;
+          console.log(`  ${roleColor(role.padEnd(8))}  ${chalk.white(name)}  ${chalk.dim(c.user.email)}`);
+          console.log(chalk.dim(`            ID: ${c.id}`));
+        }
+        console.log();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.red(`Failed to list collaborators: ${message}\n`));
+        process.exit(1);
+      }
+    });
+
+  plans
+    .command("unshare <planId>")
+    .description("Remove a collaborator from a trip plan")
+    .requiredOption("--collaborator-id <id>", "Collaborator ID (from `plans collaborators`)")
+    .option("--json", "Output raw JSON")
+    .action(async (planId: string, opts) => {
+      try {
+        await graphql<{ removeTripPlanCollaborator: boolean }>(
+          `mutation Remove($collaboratorId: String!) {
+            removeTripPlanCollaborator(collaboratorId: $collaboratorId)
+          }`,
+          { collaboratorId: opts.collaboratorId }
+        );
+
+        if (opts.json) {
+          process.stdout.write(JSON.stringify({ success: true, removed: opts.collaboratorId }, null, 2) + "\n");
+          return;
+        }
+
+        console.log(chalk.green(`\n  ✓ Removed collaborator ${opts.collaboratorId}\n`));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.red(`Failed to remove collaborator: ${message}\n`));
+        process.exit(1);
+      }
+    });
+
+  plans
+    .command("shared")
+    .description("List trip plans shared with you")
+    .option("--limit <n>", "Max results", "20")
+    .option("--page <n>", "Page number", "1")
+    .option("--json", "Output raw JSON")
+    .action(async (opts) => {
+      try {
+        const limit = parseInt(opts.limit, 10);
+        const page = parseInt(opts.page, 10);
+
+        const data = await graphql<{
+          sharedTripPlans: { count: number; items: Array<{ id: string; title: string; startDate?: string; endDate?: string }> };
+        }>(
+          `query SharedPlans($limit: Int, $page: Int) {
+            sharedTripPlans(limit: $limit, page: $page) {
+              count
+              items { id title startDate endDate }
+            }
+          }`,
+          { limit, page }
+        );
+
+        const { count, items } = data.sharedTripPlans;
+
+        if (opts.json) {
+          process.stdout.write(JSON.stringify({ count, page, limit, plans: items }, null, 2) + "\n");
+          return;
+        }
+
+        if (items.length === 0) {
+          console.log(chalk.dim("\n  No shared plans.\n"));
+          return;
+        }
+
+        const baseUrl = deriveBaseUrl(getApiUrl());
+        console.log(chalk.bold(`\n  🤝 Shared with you (${count} total)\n`));
+        for (const p of items) {
+          const dates = p.startDate ? chalk.dim(` ${p.startDate}${p.endDate ? " → " + p.endDate : ""}`) : "";
+          console.log(`  ${chalk.white(p.title)}${dates}`);
+          console.log(chalk.dim(`    ${baseUrl}/plans/${p.id}`));
+        }
+        console.log();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.red(`Failed to list shared plans: ${message}\n`));
+        process.exit(1);
+      }
+    });
+
+  plans
+    .command("comments <itemId>")
+    .description("View or add comments on a trip plan item")
+    .option("--add <text>", "Add a comment")
+    .option("--reply-to <commentId>", "Reply to a comment (used with --add)")
+    .option("--delete <commentId>", "Delete a comment")
+    .option("--limit <n>", "Max comments", "20")
+    .option("--json", "Output raw JSON")
+    .action(async (itemId: string, opts) => {
+      try {
+        // Delete mode
+        if (opts.delete) {
+          await graphql<{ deleteTripPlanItemComment: boolean }>(
+            `mutation Delete($id: String!) { deleteTripPlanItemComment(id: $id) }`,
+            { id: opts.delete }
+          );
+          if (opts.json) {
+            process.stdout.write(JSON.stringify({ success: true, deleted: opts.delete }, null, 2) + "\n");
+          } else {
+            console.log(chalk.green(`\n  ✓ Comment deleted\n`));
+          }
+          return;
+        }
+
+        // Add mode
+        if (opts.add) {
+          const input: Record<string, unknown> = { content: opts.add };
+          if (opts.replyTo) input.parentCommentId = opts.replyTo;
+
+          const data = await graphql<{ createTripPlanItemComment: { id: string; text: string } }>(
+            `mutation AddComment($itemId: String!, $input: CreateCommentInput!) {
+              createTripPlanItemComment(itemId: $itemId, input: $input) { id text }
+            }`,
+            { itemId, input }
+          );
+
+          if (opts.json) {
+            process.stdout.write(JSON.stringify(data.createTripPlanItemComment, null, 2) + "\n");
+          } else {
+            console.log(chalk.green(`\n  ✓ Comment added\n`));
+          }
+          return;
+        }
+
+        // List mode
+        const limit = parseInt(opts.limit, 10);
+        const data = await graphql<{
+          tripPlanItemComments: Array<{
+            id: string;
+            text: string;
+            author: { id: string; firstName: string; lastName: string };
+            parentCommentId?: string;
+            replies?: Array<{ id: string; text: string; author: { firstName: string; lastName: string } }>;
+          }>;
+        }>(
+          `query Comments($itemId: String!, $limit: Int) {
+            tripPlanItemComments(itemId: $itemId, limit: $limit) {
+              id text parentCommentId
+              author { id firstName lastName }
+              replies { id text author { firstName lastName } }
+            }
+          }`,
+          { itemId, limit }
+        );
+
+        const comments = data.tripPlanItemComments;
+
+        if (opts.json) {
+          process.stdout.write(JSON.stringify({ itemId, comments }, null, 2) + "\n");
+          return;
+        }
+
+        if (comments.length === 0) {
+          console.log(chalk.dim("\n  No comments yet.\n"));
+          console.log(chalk.dim(`  Add one: voyagier plans comments ${itemId} --add "Looks great!"\n`));
+          return;
+        }
+
+        console.log(chalk.bold(`\n  💬 Comments (${comments.length})\n`));
+        for (const comment of comments) {
+          const name = `${comment.author.firstName} ${comment.author.lastName}`.trim();
+          console.log(`  ${chalk.cyan(name)}: ${comment.text}`);
+          console.log(chalk.dim(`    ID: ${comment.id}`));
+          if (comment.replies) {
+            for (const reply of comment.replies) {
+              const rName = `${reply.author.firstName} ${reply.author.lastName}`.trim();
+              console.log(`    ↳ ${chalk.cyan(rName)}: ${reply.text}`);
+            }
+          }
+        }
+        console.log();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.red(`Failed: ${message}\n`));
+        process.exit(1);
+      }
+    });
+
+  plans
+    .command("vote <itemId>")
+    .description("Upvote or downvote a trip plan item (or remove vote)")
+    .option("--up", "Upvote")
+    .option("--down", "Downvote")
+    .option("--remove", "Remove your vote")
+    .option("--json", "Output raw JSON")
+    .action(async (itemId: string, opts) => {
+      try {
+        if (opts.remove) {
+          await graphql<{ deleteTripPlanItemFeedback: boolean }>(
+            `mutation RemoveVote($itemId: String!) { deleteTripPlanItemFeedback(itemId: $itemId) }`,
+            { itemId }
+          );
+          if (opts.json) {
+            process.stdout.write(JSON.stringify({ success: true, action: "removed" }, null, 2) + "\n");
+          } else {
+            console.log(chalk.green("\n  ✓ Vote removed\n"));
+          }
+          return;
+        }
+
+        if (!opts.up && !opts.down) {
+          process.stderr.write(chalk.red("Specify --up or --down (or --remove to clear vote).\n"));
+          process.exit(1);
+        }
+
+        const feedbackType = opts.down ? "Downvote" : "Upvote";
+
+        await graphql<{ updateTripPlanItemFeedback: unknown }>(
+          `mutation Vote($itemId: String!, $feedbackType: FeedbackType!) {
+            updateTripPlanItemFeedback(itemId: $itemId, feedbackType: $feedbackType) { id }
+          }`,
+          { itemId, feedbackType }
+        );
+
+        if (opts.json) {
+          process.stdout.write(JSON.stringify({ success: true, action: feedbackType.toLowerCase(), itemId }, null, 2) + "\n");
+        } else {
+          const emoji = feedbackType === "Upvote" ? "👍" : "👎";
+          console.log(chalk.green(`\n  ${emoji} ${feedbackType}d\n`));
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(chalk.red(`Failed to vote: ${message}\n`));
+        process.exit(1);
+      }
+    });
 }
 
 function typeIcon(type: string, title?: string): string {

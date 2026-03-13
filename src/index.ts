@@ -11,6 +11,7 @@ import { registerCartCommands } from "./commands/cart.js";
 import { registerOptionsCommands } from "./commands/options.js";
 import { registerBookCommands } from "./commands/book.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
+import { registerBookingsCommands } from "./commands/bookings.js";
 import { trackCommand, getTraceId, isTelemetryEnabled } from "./telemetry.js";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")) as { version: string };
@@ -28,6 +29,7 @@ registerCartCommands(program);
 registerOptionsCommands(program);
 registerBookCommands(program);
 registerTelemetryCommands(program);
+registerBookingsCommands(program);
 
 // Instrument all commands with telemetry
 function instrumentCommands(cmd: Command): void {
