@@ -47,7 +47,7 @@ interface TripPlanItemDetail extends TripPlanItem {
 interface PaginatedTripPlans {
   tripPlans: {
     items: TripPlan[];
-    total: number;
+    count: number;
     page: number;
     limit: number;
   };
@@ -138,16 +138,16 @@ export function registerPlanCommands(program: Command): void {
         }
 
         const data = await graphql<PaginatedTripPlans>(
-          `query TripPlans($page: Int!, $limit: Int!) {
+          `query TripPlans($page: Int, $limit: Int) {
             tripPlans(page: $page, limit: $limit) {
               items { id title startDate endDate itemCount }
-              total page limit
+              count page limit
             }
           }`,
           { page, limit }
         );
 
-        const { items, total } = data.tripPlans;
+        const { items, count: total } = data.tripPlans;
 
         if (opts.json) {
           process.stdout.write(JSON.stringify({
