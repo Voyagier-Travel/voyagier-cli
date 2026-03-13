@@ -160,6 +160,14 @@ export function subSelectionLabel(type: string): string {
 }
 
 /**
+ * Returns true when a location string looks like a 3-letter airport code (e.g. "BKI", "KUL").
+ * The hotel search API expects a city name, not an airport code.
+ */
+export function looksLikeAirportCode(location: string): boolean {
+  return /^[A-Za-z]{3}$/.test(location.trim());
+}
+
+/**
  * Open a URL in the user's default browser. Fails silently.
  */
 export function openBrowser(url: string): void {
