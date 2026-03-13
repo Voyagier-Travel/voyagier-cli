@@ -2,7 +2,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
-import { validateDate, warnPastDate, formatPrice, deriveBaseUrl } from "../utils.js";
+import { validateDate, warnPastDate, formatPrice, deriveBaseUrl, formatDateRange, formatDateHuman } from "../utils.js";
 import { fatal, jsonOutput } from "../output.js";
 import { GET_PLAN_DEEP } from "../queries.js";
 
@@ -156,7 +156,8 @@ export function registerPlanCommands(program: Command): void {
         console.log(chalk.dim(`  ID:  ${plan.id}`));
         console.log(chalk.dim(`  URL: ${planUrl(plan.id)}`));
         if (plan.startDate || plan.endDate) {
-          console.log(chalk.dim(`  Dates: ${plan.startDate ?? "?"} → ${plan.endDate ?? "?"}`));
+          const dateRange = formatDateRange(plan.startDate, plan.endDate);
+          if (dateRange) console.log(chalk.dim(`  Dates: ${dateRange}`));
         }
         console.log(chalk.dim(`\n  Next: voyagier travellers add --plan ${plan.id} --first <name> --last <name> --type ADULT`));
       } catch (err) {
@@ -214,7 +215,7 @@ export function registerPlanCommands(program: Command): void {
         const pageInfo = total > limit ? ` (page ${page}, showing ${items.length} of ${total})` : "";
         console.log(chalk.bold(`\n${total} trip plan${total > 1 ? "s" : ""}${pageInfo}:\n`));
         for (const plan of items) {
-          const dates = plan.startDate ? `${plan.startDate}${plan.endDate ? ` → ${plan.endDate}` : ""}` : "";
+          const dates = formatDateRange(plan.startDate, plan.endDate);
           const itemsLabel = plan.itemCount ? `${plan.itemCount} items` : "empty";
           console.log(`  📋  ${chalk.white(plan.title)}  ${chalk.dim(dates)}`);
           console.log(chalk.dim(`      ${plan.id}  ·  ${itemsLabel}`));
@@ -262,7 +263,8 @@ export function registerPlanCommands(program: Command): void {
         console.log(chalk.dim(`  ID:  ${plan.id}`));
         console.log(chalk.dim(`  URL: ${planUrl(plan.id)}`));
         if (plan.startDate || plan.endDate) {
-          console.log(chalk.dim(`  Dates: ${plan.startDate ?? "?"} → ${plan.endDate ?? "?"}`));
+          const dateRange = formatDateRange(plan.startDate, plan.endDate);
+          if (dateRange) console.log(chalk.dim(`  Dates: ${dateRange}`));
         }
         if (plan.description) console.log(chalk.dim(`  ${plan.description}`));
 
@@ -343,7 +345,8 @@ export function registerPlanCommands(program: Command): void {
           return;
         }
 
-        const dates = plan.startDate && plan.endDate ? `  ${chalk.dim(`${plan.startDate} → ${plan.endDate}`)}` : "";
+        const dateRange = formatDateRange(plan.startDate, plan.endDate);
+        const dates = dateRange ? `  ${chalk.dim(dateRange)}` : "";
         console.log(chalk.bold(`\n${plan.title}`) + dates);
         console.log(chalk.dim(`${planUrl(plan.id)}\n`));
 
@@ -590,7 +593,8 @@ export function registerPlanCommands(program: Command): void {
         console.log(chalk.green(`✓ Updated trip plan: ${plan.title}`));
         console.log(chalk.dim(`  ID:  ${plan.id}`));
         if (plan.startDate || plan.endDate) {
-          console.log(chalk.dim(`  Dates: ${plan.startDate ?? "?"} → ${plan.endDate ?? "?"}`));
+          const dateRange = formatDateRange(plan.startDate, plan.endDate);
+          if (dateRange) console.log(chalk.dim(`  Dates: ${dateRange}`));
         }
         if (plan.description) console.log(chalk.dim(`  ${plan.description}`));
       } catch (err) {
@@ -776,7 +780,8 @@ export function registerPlanCommands(program: Command): void {
         const baseUrl = deriveBaseUrl(getApiUrl());
         console.log(chalk.bold(`\n  🤝 Shared with you (${count} total)\n`));
         for (const p of items) {
-          const dates = p.startDate ? chalk.dim(` ${p.startDate}${p.endDate ? " → " + p.endDate : ""}`) : "";
+          const dr = formatDateRange(p.startDate, p.endDate);
+          const dates = dr ? chalk.dim(` ${dr}`) : "";
           console.log(`  ${chalk.white(p.title)}${dates}`);
           console.log(chalk.dim(`    ${baseUrl}/plans/${p.id}`));
         }

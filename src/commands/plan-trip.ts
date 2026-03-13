@@ -2,7 +2,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
 import { getApiUrl, getHomeAirports } from "../config.js";
-import { validateDate, warnPastDate, validateIata, extractFlightToken, buildFlightSummary, buildHotelSummary, deriveBaseUrl, formatPrice } from "../utils.js";
+import { validateDate, warnPastDate, validateIata, extractFlightToken, buildFlightSummary, buildHotelSummary, deriveBaseUrl, formatPrice, formatDateRange } from "../utils.js";
 import { progress, warn, fatal, jsonOutput } from "../output.js";
 
 interface TripPlan {
@@ -69,15 +69,7 @@ function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[]
   });
 }
 
-function formatDateDisplay(start?: string, end?: string): string {
-  if (!start) return "";
-  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const [sy, sm, sd] = start.split("-").map(Number);
-  if (!end) return `${months[sm - 1]} ${sd}, ${sy}`;
-  const [ey, em, ed] = end.split("-").map(Number);
-  if (sy === ey && sm === em) return `${months[sm - 1]} ${sd}-${ed}, ${sy}`;
-  return `${months[sm - 1]} ${sd} – ${months[em - 1]} ${ed}, ${ey}`;
-}
+
 
 function parseTravellers(names: string): Array<{ firstName: string; lastName: string }> {
   return names.split(",")
@@ -358,7 +350,7 @@ export function registerPlanTripCommand(program: Command): void {
         }
 
         // Human output
-        const dateStr = formatDateDisplay(plan.startDate, plan.endDate);
+        const dateStr = formatDateRange(plan.startDate, plan.endDate);
         console.log(chalk.green(`\n✓ Created: ${plan.title}${dateStr ? ` (${dateStr})` : ""}`));
         if (travellers.length > 0) {
           console.log(`  ${travellers.length} traveller${travellers.length !== 1 ? "s" : ""} added`);
