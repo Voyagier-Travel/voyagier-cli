@@ -6,6 +6,7 @@ import { getApiUrl } from "../config.js";
 import { validateDate, warnPastDate, formatPrice, deriveBaseUrl, formatDateRange, formatDateHuman } from "../utils.js";
 import { fatal, jsonOutput } from "../output.js";
 import { GET_PLAN_DEEP } from "../queries.js";
+import { formatAgentCard, buildAgentCardFromData } from "../agent-card.js";
 
 interface DeepSubSelection {
   id: string;
@@ -122,6 +123,7 @@ export function registerPlanCommands(program: Command): void {
     .option("--description <text>", "Description")
     .option("--json", "Output raw JSON")
     .option("--dry-run", "Show the GraphQL query without executing")
+    .option("--agent", "Output markdown card for AI agents")
     .action(async (opts) => {
       try {
         if (opts.start) {
@@ -147,6 +149,11 @@ export function registerPlanCommands(program: Command): void {
         );
 
         const plan = data.createTripPlan;
+
+        if (opts.agent) {
+          process.stdout.write(buildAgentCardFromData({ ...plan, items: [], travellers: [] }) + "\n");
+          return;
+        }
 
         if (opts.json) {
           const planSummary = await getPlanSummary(plan.id);
@@ -176,6 +183,7 @@ export function registerPlanCommands(program: Command): void {
     .option("--page <n>", "Page number", "1")
     .option("--limit <n>", "Results per page", "20")
     .option("--json", "Output raw JSON")
+    .option("--agent", "Output markdown card for AI agents")
     .action(async (opts) => {
       try {
         const page = parseInt(opts.page, 10);
@@ -199,6 +207,16 @@ export function registerPlanCommands(program: Command): void {
         );
 
         const { items, count: total } = data.tripPlans;
+
+        if (opts.agent) {
+          const lines: string[] = ["### Your Trip Plans\n"];
+          for (const p of items) {
+            lines.push(`- [${p.title}](${planUrl(p.id)})`);
+          }
+          if (items.length === 0) lines.push("_No trip plans found._");
+          process.stdout.write(lines.join("\n") + "\n");
+          return;
+        }
 
         if (opts.json) {
           process.stdout.write(JSON.stringify({
@@ -239,6 +257,7 @@ export function registerPlanCommands(program: Command): void {
     .command("get <id>")
     .description("Show trip plan details")
     .option("--json", "Output raw JSON")
+    .option("--agent", "Output markdown card for AI agents")
     .action(async (id: string, opts) => {
       try {
         const data = await graphql<TripPlanDetail>(
