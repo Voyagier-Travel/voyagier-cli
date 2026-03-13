@@ -6,6 +6,7 @@ import { loadSearchState, saveSearchState, clearSearchState, isSearchStateStale 
 import { formatFlights } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, deriveBaseUrl } from "../utils.js";
 import { hintFlightSelected, hintHotelSelected } from "../hints.js";
+import { progress, warn, fatal, jsonOutput, jsonError } from "../output.js";
 
 interface SelectionResponse {
   id: string;
@@ -31,6 +32,10 @@ export function registerSelectCommands(program: Command): void {
     .description("Select an option from the last search results")
     .option("--info <n>", "Show full details for option N without selecting")
     .option("--clear", "Clear cached search results")
+    .option("--selection-id <id>", "Explicit selection ID (direct mode, skips state file)")
+    .option("--option-id <id>", "Explicit option ID (for hotels and one-way flights)")
+    .option("--flight-token <token>", "Explicit flight token (for round-trip flights)")
+    .option("--phase <phase>", "departure or return (required with --flight-token)")
     .option("--json", "Output raw JSON")
     .action(async (number: string | undefined, opts) => {
       if (opts.clear) {
@@ -40,16 +45,109 @@ export function registerSelectCommands(program: Command): void {
         return;
       }
 
+      // Direct mode: --selection-id + (--option-id or --flight-token)
+      if (opts.selectionId && (opts.optionId || opts.flightToken)) {
+        try {
+          if (opts.flightToken) {
+            // Round-trip flight via explicit token
+            if (opts.phase === "departure") {
+              if (!opts.json) progress("Selecting departure flight...");
+              const data = await graphql<{ selectDepartureFlight: FlightSelectionResponse }>(
+                `mutation SelectDeparture($selectionId: String!, $flightToken: String!) {
+                  selectDepartureFlight(selectionId: $selectionId, flightToken: $flightToken) {
+                    id
+                    options { id name price time airline duration bookingData }
+                  }
+                }`,
+                { selectionId: opts.selectionId, flightToken: opts.flightToken }
+              );
+              const returnOptions = data.selectDepartureFlight.options;
+              if (opts.json) {
+                jsonOutput({
+                  success: true,
+                  type: "departure_selected",
+                  selectionId: opts.selectionId,
+                  returnOptions,
+                });
+              } else {
+                console.log(chalk.green("✓ Departure flight selected."));
+                console.log(hintFlightSelected());
+              }
+            } else if (opts.phase === "return") {
+              if (!opts.json) progress("Selecting return flight...");
+              await graphql<{ selectReturnFlight: FlightSelectionResponse }>(
+                `mutation SelectReturn($selectionId: String!, $flightToken: String!) {
+                  selectReturnFlight(selectionId: $selectionId, flightToken: $flightToken) {
+                    id
+                    options { id name price time airline duration bookingData }
+                  }
+                }`,
+                { selectionId: opts.selectionId, flightToken: opts.flightToken }
+              );
+              if (opts.json) {
+                jsonOutput({
+                  success: true,
+                  type: "return_selected",
+                  selectionId: opts.selectionId,
+                });
+              } else {
+                console.log(chalk.green("✓ Return flight selected."));
+                console.log(hintFlightSelected());
+              }
+            } else {
+              if (opts.json) {
+                jsonError("--phase departure|return required with --flight-token", "MISSING_PHASE");
+              } else {
+                fatal("--phase departure|return required with --flight-token");
+              }
+            }
+          } else {
+            // Hotel or one-way flight via explicit option ID
+            if (!opts.json) progress("Selecting option...");
+            const data = await graphql<{ setTripPlanSelectedOption: SelectionResponse }>(
+              `mutation SetSelected($selectionId: String!, $optionId: String!) {
+                setTripPlanSelectedOption(selectionId: $selectionId, optionId: $optionId) {
+                  id
+                  selectedOption { id name price }
+                }
+              }`,
+              { selectionId: opts.selectionId, optionId: opts.optionId }
+            );
+            const result = data.setTripPlanSelectedOption;
+            if (opts.json) {
+              jsonOutput({
+                success: true,
+                type: "option_selected",
+                selectionId: result.id,
+                selected: result.selectedOption ?? null,
+              });
+            } else {
+              const name = result.selectedOption?.name ?? opts.optionId;
+              console.log(chalk.green(`✓ Selected: ${name}`));
+              console.log(hintHotelSelected());
+            }
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (opts.json) {
+            jsonError(message, "SELECTION_FAILED");
+          } else {
+            process.stderr.write(chalk.red(`Selection failed: ${message}\n`));
+            process.exit(1);
+          }
+        }
+        return;
+      }
+
+      // Indexed mode: use state file
       const state = loadSearchState();
       if (!state) {
-        process.stderr.write(chalk.red("No search results cached. Run a search first:\n"));
-        process.stderr.write(chalk.dim("  voyagier search flights --plan <id> --from LAX --to NRT --date 2026-04-15\n"));
-        process.exit(1);
+        fatal("No search results cached. Run a search first:\n  voyagier search flights --plan <id> --from LAX --to NRT --date 2026-04-15");
       }
 
       if (isSearchStateStale(state)) {
-        process.stderr.write(chalk.yellow("⚠ Search results are over 2 hours old and may have expired.\n"));
-        process.stderr.write(chalk.dim("  Re-run your search for current pricing.\n\n"));
+        warn("Search results are over 2 hours old and may have expired.");
+        progress("  Re-run your search for current pricing.\n");
       }
 
       // --info mode: show details without selecting
@@ -99,7 +197,7 @@ export function registerSelectCommands(program: Command): void {
             process.exit(1);
           }
 
-          if (!opts.json) process.stderr.write(chalk.dim("Selecting departure flight...\n"));
+          if (!opts.json) progress("Selecting departure flight...");
 
           const data = await graphql<{ selectDepartureFlight: FlightSelectionResponse }>(
             `mutation SelectDeparture($selectionId: String!, $flightToken: String!) {
@@ -156,7 +254,7 @@ export function registerSelectCommands(program: Command): void {
             process.exit(1);
           }
 
-          if (!opts.json) process.stderr.write(chalk.dim("Selecting return flight...\n"));
+          if (!opts.json) progress("Selecting return flight...");
 
           await graphql<{ selectReturnFlight: FlightSelectionResponse }>(
             `mutation SelectReturn($selectionId: String!, $flightToken: String!) {
@@ -187,7 +285,7 @@ export function registerSelectCommands(program: Command): void {
         }
 
         // One-way flight or hotel: generic selection
-        if (!opts.json) process.stderr.write(chalk.dim("Selecting option...\n"));
+        if (!opts.json) progress("Selecting option...");
 
         const data = await graphql<{ setTripPlanSelectedOption: SelectionResponse }>(
           `mutation SetSelected($selectionId: String!, $optionId: String!) {
@@ -229,7 +327,3 @@ export function registerSelectCommands(program: Command): void {
       }
     });
 }
-
-
-
-
