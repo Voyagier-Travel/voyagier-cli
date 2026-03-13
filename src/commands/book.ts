@@ -62,14 +62,7 @@ export function registerBookCommands(program: Command): void {
         const cart = cartData.getTripPlanCart;
         const plan = planData.tripPlan;
 
-        // Pre-flight: cart not empty
-        if (cart.itemCount === 0) {
-          process.stderr.write(chalk.red("Cart is empty. Nothing to book.\n"));
-          process.stderr.write(chalk.dim(`Select flights or hotels first: voyagier search flights --plan ${planId} ...\n`));
-          process.exit(1);
-        }
-
-        // Pre-flight: no missing sub-selections
+        // Pre-flight: check for missing sub-selections FIRST (these make cart appear empty)
         const pending = findPendingSubSelections(plan.items);
         if (pending.length > 0) {
           process.stderr.write(chalk.red("Cannot checkout — items need sub-selection choices:\n\n"));
@@ -77,6 +70,13 @@ export function registerBookCommands(program: Command): void {
             process.stderr.write(chalk.yellow(`  • ${p.itemTitle} — pick ${subSelectionLabel(p.subSelectionType)}\n`));
           }
           process.stderr.write(chalk.dim(`\nRun: voyagier options ${planId}\n`));
+          process.exit(1);
+        }
+
+        // Pre-flight: cart not empty
+        if (cart.itemCount === 0) {
+          process.stderr.write(chalk.red("Cart is empty. Nothing to book.\n"));
+          process.stderr.write(chalk.dim(`Select flights or hotels first: voyagier search flights --plan ${planId} ...\n`));
           process.exit(1);
         }
 
