@@ -35,6 +35,11 @@ interface DeepItem {
 }
 
 function inferItemType(title: string): "flight" | "hotel" | "other" {
+  return inferTypeFromTitle(title);
+}
+
+/** Shared type inference from title text — used by both inferItemType and typeIcon. */
+function inferTypeFromTitle(title: string): "flight" | "hotel" | "other" {
   const t = title.toLowerCase();
   if (t.includes("hotel")) return "hotel";
   if (t.includes("flight")) return "flight";
@@ -505,7 +510,12 @@ export function registerPlanCommands(program: Command): void {
         let items = data.tripPlan.items;
 
         if (opts.type) {
-          items = items.filter(item => inferItemType(item.title) === opts.type.toLowerCase());
+          const validTypes = ["flight", "hotel"];
+          const normalizedType = opts.type.toLowerCase();
+          if (!validTypes.includes(normalizedType)) {
+            fatal(`Invalid --type "${opts.type}". Valid values: ${validTypes.join(", ")}`);
+          }
+          items = items.filter(item => inferItemType(item.title) === normalizedType);
         }
 
         const deleted: string[] = [];
@@ -631,12 +641,12 @@ export function registerPlanCommands(program: Command): void {
         );
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({
+          jsonOutput({
             success: true,
             planId,
             invitedUser: { id: user.id, username: user.username, name: user.name },
             role: role.name,
-          }, null, 2) + "\n");
+          });
           return;
         }
 
@@ -885,6 +895,12 @@ export function registerPlanCommands(program: Command): void {
     .option("--json", "Output raw JSON")
     .action(async (itemId: string, opts) => {
       try {
+        // Validate exactly one of --up, --down, --remove
+        const flagCount = [opts.up, opts.down, opts.remove].filter(Boolean).length;
+        if (flagCount > 1) {
+          fatal("Specify exactly one of --up, --down, or --remove.");
+        }
+
         if (opts.remove) {
           await graphql<{ deleteTripPlanItemFeedback: boolean }>(
             `mutation RemoveVote($itemId: String!) { deleteTripPlanItemFeedback(itemId: $itemId) }`,
@@ -941,9 +957,9 @@ function typeIcon(type: string, title?: string): string {
   const t = (type ?? "").toLowerCase();
   // API returns "Selection" for all search-created items — infer from title
   if (t === "selection" && title) {
-    const titleLower = title.toLowerCase();
-    if (titleLower.includes("hotel")) return "🏨";
-    if (titleLower.includes("flight")) return "✈️";
+    const inferred = inferTypeFromTitle(title);
+    if (inferred === "hotel") return "🏨";
+    if (inferred === "flight") return "✈️";
     return "📋";
   }
   switch (t) {
