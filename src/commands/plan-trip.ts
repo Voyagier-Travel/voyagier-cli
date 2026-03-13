@@ -63,6 +63,8 @@ function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[]
         return parseDurationMinutes(a.duration) - parseDurationMinutes(b.duration);
       case "stops":
         return parseStops(a.bookingData) - parseStops(b.bookingData);
+      default:
+        return 0;
     }
   });
 }
@@ -132,7 +134,13 @@ export function registerPlanTripCommand(program: Command): void {
         }
 
         const sortBy = (opts.sort ?? "price") as SortField;
+        if (!["price", "duration", "stops"].includes(sortBy)) {
+          fatal(`Invalid --sort value "${sortBy}". Valid: price, duration, stops`);
+        }
         const maxResults = parseInt(opts.maxResults ?? "10", 10);
+        if (!Number.isFinite(maxResults) || maxResults < 1) {
+          fatal("--max-results must be a positive integer.");
+        }
         const baseUrl = deriveBaseUrl(getApiUrl());
 
         // Step 1: Create plan
@@ -266,9 +274,9 @@ export function registerPlanTripCommand(program: Command): void {
           const checkin = opts.checkin ?? opts.depart;
           const checkout = opts.checkout ?? opts.return ?? (opts.depart
             ? (() => {
-                const d = new Date(opts.depart + "T00:00:00");
-                d.setDate(d.getDate() + 1);
-                return d.toISOString().slice(0, 10);
+                const [y, m, d2] = opts.depart.split("-").map(Number);
+                const utc = new Date(Date.UTC(y, m - 1, d2 + 1));
+                return utc.toISOString().slice(0, 10);
               })()
             : undefined);
 
@@ -359,10 +367,10 @@ export function registerPlanTripCommand(program: Command): void {
         if (flightResult) {
           console.log(chalk.bold(`\n✈️  Top ${flightResult.options.length} flight${flightResult.options.length !== 1 ? "s" : ""} (${origin} → ${destination}, sorted by ${sortBy}):`));
           flightResult.options.forEach((opt, i) => {
-            const price = opt.price != null ? chalk.green(` $${opt.price}`) : "";
-            const dur = opt.duration ? `  ${opt.duration}` : "";
-            const airline = opt.airline ? `  ${opt.airline}` : "";
-            console.log(`  [${i + 1}]${airline}${price}  ${opt.summary}${dur}`);
+            // summary already includes airline, price, duration
+            
+            
+            console.log(`  [${i + 1}]  ${opt.summary}`);
           });
           if (flightResult.optionCount > flightResult.options.length) {
             console.log(chalk.dim(`  ... and ${flightResult.optionCount - flightResult.options.length} more`));
@@ -372,7 +380,7 @@ export function registerPlanTripCommand(program: Command): void {
         if (hotelResult) {
           console.log(chalk.bold(`\n🏨  Top ${hotelResult.options.length} hotel${hotelResult.options.length !== 1 ? "s" : ""} (${opts.hotel}):`));
           hotelResult.options.forEach((opt, i) => {
-            const price = opt.price != null ? chalk.green(`  $${formatPrice(opt.price)}/night`) : "";
+            const price = opt.price != null ? chalk.green(`  ${formatPrice(opt.price)}/night`) : "";
             console.log(`  [${i + 1}] ${opt.name}${price}`);
           });
           if (hotelResult.optionCount > hotelResult.options.length) {

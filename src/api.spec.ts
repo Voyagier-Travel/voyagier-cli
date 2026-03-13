@@ -106,23 +106,15 @@ describe("graphql", () => {
       .rejects.toThrow("API error: 500 Internal Server Error");
   });
 
-  it("should exit on 401 unauthorized", async () => {
-    const exitSpy = jest.spyOn(process, "exit").mockImplementation(() => {
-      throw new Error("process.exit(1)");
-    });
-    const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-
+  it("should throw AuthError on 401 unauthorized", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
       status: 401,
       statusText: "Unauthorized",
     } as any);
 
-    await expect(graphql("query { me { id } }")).rejects.toThrow("process.exit(1)");
-    expect(exitSpy).toHaveBeenCalledWith(1);
-
-    exitSpy.mockRestore();
-    stderrSpy.mockRestore();
+    await expect(graphql("query { me { id } }")).rejects.toThrow("Authentication failed");
+    await expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it("should handle dry-run mode without calling fetch", async () => {

@@ -46,6 +46,13 @@ export function registerSelectCommands(program: Command): void {
       }
 
       // Direct mode: --selection-id + (--option-id or --flight-token)
+      if (opts.selectionId && !opts.optionId && !opts.flightToken) {
+        if (opts.json) {
+          jsonError("--selection-id requires --option-id or --flight-token for direct mode.", "INCOMPLETE_DIRECT_MODE");
+        } else {
+          fatal("--selection-id requires --option-id or --flight-token for direct mode.");
+        }
+      }
       if (opts.selectionId && (opts.optionId || opts.flightToken)) {
         try {
           if (opts.flightToken) {
