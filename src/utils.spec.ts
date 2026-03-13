@@ -1,5 +1,5 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { extractFlightToken, buildFlightSummary, buildHotelSummary, formatPrice, validateDate, validateIata, findPendingSubSelections, subSelectionLabel, deriveBaseUrl, openBrowser, warnPastDate } from "./utils.js";
+import { extractFlightToken, buildFlightSummary, buildHotelSummary, formatPrice, validateDate, validateIata, findPendingSubSelections, subSelectionLabel, deriveBaseUrl, openBrowser, warnPastDate, looksLikeAirportCode } from "./utils.js";
 
 describe("extractFlightToken", () => {
   it("should return undefined when bookingData is undefined", () => {
@@ -346,6 +346,47 @@ describe("deriveBaseUrl", () => {
 
   it("handles malformed URLs gracefully", () => {
     expect(deriveBaseUrl("not-a-url")).toBe("https://voyagier.com");
+  });
+});
+
+describe("looksLikeAirportCode", () => {
+  it("returns true for 3-letter uppercase codes", () => {
+    expect(looksLikeAirportCode("BKI")).toBe(true);
+    expect(looksLikeAirportCode("KUL")).toBe(true);
+    expect(looksLikeAirportCode("LAX")).toBe(true);
+  });
+
+  it("returns true for 3-letter lowercase codes", () => {
+    expect(looksLikeAirportCode("bki")).toBe(true);
+    expect(looksLikeAirportCode("lax")).toBe(true);
+  });
+
+  it("returns true for 3-letter mixed-case codes", () => {
+    expect(looksLikeAirportCode("Bki")).toBe(true);
+  });
+
+  it("returns false for city names", () => {
+    expect(looksLikeAirportCode("Kota Kinabalu")).toBe(false);
+    expect(looksLikeAirportCode("Sabah")).toBe(false);
+    expect(looksLikeAirportCode("Kuala Lumpur")).toBe(false);
+  });
+
+  it("returns false for strings longer than 3 letters", () => {
+    expect(looksLikeAirportCode("LAXXX")).toBe(false);
+    expect(looksLikeAirportCode("Bali")).toBe(false);
+  });
+
+  it("returns false for strings shorter than 3 letters", () => {
+    expect(looksLikeAirportCode("LA")).toBe(false);
+    expect(looksLikeAirportCode("")).toBe(false);
+  });
+
+  it("returns false for codes containing digits", () => {
+    expect(looksLikeAirportCode("B1I")).toBe(false);
+  });
+
+  it("ignores surrounding whitespace", () => {
+    expect(looksLikeAirportCode("  BKI  ")).toBe(true);
   });
 });
 
