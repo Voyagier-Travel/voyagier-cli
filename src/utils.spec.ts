@@ -1,5 +1,5 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { extractFlightToken, buildFlightSummary, buildHotelSummary, formatPrice, validateDate, validateIata, findPendingSubSelections, subSelectionLabel, deriveBaseUrl, openBrowser } from "./utils.js";
+import { extractFlightToken, buildFlightSummary, buildHotelSummary, formatPrice, validateDate, validateIata, findPendingSubSelections, subSelectionLabel, deriveBaseUrl, openBrowser, validateDateRange } from "./utils.js";
 
 describe("extractFlightToken", () => {
   it("should return undefined when bookingData is undefined", () => {
@@ -355,4 +355,35 @@ describe("openBrowser", () => {
     // openBrowser swallows errors — just verify it doesn't throw
     expect(() => openBrowser("https://example.com")).not.toThrow();
   });
+
+  describe("validateDateRange", () => {
+    let exitSpy: ReturnType<typeof jest.spyOn>;
+    let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+    beforeEach(() => {
+      exitSpy = jest.spyOn(process, "exit").mockImplementation(() => undefined as never);
+      stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    });
+
+    afterEach(() => {
+      exitSpy.mockRestore();
+      stderrSpy.mockRestore();
+    });
+
+    it("accepts valid range", () => {
+      validateDateRange("2026-06-01", "2026-06-05", "--start", "--end");
+      expect(exitSpy).not.toHaveBeenCalled();
+    });
+
+    it("accepts same date", () => {
+      validateDateRange("2026-06-01", "2026-06-01", "--start", "--end");
+      expect(exitSpy).not.toHaveBeenCalled();
+    });
+
+    it("exits on invalid range", () => {
+      validateDateRange("2026-06-10", "2026-06-05", "--start", "--end");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
 });
