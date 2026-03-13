@@ -1,3 +1,4 @@
+import chalk from "chalk";
 import { getApiUrl, getToken } from "./config.js";
 import { getTraceId } from "./telemetry.js";
 
@@ -41,7 +42,8 @@ export async function graphql<T = unknown>(
 
   if (!res.ok) {
     if (res.status === 401) {
-      process.stderr.write("Authentication failed. Your token may be invalid or expired.\n");
+      process.stderr.write(chalk.red("Authentication failed. Your token may be invalid or expired.\n"));
+      process.stderr.write(chalk.dim("  Run: voyagier login\n"));
       process.exit(1);
     }
     throw new Error(`API error: ${res.status} ${res.statusText}`);
@@ -49,7 +51,14 @@ export async function graphql<T = unknown>(
 
   const json = (await res.json()) as GraphQLResponse<T>;
   if (json.errors?.length) {
-    throw new Error(`GraphQL error: ${json.errors[0].message}`);
+    const err = json.errors[0];
+    const code = (err as Record<string, unknown> & { extensions?: { code?: string } }).extensions?.code;
+    if (code === "UNAUTHENTICATED" || err.message === "Unauthorized") {
+      process.stderr.write(chalk.red("Authentication failed. Your token may be invalid or expired.\n"));
+      process.stderr.write(chalk.dim("  Run: voyagier login\n"));
+      process.exit(1);
+    }
+    throw new Error(`GraphQL error: ${err.message}`);
   }
   if (!json.data) {
     throw new Error("No data returned from API");
@@ -101,7 +110,8 @@ export async function streamChat(
 
   if (!res.ok) {
     if (res.status === 401) {
-      process.stderr.write("Authentication failed.\n");
+      process.stderr.write(chalk.red("Authentication failed.\n"));
+      process.stderr.write(chalk.dim("  Run: voyagier login\n"));
       process.exit(1);
     }
     throw new Error(`Stream error: ${res.status} ${res.statusText}`);
