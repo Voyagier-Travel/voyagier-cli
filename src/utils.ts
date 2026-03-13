@@ -70,6 +70,18 @@ export function validateDate(value: string, flagName: string): void {
 }
 
 /**
+ * Validate that a date range is valid (end is not before start).
+ * Dates are compared as YYYY-MM-DD strings to avoid timezone issues.
+ */
+export function validateDateRange(start: string, end: string, startLabel: string, endLabel: string): void {
+  // Compare as strings (YYYY-MM-DD sorts correctly) to avoid timezone issues
+  if (end < start) {
+    process.stderr.write(chalk.red(`${endLabel} (${end}) cannot be before ${startLabel} (${start}).\n`));
+    process.exit(1);
+  }
+}
+
+/**
  * Validate a 3-letter IATA airport code.
  * Exits with a helpful error if invalid.
  */

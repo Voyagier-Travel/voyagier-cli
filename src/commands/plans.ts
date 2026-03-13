@@ -2,7 +2,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
-import { validateDate, formatPrice, deriveBaseUrl } from "../utils.js";
+import { validateDate, validateDateRange, formatPrice, deriveBaseUrl } from "../utils.js";
 
 interface TripPlan {
   id: string;
@@ -82,6 +82,7 @@ export function registerPlanCommands(program: Command): void {
       try {
         if (opts.start) validateDate(opts.start, "--start");
         if (opts.end) validateDate(opts.end, "--end");
+        if (opts.start && opts.end) validateDateRange(opts.start, opts.end, "--start", "--end");
 
         const input: Record<string, unknown> = { title: opts.title };
         if (opts.start) input.startDate = opts.start;
