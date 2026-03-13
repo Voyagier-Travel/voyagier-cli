@@ -81,4 +81,36 @@ describe("formatHotels", () => {
   it("should return empty string for empty array", () => {
     expect(formatHotels([])).toBe("");
   });
+
+  describe("flight route extraction", () => {
+    it("shows route from bookingData.searchQuery", () => {
+      const result = formatFlights([{
+        name: "BWI to BWI",
+        price: 500,
+        airline: "DL",
+        bookingData: { searchQuery: { origin: "BWI", destination: "SJU" } },
+      }]);
+      expect(result).toContain("BWI to SJU");
+      expect(result).not.toContain("BWI to BWI");
+    });
+
+    it("falls back to name when no searchQuery", () => {
+      const result = formatFlights([{
+        name: "LAX to NRT",
+        price: 1200,
+        airline: "AA",
+      }]);
+      expect(result).toContain("LAX to NRT");
+    });
+
+    it("falls back to name when searchQuery is malformed", () => {
+      const result = formatFlights([{
+        name: "JFK to LHR",
+        price: 800,
+        bookingData: { searchQuery: "not an object" },
+      }]);
+      expect(result).toContain("JFK to LHR");
+    });
+  });
+
 });
