@@ -114,7 +114,7 @@ export function registerBookingsCommands(program: Command): void {
           const icon = typeIcon(r.type);
           const label = typeLabel(r.type);
           const status = statusIcon(r.status);
-          const amount = r.amount ? chalk.green(formatPrice(r.amount / 100)) : "";
+          const amount = r.amount != null ? chalk.green(formatPrice(r.amount / 100)) : "";
           const pnr = r.pnr ? chalk.white(` PNR: ${r.pnr}`) : "";
           const ref = !r.pnr && r.providerReference ? chalk.dim(` Ref: ${r.providerReference}`) : "";
           const dates = r.travelStartDate
@@ -179,7 +179,7 @@ export function registerBookingsCommands(program: Command): void {
         if (r.pnr) console.log(`  PNR:        ${chalk.bold(r.pnr)}`);
         if (r.providerReference) console.log(`  Reference:  ${r.providerReference}`);
         if (r.providerName) console.log(`  Provider:   ${r.providerName}`);
-        if (r.amount) console.log(`  Amount:     ${chalk.green(formatPrice(r.amount / 100))}${r.currency ? ` ${r.currency}` : ""}`);
+        if (r.amount != null) console.log(`  Amount:     ${chalk.green(formatPrice(r.amount / 100))}${r.currency ? ` ${r.currency}` : ""}`);
         if (r.issueDate) console.log(`  Issued:     ${formatDate(r.issueDate)}`);
         if (r.travelStartDate) {
           const dateStr = `${formatDate(r.travelStartDate)}${r.travelEndDate ? ` → ${formatDate(r.travelEndDate)}` : ""}`;
