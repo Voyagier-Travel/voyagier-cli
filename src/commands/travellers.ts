@@ -1,3 +1,4 @@
+import { printPlanFooter } from "../plan-footer.js";
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
@@ -70,7 +71,7 @@ export function registerTravellerCommands(program: Command): void {
         console.log(chalk.dim(`  ID: ${t.id}`));
         console.log(chalk.dim(`  Type: ${t.declaredTravellerType ?? "ADULT"}`));
         if (t.email) console.log(chalk.dim(`  Email: ${t.email}`));
-        console.log(chalk.dim(`  Plan: ${planUrl}`));
+        await printPlanFooter(opts.plan as string);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         process.stderr.write(chalk.red(`Failed to add traveller: ${message}\n`));

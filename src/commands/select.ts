@@ -1,3 +1,4 @@
+import { printPlanFooter } from "../plan-footer.js";
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
@@ -282,7 +283,7 @@ export function registerSelectCommands(program: Command): void {
             }, null, 2) + "\n");
           } else {
             console.log(chalk.green(`\n✓ Return flight selected: ${selected.summary}`));
-            console.log(chalk.dim(`\n  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`));
+            await printPlanFooter(state.tripPlanId);
             console.log(hintFlightSelected());
             console.log(chalk.dim(`  Next: voyagier plans get ${state.tripPlanId}`));
           }
@@ -322,7 +323,7 @@ export function registerSelectCommands(program: Command): void {
           } else {
             console.log(hintHotelSelected());
           }
-          console.log(chalk.dim(`\n  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`));
+          await printPlanFooter(state.tripPlanId);
           console.log(chalk.dim(`  Next: voyagier plans get ${state.tripPlanId}`));
         }
 
