@@ -610,28 +610,69 @@ export function registerPlanCommands(program: Command): void {
   plans
     .command("share <planId>")
     .description("Invite a collaborator to a trip plan")
-    .requiredOption("--user <username>", "Username of the person to invite")
+    .option("--user <username>", "Username of the person to invite")
+    .option("--email <email>", "Email address of the person to invite")
     .option("--role <role>", "Role: viewer, editor, agent", "viewer")
     .option("--json", "Output raw JSON")
     .action(async (planId: string, opts) => {
       try {
-        // Look up user by username
-        const userData = await graphql<{ userPublicProfile: { id: string; name: string; username: string } | null }>(
-          `query LookupUser($username: String!) { userPublicProfile(username: $username) { id name username } }`,
-          { username: opts.user }
-        );
-
-        const user = userData.userPublicProfile;
-        if (!user) {
-          process.stderr.write(chalk.red(`User "${opts.user}" not found.\n`));
+        if (!opts.user && !opts.email) {
+          process.stderr.write(chalk.red("Either --user or --email is required.\n"));
           process.exit(1);
+        }
+        if (opts.user && opts.email) {
+          process.stderr.write(chalk.red("Use either --user or --email, not both.\n"));
+          process.exit(1);
+        }
+
+        let userId: string;
+        let userDisplay: string;
+
+        if (opts.user) {
+          // Look up user by username
+          const userData = await graphql<{ userPublicProfile: { id: string; name: string; username: string } | null }>(
+            `query LookupUser($username: String!) { userPublicProfile(username: $username) { id name username } }`,
+            { username: opts.user }
+          );
+          const user = userData.userPublicProfile;
+          if (!user) {
+            process.stderr.write(chalk.red(`User "${opts.user}" not found.\n`));
+            process.exit(1);
+          }
+          userId = user.id;
+          userDisplay = user.name ?? user.username;
+        } else {
+          // Look up user by email (search users, filter client-side)
+          // TODO: Replace with server-side email filter query when available (VOY-809)
+          const usersData = await graphql<{ users: { items: Array<{ id: string; name: string; email: string; username?: string }> } }>(
+            `query Users { users(limit: 100) { items { id name email username } } }`
+          );
+          const email = (opts.email as string).toLowerCase();
+          const match = usersData.users.items.find((u) => u.email?.toLowerCase() === email);
+
+          if (!match) {
+            // User not found — send platform invitation
+            await graphql<{ createUserInvitation: { id: string } }>(
+              `mutation InviteUser($input: CreateUserInvitationInput!) { createUserInvitation(input: $input) { id } }`,
+              { input: { email: opts.email as string } }
+            );
+            if (opts.json) {
+              jsonOutput({ invited: true, email: opts.email, message: "Platform invitation sent. Re-run after they sign up." });
+              return;
+            }
+            console.log(chalk.yellow(`\n  ✉ No Voyagier account found for ${opts.email}.`));
+            console.log(chalk.dim("    A platform invitation has been sent."));
+            console.log(chalk.dim("    Run this command again once they've signed up.\n"));
+            return;
+          }
+          userId = match.id;
+          userDisplay = match.name || match.email;
         }
 
         // Resolve role name to ID
         const rolesData = await graphql<{ tripPlanRoles: Array<{ id: string; name: string }> }>(
           `{ tripPlanRoles { id name } }`
         );
-
         const roleName = opts.role.charAt(0).toUpperCase() + opts.role.slice(1).toLowerCase();
         const role = rolesData.tripPlanRoles.find(r => r.name === roleName);
         if (!role) {
@@ -644,20 +685,14 @@ export function registerPlanCommands(program: Command): void {
           `mutation Invite($tripPlanId: String!, $input: InviteCollaboratorInput!) {
             inviteTripPlanCollaborator(tripPlanId: $tripPlanId, input: $input) { id }
           }`,
-          { tripPlanId: planId, input: { invitedUserId: user.id, roleId: role.id } }
+          { tripPlanId: planId, input: { invitedUserId: userId, roleId: role.id } }
         );
 
         if (opts.json) {
-          jsonOutput({
-            success: true,
-            planId,
-            invitedUser: { id: user.id, username: user.username, name: user.name },
-            role: role.name,
-          });
+          jsonOutput({ success: true, planId, invitedUser: userDisplay, role: role.name });
           return;
         }
-
-        console.log(chalk.green(`\n  ✓ Invited ${chalk.bold(user.name ?? user.username)} as ${role.name}\n`));
+        console.log(chalk.green(`\n  ✓ Invited ${chalk.bold(userDisplay)} as ${role.name}\n`));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         process.stderr.write(chalk.red(`Failed to share plan: ${message}\n`));
