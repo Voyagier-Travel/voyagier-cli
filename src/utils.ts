@@ -192,3 +192,30 @@ export function deriveBaseUrl(apiUrl: string): string {
     return "https://voyagier.com";
   }
 }
+
+/**
+ * Format an ISO date string (or YYYY-MM-DD) for human display.
+ * e.g. "2026-06-15T00:00:00.000Z" → "Jun 15, 2026"
+ */
+export function formatDateHuman(iso?: string): string | null {
+  if (!iso) return null;
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return null;
+  return `${months[m - 1]} ${d}, ${y}`;
+}
+
+/**
+ * Format a date range for human display.
+ * e.g. "Jun 15 – Jul 6, 2026" or "Jun 15-19, 2026"
+ */
+export function formatDateRange(start?: string, end?: string): string {
+  if (!start) return "";
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const [sy, sm, sd] = start.slice(0, 10).split("-").map(Number);
+  if (!end) return `${months[sm - 1]} ${sd}, ${sy}`;
+  const [ey, em, ed] = end.slice(0, 10).split("-").map(Number);
+  if (sy === ey && sm === em) return `${months[sm - 1]} ${sd}-${ed}, ${sy}`;
+  if (sy === ey) return `${months[sm - 1]} ${sd} – ${months[em - 1]} ${ed}, ${sy}`;
+  return `${months[sm - 1]} ${sd}, ${sy} – ${months[em - 1]} ${ed}, ${ey}`;
+}
