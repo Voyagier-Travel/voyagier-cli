@@ -234,6 +234,12 @@ export function registerOptionsCommands(program: Command): void {
         process.exit(1);
       }
 
+      if (state.results.length === 0) {
+        process.stderr.write(chalk.red("No pending sub-selections found. All items may already have selections chosen.\n"));
+        process.stderr.write(chalk.dim("  Run: voyagier options <planId> to check current state\n"));
+        process.exit(1);
+      }
+
       const result = state.results.find(r => r.index === num);
       if (!result) {
         process.stderr.write(chalk.red(`Option [${num}] not found. Valid range: 1-${state.results.length}\n`));
