@@ -6,6 +6,7 @@ import { formatPrice, subSelectionLabel, deriveBaseUrl } from "../utils.js";
 import { hintCabinClass, hintHotelRoom } from "../hints.js";
 import { saveOptionsState, loadOptionsState, clearOptionsState } from "../state.js";
 import { GET_PLAN_DEEP, SET_SUB_SELECTION, REFRESH_SUB_SELECTION } from "../queries.js";
+import { progress } from "../output.js";
 
 interface SubSelectionOption {
   id: string;
@@ -92,7 +93,7 @@ export function registerOptionsCommands(program: Command): void {
 
         // If --refresh, refresh all sub-selections first
         if (opts.refresh) {
-          process.stderr.write(chalk.dim("Refreshing options from provider...\n"));
+          progress("Refreshing options from provider...");
           for (const entry of allSubs) {
             try {
               const refreshed = await graphql<{

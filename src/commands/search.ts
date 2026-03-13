@@ -5,6 +5,7 @@ import { getApiUrl, getHomeAirports } from "../config.js";
 import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, warnPastDate, validateIata, deriveBaseUrl } from "../utils.js";
+import { progress } from "../output.js";
 
 interface SelectOption {
   id: string;
@@ -134,7 +135,7 @@ export function registerSearchCommands(program: Command): void {
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
 
-        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Resolving travellers...\n"));
+        if (!dryRun && !opts.json) progress("Resolving travellers...");
 
         const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
         if (!dryRun && travellerIds.length === 0) {
@@ -143,7 +144,7 @@ export function registerSearchCommands(program: Command): void {
           process.exit(1);
         }
 
-        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Searching flights...\n"));
+        if (!dryRun && !opts.json) progress("Searching flights...");
         const destination = opts.to.toUpperCase();
         const isRoundTrip = !!opts.return;
 
@@ -254,7 +255,7 @@ export function registerSearchCommands(program: Command): void {
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
 
-        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Resolving travellers...\n"));
+        if (!dryRun && !opts.json) progress("Resolving travellers...");
 
         const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
         if (!dryRun && travellerIds.length === 0) {
@@ -263,7 +264,7 @@ export function registerSearchCommands(program: Command): void {
           process.exit(1);
         }
 
-        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Searching hotels...\n"));
+        if (!dryRun && !opts.json) progress("Searching hotels...");
 
         const adults = parseInt(opts.guests, 10);
         if (!Number.isFinite(adults) || adults < 1) {

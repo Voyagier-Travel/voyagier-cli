@@ -6,6 +6,7 @@ import { loadSearchState, saveSearchState, clearSearchState, isSearchStateStale 
 import { formatFlights } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, deriveBaseUrl } from "../utils.js";
 import { hintFlightSelected, hintHotelSelected } from "../hints.js";
+import { progress, warn, fatal } from "../output.js";
 
 interface SelectionResponse {
   id: string;
@@ -42,14 +43,12 @@ export function registerSelectCommands(program: Command): void {
 
       const state = loadSearchState();
       if (!state) {
-        process.stderr.write(chalk.red("No search results cached. Run a search first:\n"));
-        process.stderr.write(chalk.dim("  voyagier search flights --plan <id> --from LAX --to NRT --date 2026-04-15\n"));
-        process.exit(1);
+        fatal("No search results cached. Run a search first:\n  voyagier search flights --plan <id> --from LAX --to NRT --date 2026-04-15");
       }
 
       if (isSearchStateStale(state)) {
-        process.stderr.write(chalk.yellow("⚠ Search results are over 2 hours old and may have expired.\n"));
-        process.stderr.write(chalk.dim("  Re-run your search for current pricing.\n\n"));
+        warn("Search results are over 2 hours old and may have expired.");
+        progress("  Re-run your search for current pricing.\n");
       }
 
       // --info mode: show details without selecting
@@ -99,7 +98,7 @@ export function registerSelectCommands(program: Command): void {
             process.exit(1);
           }
 
-          if (!opts.json) process.stderr.write(chalk.dim("Selecting departure flight...\n"));
+          if (!opts.json) progress("Selecting departure flight...");
 
           const data = await graphql<{ selectDepartureFlight: FlightSelectionResponse }>(
             `mutation SelectDeparture($selectionId: String!, $flightToken: String!) {
@@ -156,7 +155,7 @@ export function registerSelectCommands(program: Command): void {
             process.exit(1);
           }
 
-          if (!opts.json) process.stderr.write(chalk.dim("Selecting return flight...\n"));
+          if (!opts.json) progress("Selecting return flight...");
 
           await graphql<{ selectReturnFlight: FlightSelectionResponse }>(
             `mutation SelectReturn($selectionId: String!, $flightToken: String!) {
@@ -187,7 +186,7 @@ export function registerSelectCommands(program: Command): void {
         }
 
         // One-way flight or hotel: generic selection
-        if (!opts.json) process.stderr.write(chalk.dim("Selecting option...\n"));
+        if (!opts.json) progress("Selecting option...");
 
         const data = await graphql<{ setTripPlanSelectedOption: SelectionResponse }>(
           `mutation SetSelected($selectionId: String!, $optionId: String!) {

@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
 import { validateDate, deriveBaseUrl } from "../utils.js";
+import { fatal } from "../output.js";
 
 /** Convert an enum value to PascalCase (e.g. "adult" → "Adult", "MALE" → "Male"). */
 function toPascalCase(value: string): string {

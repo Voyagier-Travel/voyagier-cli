@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
 import { validateDate, warnPastDate, formatPrice, deriveBaseUrl } from "../utils.js";
+import { fatal } from "../output.js";
 
 interface TripPlan {
   id: string;
@@ -129,12 +130,10 @@ export function registerPlanCommands(program: Command): void {
         const limit = parseInt(opts.limit, 10);
 
         if (!Number.isFinite(page) || page < 1) {
-          process.stderr.write(chalk.red("--page must be an integer ≥ 1.\n"));
-          process.exit(1);
+          fatal("--page must be an integer ≥ 1.");
         }
         if (!Number.isFinite(limit) || limit < 1) {
-          process.stderr.write(chalk.red("--limit must be an integer ≥ 1.\n"));
-          process.exit(1);
+          fatal("--limit must be an integer ≥ 1.");
         }
 
         const data = await graphql<PaginatedTripPlans>(
