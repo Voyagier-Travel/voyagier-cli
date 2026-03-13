@@ -1,3 +1,4 @@
+import { printPlanFooter, getPlanSummary } from "../plan-footer.js";
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
@@ -148,7 +149,8 @@ export function registerPlanCommands(program: Command): void {
         const plan = data.createTripPlan;
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ ...plan, url: planUrl(plan.id) }, null, 2) + "\n");
+          const planSummary = await getPlanSummary(plan.id);
+          jsonOutput({ ...plan, url: planUrl(plan.id), planSummary });
           return;
         }
 
@@ -160,6 +162,7 @@ export function registerPlanCommands(program: Command): void {
           if (dateRange) console.log(chalk.dim(`  Dates: ${dateRange}`));
         }
         console.log(chalk.dim(`\n  Next: voyagier travellers add --plan ${plan.id} --first <name> --last <name> --type ADULT`));
+        await printPlanFooter(plan.id);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         process.stderr.write(chalk.red(`Failed to create plan: ${message}\n`));

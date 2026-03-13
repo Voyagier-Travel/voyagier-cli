@@ -1,3 +1,4 @@
+import { printPlanFooter } from "../plan-footer.js";
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
@@ -220,7 +221,7 @@ export function registerSearchCommands(program: Command): void {
         const sortLabel = sortBy !== "default" ? ` (sorted by ${sortBy})` : "";
         console.log(chalk.bold(`\n${options.length} flight option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
         console.log(formatFlights(options));
-        console.log(chalk.dim(`\n  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`));
+        await printPlanFooter(result.item.tripPlanId);
         if (isRoundTrip) {
           console.log(chalk.dim(`  Note: Select departure first, then return.`));
         }
@@ -348,7 +349,7 @@ export function registerSearchCommands(program: Command): void {
         const sortLabel = sortBy !== "default" ? ` (sorted by ${sortBy})` : "";
         console.log(chalk.bold(`\n${options.length} hotel option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
         console.log(formatHotels(options));
-        console.log(chalk.dim(`\n  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`));
+        await printPlanFooter(result.item.tripPlanId);
         console.log(chalk.dim(`  Next: voyagier select <number>`));
       } catch (err) {
         handleSearchError(err);
