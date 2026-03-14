@@ -15,6 +15,8 @@ export interface SearchState {
   selectionId: string;
   isRoundTrip?: boolean;
   awaitingReturn?: boolean;
+  origin?: string;
+  destination?: string;
   results: SearchResult[];
   timestamp: string;
 }

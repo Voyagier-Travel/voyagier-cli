@@ -51,7 +51,17 @@ export async function graphql<T = unknown>(
     if (res.status === 401) {
       throw new AuthError("Authentication failed. Your token may be invalid or expired. Run: voyagier login");
     }
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
+    // Try to extract GraphQL error details from the response body
+    let detail = "";
+    try {
+      const errorBody = (await res.json()) as GraphQLResponse;
+      if (errorBody.errors?.length) {
+        detail = " — " + errorBody.errors.map(e => e.message).join("; ");
+      }
+    } catch {
+      // Response body wasn't valid JSON; fall through to generic message
+    }
+    throw new Error(`API error: ${res.status} ${res.statusText}${detail}`);
   }
 
   const json = (await res.json()) as GraphQLResponse<T>;
