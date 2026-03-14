@@ -232,24 +232,31 @@ export function registerSelectCommands(program: Command): void {
             console.log(hintFlightSelected());
           }
 
-          // Save return options to state
+          // Save return options to state (swap origin/destination for return leg)
+          const returnOrigin = state.destination;
+          const returnDestination = state.origin;
           const returnResults = returnOptions.map((opt, i) => ({
             index: i + 1,
             optionId: opt.id,
             flightToken: extractFlightToken(opt.bookingData),
-            summary: buildFlightSummary(opt),
+            summary: buildFlightSummary(opt, returnOrigin, returnDestination),
           }));
 
           saveSearchState({
             ...state,
             awaitingReturn: true,
+            origin: returnOrigin,
+            destination: returnDestination,
             results: returnResults,
             timestamp: new Date().toISOString(),
           });
 
           if (!opts.json && returnResults.length > 0) {
             console.log(chalk.bold(`\nNow select your return flight:\n`));
-            console.log(formatFlights(returnOptions));
+            const routeOverride = returnOrigin && returnDestination
+              ? { origin: returnOrigin, destination: returnDestination }
+              : undefined;
+            console.log(formatFlights(returnOptions, routeOverride));
             console.log(chalk.dim(`\nRun: voyagier select <number>`));
           }
           return;

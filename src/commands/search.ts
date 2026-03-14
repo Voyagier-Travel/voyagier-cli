@@ -198,6 +198,8 @@ export function registerSearchCommands(program: Command): void {
           tripPlanId: result.item.tripPlanId,
           selectionId: result.selection.id,
           isRoundTrip,
+          origin,
+          destination,
           results: searchResults,
           timestamp: new Date().toISOString(),
         });
@@ -241,6 +243,7 @@ export function registerSearchCommands(program: Command): void {
     .option("--currency <code>", "Currency code", "USD")
     .option("--guests <n>", "Number of adult guests", "1")
     .option("--sort <field>", "Sort by: price, default", "default")
+    .option("--replace", "Replace existing hotel items for this location (removes old selections)")
     .option("--json", "Output raw JSON")
     .option("--dry-run", "Show the GraphQL query without executing")
     .option("--verbose", "Show request details sent to the API")
@@ -263,6 +266,48 @@ export function registerSearchCommands(program: Command): void {
           process.stderr.write(chalk.red("No travellers on this plan. Add one first:\n"));
           process.stderr.write(chalk.dim(`  voyagier travellers add --plan ${tripPlanId} --first <name> --last <name> --type ADULT\n`));
           process.exit(1);
+        }
+
+        // Check for existing hotel items and handle --replace
+        if (!dryRun && opts.replace) {
+          try {
+            const planData = await graphql<{ tripPlan: { items: Array<{ id: string; title: string }> } }>(
+              `query GetPlan($id: String!) { tripPlan(id: $id) { items { id title } } }`,
+              { id: tripPlanId }
+            );
+            const hotelItems = planData.tripPlan.items.filter(
+              (item) => item.title.toLowerCase().includes("hotel")
+            );
+            if (hotelItems.length > 0) {
+              for (const item of hotelItems) {
+                await graphql<{ deleteTripPlanItem: boolean }>(
+                  `mutation DeleteItem($id: String!) { deleteTripPlanItem(id: $id) }`,
+                  { id: item.id }
+                );
+              }
+              if (!opts.json) {
+                process.stderr.write(chalk.dim(`Replaced ${hotelItems.length} existing hotel item${hotelItems.length > 1 ? "s" : ""}.\n`));
+              }
+            }
+          } catch {
+            // Non-fatal — continue with search even if cleanup fails
+          }
+        } else if (!dryRun) {
+          // Warn if there are already hotel items (without --replace)
+          try {
+            const planData = await graphql<{ tripPlan: { items: Array<{ id: string; title: string }> } }>(
+              `query GetPlan($id: String!) { tripPlan(id: $id) { items { id title } } }`,
+              { id: tripPlanId }
+            );
+            const hotelItems = planData.tripPlan.items.filter(
+              (item) => item.title.toLowerCase().includes("hotel")
+            );
+            if (hotelItems.length > 0 && !opts.json) {
+              process.stderr.write(chalk.yellow(`⚠ This plan already has ${hotelItems.length} hotel item${hotelItems.length > 1 ? "s" : ""}. Use --replace to remove them first.\n`));
+            }
+          } catch {
+            // Non-fatal
+          }
         }
 
         if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Searching hotels...\n"));

@@ -91,7 +91,7 @@ export function registerAuthCommands(program: Command): void {
   auth
     .command("set-token <token>")
     .description("Save a personal access token")
-    .option("--url <apiUrl>", "API base URL", "https://voyagier.com")
+    .option("--url <apiUrl>", "API base URL", "https://voyagier.com/api")
     .action((token: string, opts) => {
       saveCredentials(token, opts.url);
       console.log(chalk.green("✓ Token saved."));
@@ -160,7 +160,7 @@ export function registerAuthCommands(program: Command): void {
   auth
     .command("login")
     .description("Log in to Voyagier")
-    .option("--url <apiUrl>", "API base URL", "https://voyagier.com")
+    .option("--url <apiUrl>", "API base URL", "https://voyagier.com/api")
     .action(async (opts) => {
       const apiUrl = opts.url as string;
       const isInteractive = process.stdin.isTTY === true && !process.env.CI;
@@ -306,14 +306,18 @@ export function registerAuthCommands(program: Command): void {
           if (suggestion) {
             console.log(chalk.dim(`     Your city is ${city}. Common airports: ${suggestion.join(", ")}`));
           }
-          const airportInput = await prompt(rl!, "     Enter your home airport(s), comma-separated (e.g. BWI,DCA): ");
-          if (airportInput) {
-            const codes = airportInput.split(",").map(c => c.trim().toUpperCase()).filter(Boolean);
-            const invalid = codes.filter(c => !validateIataCode(c));
-            if (invalid.length > 0) {
-              console.log(chalk.yellow(`     ⚠ Skipping invalid code(s): ${invalid.join(", ")}`));
+          if (rl) {
+            const airportInput = await prompt(rl, "     Enter your home airport(s), comma-separated (e.g. BWI,DCA): ");
+            if (airportInput) {
+              const codes = airportInput.split(",").map(c => c.trim().toUpperCase()).filter(Boolean);
+              const invalid = codes.filter(c => !validateIataCode(c));
+              if (invalid.length > 0) {
+                console.log(chalk.yellow(`     ⚠ Skipping invalid code(s): ${invalid.join(", ")}`));
+              }
+              userCtx.homeAirports = codes.filter(c => validateIataCode(c));
             }
-            userCtx.homeAirports = codes.filter(c => validateIataCode(c));
+          } else {
+            console.log(chalk.dim("     Non-interactive mode. Use: voyagier auth setup --airports BWI,DCA"));
           }
         }
         if (userCtx.homeAirports.length > 0) {
@@ -342,6 +346,9 @@ export function registerAuthCommands(program: Command): void {
           } else {
             userCtx.preferredCabin = "economy";
           }
+        } else if (!opts.cabin) {
+          userCtx.preferredCabin = "economy";
+          console.log(chalk.dim("     Defaulting to Economy. Use: voyagier auth setup --cabin business"));
         }
         if (userCtx.preferredCabin) {
           console.log(chalk.green(`     ✓ ${CABIN_LABELS[userCtx.preferredCabin]}\n`));
@@ -370,6 +377,8 @@ export function registerAuthCommands(program: Command): void {
             } else {
               console.log(chalk.dim("     Skipped.\n"));
             }
+          } else {
+            console.log(chalk.dim("     Skipped (non-interactive).\n"));
           }
         }
 
@@ -410,6 +419,8 @@ export function registerAuthCommands(program: Command): void {
               userCtx.frequentFlyerPrograms = programs;
             }
             console.log();
+          } else {
+            console.log(chalk.dim("     Skipped (non-interactive).\n"));
           }
         }
 

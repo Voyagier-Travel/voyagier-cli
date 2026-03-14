@@ -652,8 +652,8 @@ export function registerPlanCommands(program: Command): void {
 
           if (!match) {
             // User not found — send platform invitation
-            await graphql<{ createUserInvitation: { id: string } }>(
-              `mutation InviteUser($input: CreateUserInvitationInput!) { createUserInvitation(input: $input) { id } }`,
+            await graphql<{ createUserInvitation: { __typename: string } }>(
+              `mutation InviteUser($input: CreateUserInvitationInput!) { createUserInvitation(createUserInvitationInput: $input) { __typename } }`,
               { input: { email: opts.email as string } }
             );
             if (opts.json) {
