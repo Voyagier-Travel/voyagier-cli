@@ -35,12 +35,14 @@ function extractRoute(opt: FlightOption): string {
   return opt.name;
 }
 
-export function formatFlights(options: FlightOption[]): string {
+export function formatFlights(options: FlightOption[], overrideRoute?: { origin: string; destination: string }): string {
   return options
     .map((opt, i) => {
       const idx = chalk.bold.cyan(`[${i + 1}]`);
       const airline = opt.airline ? chalk.white(opt.airline) : "";
-      const route = chalk.white(extractRoute(opt));
+      const route = chalk.white(overrideRoute
+        ? `${overrideRoute.origin} to ${overrideRoute.destination}`
+        : extractRoute(opt));
       const price = opt.price != null ? chalk.green(formatPrice(opt.price)) : "";
       const duration = opt.duration ? chalk.dim(opt.duration) : "";
       const time = opt.time ? chalk.dim(opt.time) : "";
