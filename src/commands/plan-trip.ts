@@ -6,6 +6,7 @@ import { validateDate, warnPastDate, validateIata, extractFlightToken, buildFlig
 import { progress, warn, fatal, jsonOutput } from "../output.js";
 import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
 import { resolveAirport, searchAirports } from "../data/airports.js";
+import { findMetroArea } from "../data/metro-areas.js";
 
 interface TripPlan {
   id: string;
@@ -77,6 +78,16 @@ function resolvePlanAirport(value: string, flagName: string, quiet: boolean): st
   if (/^[A-Za-z]{3}$/.test(value.trim())) {
     return value.toUpperCase();
   }
+  // Check metro areas first
+  const metro = findMetroArea(value);
+  if (metro) {
+    if (!quiet && metro.airports.length > 1) {
+      progress(`${metro.name} airports: ${metro.airports.join(", ")}. Using ${metro.airports[0]} (primary) for ${flagName}`);
+    } else if (!quiet) {
+      progress(`Using ${metro.airports[0]} (${metro.name}) for ${flagName}`);
+    }
+    return metro.airports[0];
+  }
   const matches = searchAirports(value);
   if (matches.length === 0) {
     fatal(`No airports found for ${flagName}: "${value}". Use a 3-letter IATA code or run: voyagier search airports "${value}"`);
@@ -87,7 +98,7 @@ function resolvePlanAirport(value: string, flagName: string, quiet: boolean): st
     }
     return matches[0].code;
   }
-  const codes = matches.map((m) => m.code).join(", ");
+  const codes = matches.slice(0, 10).map((m) => m.code).join(", ");
   fatal(`Multiple airports found for ${flagName}: "${value}". Specify a code: ${codes}`);
 }
 
