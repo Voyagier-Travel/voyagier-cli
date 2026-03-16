@@ -2,7 +2,7 @@ import chalk from "chalk";
 import { getApiUrl, getToken } from "./config.js";
 import { getTraceId } from "./telemetry.js";
 import { verbose } from "./verbose.js";
-import { CliError, CliErrorCode } from "./errors.js";
+import { CliError, CliErrorCode, authFailedMessage } from "./errors.js";
 
 export class AuthError extends Error {
   constructor(message: string) {
@@ -61,7 +61,7 @@ export async function graphql<T = unknown>(
 
   if (!res.ok) {
     if (res.status === 401) {
-      throw new CliError(CliErrorCode.AUTH_FAILED, "Authentication failed. Your token may be invalid or expired. Run: voyagier login");
+      throw new CliError(CliErrorCode.AUTH_FAILED, authFailedMessage("Authentication failed. Your token may be invalid or expired."));
     }
     // Try to extract GraphQL error details from the response body
     let detail = "";
@@ -84,7 +84,7 @@ export async function graphql<T = unknown>(
     const err = json.errors[0];
     const code = (err as Record<string, unknown> & { extensions?: { code?: string } }).extensions?.code;
     if (code === "UNAUTHENTICATED" || err.message === "Unauthorized") {
-      throw new CliError(CliErrorCode.AUTH_FAILED, "Authentication failed. Your token may be invalid or expired. Run: voyagier login");
+      throw new CliError(CliErrorCode.AUTH_FAILED, authFailedMessage("Authentication failed. Your token may be invalid or expired."));
     }
     const hint = err.message.includes("Cannot query field")
       ? "\nHint: Your CLI may be out of date. Check: voyagier --version"
@@ -141,7 +141,7 @@ export async function streamChat(
 
   if (!res.ok) {
     if (res.status === 401) {
-      throw new CliError(CliErrorCode.AUTH_FAILED, "Authentication failed.");
+      throw new CliError(CliErrorCode.AUTH_FAILED, authFailedMessage("Authentication failed."));
     }
     throw new CliError(CliErrorCode.API_ERROR, `Stream error: ${res.status} ${res.statusText}`);
   }

@@ -7,7 +7,7 @@ import { openBrowser } from "../utils.js";
 import { saveCredentials, getToken, getApiUrl, clearCredentials, credentialsExist, saveUserContext, getUserContext } from "../config.js";
 import type { UserContext } from "../config.js";
 import { graphql } from "../api.js";
-import { CliError, CliErrorCode } from "../errors.js";
+import { CliError, CliErrorCode, authFailedMessage } from "../errors.js";
 
 // City → common airport suggestions
 const CITY_AIRPORTS: Record<string, string[]> = {
@@ -94,7 +94,7 @@ export function registerAuthCommands(program: Command): void {
   auth
     .command("set-token <token>")
     .description("Save a personal access token")
-    .option("--url <apiUrl>", "API base URL", "https://voyagier.com/api")
+    .option("--url <apiUrl>", "API base URL", "https://travel.voyagier.com/api")
     .action((token: string, opts) => {
       saveCredentials(token, opts.url);
       console.log(chalk.green("✓ Token saved."));
@@ -107,8 +107,7 @@ export function registerAuthCommands(program: Command): void {
     .description("Check authentication status and profile")
     .action(async () => {
       if (!credentialsExist()) {
-        console.log(chalk.red("✗ Not authenticated."));
-        console.log(chalk.dim("  Run: voyagier auth set-token <token>"));
+        console.log(chalk.red(authFailedMessage("Not authenticated.")));
         return;
       }
 
@@ -163,24 +162,27 @@ export function registerAuthCommands(program: Command): void {
   auth
     .command("login")
     .description("Log in to Voyagier")
-    .option("--url <apiUrl>", "API base URL", "https://voyagier.com/api")
+    .option("--url <apiUrl>", "API base URL", "https://travel.voyagier.com/api")
     .action(async (opts) => {
       const apiUrl = opts.url as string;
       const isInteractive = process.stdin.isTTY === true && !process.env.CI;
 
       console.log(chalk.bold("\nVoyagier CLI Login\n"));
 
+      // Derive web URL from API URL (strip /api suffix)
+      const webUrl = apiUrl.replace(/\/api\/?$/, "");
+
       if (!isInteractive) {
         // Non-interactive: just show instructions
         console.log("  Generate a Personal Access Token at:\n");
-        console.log(chalk.cyan(`    ${apiUrl}/settings\n`));
+        console.log(chalk.cyan(`    ${webUrl}/settings\n`));
         console.log("  Then run:\n");
         console.log(chalk.cyan("    voyagier auth set-token <your-token>\n"));
         return;
       }
 
       // Interactive: open browser + prompt for token
-      const settingsUrl = `${apiUrl}/settings`;
+      const settingsUrl = `${webUrl}/settings`;
       console.log(`  1. Go to ${chalk.cyan(settingsUrl)}`);
       console.log(`  2. Generate a Personal Access Token`);
       console.log(`  3. Paste it below\n`);
@@ -240,8 +242,7 @@ export function registerAuthCommands(program: Command): void {
     .option("--skip-ff", "Skip frequent flyer setup")
     .action(async (opts) => {
       if (!credentialsExist()) {
-        console.log(chalk.red("✗ Not authenticated."));
-        console.log(chalk.dim("  Run: voyagier auth set-token <token>  or  voyagier auth login"));
+        console.log(chalk.red(authFailedMessage("Not authenticated.")));
         return;
       }
 
