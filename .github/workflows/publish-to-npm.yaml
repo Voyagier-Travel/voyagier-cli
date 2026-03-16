@@ -1,0 +1,14 @@
+  name: Publish to NPM
+  on:
+    workflow_dispatch:
+
+  permissions:
+    contents: write
+    id-token: write
+
+  jobs:
+    publish:
+      uses: Voyagier-Travel/voyagier-workflows/.github/workflows/publish-to-npm.yaml@main
+      with:                                                                                                                                                                                  
+        access: public                                                                                                                                                                       
+      secrets: inherit
