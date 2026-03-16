@@ -1,6 +1,7 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { existsSync, unlinkSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
+import { CliError, CliErrorCode } from "./errors.js";
 import { saveCredentials, CONFIG_DIR } from "./config.js";
 import { graphql } from "./api.js";
 
@@ -113,8 +114,14 @@ describe("graphql", () => {
       statusText: "Unauthorized",
     } as any);
 
-    await expect(graphql("query { me { id } }")).rejects.toThrow("Authentication failed");
-    await expect(mockFetch).toHaveBeenCalledTimes(1);
+    try {
+      await graphql("query { me { id } }");
+      fail("Expected CliError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.AUTH_FAILED);
+    }
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it("should handle dry-run mode without calling fetch", async () => {
@@ -267,23 +274,20 @@ describe("graphql", () => {
       expect(chunks).toEqual(["Hello from AI"]);
     });
 
-    it("should exit on 401", async () => {
-      const exitSpy = jest.spyOn(process, "exit").mockImplementation(() => {
-        throw new Error("process.exit(1)");
-      });
-      const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-
+    it("should throw CliError on 401", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 401,
         statusText: "Unauthorized",
       } as any);
 
-      await expect(streamChatFn("s1", "test", { onTextDelta() {} }))
-        .rejects.toThrow("process.exit(1)");
-
-      exitSpy.mockRestore();
-      stderrSpy.mockRestore();
+      try {
+        await streamChatFn("s1", "test", { onTextDelta() {} });
+        fail("Expected CliError");
+      } catch (err) {
+        expect(err).toBeInstanceOf(CliError);
+        expect((err as CliError).code).toBe(CliErrorCode.AUTH_FAILED);
+      }
     });
 
     it("should throw on non-401 error", async () => {

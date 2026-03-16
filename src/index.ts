@@ -15,6 +15,7 @@ import { registerBookingsCommands } from "./commands/bookings.js";
 import { registerPlanTripCommand } from "./commands/plan-trip.js";
 import { trackCommand, getTraceId, isTelemetryEnabled } from "./telemetry.js";
 import { credentialsExist } from "./config.js";
+import { CliError } from "./errors.js";
 import chalk from "chalk";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")) as { version: string };
@@ -88,4 +89,23 @@ if (userArgs.length === 0 && !credentialsExist()) {
   process.exit(0);
 }
 
-program.parse();
+try {
+  await program.parseAsync();
+} catch (err) {
+  if (err instanceof CliError) {
+    const isJson = process.argv.includes("--json");
+    if (isJson) {
+      process.stdout.write(JSON.stringify({ error: true, code: err.code, message: err.message }, null, 2) + "\n");
+    } else {
+      process.stderr.write(chalk.red(err.message + "\n"));
+    }
+    if (process.argv.includes("--stacktrace") && err.stack) {
+      process.stderr.write(err.stack + "\n");
+    }
+    process.exit(1);
+  } else {
+    const stack = err instanceof Error ? (err.stack ?? String(err)) : String(err);
+    process.stderr.write(stack + "\n");
+    process.exit(2);
+  }
+}

@@ -7,7 +7,8 @@ import { loadSearchState, saveSearchState, clearSearchState, isSearchStateStale 
 import { formatFlights } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, deriveBaseUrl } from "../utils.js";
 import { hintFlightSelected, hintHotelSelected } from "../hints.js";
-import { progress, warn, fatal, jsonOutput, jsonError } from "../output.js";
+import { progress, warn, fatal, jsonOutput } from "../output.js";
+import { CliError, CliErrorCode } from "../errors.js";
 
 interface SelectionResponse {
   id: string;
@@ -49,11 +50,7 @@ export function registerSelectCommands(program: Command): void {
 
       // Direct mode: --selection-id + (--option-id or --flight-token)
       if (opts.selectionId && !opts.optionId && !opts.flightToken) {
-        if (opts.json) {
-          jsonError("--selection-id requires --option-id or --flight-token for direct mode.", "INCOMPLETE_DIRECT_MODE");
-        } else {
-          fatal("--selection-id requires --option-id or --flight-token for direct mode.");
-        }
+        throw new CliError(CliErrorCode.VALIDATION, "--selection-id requires --option-id or --flight-token for direct mode.");
       }
       if (opts.selectionId && (opts.optionId || opts.flightToken)) {
         try {
@@ -113,11 +110,7 @@ export function registerSelectCommands(program: Command): void {
                 console.log(hintFlightSelected());
               }
             } else {
-              if (opts.json) {
-                jsonError("--phase departure|return required with --flight-token", "MISSING_PHASE");
-              } else {
-                fatal("--phase departure|return required with --flight-token");
-              }
+              throw new CliError(CliErrorCode.VALIDATION, "--phase departure|return required with --flight-token");
             }
           } else {
             // Hotel or one-way flight via explicit option ID
@@ -149,13 +142,9 @@ export function registerSelectCommands(program: Command): void {
             }
           }
         } catch (err) {
+          if (err instanceof CliError) throw err;
           const message = err instanceof Error ? err.message : String(err);
-          if (opts.json) {
-            jsonError(message, "SELECTION_FAILED");
-          } else {
-            process.stderr.write(chalk.red(`Selection failed: ${message}\n`));
-            process.exit(1);
-          }
+          throw new CliError(CliErrorCode.API_ERROR, `Selection failed: ${message}`);
         }
         return;
       }
@@ -176,8 +165,7 @@ export function registerSelectCommands(program: Command): void {
       if (infoIdx !== null) {
         const result = state.results.find((r) => r.index === infoIdx);
         if (!result) {
-          process.stderr.write(chalk.red(`No option [${infoIdx}]. Valid range: 1-${state.results.length}\n`));
-          process.exit(1);
+          throw new CliError(CliErrorCode.NOT_FOUND, `No option [${infoIdx}]. Valid range: 1-${state.results.length}`);
         }
         if (opts.json) {
           process.stdout.write(JSON.stringify(result, null, 2) + "\n");
@@ -192,30 +180,24 @@ export function registerSelectCommands(program: Command): void {
 
       // Selection mode
       if (!number) {
-        process.stderr.write(chalk.red("Please specify an option number: voyagier select <number>\n"));
-        process.stderr.write(chalk.dim(`  Available: 1-${state.results.length}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.VALIDATION, `Please specify an option number: voyagier select <number>\n  Available: 1-${state.results.length}`);
       }
 
       const idx = parseInt(number, 10);
       if (isNaN(idx) || idx < 1) {
-        process.stderr.write(chalk.red(`Invalid selection: "${number}". Please specify a number (1-${state.results.length}).\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.VALIDATION, `Invalid selection: "${number}". Please specify a number (1-${state.results.length}).`);
       }
       const selected = state.results.find((r) => r.index === idx);
       if (!selected) {
-        process.stderr.write(chalk.red(`No option [${idx}]. Valid range: 1-${state.results.length}\n`));
         const searchType = state.type === "flights" ? "flights" : "hotels";
-        process.stderr.write(chalk.dim(`  Tip: voyagier search ${searchType} --plan ${state.tripPlanId} ... to refresh results\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.NOT_FOUND, `No option [${idx}]. Valid range: 1-${state.results.length}\n  Tip: voyagier search ${searchType} --plan ${state.tripPlanId} ... to refresh results`);
       }
 
       try {
         // Round-trip flight: departure selection
         if (state.type === "flights" && state.isRoundTrip && !state.awaitingReturn) {
           if (!selected.flightToken) {
-            process.stderr.write(chalk.red("No flight token found for this option. Try refreshing your search.\n"));
-            process.exit(1);
+            throw new CliError(CliErrorCode.STATE_CORRUPT, "No flight token found for this option. Try refreshing your search.");
           }
 
           if (!opts.json) progress("Selecting departure flight...");
@@ -238,7 +220,7 @@ export function registerSelectCommands(program: Command): void {
               type: "departure_selected",
               selected: selected.summary,
               returnOptions,
-              tripPlanUrl: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
+              url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
             }, null, 2) + "\n");
           } else if (opts.agent) {
             const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`;
@@ -288,8 +270,7 @@ export function registerSelectCommands(program: Command): void {
         // Round-trip flight: return selection
         if (state.type === "flights" && state.awaitingReturn) {
           if (!selected.flightToken) {
-            process.stderr.write(chalk.red("No flight token found for this option. Try refreshing your search.\n"));
-            process.exit(1);
+            throw new CliError(CliErrorCode.STATE_CORRUPT, "No flight token found for this option. Try refreshing your search.");
           }
 
           if (!opts.json) progress("Selecting return flight...");
@@ -309,7 +290,7 @@ export function registerSelectCommands(program: Command): void {
               success: true,
               type: "return_selected",
               selected: selected.summary,
-              tripPlanUrl: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
+              url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
             }, null, 2) + "\n");
           } else if (opts.agent) {
             const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`;
@@ -354,7 +335,7 @@ export function registerSelectCommands(program: Command): void {
             type: state.type === "flights" ? "flight_selected" : "hotel_selected",
             selected: selected.summary,
             selectionId: result.id,
-            tripPlanUrl: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
+            url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
           }, null, 2) + "\n");
         } else if (opts.agent) {
           const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`;
@@ -382,9 +363,9 @@ export function registerSelectCommands(program: Command): void {
 
         clearSearchState();
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Selection failed: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Selection failed: ${message}`);
       }
     });
 }

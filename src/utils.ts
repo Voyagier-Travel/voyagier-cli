@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import { spawn } from "child_process";
+import { CliError, CliErrorCode } from "./errors.js";
 
 /**
  * Extract a flight token from a booking data JSONB blob.
@@ -57,15 +58,13 @@ export function formatPrice(price: number): string {
  */
 export function validateDate(value: string, flagName: string): void {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    process.stderr.write(chalk.red(`Invalid date for ${flagName}: "${value}". Expected format: YYYY-MM-DD\n`));
-    process.exit(1);
+    throw new CliError(CliErrorCode.VALIDATION, `Invalid date for ${flagName}: "${value}". Expected format: YYYY-MM-DD`);
   }
   const [year, month, day] = value.split("-").map(Number);
   // Round-trip through Date to catch impossible dates (Feb 31, etc.)
   const d = new Date(Date.UTC(year, month - 1, day));
   if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
-    process.stderr.write(chalk.red(`Invalid date for ${flagName}: "${value}". Date does not exist.\n`));
-    process.exit(1);
+    throw new CliError(CliErrorCode.VALIDATION, `Invalid date for ${flagName}: "${value}". Date does not exist.`);
   }
 }
 
@@ -87,8 +86,7 @@ export function warnPastDate(date: string, label: string): void {
 export function validateIata(value: string, flagName: string): void {
   const upper = value.toUpperCase();
   if (!/^[A-Z]{3}$/.test(upper)) {
-    process.stderr.write(chalk.red(`Invalid IATA code for ${flagName}: "${value}". Expected 3-letter code (e.g., LAX, NRT).\n`));
-    process.exit(1);
+    throw new CliError(CliErrorCode.VALIDATION, `Invalid IATA code for ${flagName}: "${value}". Expected 3-letter code (e.g., LAX, NRT).`);
   }
 }
 

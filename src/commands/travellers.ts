@@ -5,6 +5,7 @@ import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
 import { validateDate, deriveBaseUrl } from "../utils.js";
 import { jsonOutput, fatal } from "../output.js";
+import { CliError, CliErrorCode } from "../errors.js";
 
 /** Convert an enum value to PascalCase (e.g. "adult" → "Adult", "MALE" → "Male"). */
 function toPascalCase(value: string): string {
@@ -63,7 +64,7 @@ export function registerTravellerCommands(program: Command): void {
         const planUrl = `${baseUrl}/plans/${opts.plan}`;
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ ...t, tripPlanUrl: planUrl }, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({ ...t, url: planUrl }, null, 2) + "\n");
           return;
         }
 
@@ -73,9 +74,9 @@ export function registerTravellerCommands(program: Command): void {
         if (t.email) console.log(chalk.dim(`  Email: ${t.email}`));
         await printPlanFooter(opts.plan as string);
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to add traveller: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to add traveller: ${message}`);
       }
     });
 
@@ -101,7 +102,7 @@ export function registerTravellerCommands(program: Command): void {
         const planUrl = `${baseUrl}/plans/${opts.plan}`;
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ travellers: list, tripPlanUrl: planUrl }, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({ travellers: list, url: planUrl }, null, 2) + "\n");
           return;
         }
 
@@ -138,9 +139,9 @@ export function registerTravellerCommands(program: Command): void {
         }
         console.log(chalk.dim(`\n  Plan: ${planUrl}\n`));
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to list travellers: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to list travellers: ${message}`);
       }
     });
 
@@ -164,9 +165,9 @@ export function registerTravellerCommands(program: Command): void {
 
         console.log(chalk.green(`✓ Removed traveller ${id}`));
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to remove traveller: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to remove traveller: ${message}`);
       }
     });
 
@@ -218,9 +219,9 @@ export function registerTravellerCommands(program: Command): void {
         console.log(chalk.dim(`  Type: ${t.declaredTravellerType ?? "ADULT"}`));
         if (t.email) console.log(chalk.dim(`  Email: ${t.email}`));
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to update traveller: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to update traveller: ${message}`);
       }
     });
 }
