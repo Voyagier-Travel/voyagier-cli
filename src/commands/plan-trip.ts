@@ -4,6 +4,9 @@ import { graphql } from "../api.js";
 import { getApiUrl, getHomeAirports } from "../config.js";
 import { validateDate, warnPastDate, validateIata, extractFlightToken, buildFlightSummary, buildHotelSummary, deriveBaseUrl, formatPrice, formatDateRange } from "../utils.js";
 import { progress, warn, fatal, jsonOutput } from "../output.js";
+import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
+import { searchAirports } from "../data/airports.js";
+import { findMetroArea } from "../data/metro-areas.js";
 
 interface TripPlan {
   id: string;
@@ -71,6 +74,34 @@ function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[]
 
 
 
+function resolvePlanAirport(value: string, flagName: string, quiet: boolean): string {
+  if (/^[A-Za-z]{3}$/.test(value.trim())) {
+    return value.toUpperCase();
+  }
+  // Check metro areas first
+  const metro = findMetroArea(value);
+  if (metro) {
+    if (!quiet && metro.airports.length > 1) {
+      progress(`${metro.name} airports: ${metro.airports.join(", ")}. Using ${metro.airports[0]} (primary) for ${flagName}`);
+    } else if (!quiet) {
+      progress(`Using ${metro.airports[0]} (${metro.name}) for ${flagName}`);
+    }
+    return metro.airports[0];
+  }
+  const matches = searchAirports(value);
+  if (matches.length === 0) {
+    fatal(`No airports found for ${flagName}: "${value}". Use a 3-letter IATA code or run: voyagier search airports "${value}"`);
+  }
+  if (matches.length === 1) {
+    if (!quiet) {
+      progress(`Using ${matches[0].code} (${matches[0].name}) for ${flagName}`);
+    }
+    return matches[0].code;
+  }
+  const codes = matches.slice(0, 10).map((m) => m.code).join(", ");
+  fatal(`Multiple airports found for ${flagName}: "${value}". Specify a code: ${codes}`);
+}
+
 function parseTravellers(names: string): Array<{ firstName: string; lastName: string }> {
   return names.split(",")
     .map(name => name.trim())
@@ -86,7 +117,8 @@ export function registerPlanTripCommand(program: Command): void {
   program
     .command("plan-trip")
     .description("Create a full trip plan: plan + travellers + flights + hotels in one command")
-    .requiredOption("--title <title>", "Trip plan title")
+    .option("--plan <id>", "Add to an existing trip plan instead of creating a new one")
+    .option("--title <title>", "Trip plan title (required when --plan is not used)")
     .option("--from <code>", "Origin airport code (defaults to home airport)")
     .option("--to <code>", "Destination airport code")
     .option("--depart <date>", "Departure date (YYYY-MM-DD)")
@@ -99,10 +131,17 @@ export function registerPlanTripCommand(program: Command): void {
     .option("--sort <field>", "Sort options by: price, duration, stops", "price")
     .option("--max-results <n>", "Max options to show per category", "10")
     .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
     .action(async (opts) => {
       const json = !!opts.json;
+      const agent = !!opts.agent;
 
       try {
+        // Validate --plan / --title
+        if (!opts.plan && !opts.title) {
+          fatal("--title is required when --plan is not provided.");
+        }
+
         // Validate inputs
         if (opts.depart) {
           validateDate(opts.depart, "--depart");
@@ -118,10 +157,11 @@ export function registerPlanTripCommand(program: Command): void {
         if (opts.checkout) {
           validateDate(opts.checkout, "--checkout");
         }
-        if (opts.to) {
+        // Validate airport inputs (allow city names — resolution happens later)
+        if (opts.to && /^[A-Za-z]{3}$/.test(opts.to.trim())) {
           validateIata(opts.to, "--to");
         }
-        if (opts.from) {
+        if (opts.from && /^[A-Za-z]{3}$/.test(opts.from.trim())) {
           validateIata(opts.from, "--from");
         }
 
@@ -135,25 +175,35 @@ export function registerPlanTripCommand(program: Command): void {
         }
         const baseUrl = deriveBaseUrl(getApiUrl());
 
-        // Step 1: Create plan
-        if (!json) progress("Creating trip plan...");
-        const planInput: Record<string, unknown> = { title: opts.title };
-        if (opts.depart) planInput.startDate = opts.depart;
-        const endDate = opts.return ?? opts.checkout;
-        if (endDate) planInput.endDate = endDate;
+        // Step 1: Create or fetch plan
+        let plan: TripPlan;
+        if (opts.plan) {
+          if (!json && !agent) progress("Fetching existing trip plan...");
+          const planData = await graphql<{ tripPlan: TripPlan }>(
+            `query TripPlan($id: String!) { tripPlan(id: $id) { id title startDate endDate } }`,
+            { id: opts.plan }
+          );
+          plan = planData.tripPlan;
+        } else {
+          if (!json && !agent) progress("Creating trip plan...");
+          const planInput: Record<string, unknown> = { title: opts.title };
+          if (opts.depart) planInput.startDate = opts.depart;
+          const endDate = opts.return ?? opts.checkout;
+          if (endDate) planInput.endDate = endDate;
 
-        const planData = await graphql<{ createTripPlan: TripPlan }>(
-          `mutation CreateTripPlan($input: CreateTripPlanInput!) {
-            createTripPlan(input: $input) { id title startDate endDate }
-          }`,
-          { input: planInput }
-        );
-        const plan = planData.createTripPlan;
+          const planData = await graphql<{ createTripPlan: TripPlan }>(
+            `mutation CreateTripPlan($input: CreateTripPlanInput!) {
+              createTripPlan(input: $input) { id title startDate endDate }
+            }`,
+            { input: planInput }
+          );
+          plan = planData.createTripPlan;
+        }
 
         // Step 2: Add travellers
         const travellers: Traveller[] = [];
         if (opts.travellers) {
-          if (!json) progress("Adding travellers...");
+          if (!json && !agent) progress("Adding travellers...");
           const parsed = parseTravellers(opts.travellers);
           for (const t of parsed) {
             const tData = await graphql<{ createTripPlanTraveller: Traveller }>(
@@ -171,7 +221,7 @@ export function registerPlanTripCommand(program: Command): void {
         // Resolve traveller IDs (from newly added or existing)
         let travellerIds = travellers.map(t => t.id);
         if (travellerIds.length === 0) {
-          // Fetch existing travellers
+          // Fetch existing travellers (always needed for existing plans; also for new plans with no --travellers)
           const tData = await graphql<{ tripPlanTravellers: Traveller[] }>(
             `query Travellers($tripPlanId: String!) {
               tripPlanTravellers(tripPlanId: $tripPlanId) { id firstName lastName }
@@ -197,22 +247,23 @@ export function registerPlanTripCommand(program: Command): void {
         let destination: string | null = null;
 
         if (opts.to && opts.depart) {
+          // Resolve destination
+          destination = resolvePlanAirport(opts.to, "--to", json || agent);
           // Resolve origin
           if (opts.from) {
-            origin = opts.from.toUpperCase();
+            origin = resolvePlanAirport(opts.from, "--from", json || agent);
           } else {
             const homeAirports = getHomeAirports();
             if (homeAirports.length > 0) {
               origin = homeAirports[0].toUpperCase();
-              if (!json) progress(`Using home airport: ${origin}`);
+              if (!json && !agent) progress(`Using home airport: ${origin}`);
             } else {
               fatal("No origin specified and no home airport configured. Use --from <code> or run: voyagier auth setup");
             }
           }
-          destination = opts.to.toUpperCase();
           const isRoundTrip = !!opts.return;
 
-          if (!json) progress(`Searching flights (${origin} → ${destination})...`);
+          if (!json && !agent) progress(`Searching flights (${origin} → ${destination})...`);
 
           const flightInput: Record<string, unknown> = {
             origin,
@@ -275,7 +326,7 @@ export function registerPlanTripCommand(program: Command): void {
           if (!checkin || !checkout) {
             warn("--hotel requires --checkin and --checkout (or --depart/--return). Skipping hotel search.");
           } else {
-            if (!json) progress(`Searching hotels (${opts.hotel})...`);
+            if (!json && !agent) progress(`Searching hotels (${opts.hotel})...`);
 
             const adults = opts.guests ? parseInt(opts.guests, 10) : Math.max(1, travellerIds.length);
             const hotelInput: Record<string, unknown> = {
@@ -349,9 +400,54 @@ export function registerPlanTripCommand(program: Command): void {
           return;
         }
 
+        // Agent output
+        if (agent) {
+          const planUrl = `${baseUrl}/plans/${plan.id}`;
+          const dateStr = formatDateRange(plan.startDate, plan.endDate);
+          const lines: string[] = [];
+          lines.push(`## ✈️ ${plan.title}`);
+          const subParts: string[] = [];
+          if (dateStr) subParts.push(`**${dateStr}**`);
+          if (travellers.length > 0) subParts.push(`${travellers.length} traveller${travellers.length !== 1 ? "s" : ""}`);
+          if (subParts.length > 0) lines.push(subParts.join(" · "));
+          lines.push("");
+
+          if (flightResult && origin && destination) {
+            lines.push(`### Flights (${origin} → ${destination})`);
+            lines.push(agentFlightOptions(flightResult.options));
+            lines.push("");
+          }
+
+          if (hotelResult && opts.hotel) {
+            lines.push(`### Hotels (${opts.hotel})`);
+            lines.push(agentHotelOptions(hotelResult.options));
+            lines.push("");
+          }
+
+          if (travellers.length > 0) {
+            lines.push(`👤 ${travellers.map(t => `${t.firstName} ${t.lastName}`).join(", ")}`);
+            lines.push("");
+          }
+
+          lines.push(`👉 **View & edit:** ${planUrl}`);
+
+          const steps: string[] = [];
+          if (nextSteps.selectFlight) steps.push(`- Select flight: \`${nextSteps.selectFlight}\``);
+          if (nextSteps.selectHotel) steps.push(`- Select hotel: \`${nextSteps.selectHotel}\``);
+          if (steps.length > 0) {
+            lines.push("");
+            lines.push("**Next steps:**");
+            lines.push(...steps);
+          }
+
+          process.stdout.write(lines.join("\n") + "\n");
+          return;
+        }
+
         // Human output
         const dateStr = formatDateRange(plan.startDate, plan.endDate);
-        console.log(chalk.green(`\n✓ Created: ${plan.title}${dateStr ? ` (${dateStr})` : ""}`));
+        const planVerb = opts.plan ? "Using" : "Created";
+        console.log(chalk.green(`\n✓ ${planVerb}: ${plan.title}${dateStr ? ` (${dateStr})` : ""}`));
         if (travellers.length > 0) {
           console.log(`  ${travellers.length} traveller${travellers.length !== 1 ? "s" : ""} added`);
         }
@@ -394,6 +490,9 @@ export function registerPlanTripCommand(program: Command): void {
         const message = err instanceof Error ? err.message : String(err);
         if (json) {
           process.stdout.write(JSON.stringify({ error: true, message }, null, 2) + "\n");
+          process.exit(1);
+        } else if (agent) {
+          process.stdout.write(`> **Error:** ${message}\n`);
           process.exit(1);
         } else {
           process.stderr.write(chalk.red(`plan-trip failed: ${message}\n`));

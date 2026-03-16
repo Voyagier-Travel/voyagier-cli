@@ -81,6 +81,7 @@ export function registerOptionsCommands(program: Command): void {
     .command("options <planId>")
     .description("View sub-options (cabin class, room type) for a trip plan")
     .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
     .option("--refresh", "Refresh sub-selection options from provider")
     .action(async (planId: string, opts) => {
       try {
@@ -161,6 +162,46 @@ export function registerOptionsCommands(program: Command): void {
           return;
         }
 
+        if (opts.agent) {
+          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${planId}`;
+          const lines: string[] = [];
+          lines.push(`## Sub-options — ${plan.title}`);
+          lines.push("");
+
+          if (allSubs.length === 0) {
+            lines.push("_No sub-selection choices needed. All items are ready._");
+            lines.push("");
+            lines.push(`👉 **Plan:** ${planUrl}`);
+            lines.push(`**Next:** \`voyagier cart ${planId}\``);
+          } else {
+            let displayIndex = 1;
+            for (const entry of allSubs) {
+              const sub = entry.subSelection;
+              const label = subSelectionLabel(sub.type);
+              lines.push(`### ${entry.itemTitle} — pick ${label}`);
+              if (sub.selectedOption) {
+                const price = sub.selectedOption.price != null ? ` · ${formatPrice(sub.selectedOption.price)}` : "";
+                lines.push(`✅ **Currently selected:** ${sub.selectedOption.name}${price}`);
+              }
+              const sorted = [...sub.options].sort((a, b) => a.sortOrder - b.sortOrder);
+              for (const opt of sorted) {
+                const price = opt.price != null ? ` · ${formatPrice(opt.price)}` : "";
+                const desc = opt.description ? ` — ${opt.description}` : "";
+                const sel = sub.selectedOptionId === opt.id ? " ✅" : "";
+                lines.push(`${displayIndex}. ${opt.name}${price}${desc}${sel}`);
+                displayIndex++;
+              }
+              lines.push("");
+            }
+            lines.push(`👉 **Plan:** ${planUrl}`);
+            lines.push("");
+            lines.push("**Next:** `voyagier pick <number>`");
+          }
+
+          process.stdout.write(lines.join("\n") + "\n");
+          return;
+        }
+
         console.log(chalk.bold(`\n📋  Options — ${plan.title}\n`));
 
         if (allSubs.length === 0) {
@@ -224,6 +265,7 @@ export function registerOptionsCommands(program: Command): void {
     .option("--sub-selection-id <id>", "Explicit sub-selection ID (direct mode, skips state file)")
     .option("--option-id <id>", "Explicit option ID (direct mode)")
     .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
     .action(async (numberStr: string, opts) => {
       // Direct mode: --sub-selection-id + --option-id
       if ((opts.subSelectionId && !opts.optionId) || (!opts.subSelectionId && opts.optionId)) {
@@ -254,6 +296,9 @@ export function registerOptionsCommands(program: Command): void {
                 price: selected.price,
               },
             });
+          } else if (opts.agent) {
+            const price = selected.price != null ? ` · ${formatPrice(selected.price)}` : "";
+            process.stdout.write(`✅ **Selected:** ${selected.name}${price}\n`);
           } else {
             const price = selected.price != null ? ` · ${formatPrice(selected.price)}` : "";
             console.log(chalk.green(`\n  ✓ Selected: ${selected.name}${price}\n`));
@@ -318,6 +363,21 @@ export function registerOptionsCommands(program: Command): void {
             },
             tripPlanUrl: `${baseUrl}/plans/${state.tripPlanId}`,
           }, null, 2) + "\n");
+          return;
+        }
+
+        if (opts.agent) {
+          const planUrl = `${baseUrl}/plans/${state.tripPlanId}`;
+          const price = selected.price != null ? ` · ${formatPrice(selected.price)}` : "";
+          const lines = [
+            `✅ **Selected:** ${selected.name}${price}`,
+            "",
+            `👉 **View & edit:** ${planUrl}`,
+            "",
+            `**Next:** \`voyagier cart ${state.tripPlanId}\``,
+          ];
+          process.stdout.write(lines.join("\n") + "\n");
+          clearOptionsState();
           return;
         }
 

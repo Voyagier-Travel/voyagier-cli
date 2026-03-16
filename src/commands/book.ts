@@ -40,6 +40,7 @@ export function registerBookCommands(program: Command): void {
     .command("book <planId>")
     .description("Checkout and book a trip plan via Stripe")
     .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show what would be charged without creating checkout")
     .option("--status", "Check payment and booking status")
     .action(async (planId: string, opts) => {
@@ -48,11 +49,11 @@ export function registerBookCommands(program: Command): void {
 
         // --status mode
         if (opts.status) {
-          await showBookingStatus(planId, baseUrl, opts.json);
+          await showBookingStatus(planId, baseUrl, opts.json, opts.agent);
           return;
         }
 
-        process.stderr.write(chalk.dim("Loading cart...\n"));
+        if (!opts.json && !opts.agent) process.stderr.write(chalk.dim("Loading cart...\n"));
 
         const [cartData, planData] = await Promise.all([
           graphql<{ getTripPlanCart: { items: CartItem[]; total: number; itemCount: number } }>(GET_CART, { tripPlanId: planId }),
@@ -139,6 +140,24 @@ export function registerBookCommands(program: Command): void {
           return;
         }
 
+        if (opts.agent) {
+          const planUrl = `${baseUrl}/plans/${planId}`;
+          const lines = [
+            "✅ **Checkout session created!**",
+            "",
+            `💳 **Pay here:** ${checkoutUrl}`,
+            "",
+            `**Subtotal:** ${formatPrice(subtotal)}`,
+            "_(Travel fee shown on checkout page)_",
+            "",
+            `👉 **Plan:** ${planUrl}`,
+            "",
+            `**After payment:** \`voyagier book ${planId} --status\``,
+          ];
+          process.stdout.write(lines.join("\n") + "\n");
+          return;
+        }
+
         console.log(chalk.green.bold("\n  ✓ Checkout session created!\n"));
         console.log(`  Items:         ${cart.itemCount}`);
         console.log(`  Subtotal:      ${chalk.bold(formatPrice(subtotal))}`);
@@ -161,7 +180,7 @@ export function registerBookCommands(program: Command): void {
     });
 }
 
-async function showBookingStatus(planId: string, baseUrl: string, json: boolean): Promise<void> {
+async function showBookingStatus(planId: string, baseUrl: string, json: boolean, agent = false): Promise<void> {
   const data = await graphql<{ tripPlanPaymentCheckouts: PaymentCheckout[] }>(
     GET_PAYMENT_CHECKOUTS,
     { tripPlanId: planId }
@@ -171,6 +190,32 @@ async function showBookingStatus(planId: string, baseUrl: string, json: boolean)
 
   if (json) {
     process.stdout.write(JSON.stringify({ planId, checkouts }, null, 2) + "\n");
+    return;
+  }
+
+  const planUrl = `${baseUrl}/plans/${planId}`;
+
+  if (agent) {
+    const lines: string[] = [];
+    lines.push("## Booking Status");
+    lines.push("");
+    if (checkouts.length === 0) {
+      lines.push("_No payment history for this plan._");
+    } else {
+      for (const checkout of checkouts) {
+        const date = new Date(checkout.createdAt).toLocaleDateString();
+        lines.push(`**${checkout.status}** — ${date}`);
+        for (const record of checkout.bookingRecords) {
+          const ref = record.pnr ? `PNR: ${record.pnr}` :
+                      record.providerReference ? `Ref: ${record.providerReference}` : "";
+          const amount = formatPrice(record.amount / 100);
+          lines.push(`- ${record.type.replace(/_/g, " ").toLowerCase()} — ${record.status.toLowerCase()}${ref ? ` — ${ref}` : ""} — ${amount}`);
+        }
+        lines.push("");
+      }
+    }
+    lines.push(`👉 **Plan:** ${planUrl}`);
+    process.stdout.write(lines.join("\n") + "\n");
     return;
   }
 
@@ -211,5 +256,5 @@ async function showBookingStatus(planId: string, baseUrl: string, json: boolean)
     console.log(hintBookingPending());
   }
 
-  console.log(chalk.dim(`\n  Plan: ${baseUrl}/plans/${planId}\n`));
+  console.log(chalk.dim(`\n  Plan: ${planUrl}\n`));
 }

@@ -6,6 +6,9 @@ import { getApiUrl, getHomeAirports } from "../config.js";
 import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode } from "../utils.js";
+import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
+import { searchAirports } from "../data/airports.js";
+import { findMetroArea } from "../data/metro-areas.js";
 
 interface SelectOption {
   id: string;
@@ -89,8 +92,96 @@ function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[]
   });
 }
 
+/**
+ * Resolve a user-supplied airport value to an IATA code.
+ * Priority: exact IATA code → metro area (shows options) → single city match → ambiguous error.
+ * Shows a note if city name was resolved. Calls process.exit(1) if ambiguous or unknown.
+ */
+function resolveAirportInput(value: string, flagName: string, quiet: boolean): string {
+  // If it's already a valid 3-letter code, validate and return
+  if (/^[A-Za-z]{3}$/.test(value.trim())) {
+    validateIata(value, flagName);
+    return value.toUpperCase();
+  }
+
+  // Check metro areas first — "Washington DC" → show BWI, DCA, IAD as options
+  const metro = findMetroArea(value);
+  if (metro) {
+    if (metro.airports.length === 1) {
+      if (!quiet) {
+        process.stderr.write(chalk.dim(`Using ${metro.airports[0]} (${metro.name}) for ${flagName}\n`));
+      }
+      return metro.airports[0];
+    }
+    // Metro with multiple airports — use the primary (first) but show all
+    if (!quiet) {
+      process.stderr.write(chalk.dim(`${metro.name} airports: ${metro.airports.join(", ")}\n`));
+      process.stderr.write(chalk.dim(`Using ${metro.airports[0]} (primary) for ${flagName}. Specify a code to override.\n`));
+    }
+    return metro.airports[0];
+  }
+
+  // Try to resolve as city name
+  const matches = searchAirports(value);
+  if (matches.length === 0) {
+    process.stderr.write(chalk.red(`No airports found for ${flagName}: "${value}"\n`));
+    process.stderr.write(chalk.dim(`  Use a 3-letter IATA code (e.g., LAX) or search: voyagier search airports "${value}"\n`));
+    process.exit(1);
+  }
+  if (matches.length === 1) {
+    if (!quiet) {
+      process.stderr.write(chalk.dim(`Using ${matches[0].code} (${matches[0].name}) for ${flagName}\n`));
+    }
+    return matches[0].code;
+  }
+  // Multiple matches but not a known metro — show them all
+  const codes = matches.slice(0, 10).map((m) => m.code).join(", ");
+  process.stderr.write(chalk.red(`Multiple airports found for ${flagName}: "${value}". Specify a code: ${codes}\n`));
+  process.stderr.write(chalk.dim(`  Run: voyagier search airports "${value}" for details\n`));
+  process.exit(1);
+}
+
 export function registerSearchCommands(program: Command): void {
   const search = program.command("search").description("Search flights and hotels");
+
+  search
+    .command("airports")
+    .description("Search airports by city name or code")
+    .argument("<query>", "City name or partial airport code")
+    .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
+    .action((query: string, opts: { json?: boolean; agent?: boolean }) => {
+      const results = searchAirports(query);
+
+      if (opts.json) {
+        process.stdout.write(JSON.stringify(results, null, 2) + "\n");
+        return;
+      }
+
+      if (opts.agent) {
+        if (results.length === 0) {
+          process.stdout.write(`_No airports found matching "${query}"._\n`);
+          return;
+        }
+        const lines = [`### Airports matching "${query}"`, ""];
+        for (const r of results) {
+          lines.push(`- **${r.code}** — ${r.city} (${r.name})`);
+        }
+        process.stdout.write(lines.join("\n") + "\n");
+        return;
+      }
+
+      if (results.length === 0) {
+        process.stderr.write(chalk.yellow(`No airports found matching "${query}".\n`));
+        return;
+      }
+
+      console.log(chalk.bold(`\n${results.length} airport${results.length !== 1 ? "s" : ""} matching "${query}":\n`));
+      for (const r of results) {
+        console.log(`  ${chalk.cyan(r.code)}  ${r.city.padEnd(20)} ${chalk.dim(r.name)}`);
+      }
+      console.log();
+    });
 
   search
     .command("flights")
@@ -103,27 +194,28 @@ export function registerSearchCommands(program: Command): void {
     .option("--max-stops <n>", "Maximum number of stops")
     .option("--sort <field>", "Sort by: price, duration, stops, default", "default")
     .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL query without executing")
     .action(async (opts) => {
       try {
         // Resolve origin: explicit --from, or home airport default
+        const quiet = !!(opts.json || opts.agent);
         let origin: string;
         if (opts.from) {
-          validateIata(opts.from, "--from");
-          origin = opts.from.toUpperCase();
+          origin = resolveAirportInput(opts.from, "--from", quiet);
         } else {
           const homeAirports = getHomeAirports();
           if (homeAirports.length > 0) {
             origin = homeAirports[0].toUpperCase();
             validateIata(origin, "--from (home airport)");
-            process.stderr.write(chalk.dim(`Using home airport: ${origin} (from profile)\n`));
+            if (!opts.json && !opts.agent) process.stderr.write(chalk.dim(`Using home airport: ${origin} (from profile)\n`));
           } else {
             process.stderr.write(chalk.red("No origin specified. Run: voyagier auth setup (or use --from <code>)\n"));
             process.exit(1);
           }
         }
 
-        validateIata(opts.to, "--to");
+        const destination = resolveAirportInput(opts.to, "--to", quiet);
         validateDate(opts.date, "--date");
         warnPastDate(opts.date, "--date");
         warnPastDate(opts.date, "--date");
@@ -135,7 +227,7 @@ export function registerSearchCommands(program: Command): void {
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
 
-        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Resolving travellers...\n"));
+        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Resolving travellers...\n"));
 
         const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
         if (!dryRun && travellerIds.length === 0) {
@@ -144,8 +236,7 @@ export function registerSearchCommands(program: Command): void {
           process.exit(1);
         }
 
-        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Searching flights...\n"));
-        const destination = opts.to.toUpperCase();
+        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Searching flights...\n"));
         const isRoundTrip = !!opts.return;
 
         const input: Record<string, unknown> = {
@@ -215,6 +306,24 @@ export function registerSearchCommands(program: Command): void {
           return;
         }
 
+        if (opts.agent) {
+          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`;
+          const lines: string[] = [];
+          lines.push(`### Flights (${origin} → ${destination})`);
+          if (options.length === 0) {
+            lines.push("_No flights found for this route and date._");
+          } else {
+            lines.push(agentFlightOptions(options));
+          }
+          lines.push("");
+          lines.push(`👉 **Plan:** ${planUrl}`);
+          lines.push("");
+          if (isRoundTrip) lines.push("_Note: Select departure first, then return._");
+          lines.push("**Next:** `voyagier select <number>`");
+          process.stdout.write(lines.join("\n") + "\n");
+          return;
+        }
+
         if (options.length === 0) {
           process.stderr.write(chalk.dim("No flights found for this route and date.\n"));
           return;
@@ -245,6 +354,7 @@ export function registerSearchCommands(program: Command): void {
     .option("--sort <field>", "Sort by: price, default", "default")
     .option("--replace", "Replace existing hotel items for this location (removes old selections)")
     .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL query without executing")
     .option("--verbose", "Show request details sent to the API")
     .action(async (opts) => {
@@ -259,7 +369,7 @@ export function registerSearchCommands(program: Command): void {
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
 
-        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Resolving travellers...\n"));
+        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Resolving travellers...\n"));
 
         const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
         if (!dryRun && travellerIds.length === 0) {
@@ -269,6 +379,7 @@ export function registerSearchCommands(program: Command): void {
         }
 
         // Check for existing hotel items and handle --replace.
+
         // Filter by selection type (HOTEL) instead of title text to avoid
         // false matches on unrelated items whose titles contain "hotel".
         if (!dryRun) {
@@ -306,7 +417,7 @@ export function registerSearchCommands(program: Command): void {
           }
         }
 
-        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Searching hotels...\n"));
+        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Searching hotels...\n"));
         if (!dryRun && opts.verbose) {
           process.stderr.write(chalk.dim(`API request — location: "${opts.location}", check-in: ${opts.checkin}, check-out: ${opts.checkout}\n`));
         }
@@ -367,6 +478,23 @@ export function registerSearchCommands(program: Command): void {
             options: options.map((opt, i) => ({ index: i + 1, ...opt })),
             url: `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`,
           }, null, 2) + "\n");
+          return;
+        }
+
+        if (opts.agent) {
+          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`;
+          const lines: string[] = [];
+          lines.push(`### Hotels (${opts.location})`);
+          if (options.length === 0) {
+            lines.push("_No hotels found for this location and dates._");
+          } else {
+            lines.push(agentHotelOptions(options));
+          }
+          lines.push("");
+          lines.push(`👉 **Plan:** ${planUrl}`);
+          lines.push("");
+          lines.push("**Next:** `voyagier select <number>`");
+          process.stdout.write(lines.join("\n") + "\n");
           return;
         }
 

@@ -84,6 +84,7 @@ export function registerTravellerCommands(program: Command): void {
     .description("List travellers on a trip plan")
     .requiredOption("--plan <id>", "Trip plan ID")
     .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
     .action(async (opts) => {
       try {
         const data = await graphql<{ tripPlanTravellers: Traveller[] }>(
@@ -101,6 +102,24 @@ export function registerTravellerCommands(program: Command): void {
 
         if (opts.json) {
           process.stdout.write(JSON.stringify({ travellers: list, tripPlanUrl: planUrl }, null, 2) + "\n");
+          return;
+        }
+
+        if (opts.agent) {
+          const lines: string[] = [];
+          lines.push(`### Travellers (${list.length})`);
+          lines.push("");
+          if (list.length === 0) {
+            lines.push("_No travellers on this plan._");
+          } else {
+            list.forEach((t, i) => {
+              const type = t.declaredTravellerType ?? "ADULT";
+              lines.push(`${i + 1}. ${t.firstName} ${t.lastName} — ${type}`);
+            });
+          }
+          lines.push("");
+          lines.push(`👉 **Plan:** ${planUrl}`);
+          process.stdout.write(lines.join("\n") + "\n");
           return;
         }
 

@@ -20,7 +20,11 @@ import chalk from "chalk";
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")) as { version: string };
 
 const program = new Command();
-program.name("voyagier").description("Voyagier CLI — search, plan, and book travel").version(pkg.version);
+program
+  .name("voyagier")
+  .description("Voyagier CLI — search, plan, and book travel")
+  .version(pkg.version)
+  .option("--stacktrace", "show full error stack traces");
 
 registerAuthCommands(program);
 registerChatCommands(program);
