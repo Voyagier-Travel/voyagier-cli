@@ -38,6 +38,7 @@ export function registerSelectCommands(program: Command): void {
     .option("--flight-token <token>", "Explicit flight token (for round-trip flights)")
     .option("--phase <phase>", "departure or return (required with --flight-token)")
     .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
     .action(async (number: string | undefined, opts) => {
       if (opts.clear) {
         clearSearchState();
@@ -77,6 +78,13 @@ export function registerSelectCommands(program: Command): void {
                   selectionId: opts.selectionId,
                   returnOptions,
                 });
+              } else if (opts.agent) {
+                const lines = [
+                  "✅ **Departure flight selected.**",
+                  "",
+                  "**Next:** Select your return flight with `voyagier select <number>`",
+                ];
+                process.stdout.write(lines.join("\n") + "\n");
               } else {
                 console.log(chalk.green("✓ Departure flight selected."));
                 console.log(hintFlightSelected());
@@ -98,6 +106,8 @@ export function registerSelectCommands(program: Command): void {
                   type: "return_selected",
                   selectionId: opts.selectionId,
                 });
+              } else if (opts.agent) {
+                process.stdout.write("✅ **Return flight selected.**\n");
               } else {
                 console.log(chalk.green("✓ Return flight selected."));
                 console.log(hintFlightSelected());
@@ -129,6 +139,9 @@ export function registerSelectCommands(program: Command): void {
                 selectionId: result.id,
                 selected: result.selectedOption ?? null,
               });
+            } else if (opts.agent) {
+              const name = result.selectedOption?.name ?? opts.optionId;
+              process.stdout.write(`✅ **Selected:** ${name}\n`);
             } else {
               const name = result.selectedOption?.name ?? opts.optionId;
               console.log(chalk.green(`✓ Selected: ${name}`));
@@ -227,6 +240,16 @@ export function registerSelectCommands(program: Command): void {
               returnOptions,
               tripPlanUrl: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
             }, null, 2) + "\n");
+          } else if (opts.agent) {
+            const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`;
+            const lines = [
+              `✅ **Departure selected:** ${selected.summary}`,
+              "",
+              `👉 **Plan:** ${planUrl}`,
+              "",
+              "**Next:** Select your return flight with `voyagier select <number>`",
+            ];
+            process.stdout.write(lines.join("\n") + "\n");
           } else {
             console.log(chalk.green(`\n✓ Departure selected: ${selected.summary}`));
             console.log(hintFlightSelected());
@@ -288,6 +311,17 @@ export function registerSelectCommands(program: Command): void {
               selected: selected.summary,
               tripPlanUrl: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
             }, null, 2) + "\n");
+          } else if (opts.agent) {
+            const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`;
+            const lines = [
+              `✅ **Return flight selected:** ${selected.summary}`,
+              "",
+              `👉 **View & edit:** ${planUrl}`,
+              "",
+              `**Next steps:**`,
+              `- View cart: \`voyagier cart ${state.tripPlanId}\``,
+            ];
+            process.stdout.write(lines.join("\n") + "\n");
           } else {
             console.log(chalk.green(`\n✓ Return flight selected: ${selected.summary}`));
             await printPlanFooter(state.tripPlanId);
@@ -322,6 +356,18 @@ export function registerSelectCommands(program: Command): void {
             selectionId: result.id,
             tripPlanUrl: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
           }, null, 2) + "\n");
+        } else if (opts.agent) {
+          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`;
+          const icon = state.type === "flights" ? "✈️" : "🏨";
+          const lines = [
+            `✅ **${icon} Selected:** ${selected.summary}`,
+            "",
+            `👉 **View & edit:** ${planUrl}`,
+            "",
+            "**Next steps:**",
+            `- View cart: \`voyagier cart ${state.tripPlanId}\``,
+          ];
+          process.stdout.write(lines.join("\n") + "\n");
         } else {
           const icon = state.type === "flights" ? "✈️" : "🏨";
           console.log(chalk.green(`\n✓ ${icon} Selected: ${selected.summary}`));
