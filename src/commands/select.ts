@@ -220,7 +220,7 @@ export function registerSelectCommands(program: Command): void {
               type: "departure_selected",
               selected: selected.summary,
               returnOptions,
-              tripPlanUrl: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
+              url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
             }, null, 2) + "\n");
           } else if (opts.agent) {
             const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`;
@@ -290,7 +290,7 @@ export function registerSelectCommands(program: Command): void {
               success: true,
               type: "return_selected",
               selected: selected.summary,
-              tripPlanUrl: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
+              url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
             }, null, 2) + "\n");
           } else if (opts.agent) {
             const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`;
@@ -335,7 +335,7 @@ export function registerSelectCommands(program: Command): void {
             type: state.type === "flights" ? "flight_selected" : "hotel_selected",
             selected: selected.summary,
             selectionId: result.id,
-            tripPlanUrl: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
+            url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
           }, null, 2) + "\n");
         } else if (opts.agent) {
           const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`;

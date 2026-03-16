@@ -349,7 +349,7 @@ export function registerOptionsCommands(program: Command): void {
               name: selected.name,
               price: selected.price,
             },
-            tripPlanUrl: `${baseUrl}/plans/${state.tripPlanId}`,
+            url: `${baseUrl}/plans/${state.tripPlanId}`,
           }, null, 2) + "\n");
           return;
         }

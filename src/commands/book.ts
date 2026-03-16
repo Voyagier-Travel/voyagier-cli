@@ -130,7 +130,7 @@ export function registerBookCommands(program: Command): void {
             checkoutUrl,
             subtotal,
             note: "Final total (with travel fee) shown on Stripe checkout page",
-            tripPlanUrl: `${baseUrl}/plans/${planId}`,
+            url: `${baseUrl}/plans/${planId}`,
           }, null, 2) + "\n");
           return;
         }

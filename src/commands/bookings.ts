@@ -100,7 +100,12 @@ export function registerBookingsCommands(program: Command): void {
           : (raw as { getBookingRecordsByUser: BookingRecord[] }).getBookingRecordsByUser;
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ bookings: records }, null, 2) + "\n");
+          const baseUrl = deriveBaseUrl(getApiUrl());
+          const enriched = records.map((r) => ({
+            ...r,
+            ...(r.tripPlanId ? { url: `${baseUrl}/plans/${r.tripPlanId}` } : {}),
+          }));
+          process.stdout.write(JSON.stringify({ bookings: enriched }, null, 2) + "\n");
           return;
         }
 
@@ -168,7 +173,11 @@ export function registerBookingsCommands(program: Command): void {
         const baseUrl = deriveBaseUrl(getApiUrl());
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+          const enriched = {
+            ...r,
+            ...(r.tripPlanId ? { url: `${baseUrl}/plans/${r.tripPlanId}` } : {}),
+          };
+          process.stdout.write(JSON.stringify(enriched, null, 2) + "\n");
           return;
         }
 

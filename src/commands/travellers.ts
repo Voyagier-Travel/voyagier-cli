@@ -64,7 +64,7 @@ export function registerTravellerCommands(program: Command): void {
         const planUrl = `${baseUrl}/plans/${opts.plan}`;
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ ...t, tripPlanUrl: planUrl }, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({ ...t, url: planUrl }, null, 2) + "\n");
           return;
         }
 
@@ -102,7 +102,7 @@ export function registerTravellerCommands(program: Command): void {
         const planUrl = `${baseUrl}/plans/${opts.plan}`;
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ travellers: list, tripPlanUrl: planUrl }, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({ travellers: list, url: planUrl }, null, 2) + "\n");
           return;
         }
 

@@ -50,7 +50,7 @@ export function registerCartCommands(program: Command): void {
               optionCount: p.optionCount,
             })),
             note: "Travel fee added at checkout",
-            tripPlanUrl: `${baseUrl}/plans/${planId}`,
+            url: `${baseUrl}/plans/${planId}`,
           }, null, 2) + "\n");
           return;
         }
