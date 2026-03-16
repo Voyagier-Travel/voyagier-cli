@@ -5,6 +5,7 @@ import { getApiUrl, getHomeAirports } from "../config.js";
 import { validateDate, warnPastDate, validateIata, extractFlightToken, buildFlightSummary, buildHotelSummary, deriveBaseUrl, formatPrice, formatDateRange } from "../utils.js";
 import { progress, warn, fatal, jsonOutput } from "../output.js";
 import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
+import { resolveAirport, searchAirports } from "../data/airports.js";
 
 interface TripPlan {
   id: string;
@@ -72,6 +73,24 @@ function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[]
 
 
 
+function resolvePlanAirport(value: string, flagName: string, quiet: boolean): string {
+  if (/^[A-Za-z]{3}$/.test(value.trim())) {
+    return value.toUpperCase();
+  }
+  const matches = searchAirports(value);
+  if (matches.length === 0) {
+    fatal(`No airports found for ${flagName}: "${value}". Use a 3-letter IATA code or run: voyagier search airports "${value}"`);
+  }
+  if (matches.length === 1) {
+    if (!quiet) {
+      progress(`Using ${matches[0].code} (${matches[0].name}) for ${flagName}`);
+    }
+    return matches[0].code;
+  }
+  const codes = matches.map((m) => m.code).join(", ");
+  fatal(`Multiple airports found for ${flagName}: "${value}". Specify a code: ${codes}`);
+}
+
 function parseTravellers(names: string): Array<{ firstName: string; lastName: string }> {
   return names.split(",")
     .map(name => name.trim())
@@ -127,10 +146,11 @@ export function registerPlanTripCommand(program: Command): void {
         if (opts.checkout) {
           validateDate(opts.checkout, "--checkout");
         }
-        if (opts.to) {
+        // Validate airport inputs (allow city names — resolution happens later)
+        if (opts.to && /^[A-Za-z]{3}$/.test(opts.to.trim())) {
           validateIata(opts.to, "--to");
         }
-        if (opts.from) {
+        if (opts.from && /^[A-Za-z]{3}$/.test(opts.from.trim())) {
           validateIata(opts.from, "--from");
         }
 
@@ -216,9 +236,11 @@ export function registerPlanTripCommand(program: Command): void {
         let destination: string | null = null;
 
         if (opts.to && opts.depart) {
+          // Resolve destination
+          destination = resolvePlanAirport(opts.to, "--to", json || agent);
           // Resolve origin
           if (opts.from) {
-            origin = opts.from.toUpperCase();
+            origin = resolvePlanAirport(opts.from, "--from", json || agent);
           } else {
             const homeAirports = getHomeAirports();
             if (homeAirports.length > 0) {
@@ -228,7 +250,6 @@ export function registerPlanTripCommand(program: Command): void {
               fatal("No origin specified and no home airport configured. Use --from <code> or run: voyagier auth setup");
             }
           }
-          destination = opts.to.toUpperCase();
           const isRoundTrip = !!opts.return;
 
           if (!json && !agent) progress(`Searching flights (${origin} → ${destination})...`);

@@ -7,6 +7,7 @@ import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode } from "../utils.js";
 import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
+import { resolveAirport, searchAirports } from "../data/airports.js";
 
 interface SelectOption {
   id: string;
@@ -90,8 +91,79 @@ function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[]
   });
 }
 
+/**
+ * Resolve a user-supplied airport value (city name or IATA code) to an IATA code.
+ * Shows a note if city name was resolved. Calls process.exit(1) if ambiguous or unknown.
+ * Returns the uppercased IATA code.
+ */
+function resolveAirportInput(value: string, flagName: string, quiet: boolean): string {
+  // If it's already a valid 3-letter code, validate and return
+  if (/^[A-Za-z]{3}$/.test(value.trim())) {
+    validateIata(value, flagName);
+    return value.toUpperCase();
+  }
+
+  // Try to resolve as city name
+  const matches = searchAirports(value);
+  if (matches.length === 0) {
+    process.stderr.write(chalk.red(`No airports found for ${flagName}: "${value}"\n`));
+    process.stderr.write(chalk.dim(`  Use a 3-letter IATA code (e.g., LAX) or search: voyagier search airports "${value}"\n`));
+    process.exit(1);
+  }
+  if (matches.length === 1) {
+    if (!quiet) {
+      process.stderr.write(chalk.dim(`Using ${matches[0].code} (${matches[0].name}) for ${flagName}\n`));
+    }
+    return matches[0].code;
+  }
+  // Ambiguous
+  const codes = matches.map((m) => m.code).join(", ");
+  process.stderr.write(chalk.red(`Multiple airports found for ${flagName}: "${value}". Specify a code: ${codes}\n`));
+  process.stderr.write(chalk.dim(`  Run: voyagier search airports "${value}" for details\n`));
+  process.exit(1);
+}
+
 export function registerSearchCommands(program: Command): void {
   const search = program.command("search").description("Search flights and hotels");
+
+  search
+    .command("airports")
+    .description("Search airports by city name or code")
+    .argument("<query>", "City name or partial airport code")
+    .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
+    .action((query: string, opts: { json?: boolean; agent?: boolean }) => {
+      const results = searchAirports(query);
+
+      if (opts.json) {
+        process.stdout.write(JSON.stringify(results, null, 2) + "\n");
+        return;
+      }
+
+      if (opts.agent) {
+        if (results.length === 0) {
+          process.stdout.write(`_No airports found matching "${query}"._\n`);
+          return;
+        }
+        const lines = [`### Airports matching "${query}"`, ""];
+        for (const r of results) {
+          lines.push(`- **${r.code}** — ${r.city} (${r.name})`);
+        }
+        process.stdout.write(lines.join("\n") + "\n");
+        return;
+      }
+
+      if (results.length === 0) {
+        process.stderr.write(chalk.yellow(`No airports found matching "${query}".\n`));
+        return;
+      }
+
+      console.log(chalk.bold(`\n${results.length} airport${results.length !== 1 ? "s" : ""} matching "${query}":\n`));
+      for (const r of results) {
+        console.log(`  ${chalk.cyan(r.code)}  ${r.city.padEnd(20)} ${chalk.dim(r.name)}`);
+      }
+      console.log();
+    });
 
   search
     .command("flights")
@@ -109,10 +181,10 @@ export function registerSearchCommands(program: Command): void {
     .action(async (opts) => {
       try {
         // Resolve origin: explicit --from, or home airport default
+        const quiet = !!(opts.json || opts.agent);
         let origin: string;
         if (opts.from) {
-          validateIata(opts.from, "--from");
-          origin = opts.from.toUpperCase();
+          origin = resolveAirportInput(opts.from, "--from", quiet);
         } else {
           const homeAirports = getHomeAirports();
           if (homeAirports.length > 0) {
@@ -125,7 +197,7 @@ export function registerSearchCommands(program: Command): void {
           }
         }
 
-        validateIata(opts.to, "--to");
+        const destination = resolveAirportInput(opts.to, "--to", quiet);
         validateDate(opts.date, "--date");
         warnPastDate(opts.date, "--date");
         warnPastDate(opts.date, "--date");
@@ -147,7 +219,6 @@ export function registerSearchCommands(program: Command): void {
         }
 
         if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Searching flights...\n"));
-        const destination = opts.to.toUpperCase();
         const isRoundTrip = !!opts.return;
 
         const input: Record<string, unknown> = {
