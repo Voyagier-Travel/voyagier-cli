@@ -101,133 +101,85 @@ describe("formatPrice", () => {
 });
 
 describe("validateDate", () => {
-  let exitSpy: ReturnType<typeof jest.spyOn>;
-  let stderrSpy: ReturnType<typeof jest.spyOn>;
-
-  beforeEach(() => {
-    exitSpy = jest.spyOn(process, "exit").mockImplementation(() => undefined as never);
-    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-  });
-
-  afterEach(() => {
-    exitSpy.mockRestore();
-    stderrSpy.mockRestore();
-  });
-
   it("should accept valid dates", () => {
-    validateDate("2026-04-15", "--date");
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(() => validateDate("2026-04-15", "--date")).not.toThrow();
   });
 
   it("should accept boundary dates", () => {
-    validateDate("2026-01-01", "--date");
-    validateDate("2026-12-31", "--date");
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(() => validateDate("2026-01-01", "--date")).not.toThrow();
+    expect(() => validateDate("2026-12-31", "--date")).not.toThrow();
   });
 
   it("should reject non-date strings", () => {
-    validateDate("banana", "--date");
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    const output = String((stderrSpy.mock.calls[0] as any[])[0]);
-    expect(output).toContain("banana");
-    expect(output).toContain("--date");
+    expect(() => validateDate("banana", "--date")).toThrow(/banana/);
+    expect(() => validateDate("banana", "--date")).toThrow(/--date/);
   });
 
   it("should reject invalid format (slashes)", () => {
-    validateDate("2026/04/15", "--date");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(() => validateDate("2026/04/15", "--date")).toThrow();
   });
 
   it("should reject month 13", () => {
-    validateDate("2026-13-01", "--date");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(() => validateDate("2026-13-01", "--date")).toThrow();
   });
 
   it("should reject month 0", () => {
-    validateDate("2026-00-15", "--date");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(() => validateDate("2026-00-15", "--date")).toThrow();
   });
 
   it("should reject day 0", () => {
-    validateDate("2026-01-00", "--date");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(() => validateDate("2026-01-00", "--date")).toThrow();
   });
 
   it("should reject day 32", () => {
-    validateDate("2026-01-32", "--date");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(() => validateDate("2026-01-32", "--date")).toThrow();
   });
 
   it("should reject Feb 30", () => {
-    validateDate("2026-02-30", "--date");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(() => validateDate("2026-02-30", "--date")).toThrow();
   });
 
   it("should reject Feb 29 in non-leap year", () => {
-    validateDate("2025-02-29", "--date");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(() => validateDate("2025-02-29", "--date")).toThrow();
   });
 
   it("should accept Feb 29 in leap year", () => {
-    validateDate("2024-02-29", "--date");
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(() => validateDate("2024-02-29", "--date")).not.toThrow();
   });
 
   it("should reject Apr 31", () => {
-    validateDate("2026-04-31", "--date");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(() => validateDate("2026-04-31", "--date")).toThrow();
   });
 });
 
 describe("validateIata", () => {
-  let exitSpy: ReturnType<typeof jest.spyOn>;
-  let stderrSpy: ReturnType<typeof jest.spyOn>;
-
-  beforeEach(() => {
-    exitSpy = jest.spyOn(process, "exit").mockImplementation(() => undefined as never);
-    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-  });
-
-  afterEach(() => {
-    exitSpy.mockRestore();
-    stderrSpy.mockRestore();
-  });
-
   it("should accept valid uppercase IATA codes", () => {
-    validateIata("LAX", "--from");
-    validateIata("NRT", "--to");
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(() => validateIata("LAX", "--from")).not.toThrow();
+    expect(() => validateIata("NRT", "--to")).not.toThrow();
   });
 
   it("should accept lowercase (case-insensitive)", () => {
-    validateIata("lax", "--from");
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(() => validateIata("lax", "--from")).not.toThrow();
   });
 
   it("should reject codes that are too short", () => {
-    validateIata("LA", "--from");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(() => validateIata("LA", "--from")).toThrow();
   });
 
   it("should reject codes that are too long", () => {
-    validateIata("LAXXX", "--from");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(() => validateIata("LAXXX", "--from")).toThrow();
   });
 
   it("should reject codes with numbers", () => {
-    validateIata("L4X", "--from");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(() => validateIata("L4X", "--from")).toThrow();
   });
 
   it("should reject empty string", () => {
-    validateIata("", "--from");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(() => validateIata("", "--from")).toThrow();
   });
 
   it("should include flag name in error message", () => {
-    validateIata("X", "--to");
-    const output = String((stderrSpy.mock.calls[0] as any[])[0]);
-    expect(output).toContain("--to");
+    expect(() => validateIata("X", "--to")).toThrow(/--to/);
   });
 });
 

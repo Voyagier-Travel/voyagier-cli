@@ -1,14 +1,9 @@
 import chalk from "chalk";
+import { CliError, CliErrorCode } from "./errors.js";
 
 /** Write JSON to stdout. Only call this when --json is active. */
 export function jsonOutput(data: unknown): void {
   process.stdout.write(JSON.stringify(data, null, 2) + "\n");
-}
-
-/** Write structured error JSON to stdout (for --json mode failures). */
-export function jsonError(message: string, code?: string): never {
-  process.stdout.write(JSON.stringify({ error: true, message, code: code ?? "ERROR" }, null, 2) + "\n");
-  process.exit(1);
 }
 
 /** Progress message to stderr (dimmed). */
@@ -21,8 +16,7 @@ export function warn(msg: string): void {
   process.stderr.write(chalk.yellow(`⚠ ${msg}\n`));
 }
 
-/** Fatal error to stderr + exit. */
+/** Fatal validation error — throws CliError (caught by top-level handler). */
 export function fatal(msg: string): never {
-  process.stderr.write(chalk.red(msg + "\n"));
-  process.exit(1);
+  throw new CliError(CliErrorCode.VALIDATION, msg);
 }

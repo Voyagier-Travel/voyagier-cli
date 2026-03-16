@@ -4,6 +4,7 @@ import { graphql } from "../api.js";
 import { getApiUrl, getHomeAirports } from "../config.js";
 import { validateDate, warnPastDate, validateIata, extractFlightToken, buildFlightSummary, buildHotelSummary, deriveBaseUrl, formatPrice, formatDateRange } from "../utils.js";
 import { progress, warn, fatal, jsonOutput } from "../output.js";
+import { CliError, CliErrorCode } from "../errors.js";
 import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
 import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
@@ -487,17 +488,9 @@ export function registerPlanTripCommand(program: Command): void {
         console.log();
 
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        if (json) {
-          process.stdout.write(JSON.stringify({ error: true, message }, null, 2) + "\n");
-          process.exit(1);
-        } else if (agent) {
-          process.stdout.write(`> **Error:** ${message}\n`);
-          process.exit(1);
-        } else {
-          process.stderr.write(chalk.red(`plan-trip failed: ${message}\n`));
-          process.exit(1);
-        }
+        throw new CliError(CliErrorCode.API_ERROR, `plan-trip failed: ${message}`);
       }
     });
 }

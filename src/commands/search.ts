@@ -9,6 +9,7 @@ import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate
 import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
 import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
+import { CliError, CliErrorCode } from "../errors.js";
 
 interface SelectOption {
   id: string;
@@ -52,9 +53,7 @@ function resolvePlanId(opts: { plan?: string }): string {
     process.stderr.write(chalk.dim(`Using plan from last search: ${state.tripPlanId}\n`));
     return state.tripPlanId;
   }
-  process.stderr.write(chalk.red("--plan <id> is required. Create one first:\n"));
-  process.stderr.write(chalk.dim('  voyagier plans create --title "My Trip"\n'));
-  process.exit(1);
+  throw new CliError(CliErrorCode.VALIDATION, '--plan <id> is required. Create one first:\n  voyagier plans create --title "My Trip"');
 }
 
 
@@ -124,9 +123,7 @@ function resolveAirportInput(value: string, flagName: string, quiet: boolean): s
   // Try to resolve as city name
   const matches = searchAirports(value);
   if (matches.length === 0) {
-    process.stderr.write(chalk.red(`No airports found for ${flagName}: "${value}"\n`));
-    process.stderr.write(chalk.dim(`  Use a 3-letter IATA code (e.g., LAX) or search: voyagier search airports "${value}"\n`));
-    process.exit(1);
+    throw new CliError(CliErrorCode.VALIDATION, `No airports found for ${flagName}: "${value}"\n  Use a 3-letter IATA code (e.g., LAX) or search: voyagier search airports "${value}"`);
   }
   if (matches.length === 1) {
     if (!quiet) {
@@ -136,9 +133,7 @@ function resolveAirportInput(value: string, flagName: string, quiet: boolean): s
   }
   // Multiple matches but not a known metro — show them all
   const codes = matches.slice(0, 10).map((m) => m.code).join(", ");
-  process.stderr.write(chalk.red(`Multiple airports found for ${flagName}: "${value}". Specify a code: ${codes}\n`));
-  process.stderr.write(chalk.dim(`  Run: voyagier search airports "${value}" for details\n`));
-  process.exit(1);
+  throw new CliError(CliErrorCode.VALIDATION, `Multiple airports found for ${flagName}: "${value}". Specify a code: ${codes}\n  Run: voyagier search airports "${value}" for details`);
 }
 
 export function registerSearchCommands(program: Command): void {
@@ -210,8 +205,7 @@ export function registerSearchCommands(program: Command): void {
             validateIata(origin, "--from (home airport)");
             if (!opts.json && !opts.agent) process.stderr.write(chalk.dim(`Using home airport: ${origin} (from profile)\n`));
           } else {
-            process.stderr.write(chalk.red("No origin specified. Run: voyagier auth setup (or use --from <code>)\n"));
-            process.exit(1);
+            throw new CliError(CliErrorCode.VALIDATION, "No origin specified. Run: voyagier auth setup (or use --from <code>)");
           }
         }
 
@@ -231,9 +225,7 @@ export function registerSearchCommands(program: Command): void {
 
         const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
         if (!dryRun && travellerIds.length === 0) {
-          process.stderr.write(chalk.red("No travellers on this plan. Add one first:\n"));
-          process.stderr.write(chalk.dim(`  voyagier travellers add --plan ${tripPlanId} --first <name> --last <name> --type ADULT\n`));
-          process.exit(1);
+          throw new CliError(CliErrorCode.VALIDATION, `No travellers on this plan. Add one first:\n  voyagier travellers add --plan ${tripPlanId} --first <name> --last <name> --type ADULT`);
         }
 
         if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Searching flights...\n"));
@@ -250,8 +242,7 @@ export function registerSearchCommands(program: Command): void {
         if (opts.maxStops) {
           const maxStops = parseInt(opts.maxStops, 10);
           if (!Number.isFinite(maxStops) || maxStops < 0) {
-            process.stderr.write(chalk.red("--max-stops must be a non-negative integer.\n"));
-            process.exit(1);
+            throw new CliError(CliErrorCode.VALIDATION, "--max-stops must be a non-negative integer.");
           }
           input.maxStops = maxStops;
         }
@@ -373,9 +364,7 @@ export function registerSearchCommands(program: Command): void {
 
         const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
         if (!dryRun && travellerIds.length === 0) {
-          process.stderr.write(chalk.red("No travellers on this plan. Add one first:\n"));
-          process.stderr.write(chalk.dim(`  voyagier travellers add --plan ${tripPlanId} --first <name> --last <name> --type ADULT\n`));
-          process.exit(1);
+          throw new CliError(CliErrorCode.VALIDATION, `No travellers on this plan. Add one first:\n  voyagier travellers add --plan ${tripPlanId} --first <name> --last <name> --type ADULT`);
         }
 
         // Check for existing hotel items and handle --replace.
@@ -424,8 +413,7 @@ export function registerSearchCommands(program: Command): void {
 
         const adults = parseInt(opts.guests, 10);
         if (!Number.isFinite(adults) || adults < 1) {
-          process.stderr.write(chalk.red("--guests must be an integer ≥ 1.\n"));
-          process.exit(1);
+          throw new CliError(CliErrorCode.VALIDATION, "--guests must be an integer ≥ 1.");
         }
         const input: Record<string, unknown> = {
           location: opts.location,
@@ -530,14 +518,14 @@ export function registerSearchCommands(program: Command): void {
 
 
 
-function handleSearchError(err: unknown): void {
+function handleSearchError(err: unknown): never {
+  if (err instanceof CliError) throw err;
   const message = err instanceof Error ? err.message : String(err);
-  if (message.includes("401") || message.includes("Unauthorized")) {
-    process.stderr.write(chalk.red("Authentication failed. Run: voyagier auth setup\n"));
-  } else if (message.includes("ECONNREFUSED") || message.includes("fetch failed")) {
-    process.stderr.write(chalk.red("Could not connect to API. Run: voyagier auth status\n"));
+  if (message.includes("401") || message.includes("Unauthorized") || message.includes("Authentication")) {
+    throw new CliError(CliErrorCode.AUTH_FAILED, "Authentication failed. Run: voyagier auth setup");
+  } else if (message.includes("ECONNREFUSED") || message.includes("fetch failed") || message.includes("Network error")) {
+    throw new CliError(CliErrorCode.NETWORK, "Could not connect to API. Run: voyagier auth status");
   } else {
-    process.stderr.write(chalk.red(`Search error: ${message}\n`));
+    throw new CliError(CliErrorCode.API_ERROR, `Search error: ${message}`);
   }
-  process.exit(1);
 }

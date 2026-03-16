@@ -52,7 +52,13 @@ export function loadSearchState(): SearchState | null {
   try {
     const raw = readFileSync(STATE_FILE, "utf-8");
     return JSON.parse(raw) as SearchState;
-  } catch {
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      // JSON parse failure — corrupted file, safe to delete
+      try { unlinkSync(STATE_FILE); } catch { /* ignore */ }
+      process.stderr.write("Warning: Search state was corrupted and has been cleared. Re-run your search.\n");
+    }
+    // Permission/IO errors: leave the file alone, just return null
     return null;
   }
 }
@@ -80,7 +86,11 @@ export function loadOptionsState(): OptionsState | null {
   try {
     const raw = readFileSync(OPTIONS_FILE, "utf-8");
     return JSON.parse(raw) as OptionsState;
-  } catch {
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      try { unlinkSync(OPTIONS_FILE); } catch { /* ignore */ }
+      process.stderr.write("Warning: Options state was corrupted and has been cleared. Re-run voyagier options.\n");
+    }
     return null;
   }
 }
