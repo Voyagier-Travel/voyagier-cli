@@ -5,6 +5,7 @@ import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
 import { validateDate, warnPastDate, formatPrice, deriveBaseUrl, formatDateRange, formatDateHuman } from "../utils.js";
 import { fatal, jsonOutput } from "../output.js";
+import { CliError, CliErrorCode } from "../errors.js";
 import { GET_PLAN_DEEP } from "../queries.js";
 
 interface DeepSubSelection {
@@ -163,9 +164,9 @@ export function registerPlanCommands(program: Command): void {
         console.log(chalk.dim(`\n  Next: voyagier travellers add --plan ${plan.id} --first <name> --last <name> --type ADULT`));
         await printPlanFooter(plan.id);
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to create plan: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to create plan: ${message}`);
       }
     });
 
@@ -268,9 +269,9 @@ export function registerPlanCommands(program: Command): void {
         }
         console.log();
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to list plans: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to list plans: ${message}`);
       }
     });
 
@@ -381,9 +382,9 @@ export function registerPlanCommands(program: Command): void {
 
         console.log();
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to get plan: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to get plan: ${message}`);
       }
     });
 
@@ -503,9 +504,9 @@ export function registerPlanCommands(program: Command): void {
 
         console.log();
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to get plan summary: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to get plan summary: ${message}`);
       }
     });
 
@@ -527,9 +528,9 @@ export function registerPlanCommands(program: Command): void {
 
         console.log(chalk.green(`✓ Deleted trip plan ${id}`));
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to delete plan: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to delete plan: ${message}`);
       }
     });
 
@@ -595,9 +596,9 @@ export function registerPlanCommands(program: Command): void {
         }
         console.log();
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to get items: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to get items: ${message}`);;
       }
     });
 
@@ -659,9 +660,9 @@ export function registerPlanCommands(program: Command): void {
           console.log(chalk.green(`✓ Removed ${deleted.length} item${deleted.length !== 1 ? "s" : ""}`));
         }
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to remove item(s): ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to remove item(s): ${message}`);
       }
     });
 
@@ -721,9 +722,9 @@ export function registerPlanCommands(program: Command): void {
         }
         if (plan.description) console.log(chalk.dim(`  ${plan.description}`));
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to update plan: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to update plan: ${message}`);
       }
     });
 
@@ -737,12 +738,10 @@ export function registerPlanCommands(program: Command): void {
     .action(async (planId: string, opts) => {
       try {
         if (!opts.user && !opts.email) {
-          process.stderr.write(chalk.red("Either --user or --email is required.\n"));
-          process.exit(1);
+          throw new CliError(CliErrorCode.VALIDATION, "Either --user or --email is required.");
         }
         if (opts.user && opts.email) {
-          process.stderr.write(chalk.red("Use either --user or --email, not both.\n"));
-          process.exit(1);
+          throw new CliError(CliErrorCode.VALIDATION, "Use either --user or --email, not both.");
         }
 
         let userId: string;
@@ -756,8 +755,7 @@ export function registerPlanCommands(program: Command): void {
           );
           const user = userData.userPublicProfile;
           if (!user) {
-            process.stderr.write(chalk.red(`User "${opts.user}" not found.\n`));
-            process.exit(1);
+            throw new CliError(CliErrorCode.NOT_FOUND, `User "${opts.user}" not found.`);
           }
           userId = user.id;
           userDisplay = user.name ?? user.username;
@@ -797,8 +795,7 @@ export function registerPlanCommands(program: Command): void {
         const role = rolesData.tripPlanRoles.find(r => r.name === roleName);
         if (!role) {
           const valid = rolesData.tripPlanRoles.map(r => r.name.toLowerCase()).join(", ");
-          process.stderr.write(chalk.red(`Invalid role "${opts.role}". Valid: ${valid}\n`));
-          process.exit(1);
+          throw new CliError(CliErrorCode.VALIDATION, `Invalid role "${opts.role}". Valid: ${valid}`);
         }
 
         await graphql<{ inviteTripPlanCollaborator: unknown }>(
@@ -814,9 +811,9 @@ export function registerPlanCommands(program: Command): void {
         }
         console.log(chalk.green(`\n  ✓ Invited ${chalk.bold(userDisplay)} as ${role.name}\n`));
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to share plan: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to share plan: ${message}`);
       }
     });
 
@@ -867,9 +864,9 @@ export function registerPlanCommands(program: Command): void {
         }
         console.log();
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to list collaborators: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to list collaborators: ${message}`);
       }
     });
 
@@ -894,9 +891,9 @@ export function registerPlanCommands(program: Command): void {
 
         console.log(chalk.green(`\n  ✓ Removed collaborator ${opts.collaboratorId}\n`));
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to remove collaborator: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to remove collaborator: ${message}`);
       }
     });
 
@@ -945,9 +942,9 @@ export function registerPlanCommands(program: Command): void {
         }
         console.log();
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to list shared plans: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to list shared plans: ${message}`);
       }
     });
 
@@ -1043,9 +1040,9 @@ export function registerPlanCommands(program: Command): void {
         }
         console.log();
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed: ${message}`);
       }
     });
 
@@ -1078,8 +1075,7 @@ export function registerPlanCommands(program: Command): void {
         }
 
         if (!opts.up && !opts.down) {
-          process.stderr.write(chalk.red("Specify --up or --down (or --remove to clear vote).\n"));
-          process.exit(1);
+          throw new CliError(CliErrorCode.VALIDATION, "Specify --up or --down (or --remove to clear vote).");
         }
 
         const feedbackType = opts.down ? "Downvote" : "Upvote";
@@ -1114,9 +1110,9 @@ export function registerPlanCommands(program: Command): void {
           console.log(chalk.green(`\n  ${emoji} ${feedbackType}d\n`));
         }
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to vote: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to vote: ${message}`);
       }
     });
 }

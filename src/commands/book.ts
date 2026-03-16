@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
+import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
 import { formatPrice, findPendingSubSelections, subSelectionLabel, openBrowser, deriveBaseUrl, PlanItemForSubCheck } from "../utils.js";
 import { hintCheckoutCreated, hintBookingConfirmed, hintBookingPending, hintDryRun } from "../hints.js";
@@ -66,19 +67,13 @@ export function registerBookCommands(program: Command): void {
         // Pre-flight: check for missing sub-selections FIRST (these make cart appear empty)
         const pending = findPendingSubSelections(plan.items);
         if (pending.length > 0) {
-          process.stderr.write(chalk.red("Cannot checkout — items need sub-selection choices:\n\n"));
-          for (const p of pending) {
-            process.stderr.write(chalk.yellow(`  • ${p.itemTitle} — pick ${subSelectionLabel(p.subSelectionType)}\n`));
-          }
-          process.stderr.write(chalk.dim(`\nRun: voyagier options ${planId}\n`));
-          process.exit(1);
+          const pendingList = pending.map(p => `  • ${p.itemTitle} — pick ${subSelectionLabel(p.subSelectionType)}`).join("\n");
+          throw new CliError(CliErrorCode.VALIDATION, `Cannot checkout — items need sub-selection choices:\n\n${pendingList}\n\nRun: voyagier options ${planId}`);
         }
 
         // Pre-flight: cart not empty
         if (cart.itemCount === 0) {
-          process.stderr.write(chalk.red("Cart is empty. Nothing to book.\n"));
-          process.stderr.write(chalk.dim(`Select flights or hotels first: voyagier search flights --plan ${planId} ...\n`));
-          process.exit(1);
+          throw new CliError(CliErrorCode.VALIDATION, `Cart is empty. Nothing to book.\nSelect flights or hotels first: voyagier search flights --plan ${planId} ...`);
         }
 
         const subtotal = cart.total;
@@ -173,9 +168,9 @@ export function registerBookCommands(program: Command): void {
         console.log(chalk.dim(`  Plan: ${baseUrl}/plans/${planId}\n`));
 
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Checkout failed: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Checkout failed: ${message}`);
       }
     });
 }

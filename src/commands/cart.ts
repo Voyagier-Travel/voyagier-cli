@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
+import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
 import { formatPrice, findPendingSubSelections, subSelectionLabel, deriveBaseUrl, PlanItemForSubCheck } from "../utils.js";
 import { hintCartCheckout } from "../hints.js";
@@ -136,9 +137,9 @@ export function registerCartCommands(program: Command): void {
 
         console.log(chalk.dim(`  Plan: ${baseUrl}/plans/${planId}`));
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to load cart: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to load cart: ${message}`);
       }
     });
 }

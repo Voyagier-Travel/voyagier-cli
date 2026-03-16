@@ -7,6 +7,7 @@ import { hintCabinClass, hintHotelRoom } from "../hints.js";
 import { saveOptionsState, loadOptionsState, clearOptionsState } from "../state.js";
 import { GET_PLAN_DEEP, SET_SUB_SELECTION, REFRESH_SUB_SELECTION } from "../queries.js";
 import { progress, fatal, jsonOutput, jsonError } from "../output.js";
+import { CliError, CliErrorCode } from "../errors.js";
 
 interface SubSelectionOption {
   id: string;
@@ -252,9 +253,9 @@ export function registerOptionsCommands(program: Command): void {
         console.log(chalk.dim(`  Example: voyagier pick 1`));
         console.log(chalk.dim(`  Plan: ${deriveBaseUrl(getApiUrl())}/plans/${planId}\n`));
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to load options: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to load options: ${message}`);
       }
     });
 
@@ -269,11 +270,7 @@ export function registerOptionsCommands(program: Command): void {
     .action(async (numberStr: string, opts) => {
       // Direct mode: --sub-selection-id + --option-id
       if ((opts.subSelectionId && !opts.optionId) || (!opts.subSelectionId && opts.optionId)) {
-        if (opts.json) {
-          jsonError("Direct mode requires both --sub-selection-id and --option-id.", "INCOMPLETE_DIRECT_MODE");
-        } else {
-          fatal("Direct mode requires both --sub-selection-id and --option-id.");
-        }
+        throw new CliError(CliErrorCode.VALIDATION, "Direct mode requires both --sub-selection-id and --option-id.");
       }
       if (opts.subSelectionId && opts.optionId) {
         try {
@@ -304,13 +301,9 @@ export function registerOptionsCommands(program: Command): void {
             console.log(chalk.green(`\n  ✓ Selected: ${selected.name}${price}\n`));
           }
         } catch (err) {
+          if (err instanceof CliError) throw err;
           const message = err instanceof Error ? err.message : String(err);
-          if (opts.json) {
-            jsonError(message, "PICK_FAILED");
-          } else {
-            process.stderr.write(chalk.red(`Failed to select option: ${message}\n`));
-            process.exit(1);
-          }
+          throw new CliError(CliErrorCode.API_ERROR, `Failed to select option: ${message}`);
         }
         return;
       }
@@ -318,26 +311,21 @@ export function registerOptionsCommands(program: Command): void {
       // Indexed mode: use state file
       const num = parseInt(numberStr, 10);
       if (isNaN(num) || num < 1) {
-        process.stderr.write(chalk.red("Invalid selection number. Run `voyagier options <planId>` first.\n"));
-        process.exit(1);
+        throw new CliError(CliErrorCode.VALIDATION, "Invalid selection number. Run `voyagier options <planId>` first.");
       }
 
       const state = loadOptionsState();
       if (!state) {
-        process.stderr.write(chalk.red("No options context found. Run `voyagier options <planId>` first.\n"));
-        process.exit(1);
+        throw new CliError(CliErrorCode.VALIDATION, "No options context found. Run `voyagier options <planId>` first.");
       }
 
       if (state.results.length === 0) {
-        process.stderr.write(chalk.red("No pending sub-selections found. All items may already have selections chosen.\n"));
-        process.stderr.write(chalk.dim("  Run: voyagier options <planId> to check current state\n"));
-        process.exit(1);
+        throw new CliError(CliErrorCode.VALIDATION, "No pending sub-selections found. All items may already have selections chosen.\n  Run: voyagier options <planId> to check current state");
       }
 
       const result = state.results.find(r => r.index === num);
       if (!result) {
-        process.stderr.write(chalk.red(`Option [${num}] not found. Valid range: 1-${state.results.length}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.NOT_FOUND, `Option [${num}] not found. Valid range: 1-${state.results.length}`);
       }
 
       try {
@@ -388,9 +376,9 @@ export function registerOptionsCommands(program: Command): void {
 
         clearOptionsState();
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to select option: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to select option: ${message}`);
       }
     });
 }

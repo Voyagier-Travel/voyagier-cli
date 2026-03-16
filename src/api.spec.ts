@@ -267,12 +267,7 @@ describe("graphql", () => {
       expect(chunks).toEqual(["Hello from AI"]);
     });
 
-    it("should exit on 401", async () => {
-      const exitSpy = jest.spyOn(process, "exit").mockImplementation(() => {
-        throw new Error("process.exit(1)");
-      });
-      const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-
+    it("should throw CliError on 401", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 401,
@@ -280,10 +275,7 @@ describe("graphql", () => {
       } as any);
 
       await expect(streamChatFn("s1", "test", { onTextDelta() {} }))
-        .rejects.toThrow("process.exit(1)");
-
-      exitSpy.mockRestore();
-      stderrSpy.mockRestore();
+        .rejects.toThrow("Authentication failed.");
     });
 
     it("should throw on non-401 error", async () => {
