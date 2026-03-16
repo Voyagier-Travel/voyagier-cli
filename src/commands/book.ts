@@ -3,9 +3,62 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
-import { formatPrice, findPendingSubSelections, subSelectionLabel, openBrowser, deriveBaseUrl, PlanItemForSubCheck } from "../utils.js";
+import { formatPrice, findPendingSubSelections, subSelectionLabel, openBrowser, deriveBaseUrl, PlanItemForSubCheck, SelectionTraveller } from "../utils.js";
 import { hintCheckoutCreated, hintBookingConfirmed, hintBookingPending, hintDryRun } from "../hints.js";
 import { GET_CART, GET_PLAN_DEEP, CREATE_CHECKOUT, GET_PAYMENT_CHECKOUTS } from "../queries.js";
+
+type MissingField = "dateOfBirth" | "gender";
+
+const FIELD_LABELS: Record<MissingField, string> = {
+  dateOfBirth: "date of birth",
+  gender: "gender",
+};
+
+const FIELD_FLAGS: Record<MissingField, string> = {
+  dateOfBirth: "--dob YYYY-MM-DD",
+  gender: "--gender M",
+};
+
+interface TravellerValidationError {
+  travellerId: string;
+  travellerName: string;
+  missingFields: MissingField[];
+}
+
+/**
+ * Validate that travellers assigned to flight selections have the fields Sabre requires.
+ * Returns an array of errors. Empty = all good.
+ */
+function validateTravellersForBooking(items: PlanItemForSubCheck[]): TravellerValidationError[] {
+  const errors: TravellerValidationError[] = [];
+  const checked = new Set<string>();
+
+  for (const item of items) {
+    const sel = item.selection;
+    if (!sel || !sel.selectedOption) continue;
+
+    // Only validate flight selections — hotels don't need DOB/gender
+    if (sel.type !== "FLIGHT") continue;
+
+    const travellers: SelectionTraveller[] = sel.assignedTravellers ?? [];
+    for (const t of travellers) {
+      if (checked.has(t.id)) continue;
+      checked.add(t.id);
+
+      const missing: MissingField[] = [];
+      if (!t.dateOfBirth) missing.push("dateOfBirth");
+      if (!t.gender) missing.push("gender");
+      if (missing.length > 0) {
+        errors.push({
+          travellerId: t.id,
+          travellerName: `${t.firstName} ${t.lastName}`,
+          missingFields: missing,
+        });
+      }
+    }
+  }
+  return errors;
+}
 
 interface CartItem {
   id: string;
@@ -64,7 +117,23 @@ export function registerBookCommands(program: Command): void {
         const cart = cartData.getTripPlanCart;
         const plan = planData.tripPlan;
 
-        // Pre-flight: check for missing sub-selections FIRST (these make cart appear empty)
+        // Pre-flight: validate traveller data for flight bookings (skip in dry-run — show warnings instead)
+        const travellerErrors = validateTravellersForBooking(plan.items);
+        if (travellerErrors.length > 0 && !opts.dryRun) {
+          const errorLines = travellerErrors.map(e =>
+            `  ${e.travellerName}:\n${e.missingFields.map(f => `    ✗ ${FIELD_LABELS[f]}`).join("\n")}`
+          ).join("\n\n");
+
+          const fixLines = travellerErrors.map(e =>
+            `  voyagier travellers update ${e.travellerId} ${e.missingFields.map(f => FIELD_FLAGS[f]).join(" ")}`
+          ).join("\n");
+
+          throw new CliError(CliErrorCode.VALIDATION,
+            `Cannot checkout — travellers missing required flight booking data:\n\n${errorLines}\n\nFix:\n${fixLines}`
+          );
+        }
+
+        // Pre-flight: check for missing sub-selections (these make cart appear empty)
         const pending = findPendingSubSelections(plan.items);
         if (pending.length > 0) {
           const pendingList = pending.map(p => `  • ${p.itemTitle} — pick ${subSelectionLabel(p.subSelectionType)}`).join("\n");
@@ -80,6 +149,9 @@ export function registerBookCommands(program: Command): void {
 
         // --dry-run mode
         if (opts.dryRun) {
+          // Include traveller warnings in dry-run
+          const dryRunTravellerErrors = validateTravellersForBooking(plan.items);
+
           if (opts.json) {
             process.stdout.write(JSON.stringify({
               dryRun: true,
@@ -89,6 +161,12 @@ export function registerBookCommands(program: Command): void {
               subtotal,
               note: "Travel fee added at checkout",
               message: "Would create Stripe Checkout Session",
+              ...(dryRunTravellerErrors.length > 0 && {
+                warnings: dryRunTravellerErrors.map(e => ({
+                  traveller: e.travellerName,
+                  missingFields: e.missingFields,
+                })),
+              }),
             }, null, 2) + "\n");
             return;
           }
