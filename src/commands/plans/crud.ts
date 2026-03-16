@@ -6,6 +6,15 @@ import { validateDate, warnPastDate, formatPrice, formatDateRange } from "../../
 import { fatal, jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
 import { planUrl, typeIcon, TripPlan, TripPlanDetail, PaginatedTripPlans } from "./types.js";
+import {
+  CREATE_TRIP_PLAN,
+  GET_TRIP_PLANS,
+  GET_TRIP_PLAN,
+  GET_TRIP_PLAN_SUMMARY,
+  UPDATE_TRIP_PLAN,
+  GET_TRIP_PLAN_WITH_DESC,
+  DELETE_TRIP_PLAN,
+} from "../../queries.js";
 
 export function registerCrudCommands(plans: Command): void {
   plans
@@ -34,9 +43,7 @@ export function registerCrudCommands(plans: Command): void {
         if (opts.description) input.description = opts.description;
 
         const data = await graphql<{ createTripPlan: TripPlan }>(
-          `mutation CreateTripPlan($input: CreateTripPlanInput!) {
-            createTripPlan(input: $input) { id title startDate endDate description }
-          }`,
+          CREATE_TRIP_PLAN,
           { input },
           { dryRun: opts.dryRun }
         );
@@ -89,12 +96,7 @@ export function registerCrudCommands(plans: Command): void {
         const fetchPage = opts.active ? 1 : page;
 
         const data = await graphql<PaginatedTripPlans>(
-          `query TripPlans($page: Int, $limit: Int) {
-            tripPlans(page: $page, limit: $limit) {
-              items { id title startDate endDate }
-              count page limit
-            }
-          }`,
+          GET_TRIP_PLANS,
           { page: fetchPage, limit: fetchLimit }
         );
 
@@ -178,16 +180,7 @@ export function registerCrudCommands(plans: Command): void {
     .action(async (id: string, opts) => {
       try {
         const data = await graphql<TripPlanDetail>(
-          `query TripPlan($id: String!) {
-            tripPlan(id: $id) {
-              id title description startDate endDate
-              items {
-                id type title date startTime endTime day
-                selection { id selectedOption { id name price status } }
-              }
-              travellers { id firstName lastName declaredTravellerType }
-            }
-          }`,
+          GET_TRIP_PLAN,
           { id }
         );
 
@@ -291,16 +284,7 @@ export function registerCrudCommands(plans: Command): void {
     .action(async (id: string, opts) => {
       try {
         const data = await graphql<TripPlanDetail>(
-          `query TripPlan($id: String!) {
-            tripPlan(id: $id) {
-              id title startDate endDate
-              items {
-                id type title day
-                selection { id selectedOption { id name price status } }
-              }
-              travellers { id firstName lastName declaredTravellerType }
-            }
-          }`,
+          GET_TRIP_PLAN_SUMMARY,
           { id }
         );
 
@@ -435,15 +419,13 @@ export function registerCrudCommands(plans: Command): void {
         }
 
         await graphql<{ updateTripPlan: { id: string } }>(
-          `mutation UpdateTripPlan($id: String!, $input: UpdateTripPlanInput!) {
-            updateTripPlan(id: $id, input: $input) { id }
-          }`,
+          UPDATE_TRIP_PLAN,
           { id, input }
         );
 
         // Re-fetch to get the updated fields (mutation return is incomplete)
         const refetch = await graphql<{ tripPlan: TripPlan }>(
-          `query GetPlan($id: String!) { tripPlan(id: $id) { id title startDate endDate description } }`,
+          GET_TRIP_PLAN_WITH_DESC,
           { id }
         );
         const plan = refetch.tripPlan;
@@ -474,7 +456,7 @@ export function registerCrudCommands(plans: Command): void {
     .action(async (id: string, opts) => {
       try {
         await graphql<{ deleteTripPlan: boolean }>(
-          `mutation DeleteTripPlan($id: String!) { deleteTripPlan(id: $id) }`,
+          DELETE_TRIP_PLAN,
           { id }
         );
 

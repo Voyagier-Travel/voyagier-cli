@@ -3,6 +3,14 @@ import chalk from "chalk";
 import { graphql } from "../../api.js";
 import { fatal } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
+import {
+  DELETE_COMMENT,
+  CREATE_COMMENT,
+  GET_COMMENTS,
+  REMOVE_VOTE,
+  CREATE_VOTE,
+  UPDATE_VOTE,
+} from "../../queries.js";
 
 export function registerSocialCommands(plans: Command): void {
   plans
@@ -18,7 +26,7 @@ export function registerSocialCommands(plans: Command): void {
         // Delete mode
         if (opts.delete) {
           await graphql<{ deleteTripPlanItemComment: boolean }>(
-            `mutation Delete($id: String!) { deleteTripPlanItemComment(id: $id) }`,
+            DELETE_COMMENT,
             { id: opts.delete }
           );
           if (opts.json) {
@@ -35,9 +43,7 @@ export function registerSocialCommands(plans: Command): void {
           if (opts.replyTo) input.parentCommentId = opts.replyTo;
 
           const data = await graphql<{ createTripPlanItemComment: { id: string; text: string } }>(
-            `mutation AddComment($itemId: String!, $input: CreateCommentInput!) {
-              createTripPlanItemComment(itemId: $itemId, input: $input) { id text }
-            }`,
+            CREATE_COMMENT,
             { itemId, input }
           );
 
@@ -60,13 +66,7 @@ export function registerSocialCommands(plans: Command): void {
             replies?: Array<{ id: string; text: string; author: { firstName: string; lastName: string } }>;
           }>;
         }>(
-          `query Comments($itemId: String!, $limit: Int) {
-            tripPlanItemComments(itemId: $itemId, limit: $limit) {
-              id text parentCommentId
-              author { id firstName lastName }
-              replies { id text author { firstName lastName } }
-            }
-          }`,
+          GET_COMMENTS,
           { itemId, limit }
         );
 
@@ -120,7 +120,7 @@ export function registerSocialCommands(plans: Command): void {
 
         if (opts.remove) {
           await graphql<{ deleteTripPlanItemFeedback: boolean }>(
-            `mutation RemoveVote($itemId: String!) { deleteTripPlanItemFeedback(itemId: $itemId) }`,
+            REMOVE_VOTE,
             { itemId }
           );
           if (opts.json) {
@@ -140,9 +140,7 @@ export function registerSocialCommands(plans: Command): void {
         // Try create first (first vote), fall back to update (changing existing vote)
         try {
           await graphql<{ createTripPlanItemFeedback: unknown }>(
-            `mutation CreateVote($itemId: String!, $input: CreateFeedbackInput!) {
-              createTripPlanItemFeedback(itemId: $itemId, input: $input) { id }
-            }`,
+            CREATE_VOTE,
             { itemId, input: { feedbackType } }
           );
         } catch (createErr) {
@@ -150,9 +148,7 @@ export function registerSocialCommands(plans: Command): void {
           const msg = createErr instanceof Error ? createErr.message : String(createErr);
           if (msg.includes("already") || msg.includes("duplicate") || msg.includes("exists") || msg.includes("conflict")) {
             await graphql<{ updateTripPlanItemFeedback: unknown }>(
-              `mutation UpdateVote($itemId: String!, $feedbackType: FeedbackType!) {
-                updateTripPlanItemFeedback(itemId: $itemId, feedbackType: $feedbackType) { id }
-              }`,
+              UPDATE_VOTE,
               { itemId, feedbackType }
             );
           } else {

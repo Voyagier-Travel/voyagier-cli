@@ -2,6 +2,14 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
 import { getApiUrl, getHomeAirports } from "../config.js";
+import {
+  GET_TRIP_PLAN_BASIC,
+  CREATE_TRIP_PLAN_BASIC,
+  CREATE_TRAVELLER_BRIEF,
+  GET_TRAVELLERS_BRIEF,
+  CREATE_FLIGHT_SELECTION,
+  CREATE_HOTEL_SELECTION,
+} from "../queries.js";
 import { validateDate, warnPastDate, validateIata, extractFlightToken, buildFlightSummary, buildHotelSummary, deriveBaseUrl, formatPrice, formatDateRange } from "../utils.js";
 import { progress, warn, fatal, jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
@@ -181,7 +189,7 @@ export function registerPlanTripCommand(program: Command): void {
         if (opts.plan) {
           if (!json && !agent) progress("Fetching existing trip plan...");
           const planData = await graphql<{ tripPlan: TripPlan }>(
-            `query TripPlan($id: String!) { tripPlan(id: $id) { id title startDate endDate } }`,
+            GET_TRIP_PLAN_BASIC,
             { id: opts.plan }
           );
           plan = planData.tripPlan;
@@ -193,9 +201,7 @@ export function registerPlanTripCommand(program: Command): void {
           if (endDate) planInput.endDate = endDate;
 
           const planData = await graphql<{ createTripPlan: TripPlan }>(
-            `mutation CreateTripPlan($input: CreateTripPlanInput!) {
-              createTripPlan(input: $input) { id title startDate endDate }
-            }`,
+            CREATE_TRIP_PLAN_BASIC,
             { input: planInput }
           );
           plan = planData.createTripPlan;
@@ -208,11 +214,7 @@ export function registerPlanTripCommand(program: Command): void {
           const parsed = parseTravellers(opts.travellers);
           for (const t of parsed) {
             const tData = await graphql<{ createTripPlanTraveller: Traveller }>(
-              `mutation CreateTraveller($tripPlanId: String!, $input: CreateTravellerInput!) {
-                createTripPlanTraveller(tripPlanId: $tripPlanId, input: $input) {
-                  id firstName lastName
-                }
-              }`,
+              CREATE_TRAVELLER_BRIEF,
               { tripPlanId: plan.id, input: { firstName: t.firstName, lastName: t.lastName, declaredTravellerType: "Adult" } }
             );
             travellers.push(tData.createTripPlanTraveller);
@@ -224,9 +226,7 @@ export function registerPlanTripCommand(program: Command): void {
         if (travellerIds.length === 0) {
           // Fetch existing travellers (always needed for existing plans; also for new plans with no --travellers)
           const tData = await graphql<{ tripPlanTravellers: Traveller[] }>(
-            `query Travellers($tripPlanId: String!) {
-              tripPlanTravellers(tripPlanId: $tripPlanId) { id firstName lastName }
-            }`,
+            GET_TRAVELLERS_BRIEF,
             { tripPlanId: plan.id }
           );
           travellerIds = tData.tripPlanTravellers.map(t => t.id);
@@ -276,13 +276,7 @@ export function registerPlanTripCommand(program: Command): void {
           if (opts.return) flightInput.returnDate = opts.return;
 
           const fData = await graphql<{ createTripPlanFlightSelection: SelectionResult }>(
-            `mutation CreateFlightSelection($tripPlanId: String!, $input: CreateFlightSelectionInput!) {
-              createTripPlanFlightSelection(tripPlanId: $tripPlanId, input: $input) {
-                item { id title tripPlanId }
-                selection { id }
-                options { id name price time airline duration bookingData sortOrder }
-              }
-            }`,
+            CREATE_FLIGHT_SELECTION,
             { tripPlanId: plan.id, input: flightInput }
           );
 
@@ -341,13 +335,7 @@ export function registerPlanTripCommand(program: Command): void {
             };
 
             const hData = await graphql<{ createTripPlanHotelSelection: SelectionResult }>(
-              `mutation CreateHotelSelection($tripPlanId: String!, $input: CreateHotelSelectionInput!) {
-                createTripPlanHotelSelection(tripPlanId: $tripPlanId, input: $input) {
-                  item { id title tripPlanId }
-                  selection { id }
-                  options { id name price time duration bookingData sortOrder }
-                }
-              }`,
+              CREATE_HOTEL_SELECTION,
               { tripPlanId: plan.id, input: hotelInput }
             );
 

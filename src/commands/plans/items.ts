@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../../api.js";
-import { GET_PLAN_DEEP } from "../../queries.js";
+import { GET_PLAN_DEEP, DELETE_TRIP_PLAN_ITEM } from "../../queries.js";
 import { formatPrice } from "../../utils.js";
 import { fatal, jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
@@ -88,7 +88,7 @@ export function registerItemCommands(plans: Command): void {
         // Single item by ID
         if (itemId && !opts.type && !opts.all) {
           await graphql<{ deleteTripPlanItem: boolean }>(
-            `mutation DeleteTripPlanItem($id: String!) { deleteTripPlanItem(id: $id) }`,
+            DELETE_TRIP_PLAN_ITEM,
             { id: itemId }
           );
           if (opts.json) {
@@ -122,7 +122,7 @@ export function registerItemCommands(plans: Command): void {
         const deleted: string[] = [];
         for (const item of items) {
           await graphql<{ deleteTripPlanItem: boolean }>(
-            `mutation DeleteTripPlanItem($id: String!) { deleteTripPlanItem(id: $id) }`,
+            DELETE_TRIP_PLAN_ITEM,
             { id: item.id }
           );
           deleted.push(item.id);

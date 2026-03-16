@@ -3,29 +3,7 @@ import chalk from "chalk";
 import { createInterface } from "readline";
 import { graphql, streamChat } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
-
-const CREATE_SESSION = `
-  mutation CreateChatSession($input: CreateSessionInput) {
-    createChatSession(input: $input) {
-      id
-      title
-    }
-  }
-`;
-
-const LIST_SESSIONS = `
-  query ChatSessions($page: Int, $limit: Int) {
-    chatSessions(page: $page, limit: $limit) {
-      items {
-        id
-        title
-        updatedAt
-      }
-      count
-      page
-    }
-  }
-`;
+import { CREATE_CHAT_SESSION, LIST_CHAT_SESSIONS } from "../queries.js";
 
 export function registerChatCommands(program: Command): void {
   program
@@ -53,7 +31,7 @@ export function registerChatCommands(program: Command): void {
         try {
           const input = opts.plan ? { tripPlanId: opts.plan } : undefined;
           const data = await graphql<{ createChatSession: { id: string; title: string } }>(
-            CREATE_SESSION,
+            CREATE_CHAT_SESSION,
             input ? { input } : undefined
           );
           sessionId = data.createChatSession.id;
@@ -85,7 +63,7 @@ async function listSessions(): Promise<void> {
         items: Array<{ id: string; title: string; updatedAt: string }>;
         count: number;
       };
-    }>(LIST_SESSIONS, { page: 1, limit: 20 });
+    }>(LIST_CHAT_SESSIONS, { page: 1, limit: 20 });
 
     const sessions = data.chatSessions.items;
     if (sessions.length === 0) {

@@ -5,6 +5,16 @@ import { getApiUrl } from "../../config.js";
 import { deriveBaseUrl, formatDateRange } from "../../utils.js";
 import { jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
+import {
+  LOOKUP_USER,
+  GET_USERS,
+  CREATE_USER_INVITATION,
+  GET_TRIP_PLAN_ROLES,
+  INVITE_COLLABORATOR,
+  GET_COLLABORATORS,
+  REMOVE_COLLABORATOR,
+  GET_SHARED_TRIP_PLANS,
+} from "../../queries.js";
 
 export function registerSharingCommands(plans: Command): void {
   plans
@@ -29,7 +39,7 @@ export function registerSharingCommands(plans: Command): void {
         if (opts.user) {
           // Look up user by username
           const userData = await graphql<{ userPublicProfile: { id: string; name: string; username: string } | null }>(
-            `query LookupUser($username: String!) { userPublicProfile(username: $username) { id name username } }`,
+            LOOKUP_USER,
             { username: opts.user }
           );
           const user = userData.userPublicProfile;
@@ -42,7 +52,7 @@ export function registerSharingCommands(plans: Command): void {
           // Look up user by email (search users, filter client-side)
           // TODO: Replace with server-side email filter query when available (VOY-809)
           const usersData = await graphql<{ users: { items: Array<{ id: string; name: string; email: string; username?: string }> } }>(
-            `query Users { users(limit: 100) { items { id name email username } } }`
+            GET_USERS
           );
           const email = (opts.email as string).toLowerCase();
           const match = usersData.users.items.find((u) => u.email?.toLowerCase() === email);
@@ -50,7 +60,7 @@ export function registerSharingCommands(plans: Command): void {
           if (!match) {
             // User not found — send platform invitation
             await graphql<{ createUserInvitation: { __typename: string } }>(
-              `mutation InviteUser($input: CreateUserInvitationInput!) { createUserInvitation(createUserInvitationInput: $input) { __typename } }`,
+              CREATE_USER_INVITATION,
               { input: { email: opts.email as string } }
             );
             if (opts.json) {
@@ -68,7 +78,7 @@ export function registerSharingCommands(plans: Command): void {
 
         // Resolve role name to ID
         const rolesData = await graphql<{ tripPlanRoles: Array<{ id: string; name: string }> }>(
-          `{ tripPlanRoles { id name } }`
+          GET_TRIP_PLAN_ROLES
         );
         const roleName = opts.role.charAt(0).toUpperCase() + opts.role.slice(1).toLowerCase();
         const role = rolesData.tripPlanRoles.find(r => r.name === roleName);
@@ -78,9 +88,7 @@ export function registerSharingCommands(plans: Command): void {
         }
 
         await graphql<{ inviteTripPlanCollaborator: unknown }>(
-          `mutation Invite($tripPlanId: String!, $input: InviteCollaboratorInput!) {
-            inviteTripPlanCollaborator(tripPlanId: $tripPlanId, input: $input) { id }
-          }`,
+          INVITE_COLLABORATOR,
           { tripPlanId: planId, input: { invitedUserId: userId, roleId: role.id } }
         );
 
@@ -111,13 +119,7 @@ export function registerSharingCommands(plans: Command): void {
             user: { id: string; firstName: string; lastName: string; email: string };
           }>;
         }>(
-          `query Collaborators($tripPlanId: String!) {
-            tripPlanCollaborators(tripPlanId: $tripPlanId) {
-              id userId roleId
-              role { id name }
-              user { id firstName lastName email }
-            }
-          }`,
+          GET_COLLABORATORS,
           { tripPlanId: planId }
         );
 
@@ -157,9 +159,7 @@ export function registerSharingCommands(plans: Command): void {
     .action(async (planId: string, opts) => {
       try {
         await graphql<{ removeTripPlanCollaborator: boolean }>(
-          `mutation Remove($collaboratorId: String!) {
-            removeTripPlanCollaborator(collaboratorId: $collaboratorId)
-          }`,
+          REMOVE_COLLABORATOR,
           { collaboratorId: opts.collaboratorId }
         );
 
@@ -190,12 +190,7 @@ export function registerSharingCommands(plans: Command): void {
         const data = await graphql<{
           sharedTripPlans: { count: number; items: Array<{ id: string; title: string; startDate?: string; endDate?: string }> };
         }>(
-          `query SharedPlans($limit: Int, $page: Int) {
-            sharedTripPlans(limit: $limit, page: $page) {
-              count
-              items { id title startDate endDate }
-            }
-          }`,
+          GET_SHARED_TRIP_PLANS,
           { limit, page }
         );
 
