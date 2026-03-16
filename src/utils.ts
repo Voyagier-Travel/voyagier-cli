@@ -92,12 +92,22 @@ export function validateIata(value: string, flagName: string): void {
 
 // --- Shared types for sub-selection checking ---
 
+export interface SelectionTraveller {
+  id: string;
+  firstName: string;
+  lastName: string;
+  dateOfBirth?: string | null;
+  gender?: string | null;
+}
+
 export interface PlanItemForSubCheck {
   id: string;
   title: string;
   selection?: {
     id: string;
+    type?: string;
     isLocked: boolean;
+    assignedTravellers?: SelectionTraveller[];
     selectedOption?: {
       id: string;
       name: string;

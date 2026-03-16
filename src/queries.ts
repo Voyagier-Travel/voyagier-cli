@@ -34,7 +34,15 @@ export const GET_PLAN_DEEP = `
         title
         selection {
           id
+          type
           isLocked
+          assignedTravellers {
+            id
+            firstName
+            lastName
+            dateOfBirth
+            gender
+          }
           selectedOption {
             id
             name
