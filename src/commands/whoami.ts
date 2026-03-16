@@ -1,0 +1,140 @@
+import { Command } from "commander";
+import chalk from "chalk";
+import { credentialsExist, getUserContext, getApiUrl, saveUserContext } from "../config.js";
+import { graphql } from "../api.js";
+import { CliError, CliErrorCode, authFailedMessage } from "../errors.js";
+import { deriveBaseUrl } from "../utils.js";
+
+const CABIN_LABELS: Record<string, string> = {
+  economy: "Economy",
+  premium_economy: "Premium Economy",
+  business: "Business",
+  first: "First",
+};
+
+export function registerWhoamiCommand(program: Command): void {
+  program
+    .command("whoami")
+    .description("Show your identity and profile summary")
+    .option("--json", "Output raw JSON")
+    .option("--refresh", "Fetch fresh data from the API")
+    .action(async (opts) => {
+      if (!credentialsExist()) {
+        throw new CliError(CliErrorCode.AUTH_FAILED, authFailedMessage("Not authenticated."));
+      }
+
+      let ctx = getUserContext();
+
+      // --refresh or no cached context: fetch fresh data from API
+      if (opts.refresh || !ctx) {
+        interface MeData {
+          id: string;
+          firstName: string;
+          lastName: string;
+          email: string;
+          name?: string;
+          dateOfBirth?: string | null;
+          gender?: string | null;
+          passport?: { last4: string; issueCountry: string; nationalityCountry: string; expirationDate: string } | null;
+        }
+
+        let me: MeData | null = null;
+
+        try {
+          const data = await graphql<{ me: MeData }>(
+            `{ me { id firstName lastName email name dateOfBirth gender passport { last4 issueCountry nationalityCountry expirationDate } } }`,
+          );
+          me = data.me;
+        } catch (err) {
+          if (err instanceof CliError) throw err;
+          // If refresh fails but we have cached data, use it
+          if (!ctx) {
+            const message = err instanceof Error ? err.message : String(err);
+            throw new CliError(CliErrorCode.API_ERROR, `Failed to fetch profile: ${message}`);
+          }
+        }
+
+        if (me) {
+          const rawName = me.name ?? `${me.firstName ?? ""} ${me.lastName ?? ""}`.trim();
+
+          if (ctx) {
+            // Update existing context — overwrite with fresh API values (null = cleared server-side)
+            ctx.name = rawName || me.email;
+            ctx.email = me.email;
+            ctx.dateOfBirth = me.dateOfBirth ?? undefined;
+            ctx.gender = me.gender ?? undefined;
+            ctx.passport = me.passport ?? undefined;
+          } else {
+            // No cached context — create minimal one from API
+            ctx = {
+              id: me.id,
+              name: rawName || me.email,
+              email: me.email,
+              dateOfBirth: me.dateOfBirth ?? undefined,
+              gender: me.gender ?? undefined,
+              passport: me.passport ?? undefined,
+              homeAirports: [],
+              preferredCabin: "economy",
+            };
+          }
+
+          try {
+            saveUserContext(ctx);
+          } catch {
+            // Filesystem save failed — continue with in-memory ctx
+          }
+        }
+      }
+
+      // Guaranteed non-null after the block above (either cached or created; throws if neither)
+      const profile = ctx!;
+
+      const apiUrl = getApiUrl();
+      const baseUrl = deriveBaseUrl(apiUrl);
+      const env = baseUrl.includes("dev.") ? "dev" : baseUrl.includes("staging.") ? "staging" : "prod";
+
+      if (opts.json) {
+        process.stdout.write(
+          JSON.stringify({
+            name: profile.name,
+            email: profile.email,
+            homeAirports: profile.homeAirports,
+            preferredCabin: profile.preferredCabin ?? "economy",
+            dateOfBirth: profile.dateOfBirth ?? null,
+            gender: profile.gender ?? null,
+            hasPassport: !!profile.passport,
+            apiUrl,
+            environment: env,
+          }, null, 2) + "\n",
+        );
+        return;
+      }
+
+      // Compact one-line + details format
+      console.log(chalk.bold(`\n  ${profile.name}`) + chalk.dim(` (${profile.email})`));
+
+      const infoParts: string[] = [];
+      if (profile.homeAirports.length > 0) infoParts.push(profile.homeAirports.join("/"));
+      if (profile.preferredCabin) infoParts.push(CABIN_LABELS[profile.preferredCabin] ?? profile.preferredCabin);
+      infoParts.push(env === "prod" ? baseUrl.replace("https://", "") : chalk.yellow(env));
+
+      console.log(chalk.dim(`  ${infoParts.join(" · ")}`));
+
+      // Traveller readiness
+      const ready: string[] = [];
+      const missing: string[] = [];
+      if (profile.dateOfBirth) ready.push("DOB"); else missing.push("DOB");
+      if (profile.gender) ready.push("gender"); else missing.push("gender");
+      if (profile.passport) ready.push("passport"); else missing.push("passport");
+
+      if (missing.length === 0) {
+        console.log(chalk.green(`  ✓ Booking-ready (DOB, gender, passport on file)`));
+      } else if (ready.length > 0) {
+        console.log(chalk.dim(`  ✓ ${ready.join(", ")}`) + chalk.yellow(` · missing: ${missing.join(", ")}`));
+      } else {
+        console.log(chalk.yellow(`  ⚠ No traveller data on file. Run: voyagier auth setup`));
+      }
+
+      console.log();
+    });
+}
