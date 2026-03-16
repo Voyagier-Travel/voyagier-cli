@@ -279,7 +279,8 @@ export const CREATE_TRAVELLER_BRIEF = `
 export const GET_TRAVELLERS = `
   query Travellers($tripPlanId: String!) {
     tripPlanTravellers(tripPlanId: $tripPlanId) {
-      id firstName lastName email dateOfBirth declaredTravellerType
+      id firstName lastName email dateOfBirth gender declaredTravellerType
+      passport { last4 issueCountry }
     }
   }
 `;

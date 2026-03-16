@@ -76,6 +76,8 @@ interface MeResponse {
     lastName: string;
     email: string;
     name?: string;
+    dateOfBirth?: string | null;
+    gender?: string | null;
     passport?: { last4: string; issueCountry: string; nationalityCountry: string; expirationDate: string } | null;
     frequentFlyerPrograms?: Array<{ airlineCode: string; membershipNumber: string }>;
     profile?: {
@@ -250,7 +252,7 @@ export function registerAuthCommands(program: Command): void {
       let me: MeResponse["me"];
       try {
         const data = await graphql<MeResponse>(
-          `{ me { id firstName lastName email name passport { last4 issueCountry nationalityCountry expirationDate } frequentFlyerPrograms { airlineCode membershipNumber } profile { location city { name } country { name } } } }`
+          `{ me { id firstName lastName email name dateOfBirth gender passport { last4 issueCountry nationalityCountry expirationDate } frequentFlyerPrograms { airlineCode membershipNumber } profile { location city { name } country { name } } } }`
         );
         me = data.me;
       } catch (err) {
@@ -276,12 +278,24 @@ export function registerAuthCommands(program: Command): void {
       const userCtx: UserContext = {
         id: me.id,
         name: displayName,
+        firstName: me.firstName,
+        lastName: me.lastName,
         email: me.email,
+        dateOfBirth: me.dateOfBirth ?? undefined,
+        gender: me.gender ?? undefined,
         location: location ?? undefined,
         city: city ?? undefined,
         country: country ?? undefined,
         homeAirports: [],
       };
+
+      // Show imported traveller data from web profile
+      if (me.dateOfBirth || me.gender) {
+        console.log(`  👤 ${chalk.bold("Traveller Info")} ${chalk.dim("(from your profile)")}`);
+        if (me.dateOfBirth) console.log(`     DOB: ${me.dateOfBirth}`);
+        if (me.gender) console.log(`     Gender: ${me.gender}`);
+        console.log();
+      }
 
       const isInteractive = process.stdin.isTTY === true && !process.env.CI;
       let rl: ReturnType<typeof createInterface> | null = null;
