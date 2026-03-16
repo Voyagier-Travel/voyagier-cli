@@ -4,6 +4,12 @@ import { graphql } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { formatPrice, deriveBaseUrl } from "../utils.js";
 import { getApiUrl } from "../config.js";
+import {
+  GET_BOOKING_RECORDS,
+  GET_BOOKING_RECORDS_BY_USER,
+  REFRESH_BOOKING_RECORD,
+  GET_BOOKING_RECORD,
+} from "../queries.js";
 
 interface BookingRecord {
   id: string;
@@ -75,25 +81,9 @@ export function registerBookingsCommands(program: Command): void {
 
         const hasFilters = Object.keys(filters).length > 0;
 
-        const query = hasFilters
-          ? `query GetBookingRecords($filters: BookingRecordFiltersInput) {
-              getBookingRecords(filters: $filters) {
-                id type status pnr providerName providerReference amount currency
-                issueDate travelStartDate travelEndDate tripPlanId
-                tripPlan { id title }
-                tripPlanItem { id title }
-              }
-            }`
-          : `{ getBookingRecordsByUser {
-              id type status pnr providerName providerReference amount currency
-              issueDate travelStartDate travelEndDate tripPlanId
-              tripPlan { id title }
-              tripPlanItem { id title }
-            } }`;
-
         const raw = hasFilters
-          ? await graphql<{ getBookingRecords: BookingRecord[] }>(query, { filters })
-          : await graphql<{ getBookingRecordsByUser: BookingRecord[] }>(query);
+          ? await graphql<{ getBookingRecords: BookingRecord[] }>(GET_BOOKING_RECORDS, { filters })
+          : await graphql<{ getBookingRecordsByUser: BookingRecord[] }>(GET_BOOKING_RECORDS_BY_USER);
 
         const records = hasFilters
           ? (raw as { getBookingRecords: BookingRecord[] }).getBookingRecords
@@ -149,23 +139,13 @@ export function registerBookingsCommands(program: Command): void {
         if (opts.refresh) {
           if (!opts.json) process.stderr.write(chalk.dim("Refreshing from provider...\n"));
           await graphql<{ refreshBookingRecord: BookingRecord }>(
-            `mutation Refresh($id: String!) {
-              refreshBookingRecord(id: $id) { id status }
-            }`,
+            REFRESH_BOOKING_RECORD,
             { id }
           );
         }
 
         const data = await graphql<{ getBookingRecord: BookingRecord }>(
-          `query GetBookingRecord($id: String!) {
-            getBookingRecord(id: $id) {
-              id type status pnr providerName providerReference amount currency
-              issueDate travelStartDate travelEndDate tripPlanId
-              tripPlan { id title }
-              tripPlanItem { id title }
-              travellers { firstName lastName }
-            }
-          }`,
+          GET_BOOKING_RECORD,
           { id }
         );
 
