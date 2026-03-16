@@ -88,10 +88,19 @@ export function registerSelectCommands(program: Command): void {
               }
             } else if (opts.phase === "return") {
               if (!opts.json) progress("Selecting return flight...");
-              await graphql<{ selectReturnFlight: FlightSelectionResponse }>(
+              const returnDirectData = await graphql<{ selectReturnFlight: FlightSelectionResponse }>(
                 SELECT_RETURN_FLIGHT,
                 { selectionId: opts.selectionId, flightToken: opts.flightToken }
               );
+
+              // Lock in the selected option after return flight is set
+              const directFinalOptions = returnDirectData.selectReturnFlight.options;
+              if (directFinalOptions.length > 0) {
+                await graphql<{ setTripPlanSelectedOption: SelectionResponse }>(
+                  SET_TRIP_PLAN_SELECTED_OPTION,
+                  { selectionId: opts.selectionId, optionId: directFinalOptions[0].id }
+                );
+              }
               if (opts.json) {
                 jsonOutput({
                   success: true,
@@ -260,10 +269,20 @@ export function registerSelectCommands(program: Command): void {
 
           if (!opts.json) progress("Selecting return flight...");
 
-          await graphql<{ selectReturnFlight: FlightSelectionResponse }>(
+          const returnData = await graphql<{ selectReturnFlight: FlightSelectionResponse }>(
             SELECT_RETURN_FLIGHT,
             { selectionId: state.selectionId, flightToken: selected.flightToken }
           );
+
+          // After both departure + return are set, lock in the selected option
+          // selectReturnFlight returns the final combined options — pick the first to set as selectedOption
+          const finalOptions = returnData.selectReturnFlight.options;
+          if (finalOptions.length > 0) {
+            await graphql<{ setTripPlanSelectedOption: SelectionResponse }>(
+              SET_TRIP_PLAN_SELECTED_OPTION,
+              { selectionId: state.selectionId, optionId: finalOptions[0].id }
+            );
+          }
 
           if (opts.json) {
             process.stdout.write(JSON.stringify({
