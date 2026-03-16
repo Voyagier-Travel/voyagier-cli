@@ -3,6 +3,13 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
 import { getApiUrl, getHomeAirports } from "../config.js";
+import {
+  GET_TRAVELLERS_BRIEF,
+  CREATE_FLIGHT_SELECTION,
+  GET_TRIP_PLAN_ITEM_TYPES,
+  DELETE_TRIP_PLAN_ITEM,
+  CREATE_HOTEL_SELECTION,
+} from "../queries.js";
 import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode } from "../utils.js";
@@ -38,9 +45,7 @@ type SortField = "price" | "duration" | "stops" | "default";
 
 async function resolveTravellerIds(tripPlanId: string): Promise<string[]> {
   const data = await graphql<{ tripPlanTravellers: Traveller[] }>(
-    `query Travellers($tripPlanId: String!) {
-      tripPlanTravellers(tripPlanId: $tripPlanId) { id firstName lastName }
-    }`,
+    GET_TRAVELLERS_BRIEF,
     { tripPlanId }
   );
   return data.tripPlanTravellers.map((t) => t.id);
@@ -94,7 +99,7 @@ function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[]
 /**
  * Resolve a user-supplied airport value to an IATA code.
  * Priority: exact IATA code → metro area (shows options) → single city match → ambiguous error.
- * Shows a note if city name was resolved. Calls process.exit(1) if ambiguous or unknown.
+ * Shows a note if city name was resolved. Throws CliError if ambiguous or unknown.
  */
 function resolveAirportInput(value: string, flagName: string, quiet: boolean): string {
   // If it's already a valid 3-letter code, validate and return
@@ -247,16 +252,8 @@ export function registerSearchCommands(program: Command): void {
           input.maxStops = maxStops;
         }
 
-        const query = `mutation CreateFlightSelection($tripPlanId: String!, $input: CreateFlightSelectionInput!) {
-            createTripPlanFlightSelection(tripPlanId: $tripPlanId, input: $input) {
-              item { id title tripPlanId }
-              selection { id }
-              options { id name price time airline duration bookingData sortOrder }
-            }
-          }`;
-
         const data = await graphql<{ createTripPlanFlightSelection: SelectionResult }>(
-          query,
+          CREATE_FLIGHT_SELECTION,
           { tripPlanId, input },
           { dryRun }
         );
@@ -376,7 +373,7 @@ export function registerSearchCommands(program: Command): void {
             const planData = await graphql<{
               tripPlan: { items: Array<{ id: string; title: string; selection?: { type: string } }> };
             }>(
-              `query GetPlan($id: String!) { tripPlan(id: $id) { items { id title selection { type } } } }`,
+              GET_TRIP_PLAN_ITEM_TYPES,
               { id: tripPlanId }
             );
             const hotelItems = planData.tripPlan.items.filter(
@@ -386,7 +383,7 @@ export function registerSearchCommands(program: Command): void {
               if (opts.replace) {
                 for (const item of hotelItems) {
                   await graphql<{ deleteTripPlanItem: boolean }>(
-                    `mutation DeleteItem($id: String!) { deleteTripPlanItem(id: $id) }`,
+                    DELETE_TRIP_PLAN_ITEM,
                     { id: item.id }
                   );
                 }
@@ -425,16 +422,8 @@ export function registerSearchCommands(program: Command): void {
           title: `Hotel: ${opts.location}`,
         };
 
-        const query = `mutation CreateHotelSelection($tripPlanId: String!, $input: CreateHotelSelectionInput!) {
-            createTripPlanHotelSelection(tripPlanId: $tripPlanId, input: $input) {
-              item { id title tripPlanId }
-              selection { id }
-              options { id name price time duration bookingData sortOrder }
-            }
-          }`;
-
         const data = await graphql<{ createTripPlanHotelSelection: SelectionResult }>(
-          query,
+          CREATE_HOTEL_SELECTION,
           { tripPlanId, input },
           { dryRun }
         );
