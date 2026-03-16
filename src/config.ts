@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "
 import chalk from "chalk";
 import { join } from "path";
 import { homedir } from "os";
+import { CliError, CliErrorCode } from "./errors.js";
 
 export const CONFIG_DIR = join(homedir(), ".voyagier");
 const CREDENTIALS_FILE = join(CONFIG_DIR, "credentials.json");
@@ -120,9 +121,7 @@ export function getApiUrl(): string {
 export function getToken(): string {
   const creds = loadCredentials();
   if (!creds?.token) {
-    process.stderr.write(chalk.red("Not authenticated.\n"));
-    process.stderr.write(chalk.dim("  Run: voyagier login\n"));
-    process.exit(1);
+    throw new CliError(CliErrorCode.AUTH_FAILED, "Not authenticated.\n  Run: voyagier login");
   }
   return creds.token;
 }
