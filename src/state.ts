@@ -53,6 +53,9 @@ export function loadSearchState(): SearchState | null {
     const raw = readFileSync(STATE_FILE, "utf-8");
     return JSON.parse(raw) as SearchState;
   } catch {
+    // Corrupted state file — clean up and warn
+    try { unlinkSync(STATE_FILE); } catch { /* ignore */ }
+    process.stderr.write("Warning: Search state was corrupted and has been cleared. Re-run your search.\n");
     return null;
   }
 }
@@ -81,6 +84,8 @@ export function loadOptionsState(): OptionsState | null {
     const raw = readFileSync(OPTIONS_FILE, "utf-8");
     return JSON.parse(raw) as OptionsState;
   } catch {
+    try { unlinkSync(OPTIONS_FILE); } catch { /* ignore */ }
+    process.stderr.write("Warning: Options state was corrupted and has been cleared. Re-run voyagier options.\n");
     return null;
   }
 }
