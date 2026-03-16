@@ -3,6 +3,11 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
+import {
+  SELECT_DEPARTURE_FLIGHT,
+  SELECT_RETURN_FLIGHT,
+  SET_TRIP_PLAN_SELECTED_OPTION,
+} from "../queries.js";
 import { loadSearchState, saveSearchState, clearSearchState, isSearchStateStale } from "../state.js";
 import { formatFlights } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, deriveBaseUrl } from "../utils.js";
@@ -59,12 +64,7 @@ export function registerSelectCommands(program: Command): void {
             if (opts.phase === "departure") {
               if (!opts.json) progress("Selecting departure flight...");
               const data = await graphql<{ selectDepartureFlight: FlightSelectionResponse }>(
-                `mutation SelectDeparture($selectionId: String!, $flightToken: String!) {
-                  selectDepartureFlight(selectionId: $selectionId, flightToken: $flightToken) {
-                    id
-                    options { id name price time airline duration bookingData }
-                  }
-                }`,
+                SELECT_DEPARTURE_FLIGHT,
                 { selectionId: opts.selectionId, flightToken: opts.flightToken }
               );
               const returnOptions = data.selectDepartureFlight.options;
@@ -89,12 +89,7 @@ export function registerSelectCommands(program: Command): void {
             } else if (opts.phase === "return") {
               if (!opts.json) progress("Selecting return flight...");
               await graphql<{ selectReturnFlight: FlightSelectionResponse }>(
-                `mutation SelectReturn($selectionId: String!, $flightToken: String!) {
-                  selectReturnFlight(selectionId: $selectionId, flightToken: $flightToken) {
-                    id
-                    options { id name price time airline duration bookingData }
-                  }
-                }`,
+                SELECT_RETURN_FLIGHT,
                 { selectionId: opts.selectionId, flightToken: opts.flightToken }
               );
               if (opts.json) {
@@ -116,12 +111,7 @@ export function registerSelectCommands(program: Command): void {
             // Hotel or one-way flight via explicit option ID
             if (!opts.json) progress("Selecting option...");
             const data = await graphql<{ setTripPlanSelectedOption: SelectionResponse }>(
-              `mutation SetSelected($selectionId: String!, $optionId: String!) {
-                setTripPlanSelectedOption(selectionId: $selectionId, optionId: $optionId) {
-                  id
-                  selectedOption { id name price }
-                }
-              }`,
+              SET_TRIP_PLAN_SELECTED_OPTION,
               { selectionId: opts.selectionId, optionId: opts.optionId }
             );
             const result = data.setTripPlanSelectedOption;
@@ -203,12 +193,7 @@ export function registerSelectCommands(program: Command): void {
           if (!opts.json) progress("Selecting departure flight...");
 
           const data = await graphql<{ selectDepartureFlight: FlightSelectionResponse }>(
-            `mutation SelectDeparture($selectionId: String!, $flightToken: String!) {
-              selectDepartureFlight(selectionId: $selectionId, flightToken: $flightToken) {
-                id
-                options { id name price time airline duration bookingData }
-              }
-            }`,
+            SELECT_DEPARTURE_FLIGHT,
             { selectionId: state.selectionId, flightToken: selected.flightToken }
           );
 
@@ -276,12 +261,7 @@ export function registerSelectCommands(program: Command): void {
           if (!opts.json) progress("Selecting return flight...");
 
           await graphql<{ selectReturnFlight: FlightSelectionResponse }>(
-            `mutation SelectReturn($selectionId: String!, $flightToken: String!) {
-              selectReturnFlight(selectionId: $selectionId, flightToken: $flightToken) {
-                id
-                options { id name price time airline duration bookingData }
-              }
-            }`,
+            SELECT_RETURN_FLIGHT,
             { selectionId: state.selectionId, flightToken: selected.flightToken }
           );
 
@@ -318,12 +298,7 @@ export function registerSelectCommands(program: Command): void {
         if (!opts.json) progress("Selecting option...");
 
         const data = await graphql<{ setTripPlanSelectedOption: SelectionResponse }>(
-          `mutation SetSelected($selectionId: String!, $optionId: String!) {
-            setTripPlanSelectedOption(selectionId: $selectionId, optionId: $optionId) {
-              id
-              selectedOption { id name price }
-            }
-          }`,
+          SET_TRIP_PLAN_SELECTED_OPTION,
           { selectionId: state.selectionId, optionId: selected.optionId }
         );
 

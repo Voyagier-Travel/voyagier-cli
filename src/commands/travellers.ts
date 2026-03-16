@@ -6,6 +6,12 @@ import { getApiUrl } from "../config.js";
 import { validateDate, deriveBaseUrl } from "../utils.js";
 import { jsonOutput, fatal } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
+import {
+  CREATE_TRAVELLER,
+  GET_TRAVELLERS,
+  DELETE_TRAVELLER,
+  UPDATE_TRAVELLER,
+} from "../queries.js";
 
 /** Convert an enum value to PascalCase (e.g. "adult" → "Adult", "MALE" → "Male"). */
 function toPascalCase(value: string): string {
@@ -51,11 +57,7 @@ export function registerTravellerCommands(program: Command): void {
         if (opts.gender) input.gender = toPascalCase(opts.gender);
 
         const data = await graphql<{ createTripPlanTraveller: Traveller }>(
-          `mutation CreateTraveller($tripPlanId: String!, $input: CreateTravellerInput!) {
-            createTripPlanTraveller(tripPlanId: $tripPlanId, input: $input) {
-              id firstName lastName email dateOfBirth gender declaredTravellerType
-            }
-          }`,
+          CREATE_TRAVELLER,
           { tripPlanId: opts.plan, input }
         );
 
@@ -89,11 +91,7 @@ export function registerTravellerCommands(program: Command): void {
     .action(async (opts) => {
       try {
         const data = await graphql<{ tripPlanTravellers: Traveller[] }>(
-          `query Travellers($tripPlanId: String!) {
-            tripPlanTravellers(tripPlanId: $tripPlanId) {
-              id firstName lastName email dateOfBirth declaredTravellerType
-            }
-          }`,
+          GET_TRAVELLERS,
           { tripPlanId: opts.plan }
         );
 
@@ -152,9 +150,7 @@ export function registerTravellerCommands(program: Command): void {
     .action(async (id: string, opts) => {
       try {
         await graphql<{ deleteTripPlanTraveller: boolean }>(
-          `mutation DeleteTraveller($id: String!) {
-            deleteTripPlanTraveller(id: $id)
-          }`,
+          DELETE_TRAVELLER,
           { id }
         );
 
@@ -199,11 +195,7 @@ export function registerTravellerCommands(program: Command): void {
         }
 
         const data = await graphql<{ updateTripPlanTraveller: Traveller }>(
-          `mutation UpdateTraveller($id: String!, $input: UpdateTravellerInput!) {
-            updateTripPlanTraveller(id: $id, input: $input) {
-              id firstName lastName email dateOfBirth gender declaredTravellerType
-            }
-          }`,
+          UPDATE_TRAVELLER,
           { id, input }
         );
 
