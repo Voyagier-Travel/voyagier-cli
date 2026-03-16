@@ -115,17 +115,8 @@ describe("config", () => {
       expect(getToken()).toBe("env-token");
     });
 
-    it("should exit when no credentials exist", () => {
-      const exitSpy = jest.spyOn(process, "exit").mockImplementation(() => {
-        throw new Error("process.exit called");
-      });
-      const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-
-      expect(() => getToken()).toThrow("process.exit called");
-      expect(exitSpy).toHaveBeenCalledWith(1);
-
-      exitSpy.mockRestore();
-      stderrSpy.mockRestore();
+    it("should throw CliError when no credentials exist", () => {
+      expect(() => getToken()).toThrow(/Not authenticated/);
     });
   });
 
