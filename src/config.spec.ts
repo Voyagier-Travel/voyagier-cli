@@ -142,7 +142,7 @@ describe("config", () => {
 
     it("should fall back to default when no credentials", () => {
       const url = getApiUrl();
-      expect(url).toBe("https://voyagier.com/api");
+      expect(url).toBe("https://travel.voyagier.com/api");
     });
   });
 

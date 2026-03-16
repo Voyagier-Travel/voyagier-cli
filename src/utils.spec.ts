@@ -297,7 +297,7 @@ describe("deriveBaseUrl", () => {
   });
 
   it("handles malformed URLs gracefully", () => {
-    expect(deriveBaseUrl("not-a-url")).toBe("https://voyagier.com");
+    expect(deriveBaseUrl("not-a-url")).toBe("https://travel.voyagier.com");
   });
 });
 

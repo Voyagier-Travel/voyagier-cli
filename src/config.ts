@@ -54,7 +54,7 @@ function loadFileCredentials(): Credentials | null {
   }
 }
 
-export function saveCredentials(token: string, apiUrl: string = "https://voyagier.com/api"): void {
+export function saveCredentials(token: string, apiUrl: string = "https://travel.voyagier.com/api"): void {
   ensureConfigDir();
   // Preserve existing user context from file (not env vars)
   const existing = loadFileCredentials();
@@ -93,7 +93,7 @@ export function loadCredentials(): Credentials | null {
   const envToken = process.env.VOYAGIER_TOKEN;
   const envUrl = process.env.VOYAGIER_API_URL;
   if (envToken) {
-    return { token: envToken, apiUrl: envUrl ?? "https://voyagier.com/api" };
+    return { token: envToken, apiUrl: envUrl ?? "https://travel.voyagier.com/api" };
   }
 
   if (!existsSync(CREDENTIALS_FILE)) return null;
@@ -115,7 +115,7 @@ export function clearCredentials(): void {
 
 export function getApiUrl(): string {
   const creds = loadCredentials();
-  return creds?.apiUrl ?? "https://voyagier.com/api";
+  return creds?.apiUrl ?? "https://travel.voyagier.com/api";
 }
 
 export function getToken(): string {

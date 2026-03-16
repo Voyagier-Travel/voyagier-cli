@@ -105,7 +105,7 @@ voyagier search flights --plan $PLAN --from LAX --to NRT --date 2026-04-15 --jso
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `VOYAGIER_TOKEN` | Personal access token (overrides config file) | — |
-| `VOYAGIER_API_URL` | API base URL | `https://voyagier.com` |
+| `VOYAGIER_API_URL` | API base URL | `https://travel.voyagier.com` |
 
 ## Agent Skills
 
