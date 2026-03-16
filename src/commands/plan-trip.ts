@@ -4,6 +4,7 @@ import { graphql } from "../api.js";
 import { getApiUrl, getHomeAirports } from "../config.js";
 import { validateDate, warnPastDate, validateIata, extractFlightToken, buildFlightSummary, buildHotelSummary, deriveBaseUrl, formatPrice, formatDateRange } from "../utils.js";
 import { progress, warn, fatal, jsonOutput } from "../output.js";
+import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
 
 interface TripPlan {
   id: string;
@@ -99,8 +100,10 @@ export function registerPlanTripCommand(program: Command): void {
     .option("--sort <field>", "Sort options by: price, duration, stops", "price")
     .option("--max-results <n>", "Max options to show per category", "10")
     .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
     .action(async (opts) => {
       const json = !!opts.json;
+      const agent = !!opts.agent;
 
       try {
         // Validate inputs
@@ -136,7 +139,7 @@ export function registerPlanTripCommand(program: Command): void {
         const baseUrl = deriveBaseUrl(getApiUrl());
 
         // Step 1: Create plan
-        if (!json) progress("Creating trip plan...");
+        if (!json && !agent) progress("Creating trip plan...");
         const planInput: Record<string, unknown> = { title: opts.title };
         if (opts.depart) planInput.startDate = opts.depart;
         const endDate = opts.return ?? opts.checkout;
@@ -153,7 +156,7 @@ export function registerPlanTripCommand(program: Command): void {
         // Step 2: Add travellers
         const travellers: Traveller[] = [];
         if (opts.travellers) {
-          if (!json) progress("Adding travellers...");
+          if (!json && !agent) progress("Adding travellers...");
           const parsed = parseTravellers(opts.travellers);
           for (const t of parsed) {
             const tData = await graphql<{ createTripPlanTraveller: Traveller }>(
@@ -204,7 +207,7 @@ export function registerPlanTripCommand(program: Command): void {
             const homeAirports = getHomeAirports();
             if (homeAirports.length > 0) {
               origin = homeAirports[0].toUpperCase();
-              if (!json) progress(`Using home airport: ${origin}`);
+              if (!json && !agent) progress(`Using home airport: ${origin}`);
             } else {
               fatal("No origin specified and no home airport configured. Use --from <code> or run: voyagier auth setup");
             }
@@ -212,7 +215,7 @@ export function registerPlanTripCommand(program: Command): void {
           destination = opts.to.toUpperCase();
           const isRoundTrip = !!opts.return;
 
-          if (!json) progress(`Searching flights (${origin} → ${destination})...`);
+          if (!json && !agent) progress(`Searching flights (${origin} → ${destination})...`);
 
           const flightInput: Record<string, unknown> = {
             origin,
@@ -275,7 +278,7 @@ export function registerPlanTripCommand(program: Command): void {
           if (!checkin || !checkout) {
             warn("--hotel requires --checkin and --checkout (or --depart/--return). Skipping hotel search.");
           } else {
-            if (!json) progress(`Searching hotels (${opts.hotel})...`);
+            if (!json && !agent) progress(`Searching hotels (${opts.hotel})...`);
 
             const adults = opts.guests ? parseInt(opts.guests, 10) : Math.max(1, travellerIds.length);
             const hotelInput: Record<string, unknown> = {
@@ -349,6 +352,50 @@ export function registerPlanTripCommand(program: Command): void {
           return;
         }
 
+        // Agent output
+        if (agent) {
+          const planUrl = `${baseUrl}/plans/${plan.id}`;
+          const dateStr = formatDateRange(plan.startDate, plan.endDate);
+          const lines: string[] = [];
+          lines.push(`## ✈️ ${plan.title}`);
+          const subParts: string[] = [];
+          if (dateStr) subParts.push(`**${dateStr}**`);
+          if (travellers.length > 0) subParts.push(`${travellers.length} traveller${travellers.length !== 1 ? "s" : ""}`);
+          if (subParts.length > 0) lines.push(subParts.join(" · "));
+          lines.push("");
+
+          if (flightResult && origin && destination) {
+            lines.push(`### Flights (${origin} → ${destination})`);
+            lines.push(agentFlightOptions(flightResult.options));
+            lines.push("");
+          }
+
+          if (hotelResult && opts.hotel) {
+            lines.push(`### Hotels (${opts.hotel})`);
+            lines.push(agentHotelOptions(hotelResult.options));
+            lines.push("");
+          }
+
+          if (travellers.length > 0) {
+            lines.push(`👤 ${travellers.map(t => `${t.firstName} ${t.lastName}`).join(", ")}`);
+            lines.push("");
+          }
+
+          lines.push(`👉 **View & edit:** ${planUrl}`);
+
+          const steps: string[] = [];
+          if (nextSteps.selectFlight) steps.push(`- Select flight: \`${nextSteps.selectFlight}\``);
+          if (nextSteps.selectHotel) steps.push(`- Select hotel: \`${nextSteps.selectHotel}\``);
+          if (steps.length > 0) {
+            lines.push("");
+            lines.push("**Next steps:**");
+            lines.push(...steps);
+          }
+
+          process.stdout.write(lines.join("\n") + "\n");
+          return;
+        }
+
         // Human output
         const dateStr = formatDateRange(plan.startDate, plan.endDate);
         console.log(chalk.green(`\n✓ Created: ${plan.title}${dateStr ? ` (${dateStr})` : ""}`));
@@ -394,6 +441,9 @@ export function registerPlanTripCommand(program: Command): void {
         const message = err instanceof Error ? err.message : String(err);
         if (json) {
           process.stdout.write(JSON.stringify({ error: true, message }, null, 2) + "\n");
+          process.exit(1);
+        } else if (agent) {
+          process.stdout.write(`> **Error:** ${message}\n`);
           process.exit(1);
         } else {
           process.stderr.write(chalk.red(`plan-trip failed: ${message}\n`));

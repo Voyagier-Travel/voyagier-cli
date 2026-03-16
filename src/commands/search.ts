@@ -6,6 +6,7 @@ import { getApiUrl, getHomeAirports } from "../config.js";
 import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode } from "../utils.js";
+import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
 
 interface SelectOption {
   id: string;
@@ -103,6 +104,7 @@ export function registerSearchCommands(program: Command): void {
     .option("--max-stops <n>", "Maximum number of stops")
     .option("--sort <field>", "Sort by: price, duration, stops, default", "default")
     .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL query without executing")
     .action(async (opts) => {
       try {
@@ -116,7 +118,7 @@ export function registerSearchCommands(program: Command): void {
           if (homeAirports.length > 0) {
             origin = homeAirports[0].toUpperCase();
             validateIata(origin, "--from (home airport)");
-            process.stderr.write(chalk.dim(`Using home airport: ${origin} (from profile)\n`));
+            if (!opts.json && !opts.agent) process.stderr.write(chalk.dim(`Using home airport: ${origin} (from profile)\n`));
           } else {
             process.stderr.write(chalk.red("No origin specified. Run: voyagier auth setup (or use --from <code>)\n"));
             process.exit(1);
@@ -135,7 +137,7 @@ export function registerSearchCommands(program: Command): void {
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
 
-        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Resolving travellers...\n"));
+        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Resolving travellers...\n"));
 
         const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
         if (!dryRun && travellerIds.length === 0) {
@@ -144,7 +146,7 @@ export function registerSearchCommands(program: Command): void {
           process.exit(1);
         }
 
-        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Searching flights...\n"));
+        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Searching flights...\n"));
         const destination = opts.to.toUpperCase();
         const isRoundTrip = !!opts.return;
 
@@ -215,6 +217,24 @@ export function registerSearchCommands(program: Command): void {
           return;
         }
 
+        if (opts.agent) {
+          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`;
+          const lines: string[] = [];
+          lines.push(`### Flights (${origin} → ${destination})`);
+          if (options.length === 0) {
+            lines.push("_No flights found for this route and date._");
+          } else {
+            lines.push(agentFlightOptions(options));
+          }
+          lines.push("");
+          lines.push(`👉 **Plan:** ${planUrl}`);
+          lines.push("");
+          if (isRoundTrip) lines.push("_Note: Select departure first, then return._");
+          lines.push("**Next:** `voyagier select <number>`");
+          process.stdout.write(lines.join("\n") + "\n");
+          return;
+        }
+
         if (options.length === 0) {
           process.stderr.write(chalk.dim("No flights found for this route and date.\n"));
           return;
@@ -245,6 +265,7 @@ export function registerSearchCommands(program: Command): void {
     .option("--sort <field>", "Sort by: price, default", "default")
     .option("--replace", "Replace existing hotel items for this location (removes old selections)")
     .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL query without executing")
     .option("--verbose", "Show request details sent to the API")
     .action(async (opts) => {
@@ -259,7 +280,7 @@ export function registerSearchCommands(program: Command): void {
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
 
-        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Resolving travellers...\n"));
+        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Resolving travellers...\n"));
 
         const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
         if (!dryRun && travellerIds.length === 0) {
@@ -269,6 +290,7 @@ export function registerSearchCommands(program: Command): void {
         }
 
         // Check for existing hotel items and handle --replace.
+
         // Filter by selection type (HOTEL) instead of title text to avoid
         // false matches on unrelated items whose titles contain "hotel".
         if (!dryRun) {
@@ -306,7 +328,7 @@ export function registerSearchCommands(program: Command): void {
           }
         }
 
-        if (!dryRun && !opts.json) process.stderr.write(chalk.dim("Searching hotels...\n"));
+        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Searching hotels...\n"));
         if (!dryRun && opts.verbose) {
           process.stderr.write(chalk.dim(`API request — location: "${opts.location}", check-in: ${opts.checkin}, check-out: ${opts.checkout}\n`));
         }
@@ -367,6 +389,23 @@ export function registerSearchCommands(program: Command): void {
             options: options.map((opt, i) => ({ index: i + 1, ...opt })),
             url: `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`,
           }, null, 2) + "\n");
+          return;
+        }
+
+        if (opts.agent) {
+          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`;
+          const lines: string[] = [];
+          lines.push(`### Hotels (${opts.location})`);
+          if (options.length === 0) {
+            lines.push("_No hotels found for this location and dates._");
+          } else {
+            lines.push(agentHotelOptions(options));
+          }
+          lines.push("");
+          lines.push(`👉 **Plan:** ${planUrl}`);
+          lines.push("");
+          lines.push("**Next:** `voyagier select <number>`");
+          process.stdout.write(lines.join("\n") + "\n");
           return;
         }
 

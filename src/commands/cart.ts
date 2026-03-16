@@ -27,6 +27,7 @@ export function registerCartCommands(program: Command): void {
     .command("cart <planId>")
     .description("View the shopping cart for a trip plan")
     .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
     .action(async (planId: string, opts) => {
       try {
         const [cartData, planData] = await Promise.all([
@@ -50,6 +51,47 @@ export function registerCartCommands(program: Command): void {
             note: "Travel fee added at checkout",
             tripPlanUrl: `${baseUrl}/plans/${planId}`,
           }, null, 2) + "\n");
+          return;
+        }
+
+        if (opts.agent) {
+          const planUrl = `${baseUrl}/plans/${planId}`;
+          const lines: string[] = [];
+          lines.push(`## 🛒 Cart — ${plan.title}`);
+          lines.push("");
+
+          if (pending.length > 0) {
+            lines.push("⚠️ **Items need sub-selection before checkout:**");
+            for (const p of pending) {
+              lines.push(`- ${p.itemTitle} — pick ${subSelectionLabel(p.subSelectionType)} (${p.optionCount} options)`);
+            }
+            lines.push("");
+            lines.push(`Run: \`voyagier options ${planId}\``);
+            lines.push("");
+          }
+
+          if (cart.items && cart.items.length > 0) {
+            for (const item of cart.items) {
+              const icon = item.type === "FLIGHT" ? "✈️" : item.type === "HOTEL" ? "🏨" : "📦";
+              lines.push(`- ${icon} ${item.name} — ${formatPrice(item.price)}`);
+            }
+            lines.push("");
+            lines.push(`**Subtotal:** ${formatPrice(cart.total)}`);
+            lines.push("_(Travel fee added at checkout)_");
+          } else if (pending.length === 0) {
+            lines.push("_Cart is empty. Select flights or hotels first._");
+          }
+
+          lines.push("");
+          lines.push(`👉 **View & edit:** ${planUrl}`);
+
+          if (pending.length === 0 && cart.items && cart.items.length > 0) {
+            lines.push("");
+            lines.push("✅ **Ready to book!**");
+            lines.push(`**Next:** \`voyagier book ${planId}\``);
+          }
+
+          process.stdout.write(lines.join("\n") + "\n");
           return;
         }
 
