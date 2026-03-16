@@ -1,7 +1,7 @@
 {
   "name": "@voyagier/cli",
-  "version": "1.0.0",
-  "description": "Voyagier CLI \u2014 AI trip planning from your terminal",
+  "version": "1.1.0",
+  "description": "Voyagier CLI — AI trip planning from your terminal",
   "type": "module",
   "bin": {
     "voyagier": "./dist/index.js"
