@@ -63,12 +63,12 @@ export const METRO_AREAS: MetroArea[] = [
   {
     name: "Detroit Metro",
     aliases: ["detroit"],
-    airports: ["DTW", "YQG"],
+    airports: ["DTW"],
   },
   {
     name: "Seattle Metro",
     aliases: ["seattle", "tacoma"],
-    airports: ["SEA", "PAE"],
+    airports: ["SEA"],
   },
 
   // International
@@ -95,7 +95,7 @@ export const METRO_AREAS: MetroArea[] = [
   {
     name: "Beijing",
     aliases: ["beijing", "peking"],
-    airports: ["PEK", "PKX"],
+    airports: ["PEK"],
   },
   {
     name: "Seoul",
@@ -145,12 +145,12 @@ export const METRO_AREAS: MetroArea[] = [
   {
     name: "Jakarta",
     aliases: ["jakarta"],
-    airports: ["CGK", "HLP"],
+    airports: ["CGK"],
   },
   {
     name: "Kuala Lumpur",
     aliases: ["kuala lumpur", "kl"],
-    airports: ["KUL", "SZB"],
+    airports: ["KUL"],
   },
   {
     name: "Moscow",
@@ -160,12 +160,12 @@ export const METRO_AREAS: MetroArea[] = [
   {
     name: "Stockholm",
     aliases: ["stockholm"],
-    airports: ["ARN", "BMA"],
+    airports: ["ARN"],
   },
   {
     name: "Nairobi",
     aliases: ["nairobi"],
-    airports: ["NBO", "WIL"],
+    airports: ["NBO"],
   },
   {
     name: "Rio de Janeiro",
@@ -180,7 +180,7 @@ export const METRO_AREAS: MetroArea[] = [
   {
     name: "Montreal",
     aliases: ["montreal", "montréal"],
-    airports: ["YUL", "YMX"],
+    airports: ["YUL"],
   },
 ];
 
