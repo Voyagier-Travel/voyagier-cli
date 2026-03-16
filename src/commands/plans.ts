@@ -174,6 +174,7 @@ export function registerPlanCommands(program: Command): void {
     .description("List your trip plans")
     .option("--page <n>", "Page number", "1")
     .option("--limit <n>", "Results per page", "20")
+    .option("--active", "Show only future/ongoing plans (endDate >= today or no dates set)")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
     .action(async (opts) => {
@@ -188,6 +189,9 @@ export function registerPlanCommands(program: Command): void {
           fatal("--limit must be an integer ≥ 1.");
         }
 
+        const fetchLimit = opts.active ? 100 : limit;
+        const fetchPage = opts.active ? 1 : page;
+
         const data = await graphql<PaginatedTripPlans>(
           `query TripPlans($page: Int, $limit: Int) {
             tripPlans(page: $page, limit: $limit) {
@@ -195,24 +199,37 @@ export function registerPlanCommands(program: Command): void {
               count page limit
             }
           }`,
-          { page, limit }
+          { page: fetchPage, limit: fetchLimit }
         );
 
-        const { items, count: total } = data.tripPlans;
+        let { items } = data.tripPlans;
+        const total = data.tripPlans.count;
+
+        if (opts.active) {
+          const today = new Date().toISOString().slice(0, 10);
+          items = items.filter((p) => !p.endDate || p.endDate >= today);
+          items.sort((a, b) => {
+            if (!a.startDate && !b.startDate) return 0;
+            if (!a.startDate) return 1;
+            if (!b.startDate) return -1;
+            return b.startDate.localeCompare(a.startDate);
+          });
+        }
 
         if (opts.json) {
           process.stdout.write(JSON.stringify({
             items: items.map((p) => ({ ...p, url: planUrl(p.id) })),
-            total,
-            page,
-            limit,
+            total: opts.active ? items.length : total,
+            page: opts.active ? 1 : page,
+            limit: opts.active ? items.length : limit,
+            ...(opts.active ? { filtered: true } : {}),
           }, null, 2) + "\n");
           return;
         }
 
         if (opts.agent) {
           const lines: string[] = [];
-          lines.push("## Your Trip Plans");
+          lines.push(opts.active ? "## Your Active Trip Plans" : "## Your Trip Plans");
           lines.push("");
           if (items.length === 0) {
             lines.push("_No trip plans found._");
@@ -222,7 +239,7 @@ export function registerPlanCommands(program: Command): void {
               lines.push(`${i + 1}. **${p.title}**${dates ? `  —  ${dates}` : ""}`);
               lines.push(`   👉 ${planUrl(p.id)}`);
             });
-            if (total > page * limit) {
+            if (!opts.active && total > page * limit) {
               lines.push("");
               lines.push(`_Page ${page} of ${Math.ceil(total / limit)}. Next: \`voyagier plans list --page ${page + 1}\`_`);
             }
@@ -232,19 +249,21 @@ export function registerPlanCommands(program: Command): void {
         }
 
         if (items.length === 0) {
-          console.log(chalk.dim("No trip plans found."));
+          console.log(chalk.dim(opts.active ? "No active trip plans found." : "No trip plans found."));
           return;
         }
 
-        const pageInfo = total > limit ? ` (page ${page}, showing ${items.length} of ${total})` : "";
-        console.log(chalk.bold(`\n${total} trip plan${total > 1 ? "s" : ""}${pageInfo}:\n`));
+        const displayTotal = opts.active ? items.length : total;
+        const pageInfo = !opts.active && total > limit ? ` (page ${page}, showing ${items.length} of ${total})` : "";
+        const label = opts.active ? " active" : "";
+        console.log(chalk.bold(`\n${displayTotal}${label} trip plan${displayTotal > 1 ? "s" : ""}${pageInfo}:\n`));
         for (const plan of items) {
           const dates = formatDateRange(plan.startDate, plan.endDate);
           console.log(`  📋  ${chalk.white(plan.title)}  ${chalk.dim(dates)}`);
           console.log(chalk.dim(`      ${plan.id}`));
         }
 
-        if (total > page * limit) {
+        if (!opts.active && total > page * limit) {
           console.log(chalk.dim(`\n  Next page: voyagier plans list --page ${page + 1}`));
         }
         console.log();
