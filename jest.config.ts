@@ -12,8 +12,16 @@ const config: Config.InitialOptions = {
         diagnostics: false,
       },
     ],
+    "^.+\\.js$": [
+      "ts-jest",
+      {
+        useESM: true,
+        diagnostics: false,
+      },
+    ],
   },
   extensionsToTreatAsEsm: [".ts"],
+  transformIgnorePatterns: ["node_modules/(?!(chalk|#ansi-styles|ansi-styles)/)"],
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
   },
