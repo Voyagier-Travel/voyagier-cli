@@ -11,6 +11,7 @@ import { registerCartCommands } from "./commands/cart.js";
 import { registerOptionsCommands } from "./commands/options.js";
 import { registerBookCommands } from "./commands/book.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
+import { registerWhoamiCommand } from "./commands/whoami.js";
 import { registerBookingsCommands } from "./commands/bookings.js";
 import { registerPlanTripCommand } from "./commands/plan-trip.js";
 import { trackCommand, getTraceId, isTelemetryEnabled } from "./telemetry.js";
@@ -39,6 +40,7 @@ registerCartCommands(program);
 registerBookCommands(program);
 registerBookingsCommands(program);
 registerChatCommands(program);
+registerWhoamiCommand(program);
 registerTelemetryCommands(program);
 
 // Instrument all commands with telemetry
