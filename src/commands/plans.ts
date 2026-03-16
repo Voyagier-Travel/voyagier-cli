@@ -60,7 +60,6 @@ interface TripPlan {
   description?: string;
   startDate?: string;
   endDate?: string;
-  itemCount?: number;
 }
 
 interface TripPlanItem {
@@ -191,7 +190,7 @@ export function registerPlanCommands(program: Command): void {
         const data = await graphql<PaginatedTripPlans>(
           `query TripPlans($page: Int, $limit: Int) {
             tripPlans(page: $page, limit: $limit) {
-              items { id title startDate endDate itemCount }
+              items { id title startDate endDate }
               count page limit
             }
           }`,
@@ -219,9 +218,8 @@ export function registerPlanCommands(program: Command): void {
         console.log(chalk.bold(`\n${total} trip plan${total > 1 ? "s" : ""}${pageInfo}:\n`));
         for (const plan of items) {
           const dates = formatDateRange(plan.startDate, plan.endDate);
-          const itemsLabel = plan.itemCount ? `${plan.itemCount} items` : "empty";
           console.log(`  📋  ${chalk.white(plan.title)}  ${chalk.dim(dates)}`);
-          console.log(chalk.dim(`      ${plan.id}  ·  ${itemsLabel}`));
+          console.log(chalk.dim(`      ${plan.id}`));
         }
 
         if (total > page * limit) {
