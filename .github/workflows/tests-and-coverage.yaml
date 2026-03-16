@@ -1,0 +1,17 @@
+name: Tests and Coverage
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
+      - '.github/**'
+
+jobs:
+  tests-and-coverage:
+    uses: Voyagier-Travel/voyagier-workflows/.github/workflows/nodejs-tests-and-coverage.yaml@main
+    with:
+      node-version: 22
+    permissions:
+      contents: read
