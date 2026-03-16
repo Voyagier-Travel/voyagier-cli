@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import { getApiUrl, getToken } from "./config.js";
 import { getTraceId } from "./telemetry.js";
+import { verbose } from "./verbose.js";
 
 export class AuthError extends Error {
   constructor(message: string) {
@@ -36,16 +37,24 @@ export async function graphql<T = unknown>(
     process.exit(0);
   }
 
-  const res = await fetch(`${apiUrl}/graphql`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      "x-request-id": getTraceId(),
-      "x-datadog-trace-id": getTraceId(),
-    },
-    body: JSON.stringify({ query, variables }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${apiUrl}/graphql`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "x-request-id": getTraceId(),
+        "x-datadog-trace-id": getTraceId(),
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+  } catch (fetchErr) {
+    const stack = verbose && fetchErr instanceof Error ? `\n${fetchErr.stack}` : "";
+    throw new Error(
+      `Network error: Could not reach the API.\nHint: Check your connection and API URL: voyagier auth status${stack}`
+    );
+  }
 
   if (!res.ok) {
     if (res.status === 401) {
@@ -61,7 +70,10 @@ export async function graphql<T = unknown>(
     } catch {
       // Response body wasn't valid JSON; fall through to generic message
     }
-    throw new Error(`API error: ${res.status} ${res.statusText}${detail}`);
+    const hint = detail === ""
+      ? "\nHint: The API returned no data. This may be a permissions issue."
+      : "";
+    throw new Error(`API error: ${res.status} ${res.statusText}${detail}${hint}`);
   }
 
   const json = (await res.json()) as GraphQLResponse<T>;
@@ -71,7 +83,10 @@ export async function graphql<T = unknown>(
     if (code === "UNAUTHENTICATED" || err.message === "Unauthorized") {
       throw new AuthError("Authentication failed. Your token may be invalid or expired. Run: voyagier login");
     }
-    throw new Error(`GraphQL error: ${err.message}`);
+    const hint = err.message.includes("Cannot query field")
+      ? "\nHint: Your CLI may be out of date. Check: voyagier --version"
+      : "";
+    throw new Error(`GraphQL error: ${err.message}${hint}`);
   }
   if (!json.data) {
     throw new Error("No data returned from API");
