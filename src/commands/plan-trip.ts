@@ -87,7 +87,8 @@ export function registerPlanTripCommand(program: Command): void {
   program
     .command("plan-trip")
     .description("Create a full trip plan: plan + travellers + flights + hotels in one command")
-    .requiredOption("--title <title>", "Trip plan title")
+    .option("--plan <id>", "Add to an existing trip plan instead of creating a new one")
+    .option("--title <title>", "Trip plan title (required when --plan is not used)")
     .option("--from <code>", "Origin airport code (defaults to home airport)")
     .option("--to <code>", "Destination airport code")
     .option("--depart <date>", "Departure date (YYYY-MM-DD)")
@@ -106,6 +107,11 @@ export function registerPlanTripCommand(program: Command): void {
       const agent = !!opts.agent;
 
       try {
+        // Validate --plan / --title
+        if (!opts.plan && !opts.title) {
+          fatal("--title is required when --plan is not provided.");
+        }
+
         // Validate inputs
         if (opts.depart) {
           validateDate(opts.depart, "--depart");
@@ -138,20 +144,30 @@ export function registerPlanTripCommand(program: Command): void {
         }
         const baseUrl = deriveBaseUrl(getApiUrl());
 
-        // Step 1: Create plan
-        if (!json && !agent) progress("Creating trip plan...");
-        const planInput: Record<string, unknown> = { title: opts.title };
-        if (opts.depart) planInput.startDate = opts.depart;
-        const endDate = opts.return ?? opts.checkout;
-        if (endDate) planInput.endDate = endDate;
+        // Step 1: Create or fetch plan
+        let plan: TripPlan;
+        if (opts.plan) {
+          if (!json && !agent) progress("Fetching existing trip plan...");
+          const planData = await graphql<{ tripPlan: TripPlan }>(
+            `query TripPlan($id: String!) { tripPlan(id: $id) { id title startDate endDate } }`,
+            { id: opts.plan }
+          );
+          plan = planData.tripPlan;
+        } else {
+          if (!json && !agent) progress("Creating trip plan...");
+          const planInput: Record<string, unknown> = { title: opts.title };
+          if (opts.depart) planInput.startDate = opts.depart;
+          const endDate = opts.return ?? opts.checkout;
+          if (endDate) planInput.endDate = endDate;
 
-        const planData = await graphql<{ createTripPlan: TripPlan }>(
-          `mutation CreateTripPlan($input: CreateTripPlanInput!) {
-            createTripPlan(input: $input) { id title startDate endDate }
-          }`,
-          { input: planInput }
-        );
-        const plan = planData.createTripPlan;
+          const planData = await graphql<{ createTripPlan: TripPlan }>(
+            `mutation CreateTripPlan($input: CreateTripPlanInput!) {
+              createTripPlan(input: $input) { id title startDate endDate }
+            }`,
+            { input: planInput }
+          );
+          plan = planData.createTripPlan;
+        }
 
         // Step 2: Add travellers
         const travellers: Traveller[] = [];
@@ -174,7 +190,7 @@ export function registerPlanTripCommand(program: Command): void {
         // Resolve traveller IDs (from newly added or existing)
         let travellerIds = travellers.map(t => t.id);
         if (travellerIds.length === 0) {
-          // Fetch existing travellers
+          // Fetch existing travellers (always needed for existing plans; also for new plans with no --travellers)
           const tData = await graphql<{ tripPlanTravellers: Traveller[] }>(
             `query Travellers($tripPlanId: String!) {
               tripPlanTravellers(tripPlanId: $tripPlanId) { id firstName lastName }
@@ -398,7 +414,8 @@ export function registerPlanTripCommand(program: Command): void {
 
         // Human output
         const dateStr = formatDateRange(plan.startDate, plan.endDate);
-        console.log(chalk.green(`\n✓ Created: ${plan.title}${dateStr ? ` (${dateStr})` : ""}`));
+        const planVerb = opts.plan ? "Using" : "Created";
+        console.log(chalk.green(`\n✓ ${planVerb}: ${plan.title}${dateStr ? ` (${dateStr})` : ""}`));
         if (travellers.length > 0) {
           console.log(`  ${travellers.length} traveller${travellers.length !== 1 ? "s" : ""} added`);
         }
