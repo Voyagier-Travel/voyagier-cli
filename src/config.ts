@@ -10,7 +10,11 @@ const CREDENTIALS_FILE = join(CONFIG_DIR, "credentials.json");
 export interface UserContext {
   id: string;
   name: string;
+  firstName?: string;
+  lastName?: string;
   email: string;
+  dateOfBirth?: string;
+  gender?: string;
   location?: string;
   city?: string;
   country?: string;
