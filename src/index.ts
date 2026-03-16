@@ -27,18 +27,19 @@ program
   .version(pkg.version)
   .option("--stacktrace", "show full error stack traces");
 
+// Commands ordered by workflow: auth → plan → search → select → book
 registerAuthCommands(program);
-registerChatCommands(program);
+registerPlanTripCommand(program);
 registerPlanCommands(program);
+registerTravellerCommands(program);
 registerSearchCommands(program);
 registerSelectCommands(program);
-registerTravellerCommands(program);
-registerCartCommands(program);
 registerOptionsCommands(program);
+registerCartCommands(program);
 registerBookCommands(program);
-registerTelemetryCommands(program);
 registerBookingsCommands(program);
-registerPlanTripCommand(program);
+registerChatCommands(program);
+registerTelemetryCommands(program);
 
 // Instrument all commands with telemetry
 function instrumentCommands(cmd: Command): void {
