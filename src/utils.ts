@@ -195,7 +195,7 @@ export function deriveBaseUrl(apiUrl: string): string {
     url.pathname = "";
     return url.origin;
   } catch {
-    return "https://voyagier.com";
+    return "https://travel.voyagier.com";
   }
 }
 
