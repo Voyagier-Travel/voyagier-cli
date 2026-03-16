@@ -88,6 +88,98 @@ interface MeResponse {
   };
 }
 
+const ME_QUERY = `{ me { id firstName lastName email name dateOfBirth gender passport { last4 issueCountry nationalityCountry expirationDate } frequentFlyerPrograms { airlineCode membershipNumber } profile { location city { name } country { name } } } }`;
+
+/**
+ * Fetch the full user profile and build a UserContext with smart defaults.
+ * Shared by both `auth login` and `auth setup`.
+ */
+async function fetchAndBuildContext(): Promise<{ ctx: UserContext; me: MeResponse["me"] }> {
+  const data = await graphql<MeResponse>(ME_QUERY);
+  const me = data.me;
+
+  // Preserve existing preferences if user already ran setup
+  const existingCtx = getUserContext();
+
+  const rawName = me.name ?? `${me.firstName ?? ""} ${me.lastName ?? ""}`.trim();
+  const displayName = rawName || me.email;
+  const location = me.profile?.location;
+  const city = me.profile?.city?.name;
+  const country = me.profile?.country?.name;
+
+  // Auto-detect home airports from city (preserve existing if already configured)
+  const detectedAirports = existingCtx?.homeAirports?.length
+    ? existingCtx.homeAirports
+    : (city ? (CITY_AIRPORTS[city] ?? []) : []);
+
+  const ctx: UserContext = {
+    id: me.id,
+    name: displayName,
+    firstName: me.firstName,
+    lastName: me.lastName,
+    email: me.email,
+    dateOfBirth: me.dateOfBirth ?? undefined,
+    gender: me.gender ?? undefined,
+    location: location ?? undefined,
+    city: city ?? undefined,
+    country: country ?? undefined,
+    homeAirports: detectedAirports,
+    preferredCabin: existingCtx?.preferredCabin ?? "economy",
+  };
+
+  // Import passport if on profile
+  if (me.passport) {
+    ctx.passport = me.passport;
+  }
+
+  // Import frequent flyer programs if on profile
+  if (me.frequentFlyerPrograms && me.frequentFlyerPrograms.length > 0) {
+    ctx.frequentFlyerPrograms = me.frequentFlyerPrograms;
+  }
+
+  return { ctx, me };
+}
+
+/**
+ * Print a summary of the saved profile context.
+ */
+function printProfileSummary(ctx: UserContext, me: MeResponse["me"]): void {
+  const parts: string[] = [];
+
+  // Location + airports
+  const locParts = [ctx.location, ctx.city, ctx.country].filter(Boolean);
+  if (locParts.length > 0) {
+    const airportStr = ctx.homeAirports.length > 0 ? ` (${ctx.homeAirports.join(", ")})` : "";
+    parts.push(`  📍 ${locParts.join(" · ")}${airportStr}`);
+  } else if (ctx.homeAirports.length > 0) {
+    parts.push(`  ✈️  Home: ${ctx.homeAirports.join(", ")}`);
+  }
+
+  // Cabin
+  if (ctx.preferredCabin) {
+    parts.push(`  💺 ${CABIN_LABELS[ctx.preferredCabin] ?? ctx.preferredCabin}`);
+  }
+
+  // Traveller data
+  const travellerParts: string[] = [];
+  if (me.dateOfBirth) travellerParts.push(`DOB: ${me.dateOfBirth}`);
+  if (me.gender) travellerParts.push(me.gender);
+  if (me.passport) travellerParts.push(`Passport: ••••${me.passport.last4}`);
+  if (travellerParts.length > 0) {
+    parts.push(`  👤 ${travellerParts.join(" · ")}`);
+  }
+
+  // Frequent flyer
+  if (me.frequentFlyerPrograms && me.frequentFlyerPrograms.length > 0) {
+    const ffs = me.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskNumber(ff.membershipNumber)}`).join(", ");
+    parts.push(`  ✈️  ${ffs}`);
+  }
+
+  if (parts.length > 0) {
+    console.log(parts.join("\n"));
+  }
+}
+
 export function registerAuthCommands(program: Command): void {
   const auth = program.command("auth").description("Manage authentication");
 
@@ -198,23 +290,22 @@ export function registerAuthCommands(program: Command): void {
 
         saveCredentials(token, apiUrl);
 
-        // Verify
+        // Verify + auto-setup profile
         try {
-          const data = await graphql<{ me: { id: string; firstName: string; lastName: string; email: string } }>(
-            `{ me { id firstName lastName email } }`
-          );
-          const user = data.me;
-          const displayName = `${user.firstName} ${user.lastName}`.trim() || user.email;
-          console.log(chalk.green(`\n  ✓ Logged in as ${chalk.bold(displayName)} (${user.email})\n`));
+          const { ctx, me } = await fetchAndBuildContext();
+          saveUserContext(ctx);
 
-          const existingCtx = getUserContext();
-          console.log(chalk.dim("  Next steps:"));
-          if (!existingCtx || existingCtx.homeAirports.length === 0) {
-            console.log(chalk.cyan("    voyagier auth setup          — set home airports & preferences"));
+          const displayName = ctx.name || me.email;
+          console.log(chalk.green(`\n  ✓ Logged in as ${chalk.bold(displayName)} (${me.email})\n`));
+
+          printProfileSummary(ctx, me);
+
+          // Show what was auto-detected
+          if (ctx.homeAirports.length > 0) {
+            console.log(chalk.dim(`\n  Home airport auto-detected from your profile. Change with: voyagier auth setup --airports DCA,IAD`));
           }
-          console.log(chalk.dim("    voyagier plans list          — see your trip plans"));
-          console.log(chalk.dim("    voyagier plan-trip --help    — create a new trip"));
-          console.log();
+
+          console.log(chalk.dim(`\n  Ready! Try: voyagier search flights --to EDI --date 2026-05-29\n`));
         } catch {
           console.log(chalk.green("\n  ✓ Token saved.\n"));
           console.log(chalk.yellow("  ⚠ Could not verify — token may be invalid. Check: voyagier auth status\n"));
@@ -249,46 +340,31 @@ export function registerAuthCommands(program: Command): void {
       console.log(chalk.bold("\n  Voyagier CLI Setup"));
       console.log(chalk.dim("  ──────────────────\n"));
 
-      // Fetch user profile from API
+      // Fetch user profile and build context with smart defaults
       let me: MeResponse["me"];
+      let userCtx: UserContext;
       try {
-        const data = await graphql<MeResponse>(
-          `{ me { id firstName lastName email name dateOfBirth gender passport { last4 issueCountry nationalityCountry expirationDate } frequentFlyerPrograms { airlineCode membershipNumber } profile { location city { name } country { name } } } }`
-        );
-        me = data.me;
+        const result = await fetchAndBuildContext();
+        me = result.me;
+        userCtx = result.ctx;
       } catch (err) {
         if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
         throw new CliError(CliErrorCode.API_ERROR, `Failed to fetch profile: ${message}`);
       }
 
-      const displayName = me.name ?? `${me.firstName} ${me.lastName}`;
+      const displayName = userCtx.name;
       console.log(`  ${chalk.green("✓")} Connected as ${chalk.bold(displayName)} (${me.email})\n`);
 
-      const location = me.profile?.location;
-      const city = me.profile?.city?.name;
-      const country = me.profile?.country?.name;
+      const location = userCtx.location;
+      const city = userCtx.city;
+      const country = userCtx.country;
 
       if (location || city || country) {
         console.log(`  📍 ${chalk.bold("Location")}`);
         const parts = [location, city, country].filter(Boolean);
         console.log(`     ${parts.join(" · ")}\n`);
       }
-
-      // Build user context
-      const userCtx: UserContext = {
-        id: me.id,
-        name: displayName,
-        firstName: me.firstName,
-        lastName: me.lastName,
-        email: me.email,
-        dateOfBirth: me.dateOfBirth ?? undefined,
-        gender: me.gender ?? undefined,
-        location: location ?? undefined,
-        city: city ?? undefined,
-        country: country ?? undefined,
-        homeAirports: [],
-      };
 
       // Show imported traveller data from web profile
       if (me.dateOfBirth || me.gender) {
@@ -316,13 +392,20 @@ export function registerAuthCommands(program: Command): void {
           }
           userCtx.homeAirports = codes;
         } else {
-          // Suggest based on city
+          // Show auto-detected or suggest based on city
+          const autoDetected = userCtx.homeAirports.length > 0 ? userCtx.homeAirports : [];
           const suggestion = city ? CITY_AIRPORTS[city] : undefined;
-          if (suggestion) {
+          if (autoDetected.length > 0) {
+            console.log(chalk.dim(`     Auto-detected from your profile: ${autoDetected.join(", ")}`));
+          } else if (suggestion) {
             console.log(chalk.dim(`     Your city is ${city}. Common airports: ${suggestion.join(", ")}`));
           }
           if (rl) {
-            const airportInput = await prompt(rl, "     Enter your home airport(s), comma-separated (e.g. BWI,DCA): ");
+            const defaultStr = autoDetected.length > 0 ? autoDetected.join(",") : "";
+            const promptText = defaultStr
+              ? `     Home airport(s) [${defaultStr}]: `
+              : "     Enter your home airport(s), comma-separated (e.g. BWI,DCA): ";
+            const airportInput = await prompt(rl, promptText);
             if (airportInput) {
               const codes = airportInput.split(",").map(c => c.trim().toUpperCase()).filter(Boolean);
               const invalid = codes.filter(c => !validateIataCode(c));
@@ -331,8 +414,11 @@ export function registerAuthCommands(program: Command): void {
               }
               userCtx.homeAirports = codes.filter(c => validateIataCode(c));
             }
+            // If user pressed Enter with no input, keep the auto-detected value
           } else {
-            console.log(chalk.dim("     Non-interactive mode. Use: voyagier auth setup --airports BWI,DCA"));
+            if (autoDetected.length === 0) {
+              console.log(chalk.dim("     Non-interactive mode. Use: voyagier auth setup --airports BWI,DCA"));
+            }
           }
         }
         if (userCtx.homeAirports.length > 0) {
