@@ -2,6 +2,7 @@ import chalk from "chalk";
 import { getApiUrl, getToken } from "./config.js";
 import { getTraceId } from "./telemetry.js";
 import { verbose } from "./verbose.js";
+import { CliError, CliErrorCode } from "./errors.js";
 
 export class AuthError extends Error {
   constructor(message: string) {
@@ -50,15 +51,17 @@ export async function graphql<T = unknown>(
       body: JSON.stringify({ query, variables }),
     });
   } catch (fetchErr) {
+    if (fetchErr instanceof CliError) throw fetchErr;
     const stack = verbose && fetchErr instanceof Error ? `\n${fetchErr.stack}` : "";
-    throw new Error(
+    throw new CliError(
+      CliErrorCode.NETWORK,
       `Network error: Could not reach the API.\nHint: Check your connection and API URL: voyagier auth status${stack}`
     );
   }
 
   if (!res.ok) {
     if (res.status === 401) {
-      throw new AuthError("Authentication failed. Your token may be invalid or expired. Run: voyagier login");
+      throw new CliError(CliErrorCode.AUTH_FAILED, "Authentication failed. Your token may be invalid or expired. Run: voyagier login");
     }
     // Try to extract GraphQL error details from the response body
     let detail = "";
@@ -73,7 +76,7 @@ export async function graphql<T = unknown>(
     const hint = detail === ""
       ? "\nHint: The API returned no data. This may be a permissions issue."
       : "";
-    throw new Error(`API error: ${res.status} ${res.statusText}${detail}${hint}`);
+    throw new CliError(CliErrorCode.API_ERROR, `API error: ${res.status} ${res.statusText}${detail}${hint}`);
   }
 
   const json = (await res.json()) as GraphQLResponse<T>;
@@ -81,15 +84,15 @@ export async function graphql<T = unknown>(
     const err = json.errors[0];
     const code = (err as Record<string, unknown> & { extensions?: { code?: string } }).extensions?.code;
     if (code === "UNAUTHENTICATED" || err.message === "Unauthorized") {
-      throw new AuthError("Authentication failed. Your token may be invalid or expired. Run: voyagier login");
+      throw new CliError(CliErrorCode.AUTH_FAILED, "Authentication failed. Your token may be invalid or expired. Run: voyagier login");
     }
     const hint = err.message.includes("Cannot query field")
       ? "\nHint: Your CLI may be out of date. Check: voyagier --version"
       : "";
-    throw new Error(`GraphQL error: ${err.message}${hint}`);
+    throw new CliError(CliErrorCode.API_ERROR, `GraphQL error: ${err.message}${hint}`);
   }
   if (!json.data) {
-    throw new Error("No data returned from API");
+    throw new CliError(CliErrorCode.API_ERROR, "No data returned from API");
   }
   return json.data;
 }
@@ -138,10 +141,9 @@ export async function streamChat(
 
   if (!res.ok) {
     if (res.status === 401) {
-      process.stderr.write(chalk.red("Authentication failed.\n"));
-      process.exit(1);
+      throw new CliError(CliErrorCode.AUTH_FAILED, "Authentication failed.");
     }
-    throw new Error(`Stream error: ${res.status} ${res.statusText}`);
+    throw new CliError(CliErrorCode.API_ERROR, `Stream error: ${res.status} ${res.statusText}`);
   }
 
   if (!res.body) {

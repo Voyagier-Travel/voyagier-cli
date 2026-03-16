@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
+import { CliError, CliErrorCode } from "../errors.js";
 import { formatPrice, deriveBaseUrl } from "../utils.js";
 import { getApiUrl } from "../config.js";
 
@@ -99,7 +100,12 @@ export function registerBookingsCommands(program: Command): void {
           : (raw as { getBookingRecordsByUser: BookingRecord[] }).getBookingRecordsByUser;
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ bookings: records }, null, 2) + "\n");
+          const baseUrl = deriveBaseUrl(getApiUrl());
+          const enriched = records.map((r) => ({
+            ...r,
+            ...(r.tripPlanId ? { url: `${baseUrl}/plans/${r.tripPlanId}` } : {}),
+          }));
+          process.stdout.write(JSON.stringify({ bookings: enriched }, null, 2) + "\n");
           return;
         }
 
@@ -127,9 +133,9 @@ export function registerBookingsCommands(program: Command): void {
         }
         console.log();
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to list bookings: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to list bookings: ${message}`);
       }
     });
 
@@ -167,7 +173,11 @@ export function registerBookingsCommands(program: Command): void {
         const baseUrl = deriveBaseUrl(getApiUrl());
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+          const enriched = {
+            ...r,
+            ...(r.tripPlanId ? { url: `${baseUrl}/plans/${r.tripPlanId}` } : {}),
+          };
+          process.stdout.write(JSON.stringify(enriched, null, 2) + "\n");
           return;
         }
 
@@ -198,9 +208,9 @@ export function registerBookingsCommands(program: Command): void {
         if (opts.refresh) console.log(chalk.green(`  ✓ Refreshed from provider`));
         console.log();
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to get booking: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to get booking: ${message}`);
       }
     });
 }

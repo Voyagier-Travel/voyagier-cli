@@ -2,6 +2,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { createInterface } from "readline";
 import { graphql, streamChat } from "../api.js";
+import { CliError, CliErrorCode } from "../errors.js";
 
 const CREATE_SESSION = `
   mutation CreateChatSession($input: CreateSessionInput) {
@@ -60,8 +61,8 @@ export function registerChatCommands(program: Command): void {
             console.log(chalk.dim(`New session: ${sessionId}`));
           }
         } catch (err) {
-          process.stderr.write(chalk.red(`Failed to create session: ${err}\n`));
-          process.exit(1);
+          if (err instanceof CliError) throw err;
+          throw new CliError(CliErrorCode.API_ERROR, `Failed to create session: ${err}`);
         }
       }
 
@@ -127,8 +128,8 @@ async function chatSingleTurn(sessionId: string, message: string): Promise<void>
     process.stdout.write("\n");
     process.exit(0);
   } catch (err) {
-    process.stderr.write(`Error: ${err}\n`);
-    process.exit(1);
+    if (err instanceof CliError) throw err;
+    throw new CliError(CliErrorCode.API_ERROR, `Error: ${err}`);
   }
 }
 

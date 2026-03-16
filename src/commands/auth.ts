@@ -7,6 +7,7 @@ import { openBrowser } from "../utils.js";
 import { saveCredentials, getToken, getApiUrl, clearCredentials, credentialsExist, saveUserContext, getUserContext } from "../config.js";
 import type { UserContext } from "../config.js";
 import { graphql } from "../api.js";
+import { CliError, CliErrorCode } from "../errors.js";
 
 // City → common airport suggestions
 const CITY_AIRPORTS: Record<string, string[]> = {
@@ -253,9 +254,9 @@ export function registerAuthCommands(program: Command): void {
         );
         me = data.me;
       } catch (err) {
+        if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(chalk.red(`Failed to fetch profile: ${message}\n`));
-        process.exit(1);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to fetch profile: ${message}`);
       }
 
       const displayName = me.name ?? `${me.firstName} ${me.lastName}`;
@@ -296,8 +297,7 @@ export function registerAuthCommands(program: Command): void {
           const codes = (opts.airports as string).split(",").map((c: string) => c.trim().toUpperCase()).filter(Boolean);
           const invalid = codes.filter((c: string) => !validateIataCode(c));
           if (invalid.length > 0) {
-            process.stderr.write(chalk.red(`     Invalid airport code(s): ${invalid.join(", ")} (must be 3 letters)\n`));
-            process.exit(1);
+            throw new CliError(CliErrorCode.VALIDATION, `Invalid airport code(s): ${invalid.join(", ")} (must be 3 letters)`);
           }
           userCtx.homeAirports = codes;
         } else {
