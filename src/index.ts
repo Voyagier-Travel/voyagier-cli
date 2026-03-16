@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { readFileSync } from "fs";
 import { registerAuthCommands } from "./commands/auth.js";
 import { registerChatCommands } from "./commands/chat.js";
-import { registerPlanCommands } from "./commands/plans.js";
+import { registerPlanCommands } from "./commands/plans/index.js";
 import { registerSearchCommands } from "./commands/search.js";
 import { registerSelectCommands } from "./commands/select.js";
 import { registerTravellerCommands } from "./commands/travellers.js";
