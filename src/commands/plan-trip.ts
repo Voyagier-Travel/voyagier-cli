@@ -5,7 +5,7 @@ import { getApiUrl, getHomeAirports } from "../config.js";
 import { validateDate, warnPastDate, validateIata, extractFlightToken, buildFlightSummary, buildHotelSummary, deriveBaseUrl, formatPrice, formatDateRange } from "../utils.js";
 import { progress, warn, fatal, jsonOutput } from "../output.js";
 import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
-import { resolveAirport, searchAirports } from "../data/airports.js";
+import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 
 interface TripPlan {

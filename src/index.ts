@@ -24,7 +24,7 @@ program
   .name("voyagier")
   .description("Voyagier CLI — search, plan, and book travel")
   .version(pkg.version)
-  .option("--verbose", "show full error stack traces");
+  .option("--stacktrace", "show full error stack traces");
 
 registerAuthCommands(program);
 registerChatCommands(program);

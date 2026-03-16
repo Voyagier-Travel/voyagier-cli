@@ -7,7 +7,7 @@ import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode } from "../utils.js";
 import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
-import { resolveAirport, searchAirports } from "../data/airports.js";
+import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 
 interface SelectOption {
@@ -93,13 +93,9 @@ function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[]
 }
 
 /**
- * Resolve a user-supplied airport value (city name or IATA code) to an IATA code.
- * Shows a note if city name was resolved. Calls process.exit(1) if ambiguous or unknown.
- * Returns the uppercased IATA code.
- */
-/**
  * Resolve a user-supplied airport value to an IATA code.
  * Priority: exact IATA code → metro area (shows options) → single city match → ambiguous error.
+ * Shows a note if city name was resolved. Calls process.exit(1) if ambiguous or unknown.
  */
 function resolveAirportInput(value: string, flagName: string, quiet: boolean): string {
   // If it's already a valid 3-letter code, validate and return
