@@ -7,7 +7,7 @@ import { loadSearchState, saveSearchState, clearSearchState, isSearchStateStale 
 import { formatFlights } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, deriveBaseUrl } from "../utils.js";
 import { hintFlightSelected, hintHotelSelected } from "../hints.js";
-import { progress, warn, fatal, jsonOutput, jsonError } from "../output.js";
+import { progress, warn, fatal, jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 
 interface SelectionResponse {

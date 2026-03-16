@@ -1,5 +1,5 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { jsonOutput, jsonError, progress, warn, fatal } from "./output.js";
+import { jsonOutput, progress, warn, fatal } from "./output.js";
 import { CliError, CliErrorCode } from "./errors.js";
 
 describe("jsonOutput", () => {
@@ -26,23 +26,6 @@ describe("jsonOutput", () => {
   it("writes arrays as JSON", () => {
     jsonOutput([1, 2, 3]);
     expect(stdoutSpy).toHaveBeenCalledWith(JSON.stringify([1, 2, 3], null, 2) + "\n");
-  });
-});
-
-describe("jsonError", () => {
-  it("throws a CliError with VALIDATION code and the given message", () => {
-    expect(() => jsonError("something went wrong", "SOME_CODE")).toThrow(CliError);
-    expect(() => jsonError("something went wrong", "SOME_CODE")).toThrow("something went wrong");
-  });
-
-  it("throws CliError with VALIDATION code when no code is provided", () => {
-    let caughtCode: string | undefined;
-    try {
-      jsonError("bad request");
-    } catch (err) {
-      if (err instanceof CliError) caughtCode = err.code;
-    }
-    expect(caughtCode).toBe(CliErrorCode.VALIDATION);
   });
 });
 

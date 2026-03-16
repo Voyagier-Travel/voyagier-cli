@@ -2,6 +2,7 @@ import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
 import { loadCredentials, saveCredentials, clearCredentials, credentialsExist, getToken, getApiUrl, CONFIG_DIR, saveUserContext, getUserContext, getHomeAirports, getPreferredCabin } from "./config.js";
+import { CliError, CliErrorCode } from "./errors.js";
 
 const credFile = join(CONFIG_DIR, "credentials.json");
 
@@ -115,8 +116,15 @@ describe("config", () => {
       expect(getToken()).toBe("env-token");
     });
 
-    it("should throw CliError when no credentials exist", () => {
-      expect(() => getToken()).toThrow(/Not authenticated/);
+    it("should throw CliError with AUTH_FAILED when no credentials exist", () => {
+      try {
+        getToken();
+        fail("Expected CliError to be thrown");
+      } catch (err) {
+        expect(err).toBeInstanceOf(CliError);
+        expect((err as CliError).code).toBe(CliErrorCode.AUTH_FAILED);
+        expect((err as CliError).message).toMatch(/Not authenticated/);
+      }
     });
   });
 

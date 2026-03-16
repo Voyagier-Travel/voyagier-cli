@@ -598,7 +598,7 @@ export function registerPlanCommands(program: Command): void {
       } catch (err) {
         if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
-        throw new CliError(CliErrorCode.API_ERROR, `Failed to get items: ${message}`);;
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to get items: ${message}`);
       }
     });
 
