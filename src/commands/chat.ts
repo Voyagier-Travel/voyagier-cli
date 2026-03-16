@@ -33,10 +33,17 @@ export function registerChatCommands(program: Command): void {
     .option("-s, --session <id>", "Resume an existing session")
     .option("-p, --plan <id>", "Chat about a specific trip plan")
     .option("-l, --list", "List existing sessions")
-    .action(async (opts: { session?: string; plan?: string; list?: boolean }) => {
+    .option("-m, --message <text>", "Send a single message non-interactively")
+    .action(async (opts: { session?: string; plan?: string; list?: boolean; message?: string }) => {
       if (opts.list) {
         await listSessions();
         return;
+      }
+
+      // Determine if we're in non-interactive mode
+      let nonInteractiveMessage = opts.message;
+      if (!nonInteractiveMessage && !process.stdin.isTTY) {
+        nonInteractiveMessage = await readStdin();
       }
 
       let sessionId = opts.session;
@@ -49,11 +56,18 @@ export function registerChatCommands(program: Command): void {
             input ? { input } : undefined
           );
           sessionId = data.createChatSession.id;
-          console.log(chalk.dim(`New session: ${sessionId}`));
+          if (!nonInteractiveMessage) {
+            console.log(chalk.dim(`New session: ${sessionId}`));
+          }
         } catch (err) {
           process.stderr.write(chalk.red(`Failed to create session: ${err}\n`));
           process.exit(1);
         }
+      }
+
+      if (nonInteractiveMessage) {
+        await chatSingleTurn(sessionId, nonInteractiveMessage);
+        return;
       }
 
       console.log(chalk.blue.bold("Voyagier AI Trip Planner"));
@@ -86,6 +100,35 @@ async function listSessions(): Promise<void> {
     console.log(chalk.dim(`\nResume with: voyagier chat --session <id>`));
   } catch (err) {
     process.stderr.write(chalk.red(`Failed to list sessions: ${err}\n`));
+  }
+}
+
+async function readStdin(): Promise<string> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    process.stdin.on("data", (chunk: Buffer) => chunks.push(chunk));
+    process.stdin.on("end", () => resolve(Buffer.concat(chunks).toString("utf8").trim()));
+  });
+}
+
+async function chatSingleTurn(sessionId: string, message: string): Promise<void> {
+  try {
+    await streamChat(sessionId, message, {
+      onTextDelta(text) {
+        process.stdout.write(text);
+      },
+      onToolCall(toolName) {
+        process.stderr.write(`[${toolName}]\n`);
+      },
+      onError(errorText) {
+        process.stderr.write(`Error: ${errorText}\n`);
+      },
+    });
+    process.stdout.write("\n");
+    process.exit(0);
+  } catch (err) {
+    process.stderr.write(`Error: ${err}\n`);
+    process.exit(1);
   }
 }
 
