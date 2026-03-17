@@ -20,6 +20,15 @@ interface HotelOption {
   bookingData?: Record<string, unknown>;
 }
 
+interface ActivityOption {
+  id?: string;
+  name: string;
+  price?: number;
+  time?: string;
+  duration?: string;
+  bookingData?: Record<string, unknown>;
+}
+
 function extractRoute(opt: FlightOption): string {
   // Try to get origin→destination from bookingData.searchQuery
   if (opt.bookingData && typeof opt.bookingData === "object") {
@@ -67,6 +76,22 @@ export function formatHotels(options: HotelOption[]): string {
 
       let line = `  🏨  ${idx}  ${name}`;
       if (price) line += `  ·  ${price}`;
+      return line;
+    })
+    .join("\n\n");
+}
+
+export function formatActivities(options: ActivityOption[]): string {
+  return options
+    .map((opt, i) => {
+      const idx = chalk.bold.cyan(`[${i + 1}]`);
+      const name = chalk.white(opt.name);
+      const price = opt.price != null ? chalk.green(formatPrice(opt.price)) : "";
+      const duration = opt.duration ? chalk.dim(opt.duration) : "";
+
+      let line = `  🎯  ${idx}  ${name}`;
+      const details = [price, duration].filter(Boolean).join("  ·  ");
+      if (details) line += `  ·  ${details}`;
       return line;
     })
     .join("\n\n");
