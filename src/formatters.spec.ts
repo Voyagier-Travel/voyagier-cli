@@ -1,5 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
-import { formatFlights, formatHotels } from "./formatters.js";
+import { formatFlights, formatHotels, formatActivities } from "./formatters.js";
 
 // Strip ANSI color codes for assertion clarity
 const stripAnsi = (str: string) => str.replace(/\u001b\[[0-9;]*m/g, "");
@@ -113,4 +113,33 @@ describe("formatHotels", () => {
     });
   });
 
+});
+
+describe("formatActivities", () => {
+  const stripAnsi = (str: string) => str.replace(/\u001b\[[0-9;]*m/g, "");
+
+  it("should format activity with price and duration", () => {
+    const result = stripAnsi(formatActivities([{ name: "Snorkel Tour", price: 89.99, duration: "3h" }]));
+    expect(result).toContain("[1]");
+    expect(result).toContain("Snorkel Tour");
+    expect(result).toContain("$89.99");
+    expect(result).toContain("3h");
+    expect(result).toContain("🎯");
+  });
+
+  it("should handle missing price", () => {
+    const result = stripAnsi(formatActivities([{ name: "Walking Tour", duration: "2h" }]));
+    expect(result).toContain("Walking Tour");
+    expect(result).toContain("2h");
+  });
+
+  it("should handle missing duration", () => {
+    const result = stripAnsi(formatActivities([{ name: "Kayak Rental", price: 45 }]));
+    expect(result).toContain("Kayak Rental");
+    expect(result).toContain("$45.00");
+  });
+
+  it("should return empty string for empty array", () => {
+    expect(formatActivities([])).toBe("");
+  });
 });

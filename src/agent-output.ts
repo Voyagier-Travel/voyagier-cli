@@ -36,3 +36,20 @@ export function agentHotelOptions(
     })
     .join("\n");
 }
+
+/**
+ * Format a numbered list of activity options for agent output.
+ */
+export function agentActivityOptions(
+  options: Array<{ name: string; price?: number; duration?: string }>
+): string {
+  if (options.length === 0) return "_No activities found._";
+  return options
+    .map((opt, i) => {
+      const parts: string[] = [opt.name];
+      if (opt.price != null) parts.push(formatPrice(opt.price));
+      if (opt.duration) parts.push(opt.duration);
+      return `${i + 1}. ${parts.join(" · ")}`;
+    })
+    .join("\n");
+}

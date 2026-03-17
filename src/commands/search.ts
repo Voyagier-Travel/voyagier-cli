@@ -9,11 +9,12 @@ import {
   GET_TRIP_PLAN_ITEM_TYPES,
   DELETE_TRIP_PLAN_ITEM,
   CREATE_HOTEL_SELECTION,
+  CREATE_ACTIVITY_SELECTION,
 } from "../queries.js";
 import { saveSearchState, loadSearchState } from "../state.js";
-import { formatFlights, formatHotels } from "../formatters.js";
-import { extractFlightToken, buildFlightSummary, buildHotelSummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode } from "../utils.js";
-import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
+import { formatFlights, formatHotels, formatActivities } from "../formatters.js";
+import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivitySummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode } from "../utils.js";
+import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "../agent-output.js";
 import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 import { CliError, CliErrorCode } from "../errors.js";
@@ -495,6 +496,154 @@ export function registerSearchCommands(program: Command): void {
         const sortLabel = sortBy !== "default" ? ` (sorted by ${sortBy})` : "";
         console.log(chalk.bold(`\n${options.length} hotel option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
         console.log(formatHotels(options));
+        await printPlanFooter(result.item.tripPlanId);
+        console.log(chalk.dim(`  Next: voyagier select <number>`));
+      } catch (err) {
+        handleSearchError(err);
+      }
+    });
+
+  search
+    .command("activities")
+    .description("Search for Viator experiences and activities")
+    .option("--plan <id>", "Trip plan ID (or auto-resolved from last search)")
+    .requiredOption("--destination <place>", "Destination name (city or region)")
+    .requiredOption("--date <date>", "Travel date (YYYY-MM-DD)")
+    .option("--query <text>", "Free text search (e.g. 'snorkeling')")
+    .option("--currency <code>", "Currency code", "USD")
+    .option("--sort <field>", "Sort by: price, default", "default")
+    .option("--replace", "Replace existing activity items for this destination (removes old selections)")
+    .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
+    .option("--dry-run", "Show the GraphQL query without executing")
+    .option("--verbose", "Show request details sent to the API")
+    .action(async (opts) => {
+      try {
+        validateDate(opts.date, "--date");
+        warnPastDate(opts.date, "--date");
+
+        const tripPlanId = resolvePlanId(opts);
+        const dryRun = !!opts.dryRun;
+
+        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Resolving travellers...\n"));
+
+        const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
+        if (!dryRun && travellerIds.length === 0) {
+          throw new CliError(CliErrorCode.VALIDATION, `No travellers on this plan. Add one first:\n  voyagier travellers add --plan ${tripPlanId} --first <name> --last <name> --type ADULT`);
+        }
+
+        // Check for existing activity items and handle --replace.
+        if (!dryRun) {
+          try {
+            const planData = await graphql<{
+              tripPlan: { items: Array<{ id: string; title: string; selection?: { type: string } }> };
+            }>(
+              GET_TRIP_PLAN_ITEM_TYPES,
+              { id: tripPlanId }
+            );
+            const activityItems = planData.tripPlan.items.filter(
+              (item) => item.selection?.type === "ACTIVITY"
+            );
+            if (activityItems.length > 0) {
+              if (opts.replace) {
+                for (const item of activityItems) {
+                  await graphql<{ deleteTripPlanItem: boolean }>(
+                    DELETE_TRIP_PLAN_ITEM,
+                    { id: item.id }
+                  );
+                }
+                if (!opts.json) {
+                  process.stderr.write(chalk.dim(`Replaced ${activityItems.length} existing activity item${activityItems.length > 1 ? "s" : ""}.\n`));
+                }
+              } else if (!opts.json) {
+                process.stderr.write(chalk.yellow(`⚠ This plan already has ${activityItems.length} activity item${activityItems.length > 1 ? "s" : ""}. Use --replace to remove them first.\n`));
+              }
+            }
+          } catch (err) {
+            if (opts.replace && !opts.json) {
+              process.stderr.write(chalk.yellow(`⚠ --replace: failed to clean up existing activity items. Duplicates may result.\n`));
+            }
+          }
+        }
+
+        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Searching activities...\n"));
+        if (!dryRun && opts.verbose) {
+          process.stderr.write(chalk.dim(`API request — destination: "${opts.destination}", date: ${opts.date}${opts.query ? `, query: "${opts.query}"` : ""}\n`));
+        }
+
+        const titleParts = [`Activity: ${opts.destination}`];
+        if (opts.query) titleParts.push(opts.query);
+
+        const input: Record<string, unknown> = {
+          destinationName: opts.destination,
+          travelDate: opts.date,
+          currency: opts.currency,
+          travellerIds,
+          title: titleParts.join(" — "),
+        };
+        if (opts.query) input.query = opts.query;
+
+        const data = await graphql<{ createTripPlanActivitySelection: SelectionResult }>(
+          CREATE_ACTIVITY_SELECTION,
+          { tripPlanId, input },
+          { dryRun }
+        );
+
+        const result = data.createTripPlanActivitySelection;
+        const sortBy = (opts.sort ?? "default") as SortField;
+        const options = sortBy === "price"
+          ? [...result.options].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity))
+          : result.options.sort((a, b) => a.sortOrder - b.sortOrder);
+
+        const searchResults = options.map((opt, i) => ({
+          index: i + 1,
+          optionId: opt.id,
+          summary: buildActivitySummary(opt),
+        }));
+
+        saveSearchState({
+          type: "activities",
+          tripPlanId: result.item.tripPlanId,
+          selectionId: result.selection.id,
+          results: searchResults,
+          timestamp: new Date().toISOString(),
+        });
+
+        if (opts.json) {
+          process.stdout.write(JSON.stringify({
+            tripPlanId: result.item.tripPlanId,
+            selectionId: result.selection.id,
+            options: options.map((opt, i) => ({ index: i + 1, ...opt })),
+            url: `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`,
+          }, null, 2) + "\n");
+          return;
+        }
+
+        if (opts.agent) {
+          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`;
+          const lines: string[] = [];
+          lines.push(`### Activities (${opts.destination})`);
+          if (options.length === 0) {
+            lines.push("_No activities found for this destination and date._");
+          } else {
+            lines.push(agentActivityOptions(options));
+          }
+          lines.push("");
+          lines.push(`👉 **Plan:** ${planUrl}`);
+          lines.push("");
+          lines.push("**Next:** `voyagier select <number>`");
+          process.stdout.write(lines.join("\n") + "\n");
+          return;
+        }
+
+        if (options.length === 0) {
+          process.stderr.write(chalk.yellow(`No activities found for "${opts.destination}" on this date.\n`));
+          return;
+        }
+
+        const sortLabel = sortBy !== "default" ? ` (sorted by ${sortBy})` : "";
+        console.log(chalk.bold(`\n${options.length} activity option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
+        console.log(formatActivities(options));
         await printPlanFooter(result.item.tripPlanId);
         console.log(chalk.dim(`  Next: voyagier select <number>`));
       } catch (err) {

@@ -188,7 +188,7 @@ export function registerSelectCommands(program: Command): void {
       }
       const selected = state.results.find((r) => r.index === idx);
       if (!selected) {
-        const searchType = state.type === "flights" ? "flights" : "hotels";
+        const searchType = state.type === "flights" ? "flights" : state.type === "activities" ? "activities" : "hotels";
         throw new CliError(CliErrorCode.NOT_FOUND, `No option [${idx}]. Valid range: 1-${state.results.length}\n  Tip: voyagier search ${searchType} --plan ${state.tripPlanId} ... to refresh results`);
       }
 
@@ -326,14 +326,14 @@ export function registerSelectCommands(program: Command): void {
         if (opts.json) {
           process.stdout.write(JSON.stringify({
             success: true,
-            type: state.type === "flights" ? "flight_selected" : "hotel_selected",
+            type: state.type === "flights" ? "flight_selected" : state.type === "activities" ? "activity_selected" : "hotel_selected",
             selected: selected.summary,
             selectionId: result.id,
             url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
           }, null, 2) + "\n");
         } else if (opts.agent) {
           const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`;
-          const icon = state.type === "flights" ? "✈️" : "🏨";
+          const icon = state.type === "flights" ? "✈️" : state.type === "activities" ? "🎯" : "🏨";
           const lines = [
             `✅ **${icon} Selected:** ${selected.summary}`,
             "",
@@ -344,10 +344,12 @@ export function registerSelectCommands(program: Command): void {
           ];
           process.stdout.write(lines.join("\n") + "\n");
         } else {
-          const icon = state.type === "flights" ? "✈️" : "🏨";
+          const icon = state.type === "flights" ? "✈️" : state.type === "activities" ? "🎯" : "🏨";
           console.log(chalk.green(`\n✓ ${icon} Selected: ${selected.summary}`));
           if (state.type === "flights") {
             console.log(hintFlightSelected());
+          } else if (state.type === "activities") {
+            console.log(chalk.dim("  💡 Activity details and timing can be adjusted after booking."));
           } else {
             console.log(hintHotelSelected());
           }

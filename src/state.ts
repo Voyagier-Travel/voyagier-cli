@@ -10,7 +10,7 @@ export interface SearchResult {
 }
 
 export interface SearchState {
-  type: "flights" | "hotels";
+  type: "flights" | "hotels" | "activities";
   tripPlanId: string;
   selectionId: string;
   isRoundTrip?: boolean;

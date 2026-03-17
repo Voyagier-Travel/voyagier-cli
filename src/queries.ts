@@ -337,6 +337,16 @@ export const CREATE_HOTEL_SELECTION = `
   }
 `;
 
+export const CREATE_ACTIVITY_SELECTION = `
+  mutation CreateActivitySelection($tripPlanId: String!, $input: CreateActivitySelectionInput!) {
+    createTripPlanActivitySelection(tripPlanId: $tripPlanId, input: $input) {
+      item { id title tripPlanId }
+      selection { id }
+      options { id name price time duration bookingData sortOrder }
+    }
+  }
+`;
+
 // --- Select ---
 
 export const SELECT_DEPARTURE_FLIGHT = `

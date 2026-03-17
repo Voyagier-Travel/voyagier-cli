@@ -32,6 +32,12 @@ voyagier search hotels --plan <PLAN_ID> --location Tokyo --checkin 2026-04-15 --
 # Select hotel
 voyagier select 1
 
+# Search activities
+voyagier search activities --plan <PLAN_ID> --destination Tokyo --date 2026-04-16
+
+# Select activity
+voyagier select 1
+
 # View plan
 voyagier plans get <PLAN_ID>
 # → https://voyagier.com/plans/<PLAN_ID>
@@ -71,6 +77,7 @@ voyagier plans get <PLAN_ID>
 |---------|-------------|
 | `voyagier search flights --plan <id> --from <IATA> --to <IATA> --date <date>` | Search flights |
 | `voyagier search hotels --plan <id> --location <city> --checkin <date> --checkout <date>` | Search hotels |
+| `voyagier search activities --plan <id> --destination <place> --date <date>` | Search activities/experiences |
 
 ### Select
 
@@ -132,7 +139,7 @@ The skills are SKILL.md files that any agent with shell access can read and foll
 | `voyagier-shared` | Auth, global flags, output formatting |
 | `voyagier-plans` | Create, list, get, delete trip plans |
 | `voyagier-travellers` | Add, list, remove travellers |
-| `voyagier-search` | Search flights/hotels, select options |
+| `voyagier-search` | Search flights/hotels/activities, select options |
 | `voyagier-booking` | End-to-end booking workflow |
 
 ## How It Works
