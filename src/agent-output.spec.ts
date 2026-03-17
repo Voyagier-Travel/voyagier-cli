@@ -1,5 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
-import { agentFlightOptions, agentHotelOptions } from "./agent-output.js";
+import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "./agent-output.js";
 
 describe("agentFlightOptions", () => {
   it("should return numbered list with all fields", () => {
@@ -48,5 +48,35 @@ describe("agentHotelOptions", () => {
   it("should return placeholder for empty list", () => {
     const output = agentHotelOptions([]);
     expect(output).toContain("No hotels found");
+  });
+});
+
+describe("agentActivityOptions", () => {
+  it("should return numbered list with name, price, and duration", () => {
+    const output = agentActivityOptions([
+      { name: "Snorkel Tour", price: 89.99, duration: "3h" },
+      { name: "Helicopter Ride", price: 299, duration: "1h" },
+    ]);
+    expect(output).toContain("1. Snorkel Tour");
+    expect(output).toContain("$89.99");
+    expect(output).toContain("3h");
+    expect(output).toContain("2. Helicopter Ride");
+  });
+
+  it("should handle missing price", () => {
+    const output = agentActivityOptions([{ name: "Walking Tour", duration: "2h" }]);
+    expect(output).toContain("1. Walking Tour");
+    expect(output).toContain("2h");
+  });
+
+  it("should handle missing duration", () => {
+    const output = agentActivityOptions([{ name: "Kayak Rental", price: 45 }]);
+    expect(output).toContain("1. Kayak Rental");
+    expect(output).toContain("$45.00");
+  });
+
+  it("should return placeholder for empty list", () => {
+    const output = agentActivityOptions([]);
+    expect(output).toContain("No activities found");
   });
 });
