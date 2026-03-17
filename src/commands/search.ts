@@ -571,11 +571,15 @@ export function registerSearchCommands(program: Command): void {
           process.stderr.write(chalk.dim(`API request — destination: "${opts.destination}", date: ${opts.date}${opts.query ? `, query: "${opts.query}"` : ""}\n`));
         }
 
+        const titleParts = [`Activity: ${opts.destination}`];
+        if (opts.query) titleParts.push(opts.query);
+
         const input: Record<string, unknown> = {
           destinationName: opts.destination,
           travelDate: opts.date,
           currency: opts.currency,
           travellerIds,
+          title: titleParts.join(" — "),
         };
         if (opts.query) input.query = opts.query;
 
