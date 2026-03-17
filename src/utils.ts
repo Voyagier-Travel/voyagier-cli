@@ -45,6 +45,16 @@ export function buildHotelSummary(opt: { name: string; price?: number }): string
 }
 
 /**
+ * Build a human-readable one-line activity summary.
+ */
+export function buildActivitySummary(opt: { name: string; price?: number; duration?: string }): string {
+  const parts = [opt.name];
+  if (opt.price != null) parts.push(formatPrice(opt.price));
+  if (opt.duration) parts.push(opt.duration);
+  return parts.join(" · ");
+}
+
+/**
  * Format a price with commas and 2 decimal places.
  * e.g. 1234.5 → "$1,234.50"
  */
