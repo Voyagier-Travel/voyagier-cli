@@ -20,3 +20,8 @@ export function warn(msg: string): void {
 export function fatal(msg: string): never {
   throw new CliError(CliErrorCode.VALIDATION, msg);
 }
+
+/** Write JSON to stdout with planContext injected at the top level. */
+export function jsonOutputWithPlan(data: object, planId: string, planTitle?: string): void {
+  jsonOutput({ ...data, planContext: { planId, title: planTitle } });
+}

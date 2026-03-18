@@ -12,7 +12,7 @@ import { loadSearchState, saveSearchState, clearSearchState, isSearchStateStale 
 import { formatFlights } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, deriveBaseUrl } from "../utils.js";
 import { hintFlightSelected, hintHotelSelected } from "../hints.js";
-import { progress, warn, fatal, jsonOutput } from "../output.js";
+import { progress, warn, fatal, jsonOutput, jsonOutputWithPlan } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 
 interface SelectionResponse {
@@ -43,6 +43,7 @@ export function registerSelectCommands(program: Command): void {
     .option("--option-id <id>", "Explicit option ID (for hotels and one-way flights)")
     .option("--flight-token <token>", "Explicit flight token (for round-trip flights)")
     .option("--phase <phase>", "departure or return (required with --flight-token)")
+    .option("--plan <id>", "Assert that cached results belong to this trip plan (safety check for agent mode)")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
     .action(async (number: string | undefined, opts) => {
@@ -154,6 +155,10 @@ export function registerSelectCommands(program: Command): void {
         fatal("No search results cached. Run a search first:\n  voyagier search flights --plan <id> --from LAX --to NRT --date 2026-04-15");
       }
 
+      if (opts.plan && state.tripPlanId !== opts.plan) {
+        throw new CliError(CliErrorCode.VALIDATION, `Plan mismatch: search results belong to plan ${state.tripPlanId}, not ${opts.plan}. Re-run your search with --plan ${opts.plan}.`);
+      }
+
       if (isSearchStateStale(state)) {
         warn("Search results are over 2 hours old and may have expired.");
         progress("  Re-run your search for current pricing.\n");
@@ -209,13 +214,18 @@ export function registerSelectCommands(program: Command): void {
           const returnOptions = data.selectDepartureFlight.options;
 
           if (opts.json) {
-            process.stdout.write(JSON.stringify({
+            jsonOutputWithPlan({
               success: true,
               type: "departure_selected",
               selected: selected.summary,
               returnOptions,
               url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
-            }, null, 2) + "\n");
+              actionRequired: {
+                action: "select_return",
+                command: `voyagier select <number> --plan ${state.tripPlanId}`,
+                description: "Select a return flight from the options above",
+              },
+            }, state.tripPlanId);
           } else if (opts.agent) {
             const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`;
             const lines = [
@@ -285,12 +295,12 @@ export function registerSelectCommands(program: Command): void {
           }
 
           if (opts.json) {
-            process.stdout.write(JSON.stringify({
+            jsonOutputWithPlan({
               success: true,
               type: "return_selected",
               selected: selected.summary,
               url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
-            }, null, 2) + "\n");
+            }, state.tripPlanId);
           } else if (opts.agent) {
             const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`;
             const lines = [
@@ -324,13 +334,13 @@ export function registerSelectCommands(program: Command): void {
         const result = data.setTripPlanSelectedOption;
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({
+          jsonOutputWithPlan({
             success: true,
             type: state.type === "flights" ? "flight_selected" : "hotel_selected",
             selected: selected.summary,
             selectionId: result.id,
             url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
-          }, null, 2) + "\n");
+          }, state.tripPlanId);
         } else if (opts.agent) {
           const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`;
           const icon = state.type === "flights" ? "✈️" : "🏨";
