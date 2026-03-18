@@ -63,6 +63,21 @@ Always use `--json` for machine-readable output.
 }
 ```
 
+## Activities (Viator)
+
+Search and add experiences/tours to any plan:
+
+```bash
+voyagier search activities --plan <PLAN_ID> \
+  --destination "Kauai" --date <DATE> \
+  --query "scuba diving" --json
+voyagier select 1 --plan <PLAN_ID> --json
+```
+
+Options: `--destination` (required), `--date` (required), `--query` (optional free text), `--currency`, `--sort price`, `--replace`.
+
+Activities use the same `select` → `options` → `pick` pipeline as flights and hotels. Multiple activities can be added to the same plan.
+
 ## Common Patterns
 
 ### Round-trip flight + hotel (most common)
@@ -72,6 +87,52 @@ voyagier plan-trip --title "Smith — Tokyo" \
   --from JFK --to Tokyo --depart <DEPART_DATE> --return <RETURN_DATE> \
   --hotel Tokyo --travellers "John Smith" \
   --auto-select navigator --json
+```
+
+### Flight + hotel + activity
+
+```bash
+# Step 1: Flights and hotel
+voyagier plan-trip --title "Kauai Trip" --from DCA --to LIH \
+  --depart <DEPART_DATE> --return <RETURN_DATE> --hotel "Poipu" \
+  --travellers "John Doe, Jane Doe" --auto-select navigator --json
+
+# Step 2: Add activities (repeat for multiple)
+voyagier search activities --plan <PLAN_ID> \
+  --destination "Kauai" --date <ACTIVITY_DATE> --query "diving" --json
+voyagier select 1 --plan <PLAN_ID> --json
+
+# Step 3: Book everything in one checkout
+voyagier book <PLAN_ID> --json
+```
+
+### Multi-city / island hop
+
+```bash
+# Leg 1: Create plan + first leg
+voyagier plan-trip --title "Hawaii Island Hop" --from DCA --to LIH \
+  --depart <DATE_1> --hotel "Poipu" \
+  --travellers "John Doe, Jane Doe" --auto-select navigator --json
+
+# Leg 2: Add to same plan (omit --travellers to reuse existing)
+voyagier plan-trip --plan <PLAN_ID> --from LIH --to HNL \
+  --depart <DATE_2> --hotel "Waikiki" --auto-select navigator --json
+
+# Leg 3: Return home
+voyagier plan-trip --plan <PLAN_ID> --from HNL --to DCA \
+  --depart <DATE_3> --auto-select navigator --json
+
+# Activities across legs
+voyagier search activities --plan <PLAN_ID> --destination "Kauai" \
+  --date <DATE_1> --query "diving" --json
+voyagier select 1 --plan <PLAN_ID> --json
+
+voyagier search activities --plan <PLAN_ID> --destination "Oahu" \
+  --date <DATE_2> --query "surfing" --json
+voyagier select 1 --plan <PLAN_ID> --json
+
+# One checkout for everything
+voyagier book <PLAN_ID> --json
 ```
 
 ### One-way flight
@@ -102,6 +163,15 @@ voyagier book <PLAN_ID> --status --json
 voyagier plans list --active --json
 ```
 
+## Composability
+
+A plan is a shopping cart. Keep adding to it:
+- `plan-trip` creates the plan (first call) or adds a leg (`--plan <ID>`, subsequent calls)
+- `search activities` adds experiences
+- Each search → select creates a separate selection on the plan
+- `cart` aggregates everything; `book` does one checkout
+- **Don't pass `--travellers` on subsequent `plan-trip --plan` calls** — it creates duplicates. Existing travellers are reused automatically.
+
 ## Step-by-Step Flow (when you need manual control)
 
 Use when the user wants a specific flight or hotel. **Always pass `--plan` on `select` and `pick`.**
@@ -118,6 +188,8 @@ voyagier search hotels --plan <ID> --location Tokyo --checkin <DEPART_DATE> --ch
 voyagier select 1 --plan <ID> --json          # hotel
 voyagier options <ID> --json
 voyagier pick 1 --plan <ID> --json            # room type
+voyagier search activities --plan <ID> --destination Tokyo --date <DEPART_DATE> --query "sushi tour" --json
+voyagier select 1 --plan <ID> --json          # activity
 voyagier cart <ID> --json
 voyagier book <ID> --json
 ```
