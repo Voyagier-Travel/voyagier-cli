@@ -14,6 +14,7 @@ import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerWhoamiCommand } from "./commands/whoami.js";
 import { registerBookingsCommands } from "./commands/bookings.js";
 import { registerPlanTripCommand } from "./commands/plan-trip.js";
+import { registerAgentDocsCommand } from "./commands/agent-docs.js";
 import { trackCommand, getTraceId, isTelemetryEnabled } from "./telemetry.js";
 import { credentialsExist } from "./config.js";
 import { CliError } from "./errors.js";
@@ -26,7 +27,8 @@ program
   .name("voyagier")
   .description("Voyagier CLI — search, plan, and book travel")
   .version(pkg.version)
-  .option("--stacktrace", "show full error stack traces");
+  .option("--stacktrace", "show full error stack traces")
+  .addHelpText("after", "\nAI agents: run `voyagier agent-docs` for the full integration reference.");
 
 // Commands ordered by workflow: auth → plan → search → select → book
 registerAuthCommands(program);
@@ -42,6 +44,7 @@ registerBookingsCommands(program);
 registerChatCommands(program);
 registerWhoamiCommand(program);
 registerTelemetryCommands(program);
+registerAgentDocsCommand(program);
 
 // Instrument all commands with telemetry
 function instrumentCommands(cmd: Command): void {
