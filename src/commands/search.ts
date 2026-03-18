@@ -143,7 +143,7 @@ function resolveAirportInput(value: string, flagName: string, quiet: boolean): s
 }
 
 export function registerSearchCommands(program: Command): void {
-  const search = program.command("search").description("Search flights and hotels");
+  const search = program.command("search").description("Search flights, hotels, and activities");
 
   search
     .command("airports")
