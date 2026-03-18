@@ -847,3 +847,422 @@ describe("plan-trip without --auto-select (backward compat)", () => {
     expect(parsed.alternatives).toBeUndefined();
   });
 });
+
+// ── Integration tests: agent output (--agent) ─────────────────────────────
+
+describe("plan-trip --auto-select --agent output", () => {
+  let stdoutOutput: string[];
+  let stdoutSpy: ReturnType<typeof jest.spyOn>;
+  let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+  beforeEach(() => {
+    process.env.VOYAGIER_TOKEN = "test-token";
+    process.env.VOYAGIER_API_URL = "https://api.test.voyagier.com/graphql";
+    stdoutOutput = [];
+    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      stdoutOutput.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    mockGraphql.mockReset();
+  });
+
+  afterEach(() => {
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+    delete process.env.VOYAGIER_TOKEN;
+    delete process.env.VOYAGIER_API_URL;
+  });
+
+  it("outputs markdown header with plan title for --agent", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("CreateFlightSelection")) return Promise.resolve(MOCK_FLIGHT_SELECTION);
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("tripPlanTravellers")) return Promise.resolve(MOCK_TRAVELLERS_EMPTY);
+      if (query.includes("selectDepartureFlight")) return Promise.resolve(MOCK_DEPARTURE_RESULT);
+      if (query.includes("selectReturnFlight")) return Promise.resolve(MOCK_RETURN_RESULT);
+      if (query.includes("setTripPlanSelectedOption")) return Promise.resolve(MOCK_SET_SELECTED);
+      if (query.includes("TripPlanDeep")) return Promise.resolve(MOCK_PLAN_DEEP_NO_SUBS);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--title", "Paris Trip",
+      "--to", "CDG",
+      "--from", "DCA",
+      "--depart", "2026-03-23",
+      "--return", "2026-03-25",
+      "--auto-select", "cheapest",
+      "--agent",
+    ]);
+
+    const output = stdoutOutput.join("");
+    expect(output).toContain("## ✈️ Paris Trip");
+    expect(output).toContain("Departure:");
+    expect(output).toContain("Return:");
+  });
+
+  it("agent output includes next steps commands", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("CreateFlightSelection")) return Promise.resolve(MOCK_FLIGHT_SELECTION);
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("tripPlanTravellers")) return Promise.resolve(MOCK_TRAVELLERS_EMPTY);
+      if (query.includes("selectDepartureFlight")) return Promise.resolve(MOCK_DEPARTURE_RESULT);
+      if (query.includes("selectReturnFlight")) return Promise.resolve(MOCK_RETURN_RESULT);
+      if (query.includes("setTripPlanSelectedOption")) return Promise.resolve(MOCK_SET_SELECTED);
+      if (query.includes("TripPlanDeep")) return Promise.resolve(MOCK_PLAN_DEEP_NO_SUBS);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--title", "Paris Trip",
+      "--to", "CDG",
+      "--from", "DCA",
+      "--depart", "2026-03-23",
+      "--return", "2026-03-25",
+      "--auto-select", "navigator",
+      "--agent",
+    ]);
+
+    const output = stdoutOutput.join("");
+    expect(output).toContain("voyagier cart");
+    expect(output).toContain("voyagier book");
+  });
+
+  it("agent output without --auto-select shows flight options", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("CreateFlightSelection")) return Promise.resolve(MOCK_FLIGHT_SELECTION);
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("tripPlanTravellers")) return Promise.resolve(MOCK_TRAVELLERS_EMPTY);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--title", "Paris Trip",
+      "--to", "CDG",
+      "--from", "DCA",
+      "--depart", "2026-03-23",
+      "--agent",
+    ]);
+
+    const output = stdoutOutput.join("");
+    expect(output).toContain("## ✈️ Paris Trip");
+    expect(output).toContain("Flights");
+  });
+});
+
+// ── Integration tests: human (no --json, no --agent) ────────────────────────
+
+describe("plan-trip --auto-select human output", () => {
+  let stdoutOutput: string[];
+  let stdoutSpy: ReturnType<typeof jest.spyOn>;
+  let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+  beforeEach(() => {
+    process.env.VOYAGIER_TOKEN = "test-token";
+    process.env.VOYAGIER_API_URL = "https://api.test.voyagier.com/graphql";
+    stdoutOutput = [];
+    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      stdoutOutput.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    mockGraphql.mockReset();
+  });
+
+  afterEach(() => {
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+    delete process.env.VOYAGIER_TOKEN;
+    delete process.env.VOYAGIER_API_URL;
+  });
+
+  it("human output with --auto-select completes without error and calls all selection APIs", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("CreateFlightSelection")) return Promise.resolve(MOCK_FLIGHT_SELECTION);
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("tripPlanTravellers")) return Promise.resolve(MOCK_TRAVELLERS_EMPTY);
+      if (query.includes("selectDepartureFlight")) return Promise.resolve(MOCK_DEPARTURE_RESULT);
+      if (query.includes("selectReturnFlight")) return Promise.resolve(MOCK_RETURN_RESULT);
+      if (query.includes("setTripPlanSelectedOption")) return Promise.resolve(MOCK_SET_SELECTED);
+      if (query.includes("TripPlanDeep")) return Promise.resolve(MOCK_PLAN_DEEP_NO_SUBS);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--title", "Paris Trip",
+      "--to", "CDG",
+      "--from", "DCA",
+      "--depart", "2026-03-23",
+      "--return", "2026-03-25",
+      "--auto-select", "cheapest",
+    ]);
+
+    // Verify the full auto-select flow ran (departure + return + final selection)
+    const calls = (mockGraphql.mock.calls as [string][]);
+    expect(calls.some(([q]) => q.includes("selectDepartureFlight"))).toBe(true);
+    expect(calls.some(([q]) => q.includes("selectReturnFlight"))).toBe(true);
+    expect(calls.some(([q]) => q.includes("setTripPlanSelectedOption"))).toBe(true);
+  });
+
+  it("human output without --auto-select completes without error and returns flight options", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("CreateFlightSelection")) return Promise.resolve(MOCK_FLIGHT_SELECTION);
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("tripPlanTravellers")) return Promise.resolve(MOCK_TRAVELLERS_EMPTY);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--title", "Paris Trip",
+      "--to", "CDG",
+      "--from", "DCA",
+      "--depart", "2026-03-23",
+    ]);
+
+    // Verify the flight search ran
+    const calls = (mockGraphql.mock.calls as [string][]);
+    expect(calls.some(([q]) => q.includes("CreateFlightSelection"))).toBe(true);
+    // And no auto-select calls were made
+    expect(calls.some(([q]) => q.includes("selectDepartureFlight"))).toBe(false);
+  });
+});
+
+// ── Integration tests: hotel auto-select ─────────────────────────────────────
+
+const MOCK_HOTEL_SELECTION = {
+  createTripPlanHotelSelection: {
+    item: { id: "item-h", title: "Hotel Paris", tripPlanId: "plan-1" },
+    selection: { id: "hotel-sel-1" },
+    options: [
+      { id: "h1", name: "Grand Hotel Paris", price: 200, sortOrder: 0 },
+      { id: "h2", name: "Budget Inn", price: 80, sortOrder: 1 },
+    ],
+  },
+};
+
+describe("plan-trip --hotel with --auto-select", () => {
+  let stdoutOutput: string[];
+  let stdoutSpy: ReturnType<typeof jest.spyOn>;
+  let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+  beforeEach(() => {
+    process.env.VOYAGIER_TOKEN = "test-token";
+    process.env.VOYAGIER_API_URL = "https://api.test.voyagier.com/graphql";
+    stdoutOutput = [];
+    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      stdoutOutput.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    mockGraphql.mockReset();
+  });
+
+  afterEach(() => {
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+    delete process.env.VOYAGIER_TOKEN;
+    delete process.env.VOYAGIER_API_URL;
+  });
+
+  it("auto-selects hotel (cheapest) via SET_TRIP_PLAN_SELECTED_OPTION", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("tripPlanTravellers")) return Promise.resolve(MOCK_TRAVELLERS_EMPTY);
+      if (query.includes("CreateHotelSelection")) return Promise.resolve(MOCK_HOTEL_SELECTION);
+      if (query.includes("setTripPlanSelectedOption")) return Promise.resolve({
+        setTripPlanSelectedOption: { id: "hotel-sel-1", selectedOption: { id: "h2", name: "Budget Inn", price: 80 } },
+      });
+      if (query.includes("TripPlanDeep")) return Promise.resolve(MOCK_PLAN_DEEP_NO_SUBS);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--title", "Paris Trip",
+      "--hotel", "Paris",
+      "--depart", "2026-03-23",
+      "--return", "2026-03-25",
+      "--auto-select", "cheapest",
+      "--json",
+    ]);
+
+    const calls = mockGraphql.mock.calls as [string, Record<string, unknown>][];
+    const hotelSelectCall = calls.find(([q]) => q.includes("setTripPlanSelectedOption"));
+    expect(hotelSelectCall).toBeDefined();
+    // Budget Inn (h2, $80) should be selected as cheapest
+    expect(hotelSelectCall![1]).toMatchObject({ optionId: "h2" });
+  });
+
+  it("JSON output includes hotel in selected when --hotel with --auto-select", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("tripPlanTravellers")) return Promise.resolve(MOCK_TRAVELLERS_EMPTY);
+      if (query.includes("CreateHotelSelection")) return Promise.resolve(MOCK_HOTEL_SELECTION);
+      if (query.includes("setTripPlanSelectedOption")) return Promise.resolve({
+        setTripPlanSelectedOption: { id: "hotel-sel-1", selectedOption: { id: "h2", name: "Budget Inn", price: 80 } },
+      });
+      if (query.includes("TripPlanDeep")) return Promise.resolve(MOCK_PLAN_DEEP_NO_SUBS);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--title", "Paris Trip",
+      "--hotel", "Paris",
+      "--depart", "2026-03-23",
+      "--return", "2026-03-25",
+      "--auto-select", "cheapest",
+      "--json",
+    ]);
+
+    const output = stdoutOutput.join("");
+    const parsed = JSON.parse(output);
+    expect(parsed.selected).toBeDefined();
+    expect(parsed.selected.hotel).toBeDefined();
+    expect(parsed.selected.hotel.name).toBe("Budget Inn");
+  });
+
+  it("agent output includes hotel name when hotel auto-selected", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("tripPlanTravellers")) return Promise.resolve(MOCK_TRAVELLERS_EMPTY);
+      if (query.includes("CreateHotelSelection")) return Promise.resolve(MOCK_HOTEL_SELECTION);
+      if (query.includes("setTripPlanSelectedOption")) return Promise.resolve({
+        setTripPlanSelectedOption: { id: "hotel-sel-1", selectedOption: { id: "h2", name: "Budget Inn", price: 80 } },
+      });
+      if (query.includes("TripPlanDeep")) return Promise.resolve(MOCK_PLAN_DEEP_NO_SUBS);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--title", "Paris Trip",
+      "--hotel", "Paris",
+      "--depart", "2026-03-23",
+      "--return", "2026-03-25",
+      "--auto-select", "cheapest",
+      "--agent",
+    ]);
+
+    const output = stdoutOutput.join("");
+    expect(output).toContain("Hotel");
+    expect(output).toContain("Budget Inn");
+  });
+});
+
+// ── Integration tests: --plan (reuse existing plan) ──────────────────────────
+
+describe("plan-trip --plan (reuse existing plan)", () => {
+  let stdoutOutput: string[];
+  let stdoutSpy: ReturnType<typeof jest.spyOn>;
+  let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+  beforeEach(() => {
+    process.env.VOYAGIER_TOKEN = "test-token";
+    stdoutOutput = [];
+    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      stdoutOutput.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    mockGraphql.mockReset();
+  });
+
+  afterEach(() => {
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+    delete process.env.VOYAGIER_TOKEN;
+  });
+
+  it("fetches existing plan with GET_TRIP_PLAN_BASIC when --plan provided", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      // GET_TRIP_PLAN_BASIC: `query TripPlan($id: String!) { tripPlan(id: $id) { ... } }`
+      if (query.includes("query TripPlan(")) return Promise.resolve({ tripPlan: MOCK_PLAN.createTripPlan });
+      if (query.includes("tripPlanTravellers")) return Promise.resolve(MOCK_TRAVELLERS_EMPTY);
+      if (query.includes("CreateFlightSelection")) return Promise.resolve(MOCK_FLIGHT_SELECTION);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--plan", "plan-1",
+      "--to", "CDG",
+      "--from", "DCA",
+      "--depart", "2026-03-23",
+      "--json",
+    ]);
+
+    const calls = mockGraphql.mock.calls as [string][];
+    // Should NOT call CreateTripPlan
+    expect(calls.some(([q]) => q.includes("mutation CreateTripPlan"))).toBe(false);
+  });
+});
+
+// ── Integration tests: --travellers flag (parseTravellers function) ───────────
+
+describe("plan-trip --travellers", () => {
+  let stdoutOutput: string[];
+  let stdoutSpy: ReturnType<typeof jest.spyOn>;
+  let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+  const MOCK_TRAVELLER = {
+    createTripPlanTraveller: { id: "trav-1", firstName: "John", lastName: "Doe" },
+  };
+
+  beforeEach(() => {
+    process.env.VOYAGIER_TOKEN = "test-token";
+    stdoutOutput = [];
+    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      stdoutOutput.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    mockGraphql.mockReset();
+  });
+
+  afterEach(() => {
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+    delete process.env.VOYAGIER_TOKEN;
+  });
+
+  it("calls CREATE_TRAVELLER_BRIEF when --travellers is provided", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("createTripPlanTraveller")) return Promise.resolve(MOCK_TRAVELLER);
+      if (query.includes("CreateFlightSelection")) return Promise.resolve(MOCK_FLIGHT_SELECTION);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--title", "Paris Trip",
+      "--travellers", "John Doe",
+      "--to", "CDG",
+      "--from", "DCA",
+      "--depart", "2026-03-23",
+      "--json",
+    ]);
+
+    const calls = mockGraphql.mock.calls as [string][];
+    expect(calls.some(([q]) => q.includes("createTripPlanTraveller"))).toBe(true);
+  });
+
+  it("parses multiple comma-separated travellers", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("createTripPlanTraveller")) return Promise.resolve(MOCK_TRAVELLER);
+      if (query.includes("CreateFlightSelection")) return Promise.resolve(MOCK_FLIGHT_SELECTION);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--title", "Paris Trip",
+      "--travellers", "John Doe, Jane Smith",
+      "--to", "CDG",
+      "--from", "DCA",
+      "--depart", "2026-03-23",
+      "--json",
+    ]);
+
+    const calls = mockGraphql.mock.calls as [string][];
+    const travellerCalls = calls.filter(([q]) => q.includes("createTripPlanTraveller"));
+    expect(travellerCalls.length).toBe(2);
+  });
+});
