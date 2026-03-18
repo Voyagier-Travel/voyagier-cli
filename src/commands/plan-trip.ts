@@ -265,6 +265,20 @@ export function registerPlanTripCommand(program: Command): void {
   program
     .command("plan-trip")
     .description("Create a full trip plan: plan + travellers + flights + hotels in one command")
+    .addHelpText("after", `
+Examples:
+  # Book a round-trip flight + hotel (two commands total):
+  voyagier plan-trip --title "Paris Trip" --from DCA --to Paris \\
+    --depart <YYYY-MM-DD> --return <YYYY-MM-DD> --hotel Paris \\
+    --travellers "John Doe" --auto-select navigator --json
+  voyagier book <PLAN_ID> --json
+
+  # One-way, cheapest option:
+  voyagier plan-trip --title "London" --from JFK --to London \\
+    --depart <YYYY-MM-DD> --travellers "Jane Smith" --auto-select cheapest --json
+
+  Full agent reference: voyagier agent-docs
+`)
     .option("--plan <id>", "Add to an existing trip plan instead of creating a new one")
     .option("--title <title>", "Trip plan title (required when --plan is not used)")
     .option("--from <code>", "Origin airport code (defaults to home airport)")
