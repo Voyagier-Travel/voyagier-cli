@@ -1,155 +1,103 @@
 # @voyagier/cli
 
-One CLI for Voyagier — built for humans and AI agents.
-
-Search flights, book hotels, manage trip plans from your terminal. Everything syncs to the web app at [voyagier.com](https://voyagier.com).
+Search flights, book hotels, add activities — from your terminal. Everything syncs to [voyagier.com](https://voyagier.com).
 
 ```bash
 npm install -g @voyagier/cli
+voyagier auth set-token <your-token>
 ```
 
-## Quick Start
+## Two Commands to Book a Trip
 
 ```bash
-# Authenticate
-voyagier auth set-token <your-token>
+voyagier plan-trip --title "Tokyo Trip" --from LAX --to NRT \
+  --depart 2026-04-15 --return 2026-04-22 --hotel Tokyo \
+  --travellers "John Smith" --auto-select navigator --json
 
-# Create a trip plan
-voyagier plans create --title "Tokyo Trip" --start 2026-04-15 --end 2026-04-22
+voyagier book <PLAN_ID> --json
+```
 
-# Add a traveller
-voyagier travellers add --plan <PLAN_ID> --first John --last Smith --type ADULT
+## Add Activities
 
-# Search flights
-voyagier search flights --plan <PLAN_ID> --from LAX --to NRT --date 2026-04-15
+```bash
+voyagier search activities --plan <PLAN_ID> --destination Tokyo \
+  --date 2026-04-16 --query "sushi tour" --json
+voyagier select 1 --plan <PLAN_ID> --json
+voyagier book <PLAN_ID> --json
+```
 
-# Select from results
-voyagier select 1
+## Multi-Leg Trips
 
-# Search hotels
-voyagier search hotels --plan <PLAN_ID> --location Tokyo --checkin 2026-04-15 --checkout 2026-04-22
+A plan is a shopping cart. Keep adding to it:
 
-# Select hotel
-voyagier select 1
+```bash
+# Leg 1 — creates plan + travellers
+voyagier plan-trip --title "Island Hop" --from DCA --to LIH \
+  --depart 2026-03-25 --hotel Poipu --travellers "John, Jane" \
+  --auto-select navigator --json
 
-# Search activities
-voyagier search activities --plan <PLAN_ID> --destination Tokyo --date 2026-04-16
+# Leg 2 — reuses travellers (omit --travellers)
+voyagier plan-trip --plan <PLAN_ID> --from LIH --to HNL \
+  --depart 2026-03-30 --hotel Waikiki --auto-select navigator --json
 
-# Select activity
-voyagier select 1
+# Return
+voyagier plan-trip --plan <PLAN_ID> --from HNL --to DCA \
+  --depart 2026-04-03 --auto-select navigator --json
 
-# View plan
-voyagier plans get <PLAN_ID>
-# → https://voyagier.com/plans/<PLAN_ID>
+voyagier book <PLAN_ID> --json
 ```
 
 ## Commands
 
-### Auth
-
 | Command | Description |
 |---------|-------------|
-| `voyagier auth set-token <token>` | Save a personal access token |
-| `voyagier auth status` | Check connection and show authenticated user |
-| `voyagier auth logout` | Clear credentials |
-| `voyagier auth setup` | How to get a token |
+| `plan-trip` | Create or extend a plan (flights + hotels) |
+| `search flights` | Search flights by route and date |
+| `search hotels` | Search hotels by location and dates |
+| `search activities` | Search Viator experiences and tours |
+| `search airports` | Look up airport codes |
+| `select <n>` | Select from last search results |
+| `options <planId>` | View sub-options (cabin class, room type) |
+| `pick <n>` | Select a sub-option |
+| `cart <planId>` | View shopping cart |
+| `book <planId>` | Checkout via Stripe |
+| `plans` | Create, list, get, delete plans |
+| `travellers` | Add, list, remove travellers |
+| `bookings` | View booking records |
+| `chat` | Interactive AI trip planning |
+| `auth` | Manage authentication |
+| `agent-docs` | Full AI agent integration reference |
 
-### Trip Plans
+Every command supports `--json` for structured output and `--plan <id>` where applicable.
 
-| Command | Description |
-|---------|-------------|
-| `voyagier plans create --title <title>` | Create a new plan |
-| `voyagier plans list` | List your plans |
-| `voyagier plans get <id>` | Show plan details |
-| `voyagier plans delete <id>` | Delete a plan |
-
-### Travellers
-
-| Command | Description |
-|---------|-------------|
-| `voyagier travellers add --plan <id> --first <name> --last <name>` | Add a traveller |
-| `voyagier travellers list --plan <id>` | List travellers |
-| `voyagier travellers remove <id>` | Remove a traveller |
-
-### Search
-
-| Command | Description |
-|---------|-------------|
-| `voyagier search flights --plan <id> --from <IATA> --to <IATA> --date <date>` | Search flights |
-| `voyagier search hotels --plan <id> --location <city> --checkin <date> --checkout <date>` | Search hotels |
-| `voyagier search activities --plan <id> --destination <place> --date <date>` | Search activities/experiences |
-
-### Select
-
-| Command | Description |
-|---------|-------------|
-| `voyagier select <number>` | Select option from last search |
-| `voyagier select --info <number>` | Show details without selecting |
-| `voyagier select --clear` | Clear search cache |
-
-### Chat
-
-| Command | Description |
-|---------|-------------|
-| `voyagier chat` | Start an AI chat session |
-| `voyagier chat --plan <id>` | Chat about a specific plan |
-| `voyagier chat --list` | List chat sessions |
-
-## JSON Output
-
-Every command supports `--json` for structured output:
+## AI Agents
 
 ```bash
-# Create plan and capture ID
-PLAN=$(voyagier plans create --title "My Trip" --json | jq -r '.id')
-
-# Search and pipe to jq
-voyagier search flights --plan $PLAN --from LAX --to NRT --date 2026-04-15 --json | jq '.options[].name'
+voyagier agent-docs         # full integration reference
+voyagier agent-docs --json  # machine-readable
 ```
+
+Or read [AGENT.md](./AGENT.md) directly — covers auto-select strategies, JSON response contracts, composability patterns, error handling, and known quirks.
+
+## Auto-Select Strategies
+
+| Strategy | What it optimizes |
+|----------|-------------------|
+| `navigator` | Best overall value (price + duration + stops) |
+| `cheapest` | Lowest price |
+| `fastest` | Shortest duration |
+| `fewest-stops` | Minimum layovers |
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `VOYAGIER_TOKEN` | Personal access token (overrides config file) | — |
-| `VOYAGIER_API_URL` | API base URL | `https://travel.voyagier.com` |
-
-## Agent Skills
-
-This package ships with [agent skills](./skills/) — structured instructions that teach AI agents how to use the CLI.
-
-### OpenClaw
-
-```bash
-# Symlink all skills
-ln -s $(npm root -g)/@voyagier/cli/skills/voyagier-* ~/.openclaw/skills/
-
-# Or copy specific ones
-cp -r $(npm root -g)/@voyagier/cli/skills/voyagier-booking ~/.openclaw/skills/
-```
-
-### Any Agent
-
-The skills are SKILL.md files that any agent with shell access can read and follow. No MCP required. The agent reads the skill, calls CLI commands, and parses JSON output.
-
-### Available Skills
-
-| Skill | Description |
-|-------|-------------|
-| `voyagier-shared` | Auth, global flags, output formatting |
-| `voyagier-plans` | Create, list, get, delete trip plans |
-| `voyagier-travellers` | Add, list, remove travellers |
-| `voyagier-search` | Search flights/hotels/activities, select options |
-| `voyagier-booking` | End-to-end booking workflow |
+| Variable | Description |
+|----------|-------------|
+| `VOYAGIER_TOKEN` | Personal access token (overrides config) |
+| `VOYAGIER_API_URL` | API base URL (default: `https://travel.voyagier.com`) |
 
 ## How It Works
 
-The CLI is a thin client over Voyagier's GraphQL API — the same API the web app uses. Everything you do in the CLI shows up in the web app and vice versa.
-
-```
-CLI  →  Voyagier GraphQL API  →  Trip Plans (visible at voyagier.com)
-                               →  GDS (flight/hotel search)
-```
+Thin client over Voyagier's GraphQL API — same API the web app uses. Everything syncs both ways.
 
 ## License
 
