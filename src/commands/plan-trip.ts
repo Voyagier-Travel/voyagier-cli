@@ -264,7 +264,7 @@ const VALID_STRATEGIES: AutoSelectStrategy[] = ["navigator", "cheapest", "fastes
 export function registerPlanTripCommand(program: Command): void {
   program
     .command("plan-trip")
-    .description("Create a full trip plan: plan + travellers + flights + hotels in one command")
+    .description("Create or extend a trip plan (flights + hotels). Use --plan <id> to add legs. Activities: voyagier search activities")
     .addHelpText("after", `
 Examples:
   # Book a round-trip flight + hotel (two commands total):
