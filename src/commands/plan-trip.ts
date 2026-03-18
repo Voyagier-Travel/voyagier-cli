@@ -9,6 +9,11 @@ import {
   GET_TRAVELLERS_BRIEF,
   CREATE_FLIGHT_SELECTION,
   CREATE_HOTEL_SELECTION,
+  SELECT_DEPARTURE_FLIGHT,
+  SELECT_RETURN_FLIGHT,
+  SET_TRIP_PLAN_SELECTED_OPTION,
+  GET_PLAN_DEEP,
+  SET_SUB_SELECTION,
 } from "../queries.js";
 import { validateDate, warnPastDate, validateIata, extractFlightToken, buildFlightSummary, buildHotelSummary, deriveBaseUrl, formatPrice, formatDateRange } from "../utils.js";
 import { progress, warn, fatal, jsonOutput } from "../output.js";
@@ -47,9 +52,38 @@ interface SelectionResult {
   options: SelectOption[];
 }
 
-type SortField = "price" | "duration" | "stops";
+interface RawFlightOption {
+  id: string;
+  name: string;
+  price?: number;
+  time?: string;
+  airline?: string;
+  duration?: string;
+  bookingData?: Record<string, unknown>;
+}
 
-function parseDurationMinutes(duration?: string): number {
+type SortField = "price" | "duration" | "stops";
+export type AutoSelectStrategy = "navigator" | "cheapest" | "fastest" | "fewest-stops";
+
+export interface Alternative {
+  rank: number;
+  summary: string;
+  price?: number;
+  reason: string;
+}
+
+interface AutoSelectResult {
+  departure?: { summary: string; airline?: string; duration?: string; price?: number };
+  returnFlight?: { summary: string; airline?: string; duration?: string; price?: number };
+  cabin?: { name: string; price?: number };
+  hotel?: { name: string; price?: number; perNight: boolean };
+  strategy: AutoSelectStrategy;
+  rank: number;
+  rankReason: string;
+  error?: string;
+}
+
+export function parseDurationMinutes(duration?: string): number {
   if (!duration) return Infinity;
   const match = duration.match(/(\d+)h\s*(\d+)?m?/);
   if (match) return parseInt(match[1], 10) * 60 + (parseInt(match[2] ?? "0", 10));
@@ -58,7 +92,7 @@ function parseDurationMinutes(duration?: string): number {
   return Infinity;
 }
 
-function parseStops(bookingData?: Record<string, unknown>): number {
+export function parseStops(bookingData?: Record<string, unknown>): number {
   if (!bookingData) return Infinity;
   if (typeof bookingData.stops === "number") return bookingData.stops;
   const segments = bookingData.segments as unknown[] | undefined;
@@ -66,7 +100,7 @@ function parseStops(bookingData?: Record<string, unknown>): number {
   return Infinity;
 }
 
-function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[] {
+export function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[] {
   return [...options].sort((a, b) => {
     switch (sortBy) {
       case "price":
@@ -81,6 +115,107 @@ function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[]
   });
 }
 
+// TODO: Replace with booking-api ranking service call
+export function rankByNavigator(options: SelectOption[]): SelectOption[] {
+  if (options.length === 0) return [];
+
+  const byPrice = sortOptions(options, "price");
+  const byDuration = sortOptions(options, "duration");
+  const byStops = sortOptions(options, "stops");
+
+  const priceRank = new Map<string, number>();
+  const durationRank = new Map<string, number>();
+  const stopsRank = new Map<string, number>();
+
+  byPrice.forEach((o, i) => priceRank.set(o.id, i + 1));
+  byDuration.forEach((o, i) => durationRank.set(o.id, i + 1));
+  byStops.forEach((o, i) => stopsRank.set(o.id, i + 1));
+
+  return [...options].sort((a, b) => {
+    const scoreA = (priceRank.get(a.id)! * 0.5) + (durationRank.get(a.id)! * 0.3) + (stopsRank.get(a.id)! * 0.2);
+    const scoreB = (priceRank.get(b.id)! * 0.5) + (durationRank.get(b.id)! * 0.3) + (stopsRank.get(b.id)! * 0.2);
+    return scoreA - scoreB;
+  });
+}
+
+export function applyStrategy(options: SelectOption[], strategy: AutoSelectStrategy): SelectOption[] {
+  switch (strategy) {
+    case "navigator": return rankByNavigator(options);
+    case "cheapest": return sortOptions(options, "price");
+    case "fastest": return sortOptions(options, "duration");
+    case "fewest-stops":
+      return [...options].sort((a, b) => {
+        const stopsA = parseStops(a.bookingData);
+        const stopsB = parseStops(b.bookingData);
+        if (stopsA !== stopsB) return stopsA - stopsB;
+        return (a.price ?? Infinity) - (b.price ?? Infinity);
+      });
+  }
+}
+
+export function getRankReason(strategy: AutoSelectStrategy): string {
+  switch (strategy) {
+    case "navigator": return "Best overall value based on price, duration, and stops";
+    case "cheapest": return "Lowest price";
+    case "fastest": return "Shortest flight duration";
+    case "fewest-stops": return "Fewest layovers, then price";
+  }
+}
+
+function strategyTitle(strategy: AutoSelectStrategy): string {
+  switch (strategy) {
+    case "navigator": return "🧭 Navigator's Pick";
+    case "cheapest": return "💰 Cheapest Pick";
+    case "fastest": return "⚡ Fastest Pick";
+    case "fewest-stops": return "🛬 Fewest Stops Pick";
+  }
+}
+
+export function generateAlternativeReason(alt: SelectOption, selected: SelectOption): string {
+  const altPrice = alt.price ?? 0;
+  const selPrice = selected.price ?? 0;
+  const altDuration = parseDurationMinutes(alt.duration);
+  const selDuration = parseDurationMinutes(selected.duration);
+  const altStops = parseStops(alt.bookingData);
+  const selStops = parseStops(selected.bookingData);
+
+  if (altStops < selStops && altStops === 0) {
+    return altPrice > selPrice
+      ? `Direct flight, $${(altPrice - selPrice).toFixed(0)} more`
+      : `Direct flight, saves $${(selPrice - altPrice).toFixed(0)}`;
+  }
+
+  if (altDuration < selDuration && altDuration !== Infinity && selDuration !== Infinity) {
+    const mins = selDuration - altDuration;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    const timeStr = h > 0 && m > 0 ? `${h}h${m}m` : h > 0 ? `${h}h` : `${m}m`;
+
+    if (selPrice > 0 && altPrice > 0) {
+      const ratio = altPrice / selPrice;
+      if (ratio >= 1.5) return `${timeStr} faster but ${ratio.toFixed(1)}x price`;
+      const diff = altPrice - selPrice;
+      return diff > 0
+        ? `${timeStr} faster but $${diff.toFixed(0)} more`
+        : `${timeStr} faster, saves $${Math.abs(diff).toFixed(0)}`;
+    }
+    return `${timeStr} faster`;
+  }
+
+  if (altPrice < selPrice && selPrice > 0) {
+    const diff = selPrice - altPrice;
+    if (altDuration > selDuration && altDuration !== Infinity && selDuration !== Infinity) {
+      const mins = altDuration - selDuration;
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      const timeStr = h > 0 && m > 0 ? `${h}h${m}m` : h > 0 ? `${h}h` : `${m}m`;
+      return `Saves $${diff.toFixed(0)} but ${timeStr} longer`;
+    }
+    return `Saves $${diff.toFixed(0)}`;
+  }
+
+  return alt.airline ? `${alt.airline} service` : "Option";
+}
 
 
 function resolvePlanAirport(value: string, flagName: string, quiet: boolean): string {
@@ -122,6 +257,8 @@ function parseTravellers(names: string): Array<{ firstName: string; lastName: st
     });
 }
 
+const VALID_STRATEGIES: AutoSelectStrategy[] = ["navigator", "cheapest", "fastest", "fewest-stops"];
+
 export function registerPlanTripCommand(program: Command): void {
   program
     .command("plan-trip")
@@ -139,6 +276,7 @@ export function registerPlanTripCommand(program: Command): void {
     .option("--travellers <names>", "Comma-separated traveller names, e.g. \"John Doe, Jane Doe\"")
     .option("--sort <field>", "Sort options by: price, duration, stops", "price")
     .option("--max-results <n>", "Max options to show per category", "10")
+    .option("--auto-select <strategy>", "Auto-select best options: navigator, cheapest, fastest, fewest-stops")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
     .action(async (opts) => {
@@ -149,6 +287,11 @@ export function registerPlanTripCommand(program: Command): void {
         // Validate --plan / --title
         if (!opts.plan && !opts.title) {
           fatal("--title is required when --plan is not provided.");
+        }
+
+        // Validate --auto-select
+        if (opts.autoSelect && !VALID_STRATEGIES.includes(opts.autoSelect as AutoSelectStrategy)) {
+          fatal(`Invalid --auto-select value "${opts.autoSelect}". Valid: navigator, cheapest, fastest, fewest-stops`);
         }
 
         // Validate inputs
@@ -244,6 +387,7 @@ export function registerPlanTripCommand(program: Command): void {
           options: Array<{ id: string; flightToken?: string; summary: string; price?: number; duration?: string; airline?: string }>;
         } = null;
 
+        let allFlightOptions: SelectOption[] = [];
         let origin: string | null = null;
         let destination: string | null = null;
 
@@ -281,10 +425,11 @@ export function registerPlanTripCommand(program: Command): void {
           );
 
           const fResult = fData.createTripPlanFlightSelection;
-          const sorted = sortOptions(
-            fResult.options.sort((a, b) => a.sortOrder - b.sortOrder),
-            sortBy
-          ).slice(0, maxResults);
+          // Keep all options (by API sort order) for strategy ranking
+          const byApiOrder = [...fResult.options].sort((a, b) => a.sortOrder - b.sortOrder);
+          allFlightOptions = byApiOrder;
+
+          const sorted = sortOptions(byApiOrder, sortBy).slice(0, maxResults);
 
           flightResult = {
             selectionId: fResult.selection.id,
@@ -307,6 +452,7 @@ export function registerPlanTripCommand(program: Command): void {
           optionCount: number;
           options: Array<{ id: string; name: string; price?: number; summary: string }>;
         } = null;
+        let allHotelOptions: Array<{ id: string; name: string; price?: number }> = [];
 
         if (opts.hotel) {
           const checkin = opts.checkin ?? opts.depart;
@@ -340,6 +486,9 @@ export function registerPlanTripCommand(program: Command): void {
             );
 
             const hResult = hData.createTripPlanHotelSelection;
+            // Keep all hotel options for auto-select (always sorted by price)
+            allHotelOptions = [...hResult.options];
+
             const sortedHotels = (sortBy === "price"
               ? [...hResult.options].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity))
               : hResult.options.sort((a, b) => a.sortOrder - b.sortOrder)
@@ -358,34 +507,269 @@ export function registerPlanTripCommand(program: Command): void {
           }
         }
 
-        // Build next-step commands
-        const nextSteps: Record<string, string> = {};
-        if (flightResult) {
-          const firstFlight = flightResult.options[0];
-          if (firstFlight?.flightToken) {
-            nextSteps.selectFlight = `voyagier select --selection-id ${flightResult.selectionId} --flight-token ${firstFlight.flightToken} --phase departure`;
-          } else if (firstFlight) {
-            // One-way flights may not have flightToken — use option ID selection
-            nextSteps.selectFlight = `voyagier select --selection-id ${flightResult.selectionId} --option-id ${firstFlight.id}`;
+        // Step 5: Auto-select (if --auto-select)
+        let autoSelectResult: AutoSelectResult | null = null;
+        let alternatives: Alternative[] = [];
+
+        if (opts.autoSelect) {
+          const strategy = opts.autoSelect as AutoSelectStrategy;
+
+          try {
+            // Auto-select flights
+            if (flightResult && allFlightOptions.length > 0) {
+              const strategyRanked = applyStrategy(allFlightOptions, strategy);
+              const topFlight = strategyRanked[0];
+
+              if (flightResult.isRoundTrip) {
+                const topToken = extractFlightToken(topFlight.bookingData);
+                if (!topToken) throw new Error("No flight token found for top-ranked departure flight.");
+
+                if (!json && !agent) progress("Auto-selecting departure flight...");
+                const depData = await graphql<{ selectDepartureFlight: { id: string; options: RawFlightOption[] } }>(
+                  SELECT_DEPARTURE_FLIGHT,
+                  { selectionId: flightResult.selectionId, flightToken: topToken }
+                );
+
+                const returnRaw = depData.selectDepartureFlight.options;
+                const returnSelectOpts: SelectOption[] = returnRaw.map((o, i) => ({
+                  id: o.id,
+                  name: o.name,
+                  price: o.price,
+                  time: o.time,
+                  airline: o.airline,
+                  duration: o.duration,
+                  bookingData: o.bookingData,
+                  sortOrder: i,
+                }));
+
+                const returnRanked = applyStrategy(returnSelectOpts, strategy);
+                const topReturn = returnRanked[0];
+                const returnToken = extractFlightToken(topReturn.bookingData);
+                if (!returnToken) throw new Error("No flight token found for top-ranked return flight.");
+
+                if (!json && !agent) progress("Auto-selecting return flight...");
+                const retData = await graphql<{ selectReturnFlight: { id: string; options: RawFlightOption[] } }>(
+                  SELECT_RETURN_FLIGHT,
+                  { selectionId: flightResult.selectionId, flightToken: returnToken }
+                );
+
+                const finalOptions = retData.selectReturnFlight.options;
+                if (finalOptions.length > 0) {
+                  await graphql<{ setTripPlanSelectedOption: unknown }>(
+                    SET_TRIP_PLAN_SELECTED_OPTION,
+                    { selectionId: flightResult.selectionId, optionId: finalOptions[0].id }
+                  );
+                }
+
+                autoSelectResult = {
+                  departure: {
+                    summary: buildFlightSummary(topFlight, origin!, destination!),
+                    airline: topFlight.airline,
+                    duration: topFlight.duration,
+                    price: topFlight.price,
+                  },
+                  returnFlight: {
+                    summary: buildFlightSummary(topReturn, destination!, origin!),
+                    airline: topReturn.airline,
+                    duration: topReturn.duration,
+                    price: topReturn.price,
+                  },
+                  strategy,
+                  rank: 1,
+                  rankReason: getRankReason(strategy),
+                };
+
+                alternatives = strategyRanked.slice(1, 4).map((opt, i) => ({
+                  rank: i + 2,
+                  summary: buildFlightSummary(opt, origin!, destination!),
+                  price: opt.price,
+                  reason: generateAlternativeReason(opt, topFlight),
+                }));
+
+              } else {
+                // One-way flight
+                if (!json && !agent) progress("Auto-selecting flight...");
+                await graphql<{ setTripPlanSelectedOption: unknown }>(
+                  SET_TRIP_PLAN_SELECTED_OPTION,
+                  { selectionId: flightResult.selectionId, optionId: topFlight.id }
+                );
+
+                autoSelectResult = {
+                  departure: {
+                    summary: buildFlightSummary(topFlight, origin!, destination!),
+                    airline: topFlight.airline,
+                    duration: topFlight.duration,
+                    price: topFlight.price,
+                  },
+                  strategy,
+                  rank: 1,
+                  rankReason: getRankReason(strategy),
+                };
+
+                alternatives = strategyRanked.slice(1, 4).map((opt, i) => ({
+                  rank: i + 2,
+                  summary: buildFlightSummary(opt, origin!, destination!),
+                  price: opt.price,
+                  reason: generateAlternativeReason(opt, topFlight),
+                }));
+              }
+            }
+
+            // Auto-select hotel (cheapest regardless of strategy)
+            if (hotelResult && allHotelOptions.length > 0) {
+              const cheapest = [...allHotelOptions].sort(
+                (a, b) => (a.price ?? Infinity) - (b.price ?? Infinity)
+              )[0];
+
+              if (!json && !agent) progress("Auto-selecting hotel...");
+              await graphql<{ setTripPlanSelectedOption: unknown }>(
+                SET_TRIP_PLAN_SELECTED_OPTION,
+                { selectionId: hotelResult.selectionId, optionId: cheapest.id }
+              );
+
+              if (!autoSelectResult) {
+                autoSelectResult = { strategy, rank: 1, rankReason: getRankReason(strategy) };
+              }
+              autoSelectResult.hotel = { name: cheapest.name, price: cheapest.price, perNight: true };
+            }
+
+            // Auto-pick sub-selections (cabin class, room type) — pick cheapest
+            if (autoSelectResult) {
+              try {
+                if (!json && !agent) progress("Auto-selecting sub-options...");
+                const deepData = await graphql<{
+                  tripPlan: {
+                    id: string;
+                    title: string;
+                    items: Array<{
+                      id: string;
+                      title: string;
+                      selection?: {
+                        id: string;
+                        isLocked: boolean;
+                        selectedOption?: {
+                          id: string;
+                          name: string;
+                          price?: number;
+                          status: string;
+                          subSelections?: Array<{
+                            id: string;
+                            type: string;
+                            selectedOptionId?: string;
+                            options: Array<{
+                              id: string;
+                              name: string;
+                              price?: number;
+                              sortOrder: number;
+                            }>;
+                          }>;
+                        };
+                      };
+                    }>;
+                  };
+                }>(GET_PLAN_DEEP, { id: plan.id });
+
+                for (const item of deepData.tripPlan.items) {
+                  if (!item.selection?.selectedOption?.subSelections) continue;
+                  if (item.selection.isLocked) continue;
+
+                  for (const sub of item.selection.selectedOption.subSelections) {
+                    if (sub.options.length === 0) continue;
+                    const cheapestOpt = [...sub.options].sort(
+                      (a, b) => (a.price ?? Infinity) - (b.price ?? Infinity)
+                    )[0];
+
+                    try {
+                      const subResult = await graphql<{
+                        setTripPlanSubSelectionOption: {
+                          id: string;
+                          selectedOptionId: string;
+                          selectedOption: { id: string; name: string; price?: number };
+                        };
+                      }>(SET_SUB_SELECTION, {
+                        subSelectionId: sub.id,
+                        optionId: cheapestOpt.id,
+                      });
+                      const picked = subResult.setTripPlanSubSelectionOption.selectedOption;
+                      if (sub.type === "FLIGHT_CLASS") {
+                        autoSelectResult.cabin = { name: picked.name, price: picked.price };
+                      }
+                    } catch (subErr) {
+                      const msg = subErr instanceof Error ? subErr.message : String(subErr);
+                      warn(`Could not auto-pick ${sub.type}: ${msg}`);
+                    }
+                  }
+                }
+              } catch (deepErr) {
+                const msg = deepErr instanceof Error ? deepErr.message : String(deepErr);
+                warn(`Could not fetch sub-selections: ${msg}`);
+              }
+            }
+
+          } catch (autoErr) {
+            const msg = autoErr instanceof Error ? autoErr.message : String(autoErr);
+            if (autoSelectResult) {
+              autoSelectResult.error = `Auto-select partially failed: ${msg}`;
+            } else {
+              autoSelectResult = { strategy, rank: 0, rankReason: "", error: `Auto-select failed: ${msg}` };
+              if (!json && !agent) warn(`Auto-select failed: ${msg}`);
+            }
           }
         }
-        if (hotelResult) {
-          const firstHotel = hotelResult.options[0];
-          if (firstHotel) {
-            nextSteps.selectHotel = `voyagier select --selection-id ${hotelResult.selectionId} --option-id ${firstHotel.id}`;
+
+        // Build next-step commands (used in non-auto-select paths)
+        const nextSteps: Record<string, string> = {};
+        if (!opts.autoSelect) {
+          if (flightResult) {
+            const firstFlight = flightResult.options[0];
+            if (firstFlight?.flightToken) {
+              nextSteps.selectFlight = `voyagier select --selection-id ${flightResult.selectionId} --flight-token ${firstFlight.flightToken} --phase departure`;
+            } else if (firstFlight) {
+              nextSteps.selectFlight = `voyagier select --selection-id ${flightResult.selectionId} --option-id ${firstFlight.id}`;
+            }
+          }
+          if (hotelResult) {
+            const firstHotel = hotelResult.options[0];
+            if (firstHotel) {
+              nextSteps.selectHotel = `voyagier select --selection-id ${hotelResult.selectionId} --option-id ${firstHotel.id}`;
+            }
           }
         }
         nextSteps.viewPlan = `voyagier plans get ${plan.id}`;
 
         // JSON output
         if (json) {
-          jsonOutput({
-            plan: { id: plan.id, title: plan.title, url: `${baseUrl}/plans/${plan.id}` },
-            travellers: travellers.map(t => ({ id: t.id, firstName: t.firstName, lastName: t.lastName })),
-            flights: flightResult,
-            hotels: hotelResult,
-            nextSteps,
-          });
+          if (opts.autoSelect && autoSelectResult) {
+            jsonOutput({
+              plan: { id: plan.id, title: plan.title, url: `${baseUrl}/plans/${plan.id}` },
+              travellers: travellers.map(t => ({ id: t.id, firstName: t.firstName, lastName: t.lastName })),
+              selected: {
+                ...(autoSelectResult.departure ? { departure: autoSelectResult.departure } : {}),
+                ...(autoSelectResult.returnFlight ? { return: autoSelectResult.returnFlight } : {}),
+                ...(autoSelectResult.cabin ? { cabin: autoSelectResult.cabin } : {}),
+                ...(autoSelectResult.hotel ? { hotel: autoSelectResult.hotel } : {}),
+                strategy: autoSelectResult.strategy,
+                rank: autoSelectResult.rank,
+                rankReason: autoSelectResult.rankReason,
+                ...(autoSelectResult.error ? { error: autoSelectResult.error } : {}),
+              },
+              alternatives,
+              cart: { command: `voyagier cart ${plan.id}` },
+              nextSteps: {
+                review: `voyagier cart ${plan.id} --json`,
+                book: `voyagier book ${plan.id} --json`,
+                bookDryRun: `voyagier book ${plan.id} --dry-run --json`,
+              },
+            });
+          } else {
+            jsonOutput({
+              plan: { id: plan.id, title: plan.title, url: `${baseUrl}/plans/${plan.id}` },
+              travellers: travellers.map(t => ({ id: t.id, firstName: t.firstName, lastName: t.lastName })),
+              flights: flightResult,
+              hotels: hotelResult,
+              nextSteps,
+            });
+          }
           return;
         }
 
@@ -401,32 +785,70 @@ export function registerPlanTripCommand(program: Command): void {
           if (subParts.length > 0) lines.push(subParts.join(" · "));
           lines.push("");
 
-          if (flightResult && origin && destination) {
-            lines.push(`### Flights (${origin} → ${destination})`);
-            lines.push(agentFlightOptions(flightResult.options));
+          if (opts.autoSelect && autoSelectResult) {
+            lines.push(`${strategyTitle(autoSelectResult.strategy as AutoSelectStrategy)}:`);
             lines.push("");
-          }
-
-          if (hotelResult && opts.hotel) {
-            lines.push(`### Hotels (${opts.hotel})`);
-            lines.push(agentHotelOptions(hotelResult.options));
+            if (autoSelectResult.departure) {
+              lines.push(`**Departure:** ${autoSelectResult.departure.summary}`);
+            }
+            if (autoSelectResult.returnFlight) {
+              lines.push(`**Return:** ${autoSelectResult.returnFlight.summary}`);
+            }
+            if (autoSelectResult.cabin) {
+              const cabinPrice = autoSelectResult.cabin.price != null ? ` · ${formatPrice(autoSelectResult.cabin.price)}` : "";
+              lines.push(`**Cabin:** ${autoSelectResult.cabin.name}${cabinPrice}`);
+            }
+            if (autoSelectResult.hotel) {
+              const hotelPrice = autoSelectResult.hotel.price != null ? ` · ${formatPrice(autoSelectResult.hotel.price)}/night` : "";
+              lines.push(`**Hotel:** ${autoSelectResult.hotel.name}${hotelPrice}`);
+            }
+            if (autoSelectResult.error) {
+              lines.push("");
+              lines.push(`⚠ ${autoSelectResult.error}`);
+            }
+            if (alternatives.length > 0) {
+              lines.push("");
+              lines.push("**Also considered:**");
+              for (const alt of alternatives) {
+                const price = alt.price != null ? ` · ${formatPrice(alt.price)}` : "";
+                lines.push(`${alt.rank}. ${alt.summary}${price} — ${alt.reason}`);
+              }
+            }
             lines.push("");
-          }
-
-          if (travellers.length > 0) {
-            lines.push(`👤 ${travellers.map(t => `${t.firstName} ${t.lastName}`).join(", ")}`);
-            lines.push("");
-          }
-
-          lines.push(`👉 **View & edit:** ${planUrl}`);
-
-          const steps: string[] = [];
-          if (nextSteps.selectFlight) steps.push(`- Select flight: \`${nextSteps.selectFlight}\``);
-          if (nextSteps.selectHotel) steps.push(`- Select hotel: \`${nextSteps.selectHotel}\``);
-          if (steps.length > 0) {
+            lines.push(`👉 **View & edit:** ${planUrl}`);
             lines.push("");
             lines.push("**Next steps:**");
-            lines.push(...steps);
+            lines.push(`- Review cart: \`voyagier cart ${plan.id} --json\``);
+            lines.push(`- Book: \`voyagier book ${plan.id} --json\``);
+            lines.push(`- Dry run: \`voyagier book ${plan.id} --dry-run --json\``);
+          } else {
+            if (flightResult && origin && destination) {
+              lines.push(`### Flights (${origin} → ${destination})`);
+              lines.push(agentFlightOptions(flightResult.options));
+              lines.push("");
+            }
+
+            if (hotelResult && opts.hotel) {
+              lines.push(`### Hotels (${opts.hotel})`);
+              lines.push(agentHotelOptions(hotelResult.options));
+              lines.push("");
+            }
+
+            if (travellers.length > 0) {
+              lines.push(`👤 ${travellers.map(t => `${t.firstName} ${t.lastName}`).join(", ")}`);
+              lines.push("");
+            }
+
+            lines.push(`👉 **View & edit:** ${planUrl}`);
+
+            const steps: string[] = [];
+            if (nextSteps.selectFlight) steps.push(`- Select flight: \`${nextSteps.selectFlight}\``);
+            if (nextSteps.selectHotel) steps.push(`- Select hotel: \`${nextSteps.selectHotel}\``);
+            if (steps.length > 0) {
+              lines.push("");
+              lines.push("**Next steps:**");
+              lines.push(...steps);
+            }
           }
 
           process.stdout.write(lines.join("\n") + "\n");
@@ -441,12 +863,47 @@ export function registerPlanTripCommand(program: Command): void {
           console.log(`  ${travellers.length} traveller${travellers.length !== 1 ? "s" : ""} added`);
         }
 
+        if (opts.autoSelect && autoSelectResult) {
+          const title = strategyTitle(autoSelectResult.strategy as AutoSelectStrategy);
+          console.log(chalk.bold(`\n${title}:\n`));
+
+          if (autoSelectResult.departure) {
+            console.log(`  ✈️  Departure: ${autoSelectResult.departure.summary}`);
+          }
+          if (autoSelectResult.returnFlight) {
+            console.log(`  ✈️  Return:    ${autoSelectResult.returnFlight.summary}`);
+          }
+          if (autoSelectResult.cabin) {
+            const price = autoSelectResult.cabin.price != null ? ` · ${formatPrice(autoSelectResult.cabin.price)}` : "";
+            console.log(`  💺 Cabin:     ${autoSelectResult.cabin.name}${price}`);
+          }
+          if (autoSelectResult.hotel) {
+            const price = autoSelectResult.hotel.price != null ? ` · ${formatPrice(autoSelectResult.hotel.price)}/night` : "";
+            console.log(`  🏨 Hotel:     ${autoSelectResult.hotel.name}${price}`);
+          }
+
+          if (autoSelectResult.error) {
+            console.log(chalk.yellow(`\n  ⚠ ${autoSelectResult.error}`));
+          }
+
+          if (alternatives.length > 0) {
+            console.log(chalk.dim("\n  Also considered:"));
+            for (const alt of alternatives) {
+              const price = alt.price != null ? ` · ${formatPrice(alt.price)}` : "";
+              console.log(chalk.dim(`  [${alt.rank}] ${alt.summary}${price} — ${alt.reason}`));
+            }
+          }
+
+          console.log(chalk.bold("\n  Next:"));
+          console.log(`  ${chalk.cyan(`voyagier cart ${plan.id}`)}`);
+          console.log(`  ${chalk.cyan(`voyagier book ${plan.id}`)}`);
+          console.log();
+          return;
+        }
+
         if (flightResult) {
           console.log(chalk.bold(`\n✈️  Top ${flightResult.options.length} flight${flightResult.options.length !== 1 ? "s" : ""} (${origin} → ${destination}, sorted by ${sortBy}):`));
           flightResult.options.forEach((opt, i) => {
-            // summary already includes airline, price, duration
-            
-            
             console.log(`  [${i + 1}]  ${opt.summary}`);
           });
           if (flightResult.optionCount > flightResult.options.length) {
