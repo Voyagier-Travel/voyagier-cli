@@ -1,6 +1,6 @@
 # Voyagier CLI — Agent Reference
 
-> Two commands to book a trip. No state management. No multi-step flows.
+> Two commands to book a trip. The recommended flow requires no state management or multi-step coordination.
 
 ## Quick Start
 
@@ -9,7 +9,7 @@
 voyagier plan-trip \
   --title "Client Name — Paris" \
   --from DCA --to Paris \
-  --depart 2026-03-23 --return 2026-03-25 \
+  --depart <DEPART_DATE> --return <RETURN_DATE> \
   --hotel Paris \
   --travellers "John Doe" \
   --auto-select navigator \
@@ -69,7 +69,7 @@ Always use `--json` for machine-readable output.
 
 ```bash
 voyagier plan-trip --title "Smith — Tokyo" \
-  --from JFK --to Tokyo --depart 2026-05-01 --return 2026-05-08 \
+  --from JFK --to Tokyo --depart <DEPART_DATE> --return <RETURN_DATE> \
   --hotel Tokyo --travellers "John Smith" \
   --auto-select navigator --json
 ```
@@ -78,7 +78,7 @@ voyagier plan-trip --title "Smith — Tokyo" \
 
 ```bash
 voyagier plan-trip --title "One-Way to London" \
-  --from JFK --to London --depart 2026-04-10 \
+  --from JFK --to London --depart <DEPART_DATE> \
   --travellers "Jane Smith" --auto-select cheapest --json
 ```
 
@@ -86,7 +86,7 @@ voyagier plan-trip --title "One-Way to London" \
 
 ```bash
 voyagier plan-trip --plan <EXISTING_PLAN_ID> \
-  --from DCA --to Paris --depart 2026-03-23 --return 2026-03-25 \
+  --from DCA --to Paris --depart <DEPART_DATE> --return <RETURN_DATE> \
   --auto-select navigator --json
 ```
 
@@ -107,14 +107,14 @@ voyagier plans list --active --json
 Use when the user wants a specific flight or hotel. **Always pass `--plan` on `select` and `pick`.**
 
 ```bash
-voyagier plans create --title "Custom Trip" --start 2026-05-01 --end 2026-05-08 --json
+voyagier plans create --title "Custom Trip" --start <DEPART_DATE> --end <RETURN_DATE> --json
 voyagier travellers add --plan <ID> --first John --last Smith --type ADULT --json
-voyagier search flights --plan <ID> --from JFK --to NRT --date 2026-05-01 --return 2026-05-08 --json
+voyagier search flights --plan <ID> --from JFK --to NRT --date <DEPART_DATE> --return <RETURN_DATE> --json
 voyagier select 1 --plan <ID> --json          # departure (response includes actionRequired for return)
 voyagier select 1 --plan <ID> --json          # return
 voyagier options <ID> --json
 voyagier pick 1 --plan <ID> --json            # cabin class
-voyagier search hotels --plan <ID> --location Tokyo --checkin 2026-05-01 --checkout 2026-05-08 --json
+voyagier search hotels --plan <ID> --location Tokyo --checkin <DEPART_DATE> --checkout <RETURN_DATE> --json
 voyagier select 1 --plan <ID> --json          # hotel
 voyagier options <ID> --json
 voyagier pick 1 --plan <ID> --json            # room type

@@ -269,13 +269,13 @@ export function registerPlanTripCommand(program: Command): void {
 Examples:
   # Book a round-trip flight + hotel (two commands total):
   voyagier plan-trip --title "Paris Trip" --from DCA --to Paris \\
-    --depart 2026-03-23 --return 2026-03-25 --hotel Paris \\
+    --depart <YYYY-MM-DD> --return <YYYY-MM-DD> --hotel Paris \\
     --travellers "John Doe" --auto-select navigator --json
   voyagier book <PLAN_ID> --json
 
   # One-way, cheapest option:
   voyagier plan-trip --title "London" --from JFK --to London \\
-    --depart 2026-04-10 --travellers "Jane Smith" --auto-select cheapest --json
+    --depart <YYYY-MM-DD> --travellers "Jane Smith" --auto-select cheapest --json
 
   Full agent reference: voyagier agent-docs
 `)

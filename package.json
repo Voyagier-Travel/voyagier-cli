@@ -43,6 +43,7 @@
   "files": [
     "dist",
     "skills",
-    "README.md"
+    "README.md",
+    "AGENT.md"
   ]
 }
