@@ -222,7 +222,7 @@ export function registerSelectCommands(program: Command): void {
               url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
               actionRequired: {
                 action: "select_return",
-                command: `voyagier select <number> --plan ${state.tripPlanId}`,
+                command: `voyagier select <number> --plan ${state.tripPlanId} --json`,
                 description: "Select a return flight from the options above",
               },
             }, state.tripPlanId);

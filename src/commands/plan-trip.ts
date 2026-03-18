@@ -16,7 +16,7 @@ import {
   SET_SUB_SELECTION,
 } from "../queries.js";
 import { validateDate, warnPastDate, validateIata, extractFlightToken, buildFlightSummary, buildHotelSummary, deriveBaseUrl, formatPrice, formatDateRange } from "../utils.js";
-import { progress, warn, fatal, jsonOutput } from "../output.js";
+import { progress, warn, fatal, jsonOutput, jsonOutputWithPlan } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
 import { searchAirports } from "../data/airports.js";
@@ -172,17 +172,19 @@ function strategyTitle(strategy: AutoSelectStrategy): string {
 }
 
 export function generateAlternativeReason(alt: SelectOption, selected: SelectOption): string {
-  const altPrice = alt.price ?? 0;
-  const selPrice = selected.price ?? 0;
+  const altPrice = alt.price;
+  const selPrice = selected.price;
+  const hasPrices = altPrice != null && selPrice != null && selPrice > 0;
   const altDuration = parseDurationMinutes(alt.duration);
   const selDuration = parseDurationMinutes(selected.duration);
   const altStops = parseStops(alt.bookingData);
   const selStops = parseStops(selected.bookingData);
 
   if (altStops < selStops && altStops === 0) {
-    return altPrice > selPrice
-      ? `Direct flight, $${(altPrice - selPrice).toFixed(0)} more`
-      : `Direct flight, saves $${(selPrice - altPrice).toFixed(0)}`;
+    if (!hasPrices) return "Direct flight";
+    return altPrice! > selPrice!
+      ? `Direct flight, $${(altPrice! - selPrice!).toFixed(0)} more`
+      : `Direct flight, saves $${(selPrice! - altPrice!).toFixed(0)}`;
   }
 
   if (altDuration < selDuration && altDuration !== Infinity && selDuration !== Infinity) {
@@ -191,10 +193,10 @@ export function generateAlternativeReason(alt: SelectOption, selected: SelectOpt
     const m = mins % 60;
     const timeStr = h > 0 && m > 0 ? `${h}h${m}m` : h > 0 ? `${h}h` : `${m}m`;
 
-    if (selPrice > 0 && altPrice > 0) {
-      const ratio = altPrice / selPrice;
+    if (hasPrices) {
+      const ratio = altPrice! / selPrice!;
       if (ratio >= 1.5) return `${timeStr} faster but ${ratio.toFixed(1)}x price`;
-      const diff = altPrice - selPrice;
+      const diff = altPrice! - selPrice!;
       return diff > 0
         ? `${timeStr} faster but $${diff.toFixed(0)} more`
         : `${timeStr} faster, saves $${Math.abs(diff).toFixed(0)}`;
@@ -202,8 +204,8 @@ export function generateAlternativeReason(alt: SelectOption, selected: SelectOpt
     return `${timeStr} faster`;
   }
 
-  if (altPrice < selPrice && selPrice > 0) {
-    const diff = selPrice - altPrice;
+  if (hasPrices && altPrice! < selPrice!) {
+    const diff = selPrice! - altPrice!;
     if (altDuration > selDuration && altDuration !== Infinity && selDuration !== Infinity) {
       const mins = altDuration - selDuration;
       const h = Math.floor(mins / 60);
@@ -740,7 +742,7 @@ export function registerPlanTripCommand(program: Command): void {
         // JSON output
         if (json) {
           if (opts.autoSelect && autoSelectResult) {
-            jsonOutput({
+            jsonOutputWithPlan({
               plan: { id: plan.id, title: plan.title, url: `${baseUrl}/plans/${plan.id}` },
               travellers: travellers.map(t => ({ id: t.id, firstName: t.firstName, lastName: t.lastName })),
               selected: {
@@ -760,15 +762,15 @@ export function registerPlanTripCommand(program: Command): void {
                 book: `voyagier book ${plan.id} --json`,
                 bookDryRun: `voyagier book ${plan.id} --dry-run --json`,
               },
-            });
+            }, plan.id, plan.title);
           } else {
-            jsonOutput({
+            jsonOutputWithPlan({
               plan: { id: plan.id, title: plan.title, url: `${baseUrl}/plans/${plan.id}` },
               travellers: travellers.map(t => ({ id: t.id, firstName: t.firstName, lastName: t.lastName })),
               flights: flightResult,
               hotels: hotelResult,
               nextSteps,
-            });
+            }, plan.id, plan.title);
           }
           return;
         }

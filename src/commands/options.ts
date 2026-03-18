@@ -6,7 +6,7 @@ import { formatPrice, subSelectionLabel, deriveBaseUrl } from "../utils.js";
 import { hintCabinClass, hintHotelRoom } from "../hints.js";
 import { saveOptionsState, loadOptionsState, clearOptionsState } from "../state.js";
 import { GET_PLAN_DEEP, SET_SUB_SELECTION, REFRESH_SUB_SELECTION } from "../queries.js";
-import { progress, fatal, jsonOutput, jsonOutputWithPlan } from "../output.js";
+import { progress, jsonOutput, jsonOutputWithPlan } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 
 interface SubSelectionOption {

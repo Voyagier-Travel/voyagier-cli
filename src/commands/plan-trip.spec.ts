@@ -1,6 +1,5 @@
 import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals";
 import { Command } from "commander";
-import { CliError, CliErrorCode } from "../errors.js";
 
 // ── Mocks (must be declared before dynamic imports) ────────────────────────
 
@@ -29,6 +28,9 @@ jest.unstable_mockModule("../output.js", () => ({
   }),
   jsonOutput: jest.fn().mockImplementation((data: unknown) => {
     process.stdout.write(JSON.stringify(data) + "\n");
+  }),
+  jsonOutputWithPlan: jest.fn().mockImplementation((data: unknown, planId: string, planTitle?: string) => {
+    process.stdout.write(JSON.stringify({ ...data as object, planContext: { planId, title: planTitle } }) + "\n");
   }),
 }));
 
