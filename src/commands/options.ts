@@ -6,7 +6,7 @@ import { formatPrice, subSelectionLabel, deriveBaseUrl } from "../utils.js";
 import { hintCabinClass, hintHotelRoom } from "../hints.js";
 import { saveOptionsState, loadOptionsState, clearOptionsState } from "../state.js";
 import { GET_PLAN_DEEP, SET_SUB_SELECTION, REFRESH_SUB_SELECTION } from "../queries.js";
-import { progress, fatal, jsonOutput } from "../output.js";
+import { progress, jsonOutput, jsonOutputWithPlan } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 
 interface SubSelectionOption {
@@ -265,6 +265,7 @@ export function registerOptionsCommands(program: Command): void {
     .description("Select a sub-option by number (from `voyagier options`)")
     .option("--sub-selection-id <id>", "Explicit sub-selection ID (direct mode, skips state file)")
     .option("--option-id <id>", "Explicit option ID (direct mode)")
+    .option("--plan <id>", "Assert that cached options belong to this trip plan (safety check for agent mode)")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
     .action(async (numberStr: string, opts) => {
@@ -319,6 +320,10 @@ export function registerOptionsCommands(program: Command): void {
         throw new CliError(CliErrorCode.VALIDATION, "No options context found. Run `voyagier options <planId>` first.");
       }
 
+      if (opts.plan && state.tripPlanId !== opts.plan) {
+        throw new CliError(CliErrorCode.VALIDATION, `Plan mismatch: options belong to plan ${state.tripPlanId}, not ${opts.plan}. Re-run voyagier options ${opts.plan}.`);
+      }
+
       if (state.results.length === 0) {
         throw new CliError(CliErrorCode.VALIDATION, "No pending sub-selections found. All items may already have selections chosen.\n  Run: voyagier options <planId> to check current state");
       }
@@ -342,7 +347,7 @@ export function registerOptionsCommands(program: Command): void {
         const selected = data.setTripPlanSubSelectionOption.selectedOption;
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({
+          jsonOutputWithPlan({
             subSelectionId: result.subSelectionId,
             selected: {
               id: selected.id,
@@ -350,7 +355,7 @@ export function registerOptionsCommands(program: Command): void {
               price: selected.price,
             },
             url: `${baseUrl}/plans/${state.tripPlanId}`,
-          }, null, 2) + "\n");
+          }, state.tripPlanId);
           return;
         }
 
