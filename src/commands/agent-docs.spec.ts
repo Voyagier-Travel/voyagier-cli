@@ -1,4 +1,4 @@
-import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
+import { describe, it, expect } from "@jest/globals";
 import { loadAgentDocs, resolveAgentMdPath } from "./agent-docs.js";
 import { existsSync } from "fs";
 
