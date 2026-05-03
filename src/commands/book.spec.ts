@@ -2,160 +2,72 @@ import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@j
 import { Command } from "commander";
 import { CliError, CliErrorCode } from "../errors.js";
 
-// Must be declared before any imports of the mocked module
 const mockGraphql = jest.fn();
+const mockOpenBrowser = jest.fn();
 
 jest.unstable_mockModule("../api.js", () => ({
   graphql: mockGraphql,
-  AuthError: class AuthError extends Error {
-    constructor(message: string) {
-      super(message);
-      this.name = "AuthError";
-    }
+  AuthError: class AuthError extends Error {},
+}));
+
+jest.unstable_mockModule("../config.js", () => ({
+  getApiUrl: jest.fn().mockReturnValue("https://dev.voyagier.com/api"),
+  CONFIG_DIR: "/tmp/test-config",
+}));
+
+jest.unstable_mockModule("../utils.js", () => ({
+  formatPrice: (n: number) => `$${n.toFixed(2)}`,
+  openBrowser: mockOpenBrowser,
+  deriveBaseUrl: (api: string) => {
+    try { const u = new URL(api); u.pathname = ""; return u.origin; } catch { return "https://travel.voyagier.com"; }
   },
 }));
 
-// Dynamically imported after mocks are registered
-let registerBookCommands: (program: Command) => void;
+jest.unstable_mockModule("../hints.js", () => ({
+  hintCheckoutCreated: jest.fn().mockReturnValue(""),
+  hintBookingConfirmed: jest.fn().mockReturnValue(""),
+  hintBookingPending: jest.fn().mockReturnValue(""),
+  hintDryRun: jest.fn().mockReturnValue(""),
+}));
 
+let registerBookCommands: (program: Command) => void;
 beforeAll(async () => {
-  const mod = await import("./book.js");
-  registerBookCommands = mod.registerBookCommands;
+  registerBookCommands = (await import("./book.js")).registerBookCommands;
 });
 
-// ─── Test data fixtures ────────────────────────────────────────────────────
-
-const PLAN_NO_PENDING = {
+const CART_FIXTURE = {
   tripPlan: {
-    id: "plan-123",
-    title: "Tokyo Trip",
-    items: [
-      {
-        id: "item-1",
-        title: "Flight JFK→NRT",
-        selection: {
-          id: "sel-1",
-          isLocked: false,
-          selectedOption: {
-            id: "opt-1",
-            name: "AA175",
-            price: 800,
-            status: "ACTIVE",
-            subSelections: [
-              {
-                id: "sub-1",
-                type: "FLIGHT_CLASS",
-                selectedOptionId: "class-eco", // already chosen — not pending
-                options: [{ id: "class-eco" }, { id: "class-biz" }],
-              },
-            ],
-          },
-        },
-      },
-    ],
-  },
-};
-
-const PLAN_WITH_PENDING = {
-  tripPlan: {
-    id: "plan-123",
-    title: "Tokyo Trip",
-    items: [
-      {
-        id: "item-1",
-        title: "Flight JFK→NRT",
-        selection: {
-          id: "sel-1",
-          isLocked: false,
-          selectedOption: {
-            id: "opt-1",
-            name: "AA175",
-            price: 800,
-            status: "ACTIVE",
-            subSelections: [
-              {
-                id: "sub-1",
-                type: "FLIGHT_CLASS",
-                // no selectedOptionId — pending choice required
-                options: [{ id: "class-eco" }, { id: "class-biz" }],
-              },
-            ],
-          },
-        },
-      },
-    ],
-  },
-};
-
-const CART_WITH_ITEMS = {
-  getTripPlanCart: {
-    items: [
-      { id: "ci-1", name: "AA175 JFK→NRT", description: "Economy", price: 800, type: "FLIGHT" },
-      { id: "ci-2", name: "Park Hyatt Tokyo", description: "Deluxe Room", price: 500, type: "HOTEL" },
-    ],
-    total: 1300,
-    itemCount: 2,
-  },
-};
-
-const CART_EMPTY = {
-  getTripPlanCart: {
-    items: [],
-    total: 0,
-    itemCount: 0,
-  },
-};
-
-const CHECKOUT_RESULT = {
-  createTripPlanCheckout: {
-    url: "https://checkout.stripe.com/pay/cs_test_abc123",
-  },
-};
-
-const PAYMENT_CHECKOUTS_WITH_RECORDS = {
-  tripPlanPaymentCheckouts: [
-    {
-      id: "co-abc",
-      status: "PAID",
-      checkoutUrl: "https://checkout.stripe.com/pay/cs_test_abc123",
-      createdAt: "2026-03-10T12:00:00.000Z",
-      bookingRecords: [
-        {
-          id: "br-1",
-          type: "FLIGHT_BOOKING",
-          status: "CONFIRMED",
-          pnr: "XYZABC",
-          providerReference: null,
-          amount: 80000, // cents
-        },
+    id: "plan-1", title: "Test Trip",
+    cart: {
+      itemCount: 2, total: 1840, currency: "USD",
+      items: [
+        { id: "ci-1", name: "King Suite", description: null, price: 1840, currency: "USD", type: "Hotel", selectionId: "sel-h", optionId: "opt-h", metadata: {} },
+        { id: "ci-2", name: "AF023", description: null, price: 0, currency: "USD", type: "Flight", selectionId: "sel-f", optionId: "opt-f", metadata: {} },
       ],
     },
-  ],
+    goals: [
+      {
+        id: "g-h", name: "Hotel", sortOrder: 1,
+        items: [{ id: "i-h", title: "Hotel", goalId: "g-h", selections: [{ id: "sel-h", type: "Hotel", isLocked: false, options: [{ id: "opt-h", name: "King", isBookable: true, status: "ACTIVE", blueprintListingId: "bl-1", externalId: "blueprint:1" }] }] }],
+      },
+      {
+        id: "g-f", name: "Flight", sortOrder: 2,
+        items: [{ id: "i-f", title: "Flight", goalId: "g-f", selections: [{ id: "sel-f", type: "Flight", isLocked: false, options: [{ id: "opt-f", name: "AF023", isBookable: false, status: "ACTIVE", blueprintListingId: null, externalId: "sabre:af023" }] }] }],
+      },
+    ],
+  },
 };
 
-const PAYMENT_CHECKOUTS_EMPTY = {
-  tripPlanPaymentCheckouts: [],
+const ALL_BOOKABLE = JSON.parse(JSON.stringify(CART_FIXTURE));
+ALL_BOOKABLE.tripPlan.goals[1].items[0].selections[0].options[0].isBookable = true;
+
+const EMPTY_CART = {
+  tripPlan: {
+    id: "plan-1", title: "Empty",
+    cart: { itemCount: 0, total: 0, currency: "USD", items: [] },
+    goals: [],
+  },
 };
-
-// ─── Helpers ──────────────────────────────────────────────────────────────
-
-function makeGraphqlMock(overrides: Record<string, unknown> = {}) {
-  return (query: string) => {
-    if (query.includes("getTripPlanCart")) {
-      return Promise.resolve(overrides.cart ?? CART_WITH_ITEMS);
-    }
-    if (query.includes("TripPlanDeep")) {
-      return Promise.resolve(overrides.plan ?? PLAN_NO_PENDING);
-    }
-    if (query.includes("createTripPlanCheckout")) {
-      return Promise.resolve(overrides.checkout ?? CHECKOUT_RESULT);
-    }
-    if (query.includes("tripPlanPaymentCheckouts")) {
-      return Promise.resolve(overrides.checkouts ?? PAYMENT_CHECKOUTS_WITH_RECORDS);
-    }
-    return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
-  };
-}
 
 async function runBook(args: string[]): Promise<void> {
   const program = new Command();
@@ -164,245 +76,179 @@ async function runBook(args: string[]): Promise<void> {
   await program.parseAsync(["node", "voyagier", "book", ...args]);
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────
-
-describe("book command", () => {
-  let stdoutOutput: string[];
+describe("voyagier book", () => {
   let stdoutSpy: ReturnType<typeof jest.spyOn>;
   let stderrSpy: ReturnType<typeof jest.spyOn>;
+  let stdoutOutput: string[] = [];
 
   beforeEach(() => {
-    process.env.VOYAGIER_TOKEN = "test-token";
-    process.env.VOYAGIER_API_URL = "https://api.test.voyagier.com/graphql";
-
     stdoutOutput = [];
-    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
-      stdoutOutput.push(typeof chunk === "string" ? chunk : String(chunk));
+    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((c: unknown) => {
+      stdoutOutput.push(typeof c === "string" ? c : String(c));
       return true;
     });
     stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-
     mockGraphql.mockReset();
+    mockOpenBrowser.mockReset();
   });
-
   afterEach(() => {
     stdoutSpy.mockRestore();
     stderrSpy.mockRestore();
-    delete process.env.VOYAGIER_TOKEN;
-    delete process.env.VOYAGIER_API_URL;
   });
 
-  // ── 1. Pre-flight: pending sub-selections ─────────────────────────────
-
-  it("throws VALIDATION when items have pending sub-selections", async () => {
-    mockGraphql.mockImplementation(makeGraphqlMock({ plan: PLAN_WITH_PENDING }));
-
-    let err: unknown;
-    try {
-      await runBook(["plan-123"]);
-    } catch (e) {
-      err = e;
-    }
-
-    expect(err).toBeInstanceOf(CliError);
-    expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
-    expect((err as CliError).message).toContain("Cannot checkout");
-    expect((err as CliError).message).toContain("Flight JFK→NRT");
+  describe("--dry-run", () => {
+    it("returns subtotal + items + blockers as JSON; never calls checkout", async () => {
+      mockGraphql.mockResolvedValueOnce(CART_FIXTURE);
+      await runBook(["plan-1", "--dry-run", "--json"]);
+      const out = JSON.parse(stdoutOutput.join(""));
+      expect(out.ok).toBe(true);
+      expect(out.data.dryRun).toBe(true);
+      expect(out.data.subtotal).toBe(1840);
+      expect(out.data.blockers).toHaveLength(1);
+      expect(out.data.blockers[0].itemName).toBe("AF023");
+      expect(mockGraphql).toHaveBeenCalledTimes(1); // cart only, no createTripPlanCheckout
+    });
   });
 
-  // ── 2. Pre-flight: empty cart ─────────────────────────────────────────
+  describe("--validate", () => {
+    it("throws BOOKING_BLOCKED with details.blockers when any item is non-bookable", async () => {
+      mockGraphql.mockResolvedValueOnce(CART_FIXTURE);
+      let err: unknown;
+      try {
+        await runBook(["plan-1", "--validate", "--json"]);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.BOOKING_BLOCKED);
+      expect((err as CliError).details?.blockers).toHaveLength(1);
+    });
 
-  it("throws VALIDATION when cart is empty", async () => {
-    mockGraphql.mockImplementation(makeGraphqlMock({ cart: CART_EMPTY }));
-
-    let err: unknown;
-    try {
-      await runBook(["plan-123"]);
-    } catch (e) {
-      err = e;
-    }
-
-    expect(err).toBeInstanceOf(CliError);
-    expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
-    expect((err as CliError).message).toContain("Cart is empty");
+    it("passes through and creates checkout when everything is bookable", async () => {
+      mockGraphql
+        .mockResolvedValueOnce(ALL_BOOKABLE)
+        .mockResolvedValueOnce({ createTripPlanCheckout: { url: "https://checkout.stripe.com/abc" } });
+      await runBook(["plan-1", "--validate", "--json"]);
+      const out = JSON.parse(stdoutOutput.join(""));
+      expect(out.ok).toBe(true);
+      expect(out.data.checkoutUrl).toContain("checkout.stripe.com");
+    });
   });
 
-  // ── 3. Dry-run JSON output ────────────────────────────────────────────
+  describe("--only-bookable", () => {
+    it(
+      "is a CLI-side gate: surfaces skippedBlockers but currently still calls " +
+      "createTripPlanCheckout with only { tripPlanId, successUrl, cancelUrl } " +
+      "(Copilot #3178828499 — server-side filtering not yet supported by API)",
+      async () => {
+        mockGraphql
+          .mockResolvedValueOnce(CART_FIXTURE)
+          .mockResolvedValueOnce({ createTripPlanCheckout: { url: "https://checkout.stripe.com/x" } });
+        await runBook(["plan-1", "--only-bookable", "--json"]);
+        const out = JSON.parse(stdoutOutput.join(""));
+        expect(out.ok).toBe(true);
+        expect(out.data.bookableCount).toBe(1);
+        expect(out.data.skippedBlockers).toHaveLength(1);
 
-  it("outputs correct JSON shape in --dry-run --json mode", async () => {
-    mockGraphql.mockImplementation(makeGraphqlMock());
-
-    await runBook(["plan-123", "--dry-run", "--json"]);
-
-    const output = stdoutOutput.join("");
-    const parsed = JSON.parse(output);
-
-    expect(parsed.dryRun).toBe(true);
-    expect(parsed.planId).toBe("plan-123");
-    expect(parsed.subtotal).toBe(1300);
-    expect(Array.isArray(parsed.items)).toBe(true);
-    expect(parsed.items).toHaveLength(2);
-    expect(parsed.items[0]).toMatchObject({ name: "AA175 JFK→NRT", price: 800, type: "FLIGHT" });
-    expect(parsed.items[1]).toMatchObject({ name: "Park Hyatt Tokyo", price: 500, type: "HOTEL" });
+        // Pin the actual mutation contract: no cartItemIds / selectionIds yet.
+        const mutationCall = mockGraphql.mock.calls[1] as unknown as [string, { input: Record<string, unknown> }];
+        expect(mutationCall[1].input).toEqual({
+          tripPlanId: "plan-1",
+          successUrl: expect.stringContaining("plans/plan-1"),
+          cancelUrl: expect.stringContaining("plans/plan-1"),
+        });
+        // When/if the API adds cartItemIds, this test should be updated to assert
+        // the filtered set is sent through.
+      },
+    );
   });
 
-  it("does not call CREATE_CHECKOUT in dry-run mode", async () => {
-    mockGraphql.mockImplementation(makeGraphqlMock());
+  describe("--types", () => {
+    it("filters cart by type before bookability gate", async () => {
+      mockGraphql
+        .mockResolvedValueOnce(CART_FIXTURE)
+        .mockResolvedValueOnce({ createTripPlanCheckout: { url: "https://checkout.stripe.com/h" } });
+      await runBook(["plan-1", "--types", "Hotel", "--json"]);
+      const out = JSON.parse(stdoutOutput.join(""));
+      expect(out.ok).toBe(true);
+      expect(out.data.itemCount).toBe(1);
+    });
 
-    await runBook(["plan-123", "--dry-run", "--json"]);
-
-    // Only the two pre-flight queries should be called
-    expect(mockGraphql).toHaveBeenCalledTimes(2);
-    const queries: string[] = (mockGraphql.mock.calls as [string][]).map(([q]) => q);
-    expect(queries.some(q => q.includes("createTripPlanCheckout"))).toBe(false);
+    it("throws VALIDATION when no items match", async () => {
+      mockGraphql.mockResolvedValueOnce(CART_FIXTURE);
+      let err: unknown;
+      try {
+        await runBook(["plan-1", "--types", "Restaurant", "--json"]);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+      expect((err as CliError).details?.availableTypes).toBeDefined();
+    });
   });
 
-  // ── 4. Checkout creation JSON output ─────────────────────────────────
-
-  it("outputs correct JSON shape after creating checkout", async () => {
-    mockGraphql.mockImplementation(makeGraphqlMock());
-
-    await runBook(["plan-123", "--json"]);
-
-    const output = stdoutOutput.join("");
-    const parsed = JSON.parse(output);
-
-    expect(parsed.planId).toBe("plan-123");
-    expect(parsed.checkoutUrl).toBe("https://checkout.stripe.com/pay/cs_test_abc123");
-    expect(parsed.subtotal).toBe(1300);
-    expect(parsed.url).toContain("plan-123");
+  describe("--idempotency-key", () => {
+    it("surfaces the key on the JSON envelope", async () => {
+      mockGraphql
+        .mockResolvedValueOnce(ALL_BOOKABLE)
+        .mockResolvedValueOnce({ createTripPlanCheckout: { url: "https://checkout.stripe.com/k" } });
+      await runBook(["plan-1", "--idempotency-key", "01H...", "--json"]);
+      const out = JSON.parse(stdoutOutput.join(""));
+      expect(out.data.idempotencyKey).toBe("01H...");
+    });
   });
 
-  it("calls graphql three times for the checkout path (cart + plan + mutation)", async () => {
-    mockGraphql.mockImplementation(makeGraphqlMock());
+  describe("empty + bookability edges", () => {
+    it("empty cart → VALIDATION error", async () => {
+      mockGraphql.mockResolvedValueOnce(EMPTY_CART);
+      let err: unknown;
+      try {
+        await runBook(["plan-1", "--json"]);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+    });
 
-    await runBook(["plan-123", "--json"]);
-
-    expect(mockGraphql).toHaveBeenCalledTimes(3);
+    it("nothing bookable in working set → NOT_BOOKABLE", async () => {
+      const allFlights = JSON.parse(JSON.stringify(CART_FIXTURE));
+      allFlights.tripPlan.goals[0].items[0].selections[0].options[0].isBookable = false;
+      mockGraphql.mockResolvedValueOnce(allFlights);
+      let err: unknown;
+      try {
+        await runBook(["plan-1", "--json"]);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.NOT_BOOKABLE);
+    });
   });
 
-  // ── 5. Status check with booking records ─────────────────────────────
+  describe("--status", () => {
+    it("returns checkouts as JSON envelope", async () => {
+      mockGraphql.mockResolvedValueOnce({
+        tripPlanPaymentCheckouts: [
+          {
+            id: "co-1", status: "PAID", checkoutUrl: null, hostedInvoiceUrl: null,
+            bookingRecords: [{ id: "br-1", type: "FLIGHT", status: "CONFIRMED", pnr: "ABC123", providerReference: null, amount: 800 }],
+          },
+        ],
+      });
+      await runBook(["plan-1", "--status", "--json"]);
+      const out = JSON.parse(stdoutOutput.join(""));
+      expect(out.ok).toBe(true);
+      expect(out.data.checkouts).toHaveLength(1);
+      expect(out.data.checkouts[0].bookingRecords[0].pnr).toBe("ABC123");
+    });
 
-  it("outputs correct JSON shape in --status --json mode", async () => {
-    mockGraphql.mockImplementation(makeGraphqlMock());
-
-    await runBook(["plan-123", "--status", "--json"]);
-
-    const output = stdoutOutput.join("");
-    const parsed = JSON.parse(output);
-
-    expect(parsed.planId).toBe("plan-123");
-    expect(Array.isArray(parsed.checkouts)).toBe(true);
-    expect(parsed.checkouts).toHaveLength(1);
-    expect(parsed.checkouts[0].status).toBe("PAID");
-    expect(parsed.checkouts[0].bookingRecords).toHaveLength(1);
-    expect(parsed.checkouts[0].bookingRecords[0].pnr).toBe("XYZABC");
-  });
-
-  it("calls graphql exactly once for the --status path", async () => {
-    mockGraphql.mockImplementation(makeGraphqlMock());
-
-    await runBook(["plan-123", "--status", "--json"]);
-
-    expect(mockGraphql).toHaveBeenCalledTimes(1);
-  });
-
-  // ── 6. Status check empty ─────────────────────────────────────────────
-
-  it("outputs empty checkouts array when there is no payment history", async () => {
-    mockGraphql.mockImplementation(makeGraphqlMock({ checkouts: PAYMENT_CHECKOUTS_EMPTY }));
-
-    await runBook(["plan-123", "--status", "--json"]);
-
-    const output = stdoutOutput.join("");
-    const parsed = JSON.parse(output);
-
-    expect(parsed.planId).toBe("plan-123");
-    expect(parsed.checkouts).toEqual([]);
-  });
-
-  // ── 7. API error wrapping ─────────────────────────────────────────────
-
-  it("wraps unexpected API errors in CliError(API_ERROR)", async () => {
-    mockGraphql.mockRejectedValue(new Error("Network timeout"));
-
-    let err: unknown;
-    try {
-      await runBook(["plan-123"]);
-    } catch (e) {
-      err = e;
-    }
-
-    expect(err).toBeInstanceOf(CliError);
-    expect((err as CliError).code).toBe(CliErrorCode.API_ERROR);
-    expect((err as CliError).message).toContain("Network timeout");
-  });
-
-  it("does not double-wrap CliError instances", async () => {
-    const original = new CliError(CliErrorCode.AUTH_FAILED, "Not authenticated.");
-    mockGraphql.mockRejectedValue(original);
-
-    let err: unknown;
-    try {
-      await runBook(["plan-123"]);
-    } catch (e) {
-      err = e;
-    }
-
-    expect(err).toBeInstanceOf(CliError);
-    expect((err as CliError).code).toBe(CliErrorCode.AUTH_FAILED);
-  });
-
-  // ── 8. Text output modes (non-JSON) ──────────────────────────────────
-
-  it("outputs dry-run summary in text mode without throwing", async () => {
-    mockGraphql.mockImplementation(makeGraphqlMock());
-    const consoleSpy = jest.spyOn(console, "log").mockImplementation(() => {});
-
-    await runBook(["plan-123", "--dry-run"]);
-
-    consoleSpy.mockRestore();
-    // Two pre-flight queries only
-    expect(mockGraphql).toHaveBeenCalledTimes(2);
-  });
-
-  it("outputs status in --agent mode with booking records", async () => {
-    mockGraphql.mockImplementation(makeGraphqlMock());
-
-    await runBook(["plan-123", "--status", "--agent"]);
-
-    const output = stdoutOutput.join("");
-    expect(output).toContain("## Booking Status");
-    expect(output).toContain("PAID");
-    expect(output).toContain("XYZABC");
-  });
-
-  it("outputs empty status message in --agent mode with no checkouts", async () => {
-    mockGraphql.mockImplementation(makeGraphqlMock({ checkouts: PAYMENT_CHECKOUTS_EMPTY }));
-
-    await runBook(["plan-123", "--status", "--agent"]);
-
-    const output = stdoutOutput.join("");
-    expect(output).toContain("No payment history");
-  });
-
-  it("outputs status in text mode with booking records", async () => {
-    mockGraphql.mockImplementation(makeGraphqlMock());
-    const consoleSpy = jest.spyOn(console, "log").mockImplementation(() => {});
-
-    await runBook(["plan-123", "--status"]);
-
-    consoleSpy.mockRestore();
-    expect(mockGraphql).toHaveBeenCalledTimes(1);
-  });
-
-  it("outputs checkout in --agent mode", async () => {
-    mockGraphql.mockImplementation(makeGraphqlMock());
-
-    await runBook(["plan-123", "--agent"]);
-
-    const output = stdoutOutput.join("");
-    expect(output).toContain("checkout.stripe.com");
-    expect(output).toContain("plan-123");
+    it("renders 'no payment history' when empty", async () => {
+      mockGraphql.mockResolvedValueOnce({ tripPlanPaymentCheckouts: [] });
+      await runBook(["plan-1", "--status", "--agent"]);
+      const out = stdoutOutput.join("");
+      expect(out).toContain("No payment history");
+    });
   });
 });
