@@ -529,3 +529,112 @@ describe("listings — --idempotency-key help text", () => {
     expect(help).not.toContain("for the mutation");
   });
 });
+
+// ── Regression: Copilot review (third pass) ──────────────────────────────
+
+describe("listings recent — markdown table escaping (--agent)", () => {
+  it("escapes pipe/backtick characters in listingName", async () => {
+    const evilEvent = {
+      id: "evt_evil",
+      blueprintListingId: "lst_evil",
+      blueprintMonitorId: "mon_01HX",
+      listingName: "Hotel | Wreckage `cafe`",
+      changeType: "PriceChanged",
+      details: null,
+      blueprintListing: {
+        id: "lst_evil",
+        name: "Hotel | Wreckage `cafe`",
+        price: 200,
+        isAvailable: true,
+        isBookable: true,
+      },
+    };
+
+    mockGraphql
+      .mockResolvedValueOnce({
+        getTripPlanHotelSelection: { id: "sel_01HX", blueprintMonitorId: "mon_01HX" },
+      })
+      .mockResolvedValueOnce({ blueprintListingChangeEvents: [evilEvent] });
+
+    const writes: string[] = [];
+    const logSpy = jest.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      writes.push(args.map((a) => (typeof a === "string" ? a : String(a))).join(" "));
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "listings", "recent",
+      "--selection", "sel_01HX",
+      "--agent",
+    ]);
+
+    const allOut = writes.join("\n");
+    expect(allOut).toContain("Hotel \\| Wreckage \\`cafe\\`");
+
+    logSpy.mockRestore();
+  });
+
+  it("falls back to blueprintListing.name when listingName is null in --agent table", async () => {
+    const eventNoListingName = {
+      id: "evt_fallback",
+      blueprintListingId: "lst_fallback",
+      blueprintMonitorId: "mon_01HX",
+      listingName: null,
+      changeType: "NewListing",
+      details: null,
+      blueprintListing: {
+        id: "lst_fallback",
+        name: "Real Hotel Name",
+        price: 100,
+        isAvailable: true,
+        isBookable: true,
+      },
+    };
+
+    mockGraphql
+      .mockResolvedValueOnce({
+        getTripPlanHotelSelection: { id: "sel_01HX", blueprintMonitorId: "mon_01HX" },
+      })
+      .mockResolvedValueOnce({ blueprintListingChangeEvents: [eventNoListingName] });
+
+    const writes: string[] = [];
+    const logSpy = jest.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      writes.push(args.map((a) => (typeof a === "string" ? a : String(a))).join(" "));
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "listings", "recent",
+      "--selection", "sel_01HX",
+      "--agent",
+    ]);
+
+    const allOut = writes.join("\n");
+    // Must show the fallback name, not the em-dash placeholder.
+    expect(allOut).toContain("Real Hotel Name");
+    const tableRow = allOut.split("\n").find((l) => l.includes("NewListing")) ?? "";
+    expect(tableRow).not.toMatch(/\|\s+—\s+\|/); // no bare em-dash where name should be
+    expect(tableRow).toContain("Real Hotel Name");
+
+    logSpy.mockRestore();
+  });
+});
+
+describe("listings — --agent help text consistency", () => {
+  it("uses the canonical help wording 'Output plain markdown for AI agents'", () => {
+    const p = buildProgram();
+    const recentHelp = p.commands
+      .find((c) => c.name() === "listings")!
+      .commands.find((c) => c.name() === "recent")!
+      .helpInformation();
+    const addHelp = p.commands
+      .find((c) => c.name() === "listings")!
+      .commands.find((c) => c.name() === "add-to-selection")!
+      .helpInformation();
+
+    expect(recentHelp).toContain("Output plain markdown for AI agents");
+    expect(addHelp).toContain("Output plain markdown for AI agents");
+    expect(recentHelp).not.toContain("Output markdown for AI display");
+    expect(addHelp).not.toContain("Output markdown for AI display");
+  });
+});

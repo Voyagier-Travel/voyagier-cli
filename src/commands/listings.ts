@@ -17,7 +17,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
-import { parsePositiveInt, formatPrice, formatNullableBool } from "../utils.js";
+import { parsePositiveInt, formatPrice, formatNullableBool, escapeMdTableCell } from "../utils.js";
 import {
   GET_BLUEPRINT_LISTING_CHANGE_EVENTS,
   GET_BLUEPRINT_LISTING_CHANGE_EVENTS_BY_TYPE,
@@ -120,7 +120,7 @@ export function registerListingsCommands(program: Command): void {
     .option("--type <type>", "Filter by change type (availability-changed|new-listing|price-changed|...)")
     .option("--limit <n>", "Max events to return", "20")
     .option("--json", "Output raw JSON")
-    .option("--agent", "Output markdown for AI display")
+    .option("--agent", "Output plain markdown for AI agents")
     .action(async (opts) => {
       const selectionId = opts.selection;
       // Group A: Strict validation for --limit
@@ -195,7 +195,14 @@ export function registerListingsCommands(program: Command): void {
               : "—";
             // Nullable schema field: null/undefined renders as Unknown, not No.
             const avail = formatNullableBool(e.blueprintListing?.isAvailable);
-            console.log(`| ${e.changeType} | ${e.listingName ?? "—"} | ${price} | ${avail} |`);
+            // Listing name fallback chain matches the TTY formatter
+            // (formatChangeEventLine): listingName → blueprintListing.name.
+            // Escape against pipes/backticks/newlines that would corrupt the
+            // markdown table.
+            const name = e.listingName ?? e.blueprintListing?.name ?? null;
+            console.log(
+              `| ${escapeMdTableCell(e.changeType)} | ${escapeMdTableCell(name)} | ${escapeMdTableCell(price)} | ${escapeMdTableCell(avail)} |`
+            );
           }
           console.log(`\n*${events.length} event(s)*`);
         }
@@ -220,7 +227,7 @@ export function registerListingsCommands(program: Command): void {
     .requiredOption("--listing <id>", "Blueprint Listing ID")
     .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
-    .option("--agent", "Output markdown for AI display")
+    .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL mutation without executing")
     .action(async (selectionId, opts) => {
       const listingId = opts.listing;

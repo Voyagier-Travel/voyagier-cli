@@ -1203,3 +1203,216 @@ describe("CliErrorCode — Section 7 surface", () => {
     expect((errors.CliErrorCode as Record<string, string>).PLACE_ID_REQUIRED).toBeUndefined();
   });
 });
+
+// ── Regression: Copilot review (third pass) ──────────────────────────────
+
+describe("places list --highlighted --agent — markdown escaping", () => {
+  it("escapes pipe/backtick characters in highlighted place name and ID", async () => {
+    const evilHighlighted = {
+      id: "hp_evil",
+      ranking: 1,
+      category: "Hotel",
+      detectedPlace: {
+        id: "dp_ev|il",
+        name: "Hotel | `Le Mauvais`",
+        placeId: "place_evil",
+        location: { latitude: 1, longitude: 1 },
+      },
+    };
+
+    mockGraphql.mockResolvedValueOnce({ highlightedTripPlaces: [evilHighlighted] });
+
+    const writes: string[] = [];
+    const logSpy = jest.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      writes.push(args.map((a) => (typeof a === "string" ? a : String(a))).join(" "));
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "list",
+      "--plan", "plan_01HX",
+      "--highlighted",
+      "--category", "Hotel",
+      "--agent",
+    ]);
+
+    const allOut = writes.join("\n");
+    expect(allOut).toContain("Hotel \\| \\`Le Mauvais\\`");
+    expect(allOut).toContain("dp_ev\\|il");
+
+    logSpy.mockRestore();
+  });
+});
+
+describe("places list (TripPlanPlaces) --agent — markdown escaping", () => {
+  it("escapes pipe/backtick characters in trip plan place fields", async () => {
+    const evilPlace = {
+      id: "tpp_ev`il",
+      name: "Cafe | `Le Pipe`",
+      placeId: "place_evil",
+      tripPlanId: "plan_01HX",
+      type: "Cafe|OrCoffeeShop",
+      types: [],
+      countryId: "FR",
+      countryName: "France",
+      description: null,
+      iataCode: null,
+      image: null,
+      url: null,
+      placeTimezone: null,
+      location: { latitude: 1, longitude: 1 },
+    };
+
+    mockGraphql.mockResolvedValueOnce({ getTripPlanPlaces: [evilPlace] });
+
+    const writes: string[] = [];
+    const logSpy = jest.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      writes.push(args.map((a) => (typeof a === "string" ? a : String(a))).join(" "));
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "list",
+      "--plan", "plan_01HX",
+      "--agent",
+    ]);
+
+    const allOut = writes.join("\n");
+    expect(allOut).toContain("Cafe \\| \\`Le Pipe\\`");
+    expect(allOut).toContain("Cafe\\|OrCoffeeShop");
+    expect(allOut).toContain("tpp_ev\\`il");
+
+    logSpy.mockRestore();
+  });
+});
+
+describe("places search — --type normalization consistency with attach", () => {
+  it("normalizes lowercase --type to PascalCase before sending to searchPlaces", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      searchPlaces: { items: [], count: 0, page: 1, limit: 20 },
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "search",
+      "--query", "Eiffel",
+      "--type", "tourist-attraction",
+      "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("searchPlaces"),
+      expect.objectContaining({ type: "TouristAttraction" })
+    );
+  });
+
+  it("preserves already-PascalCase --type input verbatim", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      searchPlaces: { items: [], count: 0, page: 1, limit: 20 },
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "search",
+      "--query", "Eiffel",
+      "--type", "TrainStation",
+      "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("searchPlaces"),
+      expect.objectContaining({ type: "TrainStation" })
+    );
+  });
+
+  it("sends null when --type is omitted", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      searchPlaces: { items: [], count: 0, page: 1, limit: 20 },
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "search",
+      "--query", "Eiffel",
+      "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("searchPlaces"),
+      expect.objectContaining({ type: null })
+    );
+  });
+});
+
+describe("places attach — --iata-code validation", () => {
+  it("rejects malformed IATA codes (e.g., 'L4X' with a digit)", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync([
+        "node", "test", "places", "attach",
+        "--plan", "plan_01HX",
+        "--name", "Test Airport",
+        "--place-id", "place_test",
+        "--iata-code", "L4X",
+        "--json",
+      ])
+    ).rejects.toThrow(/Invalid IATA code|--iata-code/);
+
+    // The mutation must NOT have been called for an invalid IATA.
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("rejects 4-letter IATA codes", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync([
+        "node", "test", "places", "attach",
+        "--plan", "plan_01HX",
+        "--name", "Test Airport",
+        "--place-id", "place_test",
+        "--iata-code", "LAXX",
+        "--json",
+      ])
+    ).rejects.toThrow(/Invalid IATA code|--iata-code/);
+  });
+
+  it("uppercases lowercase IATA input before sending to mutation", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      upsertTripPlanPlace: { ...sampleTripPlanPlace, iataCode: "LAX" },
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "attach",
+      "--plan", "plan_01HX",
+      "--name", "LAX",
+      "--place-id", "place_lax",
+      "--iata-code", "lax",
+      "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("upsertTripPlanPlace"),
+      expect.objectContaining({
+        input: expect.objectContaining({ iataCode: "LAX" }),
+      }),
+      expect.anything()
+    );
+  });
+});
+
+describe("places — --agent help text consistency", () => {
+  const cmds = ["search", "get", "attach", "list", "highlight", "unhighlight", "remove"];
+  for (const name of cmds) {
+    it(`\`places ${name}\` uses the canonical help wording`, () => {
+      const p = buildProgram();
+      const help = p.commands
+        .find((c) => c.name() === "places")!
+        .commands.find((c) => c.name() === name)!
+        .helpInformation();
+
+      expect(help).toContain("Output plain markdown for AI agents");
+      expect(help).not.toContain("Output markdown for AI display");
+    });
+  }
+});

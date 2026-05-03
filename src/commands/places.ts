@@ -20,7 +20,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
-import { parsePositiveInt, parseNonNegativeInt, parseFloatStrict, escapeMdTableCell } from "../utils.js";
+import { parsePositiveInt, parseNonNegativeInt, parseFloatStrict, escapeMdTableCell, validateIata } from "../utils.js";
 import {
   SEARCH_PLACES,
   SEARCH_EXTERNAL_PLACES,
@@ -234,7 +234,7 @@ export function registerPlacesCommands(program: Command): void {
     .option("--limit <n>", "Max results (internal only)", "20")
     .option("--page <n>", "Page number (internal only)", "1")
     .option("--json", "Output raw JSON")
-    .option("--agent", "Output markdown for AI display")
+    .option("--agent", "Output plain markdown for AI agents")
     .action(async (opts) => {
       const source = opts.source.toLowerCase();
 
@@ -267,13 +267,17 @@ export function registerPlacesCommands(program: Command): void {
         // Group A: Strict validation for --limit and --page
         const limit = parsePositiveInt(opts.limit, "--limit", { default: 20, max: 100 }) ?? 20;
         const page = parsePositiveInt(opts.page, "--page", { default: 1 }) ?? 1;
+        // Normalize --type the same way `places attach` does so the casing
+        // contract is uniform across the command group. The schema enum is
+        // PascalCase; the CLI accepts lowercase / kebab / snake and translates.
+        const normalizedType = opts.type ? normalizePlaceType(opts.type) : null;
         const data = await graphql<{
           searchPlaces: { items: SearchPlace[]; count: number; page: number; limit: number };
         }>(SEARCH_PLACES, {
           query: opts.query,
           countryId: opts.country ?? null,
           location: location ?? null,
-          type: opts.type ?? null,
+          type: normalizedType,
           limit,
           page,
         });
@@ -335,7 +339,7 @@ export function registerPlacesCommands(program: Command): void {
     .description("Get a place by ID (internal or external)")
     .option("--external", "Look up by external ID (e.g., Google Place ID)")
     .option("--json", "Output raw JSON")
-    .option("--agent", "Output markdown for AI display")
+    .option("--agent", "Output plain markdown for AI agents")
     .action(async (id, opts) => {
       let place: SearchPlace | null;
 
@@ -414,7 +418,7 @@ export function registerPlacesCommands(program: Command): void {
     .option("--place-timezone <tz>", "Timezone")
     .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
-    .option("--agent", "Output markdown for AI display")
+    .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL mutation without executing")
     .action(async (opts) => {
       const input: Record<string, unknown> = {
@@ -427,7 +431,11 @@ export function registerPlacesCommands(program: Command): void {
       if (opts.countryName) input.countryName = opts.countryName;
       if (opts.description) input.description = opts.description;
       if (opts.image) input.image = opts.image;
-      if (opts.iataCode) input.iataCode = opts.iataCode;
+      if (opts.iataCode) {
+        // Match the rest of the CLI: validate IATA at the boundary, not at the API.
+        validateIata(opts.iataCode, "--iata-code");
+        input.iataCode = opts.iataCode.toUpperCase();
+      }
       if (opts.url) input.url = opts.url;
       if (opts.placeTimezone) input.placeTimezone = opts.placeTimezone;
 
@@ -471,7 +479,7 @@ export function registerPlacesCommands(program: Command): void {
     .option("--highlighted", "Show highlighted places instead")
     .option("--category <cat>", "Category filter (attraction|hotel|restaurant) — required with --highlighted")
     .option("--json", "Output raw JSON")
-    .option("--agent", "Output markdown for AI display")
+    .option("--agent", "Output plain markdown for AI agents")
     .action(async (opts) => {
       const planId = opts.plan;
 
@@ -512,7 +520,11 @@ export function registerPlacesCommands(program: Command): void {
             console.log(`| Rank | Name | ID |`);
             console.log(`|---|---|---|`);
             for (const h of highlighted) {
-              console.log(`| ${h.ranking ?? "—"} | ${h.detectedPlace?.name ?? "—"} | \`${h.detectedPlace?.id ?? h.id}\` |`);
+              const rank = h.ranking != null ? String(h.ranking) : null;
+              const id = h.detectedPlace?.id ?? h.id;
+              console.log(
+                `| ${escapeMdTableCell(rank)} | ${escapeMdTableCell(h.detectedPlace?.name)} | \`${escapeMdTableCell(id)}\` |`
+              );
             }
             console.log(`\n*${highlighted.length} place(s)*`);
           }
@@ -559,7 +571,9 @@ export function registerPlacesCommands(program: Command): void {
           console.log(`| Type | Name | ID |`);
           console.log(`|---|---|---|`);
           for (const p of placesList) {
-            console.log(`| ${p.type ?? "—"} | ${p.name ?? "—"} | \`${p.id}\` |`);
+            console.log(
+              `| ${escapeMdTableCell(p.type)} | ${escapeMdTableCell(p.name)} | \`${escapeMdTableCell(p.id)}\` |`
+            );
           }
           console.log(`\n*${placesList.length} place(s)*`);
         }
@@ -588,7 +602,7 @@ export function registerPlacesCommands(program: Command): void {
     .option("--ranking <n>", "Ranking position")
     .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
-    .option("--agent", "Output markdown for AI display")
+    .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL mutation without executing")
     .action(async (opts) => {
       const category = normalizeHighlightCategory(opts.category);
@@ -642,7 +656,7 @@ export function registerPlacesCommands(program: Command): void {
     .requiredOption("--place <id>", "Detected place ID")
     .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
-    .option("--agent", "Output markdown for AI display")
+    .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL mutation without executing")
     .action(async (opts) => {
       const data = await graphql<{ unhighlightTripPlace: boolean }>(
@@ -684,7 +698,7 @@ export function registerPlacesCommands(program: Command): void {
     .requiredOption("--id <id>", "Trip plan place ID")
     .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
-    .option("--agent", "Output markdown for AI display")
+    .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL mutation without executing")
     .action(async (opts) => {
       const data = await graphql<{ removeTripPlanPlace: boolean }>(
