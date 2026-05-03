@@ -606,3 +606,287 @@ export const GET_TRIP_PLAN_EVENTS = `
     }
   }
 `;
+
+// --- Listings (v2.0.0 — Section 7, Blueprint Listings surface) ---
+
+export const GET_BLUEPRINT_LISTING_CHANGE_EVENTS = `
+  query BlueprintListingChangeEvents($blueprintMonitorId: String!, $limit: Int) {
+    blueprintListingChangeEvents(blueprintMonitorId: $blueprintMonitorId, limit: $limit) {
+      id
+      blueprintListingId
+      blueprintMonitorId
+      listingName
+      changeType
+      details
+      blueprintListing {
+        id
+        name
+        price
+        isAvailable
+        isBookable
+      }
+    }
+  }
+`;
+
+export const GET_BLUEPRINT_LISTING_CHANGE_EVENTS_BY_TYPE = `
+  query BlueprintListingChangeEventsByType($blueprintMonitorId: String!, $changeType: ListingChangeType!, $limit: Int) {
+    blueprintListingChangeEventsByType(blueprintMonitorId: $blueprintMonitorId, changeType: $changeType, limit: $limit) {
+      id
+      blueprintListingId
+      blueprintMonitorId
+      listingName
+      changeType
+      details
+      blueprintListing {
+        id
+        name
+        price
+        isAvailable
+        isBookable
+      }
+    }
+  }
+`;
+
+export const ADD_BLUEPRINT_LISTING_AS_SELECTION_OPTION = `
+  mutation AddBlueprintListingAsSelectionOption($listingId: String!, $selectionId: String!) {
+    addBlueprintListingAsSelectionOption(listingId: $listingId, selectionId: $selectionId) {
+      id
+      name
+      price
+      isBookable
+      status
+    }
+  }
+`;
+
+export const GET_SELECTION_WITH_MONITOR = `
+  query TripPlanSelection($id: String!) {
+    getTripPlanHotelSelection(id: $id) {
+      id
+      blueprintMonitorId
+    }
+  }
+`;
+
+// --- Places (v2.0.0 — Section 7, geo/place surface) ---
+
+export const SEARCH_PLACES = `
+  query SearchPlaces($query: String, $countryId: String, $localityId: String, $location: SearchLocationInput, $type: String, $limit: Int, $page: Int, $hasTrips: Boolean) {
+    searchPlaces(query: $query, countryId: $countryId, localityId: $localityId, location: $location, type: $type, limit: $limit, page: $page, hasTrips: $hasTrips) {
+      items {
+        id
+        name
+        description
+        location {
+          latitude
+          longitude
+        }
+        address {
+          street
+          city
+          state
+          postalCode
+          country
+        }
+        country {
+          id
+          name
+        }
+        locality {
+          id
+          name
+        }
+      }
+      count
+      page
+      limit
+    }
+  }
+`;
+
+export const SEARCH_EXTERNAL_PLACES = `
+  query SearchExternalPlaces($query: String!, $countryCode: String, $location: SearchLocationInput) {
+    searchExternalPlaces(query: $query, countryCode: $countryCode, location: $location) {
+      id
+      name
+      description
+      location {
+        latitude
+        longitude
+      }
+      address {
+        street
+        city
+        state
+        postalCode
+        country
+      }
+      country {
+        id
+        name
+      }
+      locality {
+        id
+        name
+      }
+    }
+  }
+`;
+
+export const GET_PLACE_BY_ID = `
+  query GetPlaceById($id: String!) {
+    getPlaceById(id: $id) {
+      id
+      name
+      description
+      location {
+        latitude
+        longitude
+      }
+      address {
+        street
+        city
+        state
+        postalCode
+        country
+      }
+      country {
+        id
+        name
+      }
+      locality {
+        id
+        name
+      }
+    }
+  }
+`;
+
+export const GET_PLACE_BY_EXTERNAL_ID = `
+  query GetPlaceByExternalId($externalId: String!) {
+    getPlaceByExternalId(externalId: $externalId) {
+      id
+      name
+      description
+      location {
+        latitude
+        longitude
+      }
+      address {
+        street
+        city
+        state
+        postalCode
+        country
+      }
+      country {
+        id
+        name
+      }
+      locality {
+        id
+        name
+      }
+    }
+  }
+`;
+
+export const GET_TRIP_PLAN_PLACES = `
+  query GetTripPlanPlaces($tripPlanId: String!) {
+    getTripPlanPlaces(tripPlanId: $tripPlanId) {
+      id
+      name
+      placeId
+      tripPlanId
+      type
+      types
+      countryId
+      countryName
+      description
+      iataCode
+      image
+      url
+      placeTimezone
+      location {
+        latitude
+        longitude
+      }
+    }
+  }
+`;
+
+// GET_TRIP_PLAN_PLACE was defined in the initial Section 7 draft but never
+// wired to a command surface. Removed to keep queries.ts honest — reintroduce
+// when a `places get-attached <id>` (or similar) command is added.
+
+export const GET_HIGHLIGHTED_TRIP_PLACES = `
+  query HighlightedTripPlaces($tripId: String!, $category: HighlightedPlaceCategory!) {
+    highlightedTripPlaces(tripId: $tripId, category: $category) {
+      id
+      ranking
+      category
+      detectedPlace {
+        id
+        name
+        placeId
+        location {
+          latitude
+          longitude
+        }
+      }
+    }
+  }
+`;
+
+export const UPSERT_TRIP_PLAN_PLACE = `
+  mutation UpsertTripPlanPlace($input: UpsertTripPlanPlaceInput!) {
+    upsertTripPlanPlace(input: $input) {
+      id
+      name
+      placeId
+      tripPlanId
+      type
+      types
+      countryId
+      countryName
+      description
+      iataCode
+      image
+      url
+      placeTimezone
+      location {
+        latitude
+        longitude
+      }
+    }
+  }
+`;
+
+export const REMOVE_TRIP_PLAN_PLACE = `
+  mutation RemoveTripPlanPlace($id: String!) {
+    removeTripPlanPlace(id: $id)
+  }
+`;
+
+export const HIGHLIGHT_TRIP_PLACE = `
+  mutation HighlightTripPlace($tripId: String!, $detectedPlaceId: String!, $category: HighlightedPlaceCategory!, $ranking: Int) {
+    highlightTripPlace(tripId: $tripId, detectedPlaceId: $detectedPlaceId, category: $category, ranking: $ranking) {
+      id
+      ranking
+      category
+      detectedPlace {
+        id
+        name
+        placeId
+      }
+    }
+  }
+`;
+
+export const UNHIGHLIGHT_TRIP_PLACE = `
+  mutation UnhighlightTripPlace($tripId: String!, $detectedPlaceId: String!) {
+    unhighlightTripPlace(tripId: $tripId, detectedPlaceId: $detectedPlaceId)
+  }
+`;
