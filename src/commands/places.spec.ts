@@ -162,9 +162,10 @@ describe("parseSearchLocation", () => {
     expect(parseSearchLocation({ radius: "1000" })).toEqual({ radius: 1000 });
   });
 
-  it("ignores invalid numeric values", () => {
-    expect(parseSearchLocation({ lat: "invalid" })).toBeUndefined();
-    expect(parseSearchLocation({ lat: "48.8584", lng: "invalid" })).toEqual({ latitude: 48.8584 });
+  it("throws VALIDATION error for invalid numeric values", () => {
+    expect(() => parseSearchLocation({ lat: "invalid" })).toThrow(/Invalid --lat/);
+    expect(() => parseSearchLocation({ lng: "abc" })).toThrow(/Invalid --lng/);
+    expect(() => parseSearchLocation({ radius: "xyz" })).toThrow(/Invalid --radius/);
   });
 });
 
@@ -362,7 +363,7 @@ describe("places attach", () => {
     );
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { place: sampleTripPlanPlace },
+      data: { place: sampleTripPlanPlace, idempotencyKey: null },
       planContext: { planId: "plan_01HX" },
     });
   });
@@ -512,7 +513,7 @@ describe("places highlight", () => {
     );
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { highlighted: sampleHighlightedPlace },
+      data: { highlighted: sampleHighlightedPlace, idempotencyKey: null },
       planContext: { planId: "plan_01HX" },
     });
   });
@@ -571,7 +572,7 @@ describe("places unhighlight", () => {
     );
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { removed: true, placeId: "dp_01HX" },
+      data: { removed: true, placeId: "dp_01HX", idempotencyKey: null },
       planContext: { planId: "plan_01HX" },
     });
   });
@@ -589,7 +590,7 @@ describe("places unhighlight", () => {
 
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { removed: false, placeId: "dp_02HX" },
+      data: { removed: false, placeId: "dp_02HX", idempotencyKey: null },
       planContext: { planId: "plan_01HX" },
     });
   });
@@ -615,7 +616,7 @@ describe("places remove", () => {
     );
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { removed: true, id: "tpp_01HX" },
+      data: { removed: true, id: "tpp_01HX", idempotencyKey: null },
     });
   });
 
@@ -631,7 +632,7 @@ describe("places remove", () => {
 
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { removed: false, id: "tpp_MISSING" },
+      data: { removed: false, id: "tpp_MISSING", idempotencyKey: null },
     });
   });
 
@@ -695,5 +696,305 @@ describe("places --agent output", () => {
     const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("## Place Attached");
     expect(output).toContain("tpp_01HX");
+  });
+});
+
+// ── Group A: Strict numeric validation ────────────────────────────────────
+
+describe("places search — strict numeric validation", () => {
+  it("throws VALIDATION error for invalid --limit", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "places", "search", "--query", "test", "--limit", "abc", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("throws VALIDATION error for negative --limit", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "places", "search", "--query", "test", "--limit", "-5", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("throws VALIDATION error for invalid --page", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "places", "search", "--query", "test", "--page", "abc", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("accepts valid --limit and --page values", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      searchPlaces: { items: [], count: 0, page: 2, limit: 10 },
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "search",
+      "--query", "hotel",
+      "--limit", "10",
+      "--page", "2",
+      "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ limit: 10, page: 2 })
+    );
+  });
+});
+
+describe("places highlight — strict --ranking validation", () => {
+  it("throws VALIDATION error for non-numeric --ranking", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync([
+        "node", "test", "places", "highlight",
+        "--plan", "plan_01HX",
+        "--place", "dp_01HX",
+        "--category", "hotel",
+        "--ranking", "abc",
+        "--json",
+      ])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("throws VALIDATION error for negative --ranking", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync([
+        "node", "test", "places", "highlight",
+        "--plan", "plan_01HX",
+        "--place", "dp_01HX",
+        "--category", "hotel",
+        "--ranking", "-1",
+        "--json",
+      ])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("accepts --ranking 0 (non-negative)", async () => {
+    mockGraphql.mockResolvedValueOnce({ highlightTripPlace: { ...sampleHighlightedPlace, ranking: 0 } });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "highlight",
+      "--plan", "plan_01HX",
+      "--place", "dp_01HX",
+      "--category", "hotel",
+      "--ranking", "0",
+      "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ ranking: 0 }),
+      { dryRun: undefined }
+    );
+  });
+});
+
+// ── Group B: Preserve zero-valued coordinates ─────────────────────────────
+
+describe("places get — zero-valued coordinates", () => {
+  const placeAtEquatorPrimeMeridian = {
+    ...sampleSearchPlace,
+    location: { latitude: 0, longitude: 0 },
+  };
+
+  it("renders lat=0, lng=0 in JSON output", async () => {
+    mockGraphql.mockResolvedValueOnce({ getPlaceById: placeAtEquatorPrimeMeridian });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "places", "get", "place_01HX", "--json"]);
+
+    expect(mockJsonOutput).toHaveBeenCalledWith({
+      ok: true,
+      data: { place: placeAtEquatorPrimeMeridian },
+    });
+  });
+
+  it("renders lat=0, lng=0 in --agent output", async () => {
+    mockGraphql.mockResolvedValueOnce({ getPlaceById: placeAtEquatorPrimeMeridian });
+    const consoleSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "places", "get", "place_01HX", "--agent"]);
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("**Coordinates:** 0, 0");
+    consoleSpy.mockRestore();
+  });
+
+  it("renders lat=0, lng=0 in TTY output", async () => {
+    mockGraphql.mockResolvedValueOnce({ getPlaceById: placeAtEquatorPrimeMeridian });
+    const consoleSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "places", "get", "place_01HX"]);
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("Coordinates: 0, 0");
+    consoleSpy.mockRestore();
+  });
+});
+
+// ── Group C: Echo --idempotency-key in JSON output ────────────────────────
+
+describe("places attach — idempotency-key echo", () => {
+  it("echoes --idempotency-key in JSON output when provided", async () => {
+    mockGraphql.mockResolvedValueOnce({ upsertTripPlanPlace: sampleTripPlanPlace });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "attach",
+      "--plan", "plan_01HX",
+      "--name", "Hotel Le Bristol",
+      "--place-id", "place_02HX",
+      "--idempotency-key", "01HXYZ123ABC",
+      "--json",
+    ]);
+
+    expect(mockJsonOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ idempotencyKey: "01HXYZ123ABC" }),
+      })
+    );
+  });
+
+  it("echoes null for idempotencyKey when not provided", async () => {
+    mockGraphql.mockResolvedValueOnce({ upsertTripPlanPlace: sampleTripPlanPlace });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "attach",
+      "--plan", "plan_01HX",
+      "--name", "Hotel Le Bristol",
+      "--place-id", "place_02HX",
+      "--json",
+    ]);
+
+    expect(mockJsonOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ idempotencyKey: null }),
+      })
+    );
+  });
+});
+
+describe("places highlight — idempotency-key echo", () => {
+  it("echoes --idempotency-key in JSON output", async () => {
+    mockGraphql.mockResolvedValueOnce({ highlightTripPlace: sampleHighlightedPlace });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "highlight",
+      "--plan", "plan_01HX",
+      "--place", "dp_01HX",
+      "--category", "hotel",
+      "--idempotency-key", "01HXYZ456DEF",
+      "--json",
+    ]);
+
+    expect(mockJsonOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ idempotencyKey: "01HXYZ456DEF" }),
+      })
+    );
+  });
+});
+
+describe("places unhighlight — idempotency-key echo", () => {
+  it("echoes --idempotency-key in JSON output", async () => {
+    mockGraphql.mockResolvedValueOnce({ unhighlightTripPlace: true });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "unhighlight",
+      "--plan", "plan_01HX",
+      "--place", "dp_01HX",
+      "--idempotency-key", "01HXYZ789GHI",
+      "--json",
+    ]);
+
+    expect(mockJsonOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ idempotencyKey: "01HXYZ789GHI" }),
+      })
+    );
+  });
+});
+
+describe("places remove — idempotency-key echo", () => {
+  it("echoes --idempotency-key in JSON output", async () => {
+    mockGraphql.mockResolvedValueOnce({ removeTripPlanPlace: true });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "remove",
+      "--id", "tpp_01HX",
+      "--idempotency-key", "01HXYZABCDEF",
+      "--json",
+    ]);
+
+    expect(mockJsonOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ idempotencyKey: "01HXYZABCDEF" }),
+      })
+    );
+  });
+});
+
+// ── Group D: Strict --source validation ───────────────────────────────────
+
+describe("places search — strict --source validation", () => {
+  it("throws VALIDATION error for typo --source gogole", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "places", "search", "--query", "test", "--source", "gogole", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("throws VALIDATION error for unknown --source value", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "places", "search", "--query", "test", "--source", "bing", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("accepts --source google", async () => {
+    mockGraphql.mockResolvedValueOnce({ searchExternalPlaces: [] });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "search",
+      "--query", "test",
+      "--source", "google",
+      "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("searchExternalPlaces"),
+      expect.any(Object)
+    );
+  });
+
+  it("accepts --source internal", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      searchPlaces: { items: [], count: 0, page: 1, limit: 20 },
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "search",
+      "--query", "test",
+      "--source", "internal",
+      "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("searchPlaces"),
+      expect.any(Object)
+    );
   });
 });

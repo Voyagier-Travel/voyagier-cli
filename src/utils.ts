@@ -219,6 +219,71 @@ export function deriveBaseUrl(apiUrl: string): string {
   }
 }
 
+// ----- Strict numeric validators for CLI flags (Group A fixes) -----
+
+/**
+ * Parse a positive integer from a CLI flag. Rejects non-numeric, negative, zero (unless allowZero), NaN.
+ * Returns undefined if value is undefined (flag not provided).
+ * @throws CliError with VALIDATION code if value is invalid.
+ */
+export function parsePositiveInt(
+  value: string | undefined,
+  flagName: string,
+  opts?: { allowZero?: boolean; max?: number; default?: number }
+): number | undefined {
+  if (value === undefined) return opts?.default;
+  const parsed = parseInt(value, 10);
+  if (isNaN(parsed) || !/^-?\d+$/.test(value)) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Invalid ${flagName}: "${value}". Expected a positive integer.\n  Fix: ${flagName} 10`
+    );
+  }
+  if (parsed < 0 || (parsed === 0 && !opts?.allowZero)) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Invalid ${flagName}: "${value}". Must be ${opts?.allowZero ? "non-negative" : "positive"}.\n  Fix: ${flagName} 10`
+    );
+  }
+  if (opts?.max !== undefined && parsed > opts.max) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Invalid ${flagName}: "${value}". Maximum value is ${opts.max}.\n  Fix: ${flagName} ${opts.max}`
+    );
+  }
+  return parsed;
+}
+
+/**
+ * Parse a non-negative integer from a CLI flag (allows 0).
+ * @throws CliError with VALIDATION code if value is invalid.
+ */
+export function parseNonNegativeInt(
+  value: string | undefined,
+  flagName: string
+): number | undefined {
+  return parsePositiveInt(value, flagName, { allowZero: true });
+}
+
+/**
+ * Parse a float from a CLI flag. Rejects non-numeric, NaN.
+ * @throws CliError with VALIDATION code if value is invalid.
+ */
+export function parseFloatStrict(
+  value: string | undefined,
+  flagName: string
+): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = parseFloat(value);
+  if (isNaN(parsed) || !/^-?\d+(\.\d+)?$/.test(value)) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Invalid ${flagName}: "${value}". Expected a number.\n  Fix: ${flagName} 48.8584`
+    );
+  }
+  return parsed;
+}
+
 /**
  * Format an ISO date string (or YYYY-MM-DD) for human display.
  * e.g. "2026-06-15T00:00:00.000Z" → "Jun 15, 2026"

@@ -17,6 +17,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
+import { parsePositiveInt } from "../utils.js";
 import {
   GET_BLUEPRINT_LISTING_CHANGE_EVENTS,
   GET_BLUEPRINT_LISTING_CHANGE_EVENTS_BY_TYPE,
@@ -119,7 +120,8 @@ export function registerListingsCommands(program: Command): void {
     .option("--agent", "Output markdown for AI display")
     .action(async (opts) => {
       const selectionId = opts.selection;
-      const limit = parseInt(opts.limit, 10) || 20;
+      // Group A: Strict validation for --limit
+      const limit = parsePositiveInt(opts.limit, "--limit", { default: 20, max: 100 }) ?? 20;
 
       const selectionData = await graphql<{
         getTripPlanHotelSelection: { id: string; blueprintMonitorId?: string | null } | null;
@@ -234,9 +236,10 @@ export function registerListingsCommands(program: Command): void {
       }
 
       if (opts.json) {
+        // Echoed in JSON output for agent-side tracking; not yet enforced server-side
         jsonOutput({
           ok: true,
-          data: { option, selectionId },
+          data: { option, selectionId, idempotencyKey: opts.idempotencyKey ?? null },
         });
         return;
       }

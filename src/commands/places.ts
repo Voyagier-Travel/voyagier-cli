@@ -20,6 +20,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
+import { parsePositiveInt, parseNonNegativeInt, parseFloatStrict } from "../utils.js";
 import {
   SEARCH_PLACES,
   SEARCH_EXTERNAL_PLACES,
@@ -133,6 +134,7 @@ export function normalizePlaceType(value: string): string {
 
 /**
  * Parse --lat/--lng/--radius into a SearchLocationInput if any are provided.
+ * Rejects non-numeric values with VALIDATION_ERROR.
  * Exported for unit testing.
  */
 export function parseSearchLocation(opts: {
@@ -140,18 +142,18 @@ export function parseSearchLocation(opts: {
   lng?: string;
   radius?: string;
 }): SearchLocationInput | undefined {
-  const lat = opts.lat ? parseFloat(opts.lat) : undefined;
-  const lng = opts.lng ? parseFloat(opts.lng) : undefined;
-  const radius = opts.radius ? parseFloat(opts.radius) : undefined;
+  const lat = parseFloatStrict(opts.lat, "--lat");
+  const lng = parseFloatStrict(opts.lng, "--lng");
+  const radius = parseFloatStrict(opts.radius, "--radius");
 
   if (lat === undefined && lng === undefined && radius === undefined) {
     return undefined;
   }
 
   const location: SearchLocationInput = {};
-  if (lat !== undefined && !isNaN(lat)) location.latitude = lat;
-  if (lng !== undefined && !isNaN(lng)) location.longitude = lng;
-  if (radius !== undefined && !isNaN(radius)) location.radius = radius;
+  if (lat !== undefined) location.latitude = lat;
+  if (lng !== undefined) location.longitude = lng;
+  if (radius !== undefined) location.radius = radius;
 
   return Object.keys(location).length > 0 ? location : undefined;
 }
@@ -201,6 +203,16 @@ export function registerPlacesCommands(program: Command): void {
     .option("--agent", "Output markdown for AI display")
     .action(async (opts) => {
       const source = opts.source.toLowerCase();
+
+      // Group D: Validate --source against allowed values
+      const VALID_SOURCES = ["google", "internal"];
+      if (!VALID_SOURCES.includes(source)) {
+        throw new CliError(
+          CliErrorCode.VALIDATION,
+          `Invalid --source "${opts.source}". Must be one of: ${VALID_SOURCES.join(", ")}.\n  Fix: --source google|internal`
+        );
+      }
+
       const location = parseSearchLocation(opts);
 
       let places: SearchPlace[];
@@ -218,8 +230,9 @@ export function registerPlacesCommands(program: Command): void {
         places = data.searchExternalPlaces ?? [];
         total = places.length;
       } else {
-        const limit = parseInt(opts.limit, 10) || 20;
-        const page = parseInt(opts.page, 10) || 1;
+        // Group A: Strict validation for --limit and --page
+        const limit = parsePositiveInt(opts.limit, "--limit", { default: 20, max: 100 }) ?? 20;
+        const page = parsePositiveInt(opts.page, "--page", { default: 1 }) ?? 1;
         const data = await graphql<{
           searchPlaces: { items: SearchPlace[]; count: number; page: number; limit: number };
         }>(SEARCH_PLACES, {
@@ -321,8 +334,11 @@ export function registerPlacesCommands(program: Command): void {
         if (place.description) console.log(`**Description:** ${place.description}  `);
         if (place.address?.city) console.log(`**City:** ${place.address.city}  `);
         if (place.country?.name) console.log(`**Country:** ${place.country.name}  `);
-        if (place.location?.latitude && place.location?.longitude) {
-          console.log(`**Coordinates:** ${place.location.latitude}, ${place.location.longitude}  `);
+        // Group B: Use typeof check to preserve lat=0 or lng=0 (equator/prime meridian)
+        const lat = place.location?.latitude;
+        const lng = place.location?.longitude;
+        if (typeof lat === "number" && typeof lng === "number" && !isNaN(lat) && !isNaN(lng)) {
+          console.log(`**Coordinates:** ${lat}, ${lng}  `);
         }
         console.log("");
         return;
@@ -332,8 +348,11 @@ export function registerPlacesCommands(program: Command): void {
       if (place.description) console.log(chalk.dim(`  ${place.description}`));
       if (place.address?.city) console.log(chalk.dim(`  City: ${place.address.city}`));
       if (place.country?.name) console.log(chalk.dim(`  Country: ${place.country.name}`));
-      if (place.location?.latitude && place.location?.longitude) {
-        console.log(chalk.dim(`  Coordinates: ${place.location.latitude}, ${place.location.longitude}`));
+      // Group B: Use typeof check to preserve lat=0 or lng=0 (equator/prime meridian)
+      const ttyLat = place.location?.latitude;
+      const ttyLng = place.location?.longitude;
+      if (typeof ttyLat === "number" && typeof ttyLng === "number" && !isNaN(ttyLat) && !isNaN(ttyLng)) {
+        console.log(chalk.dim(`  Coordinates: ${ttyLat}, ${ttyLng}`));
       }
     });
 
@@ -380,9 +399,10 @@ export function registerPlacesCommands(program: Command): void {
       const place = data.upsertTripPlanPlace;
 
       if (opts.json) {
+        // Echoed in JSON output for agent-side tracking; not yet enforced server-side
         jsonOutput({
           ok: true,
-          data: { place },
+          data: { place, idempotencyKey: opts.idempotencyKey ?? null },
           planContext: { planId: opts.plan },
         });
         return;
@@ -531,7 +551,8 @@ export function registerPlacesCommands(program: Command): void {
     .option("--dry-run", "Show the GraphQL mutation without executing")
     .action(async (opts) => {
       const category = normalizeHighlightCategory(opts.category);
-      const ranking = opts.ranking ? parseInt(opts.ranking, 10) : undefined;
+      // Group A: Strict validation for --ranking (allows 0 per GraphQL schema)
+      const ranking = parseNonNegativeInt(opts.ranking, "--ranking");
 
       const data = await graphql<{
         highlightTripPlace: DetectedTripHighlightedPlace;
@@ -549,9 +570,10 @@ export function registerPlacesCommands(program: Command): void {
       const highlighted = data.highlightTripPlace;
 
       if (opts.json) {
+        // Echoed in JSON output for agent-side tracking; not yet enforced server-side
         jsonOutput({
           ok: true,
-          data: { highlighted },
+          data: { highlighted, idempotencyKey: opts.idempotencyKey ?? null },
           planContext: { planId: opts.plan },
         });
         return;
@@ -589,9 +611,10 @@ export function registerPlacesCommands(program: Command): void {
       );
 
       if (opts.json) {
+        // Echoed in JSON output for agent-side tracking; not yet enforced server-side
         jsonOutput({
           ok: true,
-          data: { removed: data.unhighlightTripPlace, placeId: opts.place },
+          data: { removed: data.unhighlightTripPlace, placeId: opts.place, idempotencyKey: opts.idempotencyKey ?? null },
           planContext: { planId: opts.plan },
         });
         return;
@@ -630,9 +653,10 @@ export function registerPlacesCommands(program: Command): void {
       );
 
       if (opts.json) {
+        // Echoed in JSON output for agent-side tracking; not yet enforced server-side
         jsonOutput({
           ok: true,
-          data: { removed: data.removeTripPlanPlace, id: opts.id },
+          data: { removed: data.removeTripPlanPlace, id: opts.id, idempotencyKey: opts.idempotencyKey ?? null },
         });
         return;
       }

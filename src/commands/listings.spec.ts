@@ -231,7 +231,7 @@ describe("listings add-to-selection", () => {
     );
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { option: sampleOption, selectionId: "sel_01HX" },
+      data: { option: sampleOption, selectionId: "sel_01HX", idempotencyKey: null },
     });
   });
 
@@ -301,5 +301,85 @@ describe("listings --agent output", () => {
     const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("## Listing Added");
     expect(output).toContain("opt_01HX");
+  });
+});
+
+// ── Group A: Strict numeric validation ────────────────────────────────────
+
+describe("listings recent — strict --limit validation", () => {
+  it("throws VALIDATION error for invalid --limit", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "listings", "recent", "--selection", "sel_01HX", "--limit", "abc", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("throws VALIDATION error for negative --limit", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "listings", "recent", "--selection", "sel_01HX", "--limit", "-5", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("accepts valid --limit values", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ getTripPlanHotelSelection: sampleSelection })
+      .mockResolvedValueOnce({ blueprintListingChangeEvents: [] });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "listings", "recent",
+      "--selection", "sel_01HX",
+      "--limit", "50",
+      "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ limit: 50 })
+    );
+  });
+});
+
+// ── Group C: Echo --idempotency-key in JSON output ────────────────────────
+
+describe("listings add-to-selection — idempotency-key echo", () => {
+  it("echoes --idempotency-key in JSON output when provided", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      addBlueprintListingAsSelectionOption: sampleOption,
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "listings", "add-to-selection", "sel_01HX",
+      "--listing", "lst_01HX",
+      "--idempotency-key", "01HXYZ999ZZZ",
+      "--json",
+    ]);
+
+    expect(mockJsonOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ idempotencyKey: "01HXYZ999ZZZ" }),
+      })
+    );
+  });
+
+  it("echoes null for idempotencyKey when not provided", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      addBlueprintListingAsSelectionOption: sampleOption,
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "listings", "add-to-selection", "sel_01HX",
+      "--listing", "lst_01HX",
+      "--json",
+    ]);
+
+    expect(mockJsonOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ idempotencyKey: null }),
+      })
+    );
   });
 });
