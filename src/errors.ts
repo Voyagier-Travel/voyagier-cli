@@ -5,12 +5,23 @@ export enum CliErrorCode {
   API_ERROR = "API_ERROR",
   NETWORK = "NETWORK",
   STATE_CORRUPT = "STATE_CORRUPT",
+  // v2.0.0 — client/RBAC awareness
+  NO_CLIENTS = "NO_CLIENTS",
+  MULTIPLE_CLIENTS = "MULTIPLE_CLIENTS",
+  CLIENT_REQUIRED = "CLIENT_REQUIRED",
+  PERMISSION_DENIED = "PERMISSION_DENIED",
+  // v2.0.0 — schema drift / version compat
+  SCHEMA_DRIFT = "SCHEMA_DRIFT",
 }
 
 export class CliError extends Error {
-  constructor(public code: CliErrorCode, message: string) {
+  /** Optional structured details (blockers, contextual data). Surfaces on --json output. */
+  public details?: Record<string, unknown>;
+
+  constructor(public code: CliErrorCode, message: string, details?: Record<string, unknown>) {
     super(message);
     this.name = "CliError";
+    if (details) this.details = details;
   }
 }
 
