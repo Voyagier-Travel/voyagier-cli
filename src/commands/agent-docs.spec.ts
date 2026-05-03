@@ -13,12 +13,9 @@ describe("agent-docs", () => {
   describe("loadAgentDocs", () => {
     it("should load AGENT.md when it exists", () => {
       const { content, fromFallback } = loadAgentDocs();
-      // AGENT.md exists in the repo root during tests
       if (existsSync(resolveAgentMdPath())) {
         expect(fromFallback).toBe(false);
         expect(content).toContain("Voyagier CLI");
-        expect(content).toContain("auto-select");
-        expect(content).toContain("navigator");
         expect(content).toContain("--json");
       } else {
         // Fallback path
@@ -27,41 +24,81 @@ describe("agent-docs", () => {
       }
     });
 
-    it("should include JSON response contract in AGENT.md", () => {
+    it("should document the v2 envelope contract", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
+        // Standard JSON envelope shape
         expect(content).toContain("planContext");
-        expect(content).toContain("alternatives");
-        expect(content).toContain("nextSteps");
-        expect(content).toContain("rankReason");
+        expect(content).toContain('"ok": true');
+        expect(content).toContain('"ok": false');
+        // Error envelope fields
+        expect(content).toContain('"code"');
+        expect(content).toContain('"fix"');
       }
     });
 
-    it("should include safety rails documentation", () => {
+    it("should document the v2 command groups", () => {
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        // The five LOCKED-STABLE v2 surfaces shipped on 2026-05-03
+        expect(content).toContain("voyagier doctor");
+        expect(content).toContain("voyagier clients");
+        expect(content).toContain("voyagier itinerary");
+        expect(content).toContain("voyagier listings");
+        expect(content).toContain("voyagier places");
+        expect(content).toContain("voyagier plans bookable");
+      }
+    });
+
+    it("should document the --plan safety rail", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
         expect(content).toContain("--plan");
-        expect(content).toContain("actionRequired");
-        expect(content).toContain("Safety rails");
+        // Cross-plan state corruption rationale is part of the safety story.
+        expect(content.toLowerCase()).toContain("cross-plan");
       }
     });
 
-    it("should include error handling documentation", () => {
+    it("should document agent-relevant error codes", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
         expect(content).toContain("AUTH_FAILED");
         expect(content).toContain("VALIDATION");
-        expect(content).toContain("error");
+        // v2-specific codes worth surfacing for branching agents
+        expect(content).toContain("CLIENT_REQUIRED");
+        expect(content).toContain("BOOKING_BLOCKED");
+        expect(content).toContain("SCHEMA_DRIFT");
       }
     });
 
-    it("should not contain hardcoded dates", () => {
+    it("should document the bookability matrix", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
-        // Dates in example JSON values (like "PT10H5M") are fine,
-        // but full calendar dates should use placeholders
-        expect(content).not.toMatch(/--depart \d{4}-\d{2}-\d{2}/);
-        expect(content).not.toMatch(/--return \d{4}-\d{2}-\d{2}/);
+        // Flights are explicitly non-bookable in v2.
+        expect(content).toMatch(/Flight.*display only|display only.*Flight|Flight.*\u274c/i);
+        // Activities (Viator) are the primary bookable path.
+        expect(content.toLowerCase()).toContain("viator");
+      }
+    });
+
+    it("should flag the known v2 gap (VOY-1189)", () => {
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        // plan-trip --auto-select is broken on v2 schema; doc must say so
+        // until VOY-1189 is fixed so agents don't try to use it.
+        expect(content).toContain("VOY-1189");
+      }
+    });
+
+    it("should not contain hardcoded calendar dates in flag examples", () => {
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        // Dates in ISO timestamps (e.g. "2026-09-15T18:30:00Z" inside a
+        // JSON example) are illustrative and acceptable. Bare `--depart YYYY-MM-DD`
+        // / `--return YYYY-MM-DD` flags should use placeholders so the doc
+        // doesn't go stale.
+        expect(content).not.toMatch(/--depart \d{4}-\d{2}-\d{2}\b/);
+        expect(content).not.toMatch(/--return \d{4}-\d{2}-\d{2}\b/);
       }
     });
   });
