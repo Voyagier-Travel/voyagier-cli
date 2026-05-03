@@ -15,6 +15,8 @@ import { registerWhoamiCommand } from "./commands/whoami.js";
 import { registerBookingsCommands } from "./commands/bookings.js";
 import { registerPlanTripCommand } from "./commands/plan-trip.js";
 import { registerAgentDocsCommand } from "./commands/agent-docs.js";
+import { registerClientsCommands } from "./commands/clients.js";
+import { registerDoctorCommand } from "./commands/doctor.js";
 import { trackCommand, getTraceId, isTelemetryEnabled } from "./telemetry.js";
 import { credentialsExist } from "./config.js";
 import { CliError } from "./errors.js";
@@ -52,6 +54,8 @@ registerChatCommands(program);
 registerWhoamiCommand(program);
 registerTelemetryCommands(program);
 registerAgentDocsCommand(program);
+registerClientsCommands(program);
+registerDoctorCommand(program, pkg.version);
 
 // Instrument all commands with telemetry
 function instrumentCommands(cmd: Command): void {

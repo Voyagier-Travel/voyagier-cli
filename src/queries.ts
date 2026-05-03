@@ -438,3 +438,81 @@ export const LIST_CHAT_SESSIONS = `
     }
   }
 `;
+
+// --- Clients (v2.0.0 — TripPlanClient surface) ---
+
+export const LIST_TRIP_PLAN_CLIENTS = `
+  query TripPlanClients {
+    tripPlanClients {
+      id
+      name
+      email
+      phone
+      avatarUrl
+      description
+      clientType
+      status
+      createdAt
+      updatedAt
+    }
+  }
+`;
+
+export const GET_TRIP_PLAN_CLIENT = `
+  query TripPlanClient($id: String!) {
+    tripPlanClient(id: $id) {
+      id
+      name
+      email
+      phone
+      avatarUrl
+      description
+      clientType
+      status
+      createdAt
+      updatedAt
+    }
+  }
+`;
+
+export const CREATE_TRIP_PLAN_CLIENT = `
+  mutation CreateTripPlanClient($input: CreateTripPlanClientInput!) {
+    createTripPlanClient(input: $input) {
+      id
+      name
+      email
+      phone
+      avatarUrl
+      description
+      clientType
+      status
+      createdAt
+      updatedAt
+    }
+  }
+`;
+
+export const UPDATE_TRIP_PLAN_CLIENT = `
+  mutation UpdateTripPlanClient($id: String!, $input: UpdateTripPlanClientInput!) {
+    updateTripPlanClient(id: $id, input: $input) {
+      id
+      name
+      email
+      phone
+      avatarUrl
+      description
+      clientType
+      status
+      createdAt
+      updatedAt
+    }
+  }
+`;
+
+// --- Doctor (v2.0.0 — used for self-checks) ---
+
+export const DOCTOR_PING = `
+  query DoctorPing {
+    __schema { queryType { name } }
+  }
+`;
