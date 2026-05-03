@@ -15,11 +15,68 @@ export const GET_CART = `
         type
         selectionId
         optionId
-        subSelectionOptionId
+        metadata
       }
       itemCount
       total
       currency
+    }
+  }
+`;
+
+/**
+ * v2 cart-with-bookability query.
+ *
+ * Pulls the cart and a parallel "bookability map" derived from each goal's items'
+ * selections' options in a single round-trip. Workaround until the API exposes
+ * `tripPlanCartWithBookability` (P1 Mark sync question, PHASE2-DESIGN-FREEZE.md §3).
+ *
+ * Use over GET_CART whenever you need per-item bookability or by-goal grouping.
+ */
+export const GET_CART_V2 = `
+  query TripPlanCartV2($id: String!) {
+    tripPlan(id: $id) {
+      id
+      title
+      cart {
+        items {
+          id
+          name
+          description
+          price
+          currency
+          type
+          selectionId
+          optionId
+          metadata
+        }
+        itemCount
+        total
+        currency
+      }
+      goals {
+        id
+        name
+        sortOrder
+        items {
+          id
+          title
+          goalId
+          selections {
+            id
+            type
+            isLocked
+            options {
+              id
+              name
+              isBookable
+              status
+              blueprintListingId
+              externalId
+            }
+          }
+        }
+      }
     }
   }
 `;
@@ -86,7 +143,7 @@ export const GET_PAYMENT_CHECKOUTS = `
       id
       status
       checkoutUrl
-      createdAt
+      hostedInvoiceUrl
       bookingRecords {
         id
         type

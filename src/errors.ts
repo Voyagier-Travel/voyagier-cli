@@ -5,13 +5,21 @@ export enum CliErrorCode {
   API_ERROR = "API_ERROR",
   NETWORK = "NETWORK",
   STATE_CORRUPT = "STATE_CORRUPT",
+
   // v2.0.0 — client/RBAC awareness
   NO_CLIENTS = "NO_CLIENTS",
   MULTIPLE_CLIENTS = "MULTIPLE_CLIENTS",
   CLIENT_REQUIRED = "CLIENT_REQUIRED",
   PERMISSION_DENIED = "PERMISSION_DENIED",
+
   // v2.0.0 — schema drift / version compat
   SCHEMA_DRIFT = "SCHEMA_DRIFT",
+
+  // v2.0.0 — Section 3 (cart + bookability)
+  NOT_BOOKABLE = "NOT_BOOKABLE",
+  BOOKING_BLOCKED = "BOOKING_BLOCKED",
+  EXPIRED_OFFER = "EXPIRED_OFFER",
+  STALE_PLAN_STATE = "STALE_PLAN_STATE",
 }
 
 export class CliError extends Error {
