@@ -383,3 +383,149 @@ describe("listings add-to-selection — idempotency-key echo", () => {
     );
   });
 });
+
+// ── Regression: Copilot review (second pass) ──────────────────────────────
+//
+// Copilot caught three classes of issue:
+//   1. Prices using string interpolation lost thousand-separators / decimals.
+//   2. Nullable booleans (isAvailable, isBookable) were rendered as "No"
+//      when null/undefined, conflating absence with negative.
+//   3. --idempotency-key help text claimed it was "for the mutation" but the
+//      key was never sent server-side; only echoed in JSON.
+
+describe("listings recent — formatPrice consistency", () => {
+  const sampleEventWithPrice = {
+    id: "evt_01HX",
+    blueprintListingId: "lst_01HX",
+    blueprintMonitorId: "mon_01HX",
+    listingName: "Hotel Le Bristol",
+    changeType: "PriceChanged",
+    details: null,
+    blueprintListing: {
+      id: "lst_01HX",
+      name: "Hotel Le Bristol",
+      price: 1840.0,
+      isAvailable: true,
+      isBookable: true,
+    },
+  };
+
+  it("renders prices with thousand-separators in --agent markdown table", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({
+        getTripPlanHotelSelection: { id: "sel_01HX", blueprintMonitorId: "mon_01HX" },
+      })
+      .mockResolvedValueOnce({ blueprintListingChangeEvents: [sampleEventWithPrice] });
+
+    const writes: string[] = [];
+    const logSpy = jest.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      writes.push(args.map((a) => (typeof a === "string" ? a : String(a))).join(" "));
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "listings", "recent",
+      "--selection", "sel_01HX",
+      "--agent",
+    ]);
+
+    const allOut = writes.join("\n");
+    expect(allOut).toContain("$1,840.00");
+    // The bare interpolation pattern would emit something like "$1840 |".
+    // Our formatPrice() always adds .00. Make sure we never see the raw form.
+    expect(allOut).not.toMatch(/\$1840[^.]/);
+
+    logSpy.mockRestore();
+  });
+});
+
+describe("listings — nullable boolean rendering", () => {
+  const eventWithNullAvailable = {
+    id: "evt_01HX",
+    blueprintListingId: "lst_01HX",
+    blueprintMonitorId: "mon_01HX",
+    listingName: "Hotel Mystery",
+    changeType: "NewListing",
+    details: null,
+    blueprintListing: {
+      id: "lst_01HX",
+      name: "Hotel Mystery",
+      price: 200,
+      isAvailable: null,
+      isBookable: null,
+    },
+  };
+
+  it("renders null isAvailable as 'Unknown' (not 'No') in agent markdown", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({
+        getTripPlanHotelSelection: { id: "sel_01HX", blueprintMonitorId: "mon_01HX" },
+      })
+      .mockResolvedValueOnce({ blueprintListingChangeEvents: [eventWithNullAvailable] });
+
+    const writes: string[] = [];
+    const logSpy = jest.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      writes.push(args.map((a) => (typeof a === "string" ? a : String(a))).join(" "));
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "listings", "recent",
+      "--selection", "sel_01HX",
+      "--agent",
+    ]);
+
+    const allOut = writes.join("\n");
+    expect(allOut).toContain("Unknown");
+    // The agent-markdown table cell for availability must NOT be the literal "No"
+    // when isAvailable is null. Look at the table row specifically.
+    const tableRow = allOut.split("\n").find((l) => l.includes("Hotel Mystery")) ?? "";
+    expect(tableRow).toContain("Unknown");
+    expect(tableRow).not.toMatch(/\| No \|/);
+
+    logSpy.mockRestore();
+  });
+
+  it("renders null isBookable as 'Unknown' in add-to-selection agent output", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      addBlueprintListingAsSelectionOption: {
+        id: "opt_01HX",
+        name: "Mystery Option",
+        price: 500,
+        isBookable: null,
+      },
+    });
+
+    const writes: string[] = [];
+    const logSpy = jest.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      writes.push(args.map((a) => (typeof a === "string" ? a : String(a))).join(" "));
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "listings", "add-to-selection", "sel_01HX",
+      "--listing", "lst_01HX",
+      "--agent",
+    ]);
+
+    const allOut = writes.join("\n");
+    expect(allOut).toMatch(/Bookable:\*?\*?\s*Unknown/);
+    expect(allOut).not.toMatch(/Bookable:\*?\*?\s*No\b/);
+
+    logSpy.mockRestore();
+  });
+});
+
+describe("listings — --idempotency-key help text", () => {
+  it("documents the flag as JSON-echo, not server-side dedup", () => {
+    const p = buildProgram();
+    const help = p.commands
+      .find((c) => c.name() === "listings")!
+      .commands.find((c) => c.name() === "add-to-selection")!
+      .helpInformation();
+
+    expect(help).toContain("--idempotency-key");
+    expect(help).toContain("Echoed in JSON output");
+    expect(help).not.toContain("for the mutation");
+  });
+});

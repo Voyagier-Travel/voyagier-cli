@@ -17,7 +17,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
-import { parsePositiveInt } from "../utils.js";
+import { parsePositiveInt, formatPrice, formatNullableBool } from "../utils.js";
 import {
   GET_BLUEPRINT_LISTING_CHANGE_EVENTS,
   GET_BLUEPRINT_LISTING_CHANGE_EVENTS_BY_TYPE,
@@ -94,11 +94,14 @@ function formatChangeEventLine(e: BlueprintListingChangeEvent): string {
   const typeBadge = chalk.cyan(`[${e.changeType}]`);
   const name = chalk.bold(e.listingName ?? e.blueprintListing?.name ?? "(unnamed)");
   const price = e.blueprintListing?.price != null
-    ? chalk.green(`$${e.blueprintListing.price}`)
+    ? chalk.green(formatPrice(e.blueprintListing.price))
     : "";
-  const available = e.blueprintListing?.isAvailable
-    ? chalk.green("●")
-    : chalk.red("○");
+  // Tri-state availability: true=green, false=red, null/undefined=dim grey.
+  const isAvail = e.blueprintListing?.isAvailable;
+  const available =
+    isAvail === true ? chalk.green("●")
+    : isAvail === false ? chalk.red("○")
+    : chalk.dim("?");
   return `${available} ${typeBadge} ${name}  ${price}  ${chalk.dim(e.id)}`;
 }
 
@@ -187,8 +190,11 @@ export function registerListingsCommands(program: Command): void {
           console.log(`| Change Type | Listing | Price | Available |`);
           console.log(`|---|---|---|---|`);
           for (const e of events) {
-            const price = e.blueprintListing?.price != null ? `$${e.blueprintListing.price}` : "—";
-            const avail = e.blueprintListing?.isAvailable ? "Yes" : "No";
+            const price = e.blueprintListing?.price != null
+              ? formatPrice(e.blueprintListing.price)
+              : "—";
+            // Nullable schema field: null/undefined renders as Unknown, not No.
+            const avail = formatNullableBool(e.blueprintListing?.isAvailable);
             console.log(`| ${e.changeType} | ${e.listingName ?? "—"} | ${price} | ${avail} |`);
           }
           console.log(`\n*${events.length} event(s)*`);
@@ -212,7 +218,7 @@ export function registerListingsCommands(program: Command): void {
     .command("add-to-selection <selectionId>")
     .description("Add a Blueprint Listing as an option to a selection")
     .requiredOption("--listing <id>", "Blueprint Listing ID")
-    .option("--idempotency-key <ulid>", "Idempotency key for the mutation")
+    .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output markdown for AI display")
     .option("--dry-run", "Show the GraphQL mutation without executing")
@@ -248,15 +254,16 @@ export function registerListingsCommands(program: Command): void {
         console.log(`## Listing Added\n`);
         console.log(`**Option ID:** \`${option.id}\`  `);
         console.log(`**Name:** ${option.name ?? "—"}  `);
-        console.log(`**Price:** ${option.price != null ? `$${option.price}` : "—"}  `);
-        console.log(`**Bookable:** ${option.isBookable ? "Yes" : "No"}\n`);
+        console.log(`**Price:** ${option.price != null ? formatPrice(option.price) : "—"}  `);
+        // Nullable schema field: null/undefined renders as Unknown, not No.
+        console.log(`**Bookable:** ${formatNullableBool(option.isBookable)}\n`);
         return;
       }
 
       console.log(chalk.green(`✓ Added listing to selection`));
       console.log(chalk.dim(`  Option ID: ${option.id}`));
       console.log(chalk.dim(`  Name:      ${option.name ?? "—"}`));
-      if (option.price != null) console.log(chalk.dim(`  Price:     $${option.price}`));
-      console.log(chalk.dim(`  Bookable:  ${option.isBookable ? "Yes" : "No"}`));
+      if (option.price != null) console.log(chalk.dim(`  Price:     ${formatPrice(option.price)}`));
+      console.log(chalk.dim(`  Bookable:  ${formatNullableBool(option.isBookable)}`));
     });
 }

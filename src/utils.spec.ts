@@ -1,5 +1,24 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivitySummary, formatPrice, validateDate, validateIata, findPendingSubSelections, subSelectionLabel, deriveBaseUrl, openBrowser, warnPastDate, looksLikeAirportCode } from "./utils.js";
+import {
+  extractFlightToken,
+  buildFlightSummary,
+  buildHotelSummary,
+  buildActivitySummary,
+  formatPrice,
+  validateDate,
+  validateIata,
+  findPendingSubSelections,
+  subSelectionLabel,
+  deriveBaseUrl,
+  openBrowser,
+  warnPastDate,
+  looksLikeAirportCode,
+  parsePositiveInt,
+  parseFloatStrict,
+  formatNullableBool,
+  escapeMdTableCell,
+} from "./utils.js";
+import { CliError } from "./errors.js";
 
 describe("extractFlightToken", () => {
   it("should return undefined when bookingData is undefined", () => {
@@ -403,4 +422,119 @@ describe("openBrowser", () => {
     });
   });
 
+});
+
+describe("parsePositiveInt — default contract validation", () => {
+  it("returns the default when value is undefined and default is valid", () => {
+    expect(parsePositiveInt(undefined, "--limit", { default: 20 })).toBe(20);
+  });
+
+  it("throws when default is 0 but allowZero is false", () => {
+    expect(() => parsePositiveInt(undefined, "--limit", { default: 0 })).toThrow(
+      /invalid default 0/
+    );
+  });
+
+  it("accepts default 0 when allowZero is true", () => {
+    expect(parsePositiveInt(undefined, "--ranking", { default: 0, allowZero: true })).toBe(0);
+  });
+
+  it("throws when default is negative", () => {
+    expect(() => parsePositiveInt(undefined, "--limit", { default: -5 })).toThrow(
+      /invalid default -5/
+    );
+  });
+
+  it("throws when default exceeds max", () => {
+    expect(() => parsePositiveInt(undefined, "--limit", { default: 200, max: 100 })).toThrow(
+      /invalid default 200/
+    );
+  });
+
+  it("throws when default is not an integer", () => {
+    expect(() => parsePositiveInt(undefined, "--limit", { default: 3.14 })).toThrow(
+      /invalid default 3.14/
+    );
+  });
+
+  it("returns undefined when value and default are both undefined", () => {
+    expect(parsePositiveInt(undefined, "--limit")).toBeUndefined();
+  });
+});
+
+describe("parseFloatStrict — bounds enforcement", () => {
+  it("accepts a value within [min, max]", () => {
+    expect(parseFloatStrict("48.85", "--lat", { min: -90, max: 90 })).toBeCloseTo(48.85);
+  });
+
+  it("rejects a value below min", () => {
+    expect(() => parseFloatStrict("-100", "--lat", { min: -90, max: 90 })).toThrow(CliError);
+  });
+
+  it("rejects a value above max", () => {
+    expect(() => parseFloatStrict("200", "--lng", { min: -180, max: 180 })).toThrow(CliError);
+  });
+
+  it("accepts boundary values", () => {
+    expect(parseFloatStrict("-90", "--lat", { min: -90, max: 90 })).toBe(-90);
+    expect(parseFloatStrict("90", "--lat", { min: -90, max: 90 })).toBe(90);
+  });
+
+  it("rejects negative values when nonNegative is true", () => {
+    expect(() => parseFloatStrict("-500", "--radius", { nonNegative: true })).toThrow(CliError);
+  });
+
+  it("accepts 0 and positive values when nonNegative is true", () => {
+    expect(parseFloatStrict("0", "--radius", { nonNegative: true })).toBe(0);
+    expect(parseFloatStrict("500", "--radius", { nonNegative: true })).toBe(500);
+  });
+
+  it("returns undefined when value is undefined", () => {
+    expect(parseFloatStrict(undefined, "--lat")).toBeUndefined();
+  });
+});
+
+describe("formatNullableBool — tri-state rendering", () => {
+  it("renders true as 'Yes'", () => {
+    expect(formatNullableBool(true)).toBe("Yes");
+  });
+
+  it("renders false as 'No'", () => {
+    expect(formatNullableBool(false)).toBe("No");
+  });
+
+  it("renders null as 'Unknown' (not 'No')", () => {
+    expect(formatNullableBool(null)).toBe("Unknown");
+  });
+
+  it("renders undefined as 'Unknown' (not 'No')", () => {
+    expect(formatNullableBool(undefined)).toBe("Unknown");
+  });
+});
+
+describe("escapeMdTableCell — markdown table safety", () => {
+  it("escapes pipe characters", () => {
+    expect(escapeMdTableCell("Foo | Bar")).toBe("Foo \\| Bar");
+  });
+
+  it("escapes backticks", () => {
+    expect(escapeMdTableCell("Foo `Bar`")).toBe("Foo \\`Bar\\`");
+  });
+
+  it("collapses newlines to spaces", () => {
+    expect(escapeMdTableCell("Foo\nBar\r\nBaz")).toBe("Foo Bar Baz");
+  });
+
+  it("escapes backslashes first to avoid double-escape", () => {
+    expect(escapeMdTableCell("a\\b")).toBe("a\\\\b");
+  });
+
+  it("returns dash for null and undefined", () => {
+    expect(escapeMdTableCell(null)).toBe("—");
+    expect(escapeMdTableCell(undefined)).toBe("—");
+  });
+
+  it("preserves regular content", () => {
+    expect(escapeMdTableCell("Eiffel Tower")).toBe("Eiffel Tower");
+  });
 });

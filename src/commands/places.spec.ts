@@ -141,6 +141,26 @@ describe("normalizePlaceType", () => {
   it("handles already PascalCase input", () => {
     expect(normalizePlaceType("Airport")).toBe("Airport");
   });
+
+  // Regression: Copilot review caught that already-PascalCase multi-word
+  // values like "TouristAttraction" were being mangled to "Touristattraction"
+  // by the previous lowercase-then-capitalize implementation.
+  it("preserves already-PascalCase multi-word values verbatim", () => {
+    expect(normalizePlaceType("TouristAttraction")).toBe("TouristAttraction");
+    expect(normalizePlaceType("TrainStation")).toBe("TrainStation");
+    expect(normalizePlaceType("CafeOrCoffeeShop")).toBe("CafeOrCoffeeShop");
+    expect(normalizePlaceType("BedAndBreakfast")).toBe("BedAndBreakfast");
+  });
+
+  it("normalizes mixed-case inputs that aren't already PascalCase", () => {
+    // Has a separator — not the no-op path.
+    expect(normalizePlaceType("tourist Attraction")).toBe("TouristAttraction");
+  });
+
+  it("strips empty segments from separator runs", () => {
+    expect(normalizePlaceType("hotel--bar")).toBe("HotelBar");
+    expect(normalizePlaceType("  hotel  bar  ")).toBe("HotelBar");
+  });
 });
 
 describe("parseSearchLocation", () => {
@@ -166,6 +186,37 @@ describe("parseSearchLocation", () => {
     expect(() => parseSearchLocation({ lat: "invalid" })).toThrow(/Invalid --lat/);
     expect(() => parseSearchLocation({ lng: "abc" })).toThrow(/Invalid --lng/);
     expect(() => parseSearchLocation({ radius: "xyz" })).toThrow(/Invalid --radius/);
+  });
+
+  // Regression: Copilot review caught that out-of-range coordinates were
+  // being passed through to the API. Latitude must be in [-90, 90],
+  // longitude in [-180, 180], radius >= 0.
+  it("rejects latitude outside [-90, 90]", () => {
+    expect(() => parseSearchLocation({ lat: "100" })).toThrow(/--lat/);
+    expect(() => parseSearchLocation({ lat: "-91" })).toThrow(/--lat/);
+  });
+
+  it("accepts latitude at the boundary", () => {
+    expect(parseSearchLocation({ lat: "90" })).toEqual({ latitude: 90 });
+    expect(parseSearchLocation({ lat: "-90" })).toEqual({ latitude: -90 });
+  });
+
+  it("rejects longitude outside [-180, 180]", () => {
+    expect(() => parseSearchLocation({ lng: "200" })).toThrow(/--lng/);
+    expect(() => parseSearchLocation({ lng: "-500" })).toThrow(/--lng/);
+  });
+
+  it("accepts longitude at the boundary", () => {
+    expect(parseSearchLocation({ lng: "180" })).toEqual({ longitude: 180 });
+    expect(parseSearchLocation({ lng: "-180" })).toEqual({ longitude: -180 });
+  });
+
+  it("rejects negative radius", () => {
+    expect(() => parseSearchLocation({ radius: "-500" })).toThrow(/--radius/);
+  });
+
+  it("accepts zero radius", () => {
+    expect(parseSearchLocation({ radius: "0" })).toEqual({ radius: 0 });
   });
 });
 
@@ -996,5 +1047,159 @@ describe("places search — strict --source validation", () => {
       expect.stringContaining("searchPlaces"),
       expect.any(Object)
     );
+  });
+});
+
+// ── Regression: Copilot review (second pass) ──────────────────────────────
+
+describe("places search — markdown escaping (--agent)", () => {
+  it("escapes pipe characters in place names in the agent table", async () => {
+    const mischievousPlace = {
+      id: "place_evil",
+      name: "Hotel | Wreckage `cafe`",
+      description: "Pipes | and backticks `everywhere`",
+      location: { latitude: 1, longitude: 1 },
+      address: { city: "Paris | Center", country: "France" },
+      country: { id: "FR", name: "France" },
+      locality: { id: "paris", name: "Paris" },
+    };
+    mockGraphql.mockResolvedValueOnce({
+      searchPlaces: { items: [mischievousPlace], count: 1, page: 1, limit: 20 },
+    });
+
+    const writes: string[] = [];
+    const logSpy = jest.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      writes.push(args.map((a) => (typeof a === "string" ? a : String(a))).join(" "));
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "search",
+      "--query", "evil",
+      "--agent",
+    ]);
+
+    const allOut = writes.join("\n");
+    // The pipe inside the place name MUST be escaped so it doesn't break
+    // the markdown table structure.
+    expect(allOut).toContain("Hotel \\| Wreckage \\`cafe\\`");
+    // The pipe inside the city MUST be escaped too.
+    expect(allOut).toContain("Paris \\| Center");
+
+    logSpy.mockRestore();
+  });
+});
+
+describe("places — formatPlaceLine location fallback (TTY)", () => {
+  it("uses locality.name when address.city is absent", async () => {
+    const placeNoCity = {
+      id: "place_loc",
+      name: "Test Place",
+      description: null,
+      location: { latitude: 0, longitude: 0 },
+      address: null,
+      country: { id: "FR", name: "France" },
+      locality: { id: "lyo", name: "Lyon" },
+    };
+    mockGraphql.mockResolvedValueOnce({
+      searchPlaces: { items: [placeNoCity], count: 1, page: 1, limit: 20 },
+    });
+
+    const writes: string[] = [];
+    const writeSpy = jest.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      writes.push(args.join(" "));
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "search",
+      "--query", "Test",
+    ]);
+
+    const allOut = writes.join("\n");
+    expect(allOut).toContain("Lyon");
+
+    writeSpy.mockRestore();
+  });
+
+  it("falls back to country.name when both city and locality are absent", async () => {
+    const placeOnlyCountry = {
+      id: "place_country",
+      name: "Test Place",
+      description: null,
+      location: { latitude: 0, longitude: 0 },
+      address: null,
+      country: { id: "FR", name: "France" },
+      locality: null,
+    };
+    mockGraphql.mockResolvedValueOnce({
+      searchPlaces: { items: [placeOnlyCountry], count: 1, page: 1, limit: 20 },
+    });
+
+    const writes: string[] = [];
+    const writeSpy = jest.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      writes.push(args.join(" "));
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "search",
+      "--query", "Test",
+    ]);
+
+    const allOut = writes.join("\n");
+    expect(allOut).toContain("France");
+
+    writeSpy.mockRestore();
+  });
+});
+
+describe("places search — --country help text honesty", () => {
+  it("documents that --country is an ID for internal source and a code for google source", () => {
+    const p = buildProgram();
+    const help = p.commands
+      .find((c) => c.name() === "places")!
+      .commands.find((c) => c.name() === "search")!
+      .helpInformation();
+
+    expect(help).toContain("--country");
+    expect(help).toMatch(/ISO country code|country ID/);
+  });
+});
+
+describe("places — --idempotency-key help text", () => {
+  const mutatingCommands = ["attach", "highlight", "unhighlight", "remove"];
+
+  for (const name of mutatingCommands) {
+    it(`documents --idempotency-key on \`places ${name}\` as JSON-echo, not server-side dedup`, () => {
+      const p = buildProgram();
+      const help = p.commands
+        .find((c) => c.name() === "places")!
+        .commands.find((c) => c.name() === name)!
+        .helpInformation();
+
+      expect(help).toContain("--idempotency-key");
+      expect(help).toContain("Echoed in JSON output");
+      expect(help).not.toContain("for the mutation");
+    });
+  }
+});
+
+// ── Regression: PLACE_NOT_FOUND remains; PLAN_REQUIRED/PLACE_ID_REQUIRED dropped ─
+
+describe("CliErrorCode — Section 7 surface", () => {
+  it("retains the codes that are actually thrown", async () => {
+    const errors = await import("../errors.js");
+    expect(errors.CliErrorCode.LISTING_NOT_FOUND).toBe("LISTING_NOT_FOUND");
+    expect(errors.CliErrorCode.PLACE_NOT_FOUND).toBe("PLACE_NOT_FOUND");
+    expect(errors.CliErrorCode.NO_MONITOR).toBe("NO_MONITOR");
+  });
+
+  it("does not declare codes that are never thrown", async () => {
+    const errors = await import("../errors.js");
+    // PLAN_REQUIRED and PLACE_ID_REQUIRED were removed because Commander's
+    // required-flag validation already covers those cases.
+    expect((errors.CliErrorCode as Record<string, string>).PLAN_REQUIRED).toBeUndefined();
+    expect((errors.CliErrorCode as Record<string, string>).PLACE_ID_REQUIRED).toBeUndefined();
   });
 });

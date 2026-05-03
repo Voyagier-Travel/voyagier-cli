@@ -20,7 +20,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
-import { parsePositiveInt, parseNonNegativeInt, parseFloatStrict } from "../utils.js";
+import { parsePositiveInt, parseNonNegativeInt, parseFloatStrict, escapeMdTableCell } from "../utils.js";
 import {
   SEARCH_PLACES,
   SEARCH_EXTERNAL_PLACES,
@@ -123,18 +123,39 @@ export function normalizeHighlightCategory(value: string): string {
 /**
  * Best-effort PascalCase normalization for PlaceType.
  * The enum has 100+ values; we don't validate exhaustively client-side.
+ *
+ * Strategy:
+ *   - If the input is already PascalCase (starts with uppercase, contains no
+ *     separators), pass it through untouched. This preserves multi-word
+ *     values like "TouristAttraction" or "TrainStation" that the caller
+ *     spelled correctly per the schema.
+ *   - Otherwise, split on whitespace/underscore/hyphen and capitalize each
+ *     segment. Handles "hotel", "tourist-attraction", "train_station",
+ *     "tourist attraction", etc.
  * Exported for unit testing.
  */
 export function normalizePlaceType(value: string): string {
+  // Already PascalCase (no separators, starts uppercase): preserve verbatim.
+  if (/^[A-Z][A-Za-z0-9]*$/.test(value)) {
+    return value;
+  }
   return value
     .split(/[\s_-]+/)
+    .filter((w) => w.length > 0)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join("");
 }
 
 /**
  * Parse --lat/--lng/--radius into a SearchLocationInput if any are provided.
- * Rejects non-numeric values with VALIDATION_ERROR.
+ * Rejects non-numeric values, out-of-range coordinates, and negative radius
+ * with VALIDATION_ERROR.
+ *
+ * Bounds:
+ *   --lat in [-90, 90]
+ *   --lng in [-180, 180]
+ *   --radius >= 0  (meters, per searchExternalPlaces)
+ *
  * Exported for unit testing.
  */
 export function parseSearchLocation(opts: {
@@ -142,9 +163,9 @@ export function parseSearchLocation(opts: {
   lng?: string;
   radius?: string;
 }): SearchLocationInput | undefined {
-  const lat = parseFloatStrict(opts.lat, "--lat");
-  const lng = parseFloatStrict(opts.lng, "--lng");
-  const radius = parseFloatStrict(opts.radius, "--radius");
+  const lat = parseFloatStrict(opts.lat, "--lat", { min: -90, max: 90 });
+  const lng = parseFloatStrict(opts.lng, "--lng", { min: -180, max: 180 });
+  const radius = parseFloatStrict(opts.radius, "--radius", { nonNegative: true });
 
   if (lat === undefined && lng === undefined && radius === undefined) {
     return undefined;
@@ -162,12 +183,22 @@ export function parseSearchLocation(opts: {
 
 function formatPlaceLine(p: SearchPlace | TripPlanPlace): string {
   const name = chalk.bold(p.name ?? "(unnamed)");
-  const loc =
-    "address" in p && p.address?.city
-      ? chalk.dim(` — ${p.address.city}`)
-      : "countryName" in p && p.countryName
-        ? chalk.dim(` — ${p.countryName}`)
-        : "";
+  // Location fallback chain (most specific first):
+  //   SearchPlace: address.city -> locality.name -> country.name
+  //   TripPlanPlace: address.city -> countryName
+  // This ensures TTY output never blanks the location when the API returned
+  // location data in a different shape than address.city.
+  let locText: string | null = null;
+  if ("address" in p && p.address?.city) {
+    locText = p.address.city;
+  } else if ("locality" in p && p.locality?.name) {
+    locText = p.locality.name;
+  } else if ("country" in p && p.country?.name) {
+    locText = p.country.name;
+  } else if ("countryName" in p && p.countryName) {
+    locText = p.countryName;
+  }
+  const loc = locText ? chalk.dim(` — ${locText}`) : "";
   const type = "type" in p && p.type ? chalk.cyan(`[${p.type}]`) + " " : "";
   return `  ${type}${name}${loc}  ${chalk.dim(p.id)}`;
 }
@@ -192,7 +223,10 @@ export function registerPlacesCommands(program: Command): void {
     .description("Search for places (internal or Google Places)")
     .requiredOption("--query <q>", "Search query")
     .option("--source <source>", "Data source: internal (default) or google", "internal")
-    .option("--country <code>", "Country code or ID filter")
+    .option(
+      "--country <value>",
+      "Country filter: ISO country code (e.g. FR) when --source google; country ID when --source internal"
+    )
     .option("--lat <f>", "Latitude for location-based search")
     .option("--lng <f>", "Longitude for location-based search")
     .option("--radius <m>", "Radius in meters for location-based search")
@@ -261,7 +295,7 @@ export function registerPlacesCommands(program: Command): void {
 
       if (opts.agent) {
         console.log(`## Place Search Results\n`);
-        console.log(`**Query:** "${opts.query}"  `);
+        console.log(`**Query:** ${escapeMdTableCell(opts.query)}  `);
         console.log(`**Source:** ${source}\n`);
         if (places.length === 0) {
           console.log("No places found.\n");
@@ -269,8 +303,15 @@ export function registerPlacesCommands(program: Command): void {
           console.log(`| Name | Location | ID |`);
           console.log(`|---|---|---|`);
           for (const p of places) {
-            const loc = p.address?.city ?? p.country?.name ?? "—";
-            console.log(`| ${p.name ?? "—"} | ${loc} | \`${p.id}\` |`);
+            // Same fallback chain as formatPlaceLine — keep them in sync.
+            const loc =
+              p.address?.city
+              ?? p.locality?.name
+              ?? p.country?.name
+              ?? "—";
+            console.log(
+              `| ${escapeMdTableCell(p.name)} | ${escapeMdTableCell(loc)} | \`${escapeMdTableCell(p.id)}\` |`
+            );
           }
           console.log(`\n*${places.length} of ${total} result(s)*`);
         }
@@ -371,7 +412,7 @@ export function registerPlacesCommands(program: Command): void {
     .option("--iata-code <code>", "IATA code (for airports)")
     .option("--url <url>", "URL")
     .option("--place-timezone <tz>", "Timezone")
-    .option("--idempotency-key <ulid>", "Idempotency key for the mutation")
+    .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output markdown for AI display")
     .option("--dry-run", "Show the GraphQL mutation without executing")
@@ -545,7 +586,7 @@ export function registerPlacesCommands(program: Command): void {
     .requiredOption("--place <id>", "Detected place ID")
     .requiredOption("--category <cat>", "Category (attraction|hotel|restaurant)")
     .option("--ranking <n>", "Ranking position")
-    .option("--idempotency-key <ulid>", "Idempotency key for the mutation")
+    .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output markdown for AI display")
     .option("--dry-run", "Show the GraphQL mutation without executing")
@@ -599,7 +640,7 @@ export function registerPlacesCommands(program: Command): void {
     .description("Remove highlight from a place")
     .requiredOption("--plan <id>", "Trip plan ID")
     .requiredOption("--place <id>", "Detected place ID")
-    .option("--idempotency-key <ulid>", "Idempotency key for the mutation")
+    .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output markdown for AI display")
     .option("--dry-run", "Show the GraphQL mutation without executing")
@@ -641,7 +682,7 @@ export function registerPlacesCommands(program: Command): void {
     .command("remove")
     .description("Remove a place from a trip plan")
     .requiredOption("--id <id>", "Trip plan place ID")
-    .option("--idempotency-key <ulid>", "Idempotency key for the mutation")
+    .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output markdown for AI display")
     .option("--dry-run", "Show the GraphQL mutation without executing")

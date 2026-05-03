@@ -25,8 +25,10 @@ export enum CliErrorCode {
   LISTING_NOT_FOUND = "LISTING_NOT_FOUND",
   PLACE_NOT_FOUND = "PLACE_NOT_FOUND",
   NO_MONITOR = "NO_MONITOR",
-  PLAN_REQUIRED = "PLAN_REQUIRED",
-  PLACE_ID_REQUIRED = "PLACE_ID_REQUIRED",
+  // PLAN_REQUIRED and PLACE_ID_REQUIRED were declared in an earlier draft
+  // but never thrown — Commander's required-flag validation handles missing
+  // --plan / --place-id at the parser layer, so the codes are unused.
+  // Reintroduce here only when there's a real path that needs to throw them.
 }
 
 export class CliError extends Error {

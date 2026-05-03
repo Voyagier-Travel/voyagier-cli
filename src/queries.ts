@@ -817,29 +817,9 @@ export const GET_TRIP_PLAN_PLACES = `
   }
 `;
 
-export const GET_TRIP_PLAN_PLACE = `
-  query GetTripPlanPlace($id: String!) {
-    getTripPlanPlace(id: $id) {
-      id
-      name
-      placeId
-      tripPlanId
-      type
-      types
-      countryId
-      countryName
-      description
-      iataCode
-      image
-      url
-      placeTimezone
-      location {
-        latitude
-        longitude
-      }
-    }
-  }
-`;
+// GET_TRIP_PLAN_PLACE was defined in the initial Section 7 draft but never
+// wired to a command surface. Removed to keep queries.ts honest — reintroduce
+// when a `places get-attached <id>` (or similar) command is added.
 
 export const GET_HIGHLIGHTED_TRIP_PLACES = `
   query HighlightedTripPlaces($tripId: String!, $category: HighlightedPlaceCategory!) {
