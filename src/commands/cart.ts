@@ -18,9 +18,9 @@ import { formatPrice, deriveBaseUrl } from "../utils.js";
 import { GET_CART_V2 } from "../queries.js";
 import {
   buildBookabilityIndex,
+  enrichCartItems,
   groupCartByGoal,
   type CartV2QueryResult,
-  type EnrichedCartItem,
   type GoalGroup,
 } from "./cart-helpers.js";
 
@@ -51,8 +51,8 @@ export function registerCartCommands(program: Command): void {
       const cart = plan.cart ?? { items: [], itemCount: 0, total: 0, currency: "USD" };
 
       const bookability = buildBookabilityIndex(plan.goals ?? []);
-      const enriched = cart.items.map((item) => enrichItem(item, bookability));
-      const byGoal = groupCartByGoal(enriched, plan.goals ?? []);
+      const enriched = enrichCartItems(cart.items, bookability);
+      const byGoal = groupCartByGoal(enriched, bookability);
 
       const planContext = {
         planId: plan.id,
@@ -84,54 +84,6 @@ export function registerCartCommands(program: Command): void {
 
       renderHuman(plan.title, byGoal, cart, planUrl, planId);
     });
-}
-
-function enrichItem(
-  item: { id: string; name: string; description?: string | null; price: number; currency: string; type: string; selectionId: string; optionId?: string | null; metadata?: unknown },
-  bookability: ReturnType<typeof buildBookabilityIndex>,
-): EnrichedCartItem {
-  const key = item.optionId ? `${item.selectionId}:${item.optionId}` : item.selectionId;
-  const info = bookability.byKey.get(key);
-  const sourceInfo = inferSource(info);
-
-  return {
-    id: item.id,
-    name: item.name,
-    description: item.description ?? undefined,
-    type: item.type,
-    price: item.price,
-    currency: item.currency,
-    selectionId: item.selectionId,
-    optionId: item.optionId ?? undefined,
-    isBookable: info?.isBookable ?? false,
-    source: sourceInfo.source,
-    bookableReason: info?.isBookable ? null : sourceInfo.reason,
-  };
-}
-
-function inferSource(info?: { isBookable: boolean; blueprintListingId?: string | null; externalId?: string | null }): { source: "BLUEPRINT" | "SABRE" | "VIATOR" | "OTHER"; reason: string | null } {
-  if (info?.blueprintListingId) {
-    return {
-      source: "BLUEPRINT",
-      reason: info.isBookable ? null : "Listing currently unavailable.",
-    };
-  }
-  if (info?.externalId?.toLowerCase().startsWith("sabre")) {
-    return {
-      source: "SABRE",
-      reason: "Flights are itinerary display only; book directly with the airline.",
-    };
-  }
-  if (info?.externalId?.toLowerCase().startsWith("viator")) {
-    return {
-      source: "VIATOR",
-      reason: info?.isBookable ? null : "Activity not currently available via Viator.",
-    };
-  }
-  return {
-    source: "OTHER",
-    reason: info?.isBookable ? null : "Booking source not yet integrated.",
-  };
 }
 
 function iconFor(type: string): string {

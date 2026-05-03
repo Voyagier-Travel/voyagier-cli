@@ -6,10 +6,28 @@
  * Modes:
  *   --dry-run             — preview cart + total + blockers, no checkout
  *   --validate            — fail with BOOKING_BLOCKED if anything is non-bookable
- *   --only-bookable       — skip non-bookable items (advisor convenience)
- *   --types flight,hotel  — restrict checkout to a comma list of item types
- *   --idempotency-key <k> — passed through on the mutation (Phase 4 will enforce)
+ *   --only-bookable       — CLI-side bookability gate (see note below)
+ *   --types flight,hotel  — CLI-side type filter (see note below)
+ *   --idempotency-key <k> — surfaced on JSON output only; the current schema's
+ *                            CreateTripPlanCheckoutInput doesn't accept it. Phase 4
+ *                            will pass it as an HTTP header once the API supports it.
  *   --status              — alias for tripPlanPaymentCheckouts query (post-checkout)
+ *
+ * IMPORTANT — server-side filtering caveat (Copilot #3178828493):
+ *   The current `createTripPlanCheckout` mutation only accepts `{ tripPlanId,
+ *   successUrl, cancelUrl }`. It books **the entire cart**, not a filtered subset.
+ *   `--types` and `--only-bookable` therefore act as **pre-flight gates**:
+ *     - `--validate` blocks checkout when blockers are present.
+ *     - `--only-bookable` skips the gate and creates a checkout for the full cart
+ *       (the Stripe session price will reflect Voyagier's own bookable filtering
+ *       on the server). Skipped blockers are surfaced on JSON output for the
+ *       caller's awareness.
+ *     - `--types Flight,Hotel,...` requires the corresponding cart lines to be
+ *       present; if no items match the filter we abort with VALIDATION rather
+ *       than create a checkout for an unfiltered cart.
+ *   Once the API exposes a `cartItemIds: [String!]` (or selection-id) input on
+ *   `CreateTripPlanCheckoutInput`, this command will pass the filtered set
+ *   through and the gates become true server-side filters.
  */
 import { Command } from "commander";
 import chalk from "chalk";
@@ -22,10 +40,10 @@ import { GET_CART_V2, CREATE_CHECKOUT, GET_PAYMENT_CHECKOUTS } from "../queries.
 import {
   buildBookabilityIndex,
   collectBlockers,
+  enrichCartItems,
   filterBookable,
   filterByTypes,
   type CartV2QueryResult,
-  type EnrichedCartItem,
 } from "./cart-helpers.js";
 
 interface PaymentCheckout {
@@ -53,7 +71,7 @@ export function registerBookCommands(program: Command): void {
     .option("--validate", "Fail if any item in the cart is not bookable (BOOKING_BLOCKED)")
     .option("--only-bookable", "Skip non-bookable items rather than failing")
     .option("--types <list>", "Comma-separated CartItemType filter (Flight,Hotel,Activity,Restaurant,Other)")
-    .option("--idempotency-key <key>", "Idempotency key for the checkout mutation")
+    .option("--idempotency-key <key>", "Idempotency key (currently surfaced on --json output; HTTP-header pass-through deferred to Phase 4)")
     .option("--status", "Show payment + booking status for past checkouts on this plan")
     .action(async (planId: string, opts: {
       json?: boolean;
@@ -89,40 +107,7 @@ export function registerBookCommands(program: Command): void {
       const plan = data.tripPlan;
       const cart = plan.cart ?? { items: [], itemCount: 0, total: 0, currency: "USD" };
       const bookability = buildBookabilityIndex(plan.goals ?? []);
-
-      const enriched: EnrichedCartItem[] = cart.items.map((item) => {
-        const key = item.optionId ? `${item.selectionId}:${item.optionId}` : item.selectionId;
-        const info = bookability.byKey.get(key);
-        const source = info?.blueprintListingId
-          ? "BLUEPRINT"
-          : info?.externalId?.toLowerCase().startsWith("sabre")
-            ? "SABRE"
-            : info?.externalId?.toLowerCase().startsWith("viator")
-              ? "VIATOR"
-              : "OTHER";
-        const reason = info?.isBookable
-          ? null
-          : source === "SABRE"
-            ? "Flights are itinerary display only; book directly with the airline."
-            : source === "BLUEPRINT"
-              ? "Listing currently unavailable."
-              : source === "VIATOR"
-                ? "Activity not currently available via Viator."
-                : "Booking source not yet integrated.";
-        return {
-          id: item.id,
-          name: item.name,
-          description: item.description ?? undefined,
-          type: item.type,
-          price: item.price,
-          currency: item.currency,
-          selectionId: item.selectionId,
-          optionId: item.optionId ?? undefined,
-          isBookable: info?.isBookable ?? false,
-          source: source as EnrichedCartItem["source"],
-          bookableReason: reason,
-        };
-      });
+      const enriched = enrichCartItems(cart.items, bookability);
 
       // Cart-empty short-circuit
       if (enriched.length === 0) {
@@ -248,8 +233,11 @@ export function registerBookCommands(program: Command): void {
         successUrl: `${baseUrl}/me/plans/${planId}?payment_status=success`,
         cancelUrl: `${baseUrl}/me/plans/${planId}?payment_status=cancel`,
       };
-      // Note: idempotency key is passed via header in Phase 4; for now we surface it on JSON output.
-      // (Mutation input itself doesn't accept the key in current schema.)
+      // CreateTripPlanCheckoutInput currently only accepts the three fields above
+      // (verified against live introspection 2026-05-03). The idempotency key is
+      // surfaced on JSON output for caller awareness; Phase 4 will pass it as an
+      // HTTP header once the API supports it. See command header for details on
+      // server-side filtering caveats with --types / --only-bookable.
 
       let checkoutUrl: string;
       try {

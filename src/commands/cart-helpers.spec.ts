@@ -5,6 +5,8 @@ import {
   filterByTypes,
   filterBookable,
   collectBlockers,
+  inferSource,
+  enrichCartItem,
   type RawGoal,
   type EnrichedCartItem,
 } from "./cart-helpers.js";
@@ -98,15 +100,20 @@ describe("buildBookabilityIndex", () => {
     expect(idx.byKey.get("sel-f1:opt-f1")?.isBookable).toBe(false);
   });
 
-  it("falls back to selectionId-only key for cart items without optionId", () => {
+  it("keys ONLY by `selectionId:optionId` (no selectionId-only fallback) per Copilot #3178828521", () => {
+    // A cart line missing optionId is unknown/unresolvable; we never silently
+    // bind a selectionId to "the first option I happened to walk".
     const idx = buildBookabilityIndex(sampleGoals);
-    expect(idx.byKey.get("sel-h1")).toBeDefined();
+    expect(idx.byKey.has("sel-h1")).toBe(false);
+    expect(idx.byKey.has("sel-h1:opt-h1")).toBe(true);
   });
 
-  it("maps each selectionId to its parent goal", () => {
+  it("maps each selectionId to its parent goal (with sortOrder for grouping)", () => {
     const idx = buildBookabilityIndex(sampleGoals);
     expect(idx.selectionToGoal.get("sel-h1")?.goalName).toBe("Paris Hotel");
     expect(idx.selectionToGoal.get("sel-f1")?.goalId).toBe("g-flight");
+    expect(idx.selectionToGoal.get("sel-h1")?.sortOrder).toBe(2);
+    expect(idx.selectionToGoal.get("sel-f1")?.sortOrder).toBe(1);
   });
 
   it("handles goals with empty items/selections gracefully", () => {
@@ -122,8 +129,10 @@ describe("buildBookabilityIndex", () => {
 });
 
 describe("groupCartByGoal", () => {
+  const sampleIndex = buildBookabilityIndex(sampleGoals);
+
   it("groups items into their parent goals", () => {
-    const groups = groupCartByGoal(enrichedFixture, sampleGoals);
+    const groups = groupCartByGoal(enrichedFixture, sampleIndex);
     const flight = groups.find((g) => g.goalId === "g-flight");
     const hotel = groups.find((g) => g.goalId === "g-paris-hotel");
     expect(flight?.items).toHaveLength(1);
@@ -131,26 +140,26 @@ describe("groupCartByGoal", () => {
   });
 
   it("orders goals by sortOrder ascending", () => {
-    const groups = groupCartByGoal(enrichedFixture, sampleGoals);
+    const groups = groupCartByGoal(enrichedFixture, sampleIndex);
     expect(groups[0].goalId).toBe("g-flight"); // sortOrder 1
     expect(groups[1].goalId).toBe("g-paris-hotel"); // sortOrder 2
   });
 
   it("computes subtotal per goal", () => {
-    const groups = groupCartByGoal(enrichedFixture, sampleGoals);
+    const groups = groupCartByGoal(enrichedFixture, sampleIndex);
     expect(groups.find((g) => g.goalId === "g-paris-hotel")?.subtotal).toBe(1840);
     expect(groups.find((g) => g.goalId === "g-flight")?.subtotal).toBe(0);
   });
 
   it("sets goal.isBookable to false if any item is not bookable", () => {
-    const groups = groupCartByGoal(enrichedFixture, sampleGoals);
+    const groups = groupCartByGoal(enrichedFixture, sampleIndex);
     expect(groups.find((g) => g.goalId === "g-paris-hotel")?.isBookable).toBe(true);
     expect(groups.find((g) => g.goalId === "g-flight")?.isBookable).toBe(false);
   });
 
   it("buckets selections without a matching goal into 'Ungrouped'", () => {
     const orphan: EnrichedCartItem = { ...enrichedFixture[0], id: "x", selectionId: "sel-x" };
-    const groups = groupCartByGoal([orphan], sampleGoals);
+    const groups = groupCartByGoal([orphan], sampleIndex);
     expect(groups[0].goalName).toBe("Ungrouped");
   });
 });
@@ -199,5 +208,69 @@ describe("collectBlockers", () => {
   it("returns empty when everything is bookable", () => {
     const allBookable = enrichedFixture.map((i) => ({ ...i, isBookable: true, bookableReason: null }));
     expect(collectBlockers(allBookable)).toHaveLength(0);
+  });
+});
+
+describe("inferSource", () => {
+  it("returns UNKNOWN when info is undefined", () => {
+    const out = inferSource(undefined);
+    expect(out.source).toBe("UNKNOWN");
+    expect(out.reason).toContain("refresh");
+  });
+  it("returns BLUEPRINT for items with blueprintListingId", () => {
+    expect(inferSource({
+      isBookable: true, blueprintListingId: "bl-1", externalId: null, selectionId: "s", optionId: "o",
+    } as never).source).toBe("BLUEPRINT");
+  });
+  it("returns SABRE for externalId starting with sabre:", () => {
+    expect(inferSource({
+      isBookable: false, blueprintListingId: null, externalId: "sabre:foo", selectionId: "s", optionId: "o",
+    } as never).source).toBe("SABRE");
+  });
+  it("returns VIATOR for externalId starting with viator:", () => {
+    expect(inferSource({
+      isBookable: true, blueprintListingId: null, externalId: "viator:abc", selectionId: "s", optionId: "o",
+    } as never).source).toBe("VIATOR");
+  });
+  it("returns OTHER otherwise", () => {
+    expect(inferSource({
+      isBookable: false, blueprintListingId: null, externalId: null, selectionId: "s", optionId: "o",
+    } as never).source).toBe("OTHER");
+  });
+});
+
+describe("enrichCartItem", () => {
+  const idx = buildBookabilityIndex(sampleGoals);
+
+  it("uses byKey lookup when both selectionId + optionId are present", () => {
+    const item = {
+      id: "ci-1", name: "King", description: null, price: 1840, currency: "USD", type: "Hotel",
+      selectionId: "sel-h1", optionId: "opt-h1", metadata: {},
+    };
+    const out = enrichCartItem(item, idx);
+    expect(out.isBookable).toBe(true);
+    expect(out.source).toBe("BLUEPRINT");
+  });
+
+  it("treats missing optionId as UNKNOWN with explicit reason (Copilot #3178828521)", () => {
+    const item = {
+      id: "ci-x", name: "Mystery", description: null, price: 100, currency: "USD", type: "Other",
+      selectionId: "sel-h1", optionId: null, metadata: {},
+    };
+    const out = enrichCartItem(item, idx);
+    expect(out.isBookable).toBe(false);
+    expect(out.source).toBe("UNKNOWN");
+    expect(out.bookableReason).toContain("optionId");
+  });
+
+  it("returns UNKNOWN when the selection/option is not on the plan", () => {
+    const item = {
+      id: "ci-y", name: "Stale", description: null, price: 50, currency: "USD", type: "Activity",
+      selectionId: "sel-deleted", optionId: "opt-deleted", metadata: {},
+    };
+    const out = enrichCartItem(item, idx);
+    expect(out.isBookable).toBe(false);
+    expect(out.source).toBe("UNKNOWN");
+    expect(out.bookableReason).toContain("refresh");
   });
 });

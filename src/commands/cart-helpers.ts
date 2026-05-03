@@ -2,7 +2,8 @@
  * Pure helpers for v2 cart + bookability (Section 3, PHASE2-DESIGN-FREEZE.md).
  *
  * Why a separate module: the cart command + plans-bookable command + book command all
- * need the same enrichment logic. Keep it pure → easy unit tests.
+ * need the same enrichment logic. Keep it pure → easy unit tests, single source of
+ * truth for `source`/`bookableReason` derivation across commands.
  */
 
 // ----- shapes returned by GET_CART_V2 -----
@@ -77,11 +78,16 @@ export interface BookabilityInfo {
 }
 
 export interface BookabilityIndex {
-  /** key = `${selectionId}:${optionId}` (or just `selectionId` if no optionId) */
+  /** key = `${selectionId}:${optionId}` — keyed only when both ids are known. */
   byKey: Map<string, BookabilityInfo>;
-  /** key = selectionId → goal info */
-  selectionToGoal: Map<string, { goalId: string; goalName: string }>;
+  /**
+   * key = selectionId → goal info (incl. sortOrder). Used by `groupCartByGoal` so we
+   * never rebuild this map elsewhere — single source of truth.
+   */
+  selectionToGoal: Map<string, { goalId: string; goalName: string; sortOrder: number }>;
 }
+
+export type CartItemSource = "BLUEPRINT" | "SABRE" | "VIATOR" | "OTHER" | "UNKNOWN";
 
 export interface EnrichedCartItem {
   id: string;
@@ -93,7 +99,7 @@ export interface EnrichedCartItem {
   selectionId: string;
   optionId?: string;
   isBookable: boolean;
-  source: "BLUEPRINT" | "SABRE" | "VIATOR" | "OTHER";
+  source: CartItemSource;
   bookableReason: string | null;
 }
 
@@ -107,16 +113,21 @@ export interface GoalGroup {
 
 /**
  * Walk goals → items → selections → options to build the bookability lookup.
- * Done once per cart load (single round-trip, mitigates the N+1 worry from §3 of the design freeze).
+ * Done once per cart load (single round-trip; the goals→items→selections→options walk
+ * is fetched in `GET_CART_V2`). Mitigates the N+1 worry from §3 of the design freeze.
  */
 export function buildBookabilityIndex(goals: RawGoal[]): BookabilityIndex {
   const byKey = new Map<string, BookabilityInfo>();
-  const selectionToGoal = new Map<string, { goalId: string; goalName: string }>();
+  const selectionToGoal = new Map<string, { goalId: string; goalName: string; sortOrder: number }>();
 
   for (const goal of goals) {
     for (const item of goal.items ?? []) {
       for (const selection of item.selections ?? []) {
-        selectionToGoal.set(selection.id, { goalId: goal.id, goalName: goal.name });
+        selectionToGoal.set(selection.id, {
+          goalId: goal.id,
+          goalName: goal.name,
+          sortOrder: goal.sortOrder ?? 0,
+        });
         for (const opt of selection.options ?? []) {
           const info: BookabilityInfo = {
             isBookable: Boolean(opt.isBookable),
@@ -129,8 +140,11 @@ export function buildBookabilityIndex(goals: RawGoal[]): BookabilityIndex {
             goalName: goal.name,
           };
           byKey.set(`${selection.id}:${opt.id}`, info);
-          // Also key by just selectionId so cart items without optionId still resolve to a fallback
-          if (!byKey.has(selection.id)) byKey.set(selection.id, info);
+          // Note: we deliberately do NOT add a selectionId-only fallback key here.
+          // A cart line missing `optionId` is an unknown / unresolvable bookability
+          // case — guessing from "the first option I happen to walk" can report the
+          // wrong isBookable/reason. `enrichCartItem()` handles missing optionId
+          // explicitly by surfacing UNKNOWN + a clear reason.
         }
       }
     }
@@ -140,34 +154,102 @@ export function buildBookabilityIndex(goals: RawGoal[]): BookabilityIndex {
 }
 
 /**
+ * Single source of truth for source classification + bookable-reason text.
+ * Used by `cart`, `book`, and `plans bookable` so the three commands cannot drift.
+ */
+export function inferSource(info: BookabilityInfo | undefined): {
+  source: CartItemSource;
+  reason: string | null;
+} {
+  if (!info) {
+    return {
+      source: "UNKNOWN",
+      reason:
+        "Cart item references a selection/option that wasn't found on the plan; refresh the cart and retry.",
+    };
+  }
+  if (info.blueprintListingId) {
+    return {
+      source: "BLUEPRINT",
+      reason: info.isBookable ? null : "Listing currently unavailable.",
+    };
+  }
+  const ext = info.externalId?.toLowerCase() ?? "";
+  if (ext.startsWith("sabre")) {
+    return {
+      source: "SABRE",
+      reason: "Flights are itinerary display only; book directly with the airline.",
+    };
+  }
+  if (ext.startsWith("viator")) {
+    return {
+      source: "VIATOR",
+      reason: info.isBookable ? null : "Activity not currently available via Viator.",
+    };
+  }
+  return {
+    source: "OTHER",
+    reason: info.isBookable ? null : "Booking source not yet integrated.",
+  };
+}
+
+/**
+ * Single source of truth for cart-item enrichment. Use this everywhere a cart
+ * line needs `isBookable`/`source`/`bookableReason`.
+ */
+export function enrichCartItem(item: RawCartItem, index: BookabilityIndex): EnrichedCartItem {
+  // No optionId → cannot resolve bookability deterministically. Be explicit.
+  if (!item.optionId) {
+    return {
+      id: item.id,
+      name: item.name,
+      description: item.description ?? undefined,
+      type: item.type,
+      price: item.price,
+      currency: item.currency,
+      selectionId: item.selectionId,
+      optionId: undefined,
+      isBookable: false,
+      source: "UNKNOWN",
+      bookableReason:
+        "Cart line is missing an optionId; cannot resolve bookability. Re-select the option from the plan.",
+    };
+  }
+
+  const info = index.byKey.get(`${item.selectionId}:${item.optionId}`);
+  const { source, reason } = inferSource(info);
+
+  return {
+    id: item.id,
+    name: item.name,
+    description: item.description ?? undefined,
+    type: item.type,
+    price: item.price,
+    currency: item.currency,
+    selectionId: item.selectionId,
+    optionId: item.optionId,
+    isBookable: info?.isBookable ?? false,
+    source,
+    bookableReason: info?.isBookable ? null : reason,
+  };
+}
+
+/** Convenience helper for walking the whole cart in one call. */
+export function enrichCartItems(items: RawCartItem[], index: BookabilityIndex): EnrichedCartItem[] {
+  return items.map((item) => enrichCartItem(item, index));
+}
+
+/**
  * Group enriched cart items by goal, in goal `sortOrder` order.
  * Items not tied to any goal land in a synthetic "Ungrouped" bucket.
  *
  * A goal is `isBookable` only if **all** its items are bookable (per §3 contract).
+ * Uses `index.selectionToGoal` directly — no rebuilt local map.
  */
-export function groupCartByGoal(items: EnrichedCartItem[], goals: RawGoal[]): GoalGroup[] {
-  const selectionToGoal = new Map<string, { goalId: string; goalName: string; sortOrder: number }>();
-  const goalOrder = new Map<string, number>();
-  goals
-    .slice()
-    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-    .forEach((g, i) => goalOrder.set(g.id, i));
-
-  for (const goal of goals) {
-    for (const item of goal.items ?? []) {
-      for (const selection of item.selections ?? []) {
-        selectionToGoal.set(selection.id, {
-          goalId: goal.id,
-          goalName: goal.name,
-          sortOrder: goal.sortOrder ?? 0,
-        });
-      }
-    }
-  }
-
+export function groupCartByGoal(items: EnrichedCartItem[], index: BookabilityIndex): GoalGroup[] {
   const buckets = new Map<string, GoalGroup>();
   for (const item of items) {
-    const goalInfo = selectionToGoal.get(item.selectionId);
+    const goalInfo = index.selectionToGoal.get(item.selectionId);
     const key = goalInfo?.goalId ?? "__ungrouped__";
     let bucket = buckets.get(key);
     if (!bucket) {
@@ -186,8 +268,8 @@ export function groupCartByGoal(items: EnrichedCartItem[], goals: RawGoal[]): Go
   }
 
   return Array.from(buckets.values()).sort((a, b) => {
-    const ai = goalOrder.get(a.goalId) ?? Number.MAX_SAFE_INTEGER;
-    const bi = goalOrder.get(b.goalId) ?? Number.MAX_SAFE_INTEGER;
+    const ai = index.selectionToGoal.get(a.items[0]?.selectionId ?? "")?.sortOrder ?? Number.MAX_SAFE_INTEGER;
+    const bi = index.selectionToGoal.get(b.items[0]?.selectionId ?? "")?.sortOrder ?? Number.MAX_SAFE_INTEGER;
     return ai - bi;
   });
 }
@@ -228,7 +310,9 @@ export function collectBlockers(items: EnrichedCartItem[]): Blocker[] {
           ? "Book this flight directly with the airline; remove from cart with the web UI to clear the blocker."
           : item.source === "BLUEPRINT"
             ? "Refresh the listing or pick a different option."
-            : "Remove the item from the cart, or wait for it to become bookable.",
+            : item.source === "UNKNOWN"
+              ? "Refresh the plan to re-resolve the cart line."
+              : "Remove the item from the cart, or wait for it to become bookable.",
     });
   }
   return blockers;

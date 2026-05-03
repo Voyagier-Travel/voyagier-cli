@@ -14,8 +14,8 @@ import { GET_CART_V2 } from "../../queries.js";
 import {
   buildBookabilityIndex,
   collectBlockers,
+  enrichCartItems,
   type CartV2QueryResult,
-  type EnrichedCartItem,
 } from "../cart-helpers.js";
 
 export function registerBookableCommand(plans: Command): void {
@@ -43,39 +43,7 @@ export function registerBookableCommand(plans: Command): void {
       const plan = data.tripPlan;
       const cart = plan.cart ?? { items: [], itemCount: 0, total: 0, currency: "USD" };
       const bookability = buildBookabilityIndex(plan.goals ?? []);
-      const enriched: EnrichedCartItem[] = cart.items.map((item) => {
-        const key = item.optionId ? `${item.selectionId}:${item.optionId}` : item.selectionId;
-        const info = bookability.byKey.get(key);
-        const source = info?.blueprintListingId
-          ? "BLUEPRINT"
-          : info?.externalId?.toLowerCase().startsWith("sabre")
-            ? "SABRE"
-            : info?.externalId?.toLowerCase().startsWith("viator")
-              ? "VIATOR"
-              : "OTHER";
-        const reason = info?.isBookable
-          ? null
-          : source === "SABRE"
-            ? "Flights are itinerary display only; book directly with the airline."
-            : source === "BLUEPRINT"
-              ? "Listing currently unavailable."
-              : source === "VIATOR"
-                ? "Activity not currently available via Viator."
-                : "Booking source not yet integrated.";
-        return {
-          id: item.id,
-          name: item.name,
-          description: item.description ?? undefined,
-          type: item.type,
-          price: item.price,
-          currency: item.currency,
-          selectionId: item.selectionId,
-          optionId: item.optionId ?? undefined,
-          isBookable: info?.isBookable ?? false,
-          source: source as EnrichedCartItem["source"],
-          bookableReason: reason,
-        };
-      });
+      const enriched = enrichCartItems(cart.items, bookability);
 
       const bookable = enriched.filter((i) => i.isBookable);
       const blockers = collectBlockers(enriched);

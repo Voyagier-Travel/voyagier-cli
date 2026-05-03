@@ -136,16 +136,31 @@ describe("voyagier book", () => {
   });
 
   describe("--only-bookable", () => {
-    it("filters out blockers and creates a checkout for the remaining bookable lines", async () => {
-      mockGraphql
-        .mockResolvedValueOnce(CART_FIXTURE)
-        .mockResolvedValueOnce({ createTripPlanCheckout: { url: "https://checkout.stripe.com/x" } });
-      await runBook(["plan-1", "--only-bookable", "--json"]);
-      const out = JSON.parse(stdoutOutput.join(""));
-      expect(out.ok).toBe(true);
-      expect(out.data.bookableCount).toBe(1);
-      expect(out.data.skippedBlockers).toHaveLength(1);
-    });
+    it(
+      "is a CLI-side gate: surfaces skippedBlockers but currently still calls " +
+      "createTripPlanCheckout with only { tripPlanId, successUrl, cancelUrl } " +
+      "(Copilot #3178828499 — server-side filtering not yet supported by API)",
+      async () => {
+        mockGraphql
+          .mockResolvedValueOnce(CART_FIXTURE)
+          .mockResolvedValueOnce({ createTripPlanCheckout: { url: "https://checkout.stripe.com/x" } });
+        await runBook(["plan-1", "--only-bookable", "--json"]);
+        const out = JSON.parse(stdoutOutput.join(""));
+        expect(out.ok).toBe(true);
+        expect(out.data.bookableCount).toBe(1);
+        expect(out.data.skippedBlockers).toHaveLength(1);
+
+        // Pin the actual mutation contract: no cartItemIds / selectionIds yet.
+        const mutationCall = mockGraphql.mock.calls[1] as unknown as [string, { input: Record<string, unknown> }];
+        expect(mutationCall[1].input).toEqual({
+          tripPlanId: "plan-1",
+          successUrl: expect.stringContaining("plans/plan-1"),
+          cancelUrl: expect.stringContaining("plans/plan-1"),
+        });
+        // When/if the API adds cartItemIds, this test should be updated to assert
+        // the filtered set is sent through.
+      },
+    );
   });
 
   describe("--types", () => {
