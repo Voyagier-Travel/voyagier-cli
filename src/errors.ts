@@ -15,9 +15,13 @@ export enum CliErrorCode {
 }
 
 export class CliError extends Error {
-  constructor(public code: CliErrorCode, message: string) {
+  /** Optional structured details (blockers, contextual data). Surfaces on --json output. */
+  public details?: Record<string, unknown>;
+
+  constructor(public code: CliErrorCode, message: string, details?: Record<string, unknown>) {
     super(message);
     this.name = "CliError";
+    if (details) this.details = details;
   }
 }
 

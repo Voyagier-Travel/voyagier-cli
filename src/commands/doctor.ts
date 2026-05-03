@@ -42,7 +42,13 @@ export interface DoctorReport {
   overall: CheckStatus;
 }
 
-const STATE_DIR = join(homedir(), ".voyagier");
+/**
+ * State directory under inspection. Override via env (`VOYAGIER_STATE_DIR`) for tests.
+ * In normal use, this is `~/.voyagier/`.
+ */
+function stateDir(): string {
+  return process.env.VOYAGIER_STATE_DIR ?? join(homedir(), ".voyagier");
+}
 const STATE_STALE_MS = 24 * 60 * 60 * 1000; // 24h
 
 /**
@@ -96,13 +102,19 @@ async function checkAuth(): Promise<DoctorCheck> {
  * Only runs if auth has already passed, since auth implicitly tests this.
  * Kept separate so its failure mode is distinct from "bad token".
  */
+/** Hard ceiling on doctor probes; doctor is meant to be a quick self-check primitive. */
+const DOCTOR_PROBE_TIMEOUT_MS = 5000;
+
 async function checkReachability(): Promise<DoctorCheck> {
   const url = getApiUrl();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DOCTOR_PROBE_TIMEOUT_MS);
   try {
     const res = await fetch(`${url}/graphql`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: "{ __typename }" }),
+      signal: controller.signal,
     });
     if (!res.ok && res.status !== 401) {
       return {
@@ -117,11 +129,17 @@ async function checkReachability(): Promise<DoctorCheck> {
       message: `${url} responding`,
     };
   } catch (err) {
+    const aborted = err instanceof DOMException && err.name === "AbortError";
+    const detail = aborted
+      ? `timed out after ${DOCTOR_PROBE_TIMEOUT_MS}ms`
+      : err instanceof Error ? err.message : String(err);
     return {
       name: "reachability",
       status: "FAIL",
-      message: `Cannot reach ${url}: ${err instanceof Error ? err.message : String(err)}`,
+      message: `Cannot reach ${url}: ${detail}`,
     };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -142,6 +160,7 @@ async function checkSchema(): Promise<DoctorCheck> {
   ];
 
   const failures: string[] = [];
+  const transportErrors: string[] = [];
   for (const probe of probes) {
     try {
       await graphql(probe.query);
@@ -155,13 +174,33 @@ async function checkSchema(): Promise<DoctorCheck> {
           message: "Schema check skipped (auth failed; fix auth first)",
         };
       }
-      // Heuristic: GraphQL validation errors include "Cannot query field" or "Unknown type".
-      if (/cannot query field|unknown type|expected type|undefined field/i.test(msg)) {
+      // Permission errors are not schema drift; record as a separate signal so we don't
+      // silently report PASS while the user can't reach the data.
+      if (err instanceof CliError && err.code === "PERMISSION_DENIED") {
+        transportErrors.push(`${probe.name}: permission denied`);
+        continue;
+      }
+      // GraphQL validation errors are now surfaced via SCHEMA_DRIFT in api.ts (see recent
+      // changes). Trust the typed code first, then fall back to message heuristic for older
+      // error shapes we haven't normalized yet.
+      const driftCode = err instanceof CliError && err.code === "SCHEMA_DRIFT";
+      const driftMessage =
+        /cannot query field|unknown (?:type|argument|field)|expected type|undefined field|did you mean/i.test(msg);
+      if (driftCode || driftMessage) {
         failures.push(`${probe.name}: ${msg}`);
       } else {
-        // Other errors (permissions, data) are not schema drift.
+        // NETWORK / API_ERROR / unknown — record as transport so we don't claim PASS.
+        transportErrors.push(`${probe.name}: ${msg}`);
       }
     }
+  }
+
+  if (transportErrors.length > 0 && failures.length === 0) {
+    return {
+      name: "schema",
+      status: "WARN",
+      message: `Schema check inconclusive — transport/permission errors on ${transportErrors.length} probe(s):\n${transportErrors.map((e) => "    " + e).join("\n")}`,
+    };
   }
 
   if (failures.length === 0) {
@@ -183,6 +222,7 @@ async function checkSchema(): Promise<DoctorCheck> {
  * Verify state files: parseable JSON, not stale beyond 24h.
  */
 function checkStateFiles(): DoctorCheck {
+  const STATE_DIR = stateDir();
   if (!existsSync(STATE_DIR)) {
     return {
       name: "state-files",
@@ -206,8 +246,18 @@ function checkStateFiles(): DoctorCheck {
     const path = join(STATE_DIR, f);
     try {
       const content = readFileSync(path, "utf-8");
-      JSON.parse(content);
-      const age = Date.now() - statSync(path).mtimeMs;
+      const parsed = JSON.parse(content) as { timestamp?: string | number };
+      // Prefer the embedded `timestamp` from src/state.ts (matches the rest of the state layer).
+      // state.ts stores ISO strings; older payloads may omit it. Fall back to mtime.
+      let baseMs: number | null = null;
+      if (typeof parsed.timestamp === "string") {
+        const ms = new Date(parsed.timestamp).getTime();
+        if (Number.isFinite(ms)) baseMs = ms;
+      } else if (typeof parsed.timestamp === "number" && Number.isFinite(parsed.timestamp)) {
+        baseMs = parsed.timestamp;
+      }
+      if (baseMs === null) baseMs = statSync(path).mtimeMs;
+      const age = Date.now() - baseMs;
       if (age > STATE_STALE_MS) stale.push(f);
     } catch {
       issues.push(f);
@@ -262,11 +312,21 @@ async function checkVersion(currentVersion: string): Promise<DoctorCheck> {
         message: "Could not parse latest version from registry",
       };
     }
-    if (data.version === currentVersion) {
+    const cmp = compareSemver(currentVersion, data.version);
+    if (cmp === 0) {
       return {
         name: "version",
         status: "PASS",
         message: `Running latest (v${currentVersion})`,
+      };
+    }
+    if (cmp > 0) {
+      // Local build is ahead of npm latest — dev/prerelease build, not outdated.
+      return {
+        name: "version",
+        status: "PASS",
+        message: `Running v${currentVersion} (ahead of npm latest v${data.version} — likely a dev/prerelease build)`,
+        details: { current: currentVersion, latest: data.version },
       };
     }
     return {
@@ -282,6 +342,53 @@ async function checkVersion(currentVersion: string): Promise<DoctorCheck> {
       message: `Version check skipped: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
+}
+
+/**
+ * Minimal semver comparator.
+ * Returns -1 if a < b, 0 if equal, 1 if a > b.
+ * Pre-release segments (e.g. `2.0.0-next.0`) are *less than* their release counterpart
+ * (`2.0.0`), per https://semver.org/#spec-item-11.
+ * If either input fails to parse, returns 0 (treat as equal — no false positives).
+ */
+export function compareSemver(a: string, b: string): number {
+  const parse = (v: string): { core: number[]; pre: string[] } | null => {
+    const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(v.trim());
+    if (!m) return null;
+    return {
+      core: [Number(m[1]), Number(m[2]), Number(m[3])],
+      pre: m[4] ? m[4].split(".") : [],
+    };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  if (!pa || !pb) return 0;
+  for (let i = 0; i < 3; i++) {
+    if (pa.core[i] !== pb.core[i]) return pa.core[i] < pb.core[i] ? -1 : 1;
+  }
+  // Cores equal. A version with pre-release is < the same version without.
+  if (pa.pre.length === 0 && pb.pre.length === 0) return 0;
+  if (pa.pre.length === 0) return 1;
+  if (pb.pre.length === 0) return -1;
+  // Compare pre-release segments per semver rules
+  for (let i = 0; i < Math.max(pa.pre.length, pb.pre.length); i++) {
+    const x = pa.pre[i];
+    const y = pb.pre[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const xn = /^\d+$/.test(x) ? Number(x) : null;
+    const yn = /^\d+$/.test(y) ? Number(y) : null;
+    if (xn !== null && yn !== null) {
+      if (xn !== yn) return xn < yn ? -1 : 1;
+    } else if (xn !== null) {
+      return -1; // numeric < alpha per spec
+    } else if (yn !== null) {
+      return 1;
+    } else if (x !== y) {
+      return x < y ? -1 : 1;
+    }
+  }
+  return 0;
 }
 
 function statusIcon(s: CheckStatus): string {

@@ -296,12 +296,73 @@ describe("clients upsert", () => {
       expect.objectContaining({ created: false })
     );
   });
+
+  it("throws VALIDATION when only an Archived client matches the email (Copilot #3178799085)", async () => {
+    // The archived record is unusable downstream because resolveClientId() requires Active.
+    // Surface explicitly so the caller can reactivate or pick a different email — don't
+    // silently return an Archived id (the v1 bug).
+    const archivedSmith = {
+      ...archivedClient,
+      id: "clt_ARCH",
+      email: "smith@example.com",
+    };
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [archivedSmith] });
+
+    const p = buildProgram();
+    p.exitOverride();
+    await expect(
+      p.parseAsync([
+        "node", "test", "clients", "upsert",
+        "--email", "smith@example.com",
+        "--name", "Smith Family",
+        "--type", "group",
+        "--json",
+      ]),
+    ).rejects.toMatchObject({
+      code: CliErrorCode.VALIDATION,
+      details: { archivedClientId: "clt_ARCH" },
+    });
+    // Critically: did NOT call createTripPlanClient, did NOT return the archived id.
+    expect(mockJsonOutput).not.toHaveBeenCalled();
+  });
+
+  it("prefers an Active match even when an Archived record with the same email also exists", async () => {
+    const activeSmith = sampleClient;
+    const archivedSmith = {
+      ...archivedClient,
+      id: "clt_ARCH",
+      email: "smith@example.com",
+    };
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [archivedSmith, activeSmith] });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "clients", "upsert",
+      "--email", "smith@example.com",
+      "--name", "Smith Family",
+      "--type", "group",
+      "--json",
+    ]);
+
+    expect(mockJsonOutput).toHaveBeenCalledWith({
+      client: activeSmith,
+      ok: true,
+      created: false,
+    });
+  });
 });
 
 describe("resolveClientId", () => {
   it("returns explicit id unchanged when not an email", async () => {
     const id = await resolveClientId("clt_01HX");
     expect(id).toBe("clt_01HX");
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("throws CLIENT_REQUIRED when explicit is empty string (Copilot #3178799122 — wires the unused error code)", async () => {
+    await expect(resolveClientId("")).rejects.toMatchObject({
+      code: CliErrorCode.CLIENT_REQUIRED,
+    });
     expect(mockGraphql).not.toHaveBeenCalled();
   });
 

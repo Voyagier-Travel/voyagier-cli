@@ -112,7 +112,9 @@ try {
   if (err instanceof CliError) {
     const isJson = process.argv.includes("--json");
     if (isJson) {
-      process.stdout.write(JSON.stringify({ error: true, code: err.code, message: err.message }, null, 2) + "\n");
+      const payload: Record<string, unknown> = { error: true, code: err.code, message: err.message };
+      if (err.details) payload.details = err.details;
+      process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
     } else {
       process.stderr.write(chalk.red(err.message + "\n"));
     }

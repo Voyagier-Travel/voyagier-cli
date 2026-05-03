@@ -80,6 +80,13 @@ function formatClientLine(c: TripPlanClient): string {
  * @returns resolved clientId
  */
 export async function resolveClientId(explicit?: string): Promise<string> {
+  // Empty-string is an explicit-but-empty signal (e.g. `--client ""`). Treat as required-but-missing.
+  if (explicit === "") {
+    throw new CliError(
+      CliErrorCode.CLIENT_REQUIRED,
+      "--client was provided but empty. Pass an id, email, or omit the flag to auto-resolve.",
+    );
+  }
   if (explicit) {
     // Heuristic: if it looks like an email, look it up; otherwise treat as id.
     if (explicit.includes("@")) {
@@ -305,10 +312,21 @@ export function registerClientsCommands(program: Command): void {
     .option("--json", "Output raw JSON")
     .option("--dry-run", "Show the GraphQL mutation without executing")
     .action(async (opts) => {
+      // KNOWN LIMITATION (Copilot #3178799095): this list-then-create flow is not
+      // strictly idempotent under concurrency — two callers may both miss the existing
+      // row and both call createTripPlanClient. Until the API exposes server-side
+      // uniqueness on email or an explicit upsertTripPlanClient mutation, the CLI
+      // workaround is best-effort and assumes serial agent flows. Tracking with Mark
+      // sync (P1 question — see PHASE2-DESIGN-FREEZE.md §1). Wrap calling code with an
+      // idempotency-key + retry on duplicate-conflict when the server side lands.
       const list = await graphql<{ tripPlanClients: TripPlanClient[] }>(LIST_TRIP_PLAN_CLIENTS);
-      const existing = list.tripPlanClients.find(
+      const sameEmail = list.tripPlanClients.filter(
         (c) => c.email?.toLowerCase() === opts.email.toLowerCase()
       );
+      // Only an Active record is reusable downstream (resolveClientId requires Active);
+      // Archived matches must be surfaced explicitly so callers can reactivate or pick another.
+      const existing = sameEmail.find((c) => c.status === "Active");
+      const archived = sameEmail.find((c) => c.status === "Archived");
 
       if (existing) {
         if (opts.json) {
@@ -318,6 +336,13 @@ export function registerClientsCommands(program: Command): void {
         console.log(chalk.cyan(`◆ Found existing client: ${existing.name}`));
         console.log(chalk.dim(`  ID: ${existing.id}`));
         return;
+      }
+
+      if (archived) {
+        const message = `Found an Archived client with email ${opts.email} (id ${archived.id}).\n` +
+          `  Reactivate first, or create with a different email:\n` +
+          `    voyagier clients update ${archived.id} --status active`;
+        throw new CliError(CliErrorCode.VALIDATION, message, { archivedClientId: archived.id });
       }
 
       const input: Record<string, unknown> = {
