@@ -1,272 +1,328 @@
+/**
+ * voyagier book <planId>
+ *
+ * v2 (Section 3 — PHASE2-DESIGN-FREEZE.md). Clean replacement.
+ *
+ * Modes:
+ *   --dry-run             — preview cart + total + blockers, no checkout
+ *   --validate            — fail with BOOKING_BLOCKED if anything is non-bookable
+ *   --only-bookable       — CLI-side bookability gate (see note below)
+ *   --types flight,hotel  — CLI-side type filter (see note below)
+ *   --idempotency-key <k> — surfaced on JSON output only; the current schema's
+ *                            CreateTripPlanCheckoutInput doesn't accept it. Phase 4
+ *                            will pass it as an HTTP header once the API supports it.
+ *   --status              — alias for tripPlanPaymentCheckouts query (post-checkout)
+ *
+ * IMPORTANT — server-side filtering caveat (Copilot #3178828493):
+ *   The current `createTripPlanCheckout` mutation only accepts `{ tripPlanId,
+ *   successUrl, cancelUrl }`. It books **the entire cart**, not a filtered subset.
+ *   `--types` and `--only-bookable` therefore act as **pre-flight gates**:
+ *     - `--validate` blocks checkout when blockers are present.
+ *     - `--only-bookable` skips the gate and creates a checkout for the full cart
+ *       (the Stripe session price will reflect Voyagier's own bookable filtering
+ *       on the server). Skipped blockers are surfaced on JSON output for the
+ *       caller's awareness.
+ *     - `--types Flight,Hotel,...` requires the corresponding cart lines to be
+ *       present; if no items match the filter we abort with VALIDATION rather
+ *       than create a checkout for an unfiltered cart.
+ *   Once the API exposes a `cartItemIds: [String!]` (or selection-id) input on
+ *   `CreateTripPlanCheckoutInput`, this command will pass the filtered set
+ *   through and the gates become true server-side filters.
+ */
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
-import { formatPrice, findPendingSubSelections, subSelectionLabel, openBrowser, deriveBaseUrl, PlanItemForSubCheck, SelectionTraveller } from "../utils.js";
+import { formatPrice, openBrowser, deriveBaseUrl } from "../utils.js";
 import { hintCheckoutCreated, hintBookingConfirmed, hintBookingPending, hintDryRun } from "../hints.js";
-import { GET_CART, GET_PLAN_DEEP, CREATE_CHECKOUT, GET_PAYMENT_CHECKOUTS } from "../queries.js";
-
-type MissingField = "dateOfBirth" | "gender";
-
-const FIELD_LABELS: Record<MissingField, string> = {
-  dateOfBirth: "date of birth",
-  gender: "gender",
-};
-
-const FIELD_FLAGS: Record<MissingField, string> = {
-  dateOfBirth: "--dob YYYY-MM-DD",
-  gender: "--gender M",
-};
-
-interface TravellerValidationError {
-  travellerId: string;
-  travellerName: string;
-  missingFields: MissingField[];
-}
-
-/**
- * Validate that travellers assigned to flight selections have the fields Sabre requires.
- * Returns an array of errors. Empty = all good.
- */
-function validateTravellersForBooking(items: PlanItemForSubCheck[]): TravellerValidationError[] {
-  const errors: TravellerValidationError[] = [];
-  const checked = new Set<string>();
-
-  for (const item of items) {
-    const sel = item.selection;
-    if (!sel || !sel.selectedOption) continue;
-
-    // Only validate flight selections — hotels don't need DOB/gender
-    if (sel.type !== "FLIGHT") continue;
-
-    const travellers: SelectionTraveller[] = sel.assignedTravellers ?? [];
-    for (const t of travellers) {
-      if (checked.has(t.id)) continue;
-      checked.add(t.id);
-
-      const missing: MissingField[] = [];
-      if (!t.dateOfBirth) missing.push("dateOfBirth");
-      if (!t.gender) missing.push("gender");
-      if (missing.length > 0) {
-        errors.push({
-          travellerId: t.id,
-          travellerName: `${t.firstName} ${t.lastName}`,
-          missingFields: missing,
-        });
-      }
-    }
-  }
-  return errors;
-}
-
-interface CartItem {
-  id: string;
-  name: string;
-  description?: string;
-  price: number;
-  type: string;
-}
-
-interface Cart {
-  items: CartItem[];
-  total: number;
-  itemCount: number;
-}
+import { GET_CART_V2, CREATE_CHECKOUT, GET_PAYMENT_CHECKOUTS } from "../queries.js";
+import {
+  buildBookabilityIndex,
+  collectBlockers,
+  enrichCartItems,
+  filterBookable,
+  filterByTypes,
+  type CartV2QueryResult,
+} from "./cart-helpers.js";
 
 interface PaymentCheckout {
   id: string;
   status: string;
-  checkoutUrl?: string;
-  createdAt: string;
+  checkoutUrl?: string | null;
+  hostedInvoiceUrl?: string | null;
   bookingRecords: Array<{
     id: string;
     type: string;
     status: string;
-    pnr?: string;
-    providerReference?: string;
-    amount: number; // stored in cents
+    pnr?: string | null;
+    providerReference?: string | null;
+    amount: number; // dollars (Float on schema; not cents)
   }>;
 }
 
 export function registerBookCommands(program: Command): void {
   program
     .command("book <planId>")
-    .description("Checkout and book a trip plan via Stripe")
-    .option("--json", "Output raw JSON")
+    .description("Checkout and book the bookable items in a trip plan via Stripe")
+    .option("--json", "Output structured JSON envelope")
     .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show what would be charged without creating checkout")
-    .option("--status", "Check payment and booking status")
-    .action(async (planId: string, opts) => {
+    .option("--validate", "Fail if any item in the cart is not bookable (BOOKING_BLOCKED)")
+    .option("--only-bookable", "Skip non-bookable items rather than failing")
+    .option("--types <list>", "Comma-separated CartItemType filter (Flight,Hotel,Activity,Restaurant,Other)")
+    .option("--idempotency-key <key>", "Idempotency key (currently surfaced on --json output; HTTP-header pass-through deferred to Phase 4)")
+    .option("--status", "Show payment + booking status for past checkouts on this plan")
+    .action(async (planId: string, opts: {
+      json?: boolean;
+      agent?: boolean;
+      dryRun?: boolean;
+      validate?: boolean;
+      onlyBookable?: boolean;
+      types?: string;
+      idempotencyKey?: string;
+      status?: boolean;
+    }) => {
+      const baseUrl = deriveBaseUrl(getApiUrl());
+      const planUrl = `${baseUrl}/plans/${planId}`;
+
+      // --status mode
+      if (opts.status) {
+        await showBookingStatus(planId, baseUrl, Boolean(opts.json), Boolean(opts.agent));
+        return;
+      }
+
+      // Load cart with bookability map
+      let data: CartV2QueryResult;
       try {
-        const baseUrl = deriveBaseUrl(getApiUrl());
+        data = await graphql<CartV2QueryResult>(GET_CART_V2, { id: planId });
+      } catch (err) {
+        if (err instanceof CliError) throw err;
+        const message = err instanceof Error ? err.message : String(err);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to load cart: ${message}`);
+      }
+      if (!data.tripPlan) {
+        throw new CliError(CliErrorCode.NOT_FOUND, `Trip plan ${planId} not found.`);
+      }
+      const plan = data.tripPlan;
+      const cart = plan.cart ?? { items: [], itemCount: 0, total: 0, currency: "USD" };
+      const bookability = buildBookabilityIndex(plan.goals ?? []);
+      const enriched = enrichCartItems(cart.items, bookability);
 
-        // --status mode
-        if (opts.status) {
-          await showBookingStatus(planId, baseUrl, opts.json, opts.agent);
-          return;
-        }
-
-        if (!opts.json && !opts.agent) process.stderr.write(chalk.dim("Loading cart...\n"));
-
-        const [cartData, planData] = await Promise.all([
-          graphql<{ getTripPlanCart: { items: CartItem[]; total: number; itemCount: number } }>(GET_CART, { tripPlanId: planId }),
-          graphql<{ tripPlan: { id: string; title: string; items: PlanItemForSubCheck[] } }>(GET_PLAN_DEEP, { id: planId }),
-        ]);
-
-        const cart = cartData.getTripPlanCart;
-        const plan = planData.tripPlan;
-
-        // Pre-flight: validate traveller data for flight bookings (skip in dry-run — show warnings instead)
-        const travellerErrors = validateTravellersForBooking(plan.items);
-        if (travellerErrors.length > 0 && !opts.dryRun) {
-          const errorLines = travellerErrors.map(e =>
-            `  ${e.travellerName}:\n${e.missingFields.map(f => `    ✗ ${FIELD_LABELS[f]}`).join("\n")}`
-          ).join("\n\n");
-
-          const fixLines = travellerErrors.map(e =>
-            `  voyagier travellers update ${e.travellerId} ${e.missingFields.map(f => FIELD_FLAGS[f]).join(" ")}`
-          ).join("\n");
-
-          throw new CliError(CliErrorCode.VALIDATION,
-            `Cannot checkout — travellers missing required flight booking data:\n\n${errorLines}\n\nFix:\n${fixLines}`
-          );
-        }
-
-        // Pre-flight: check for missing sub-selections (these make cart appear empty)
-        const pending = findPendingSubSelections(plan.items);
-        if (pending.length > 0) {
-          const pendingList = pending.map(p => `  • ${p.itemTitle} — pick ${subSelectionLabel(p.subSelectionType)}`).join("\n");
-          throw new CliError(CliErrorCode.VALIDATION, `Cannot checkout — items need sub-selection choices:\n\n${pendingList}\n\nRun: voyagier options ${planId}`);
-        }
-
-        // Pre-flight: cart not empty
-        if (cart.itemCount === 0) {
-          throw new CliError(CliErrorCode.VALIDATION, `Cart is empty. Nothing to book.\nSelect flights or hotels first: voyagier search flights --plan ${planId} ...`);
-        }
-
-        const subtotal = cart.total;
-
-        // --dry-run mode
-        if (opts.dryRun) {
-          // Include traveller warnings in dry-run
-          const dryRunTravellerErrors = validateTravellersForBooking(plan.items);
-
-          if (opts.json) {
-            process.stdout.write(JSON.stringify({
-              dryRun: true,
-              planId,
-              title: plan.title,
-              items: cart.items.map(i => ({ name: i.name, price: i.price, type: i.type })),
-              subtotal,
-              note: "Travel fee added at checkout",
-              message: "Would create Stripe Checkout Session",
-              ...(dryRunTravellerErrors.length > 0 && {
-                warnings: dryRunTravellerErrors.map(e => ({
-                  traveller: e.travellerName,
-                  missingFields: e.missingFields,
-                })),
-              }),
-            }, null, 2) + "\n");
-            return;
-          }
-
-          console.log(chalk.bold(`\n🧾  Dry Run — ${plan.title}\n`));
-          for (const item of cart.items) {
-            const icon = item.type === "FLIGHT" ? "✈️" : item.type === "HOTEL" ? "🏨" : "📦";
-            console.log(`  ${icon}  ${item.name}  ${chalk.green(formatPrice(item.price))}`);
-          }
-          console.log();
-          console.log(chalk.dim("  ─────────────────────────────────"));
-          console.log(`  Subtotal:      ${formatPrice(subtotal)}`);
-          console.log(`  Travel fee:    ${chalk.dim("added at checkout")}`);
-          console.log(hintDryRun());
-          console.log(chalk.dim("\n  [dry-run] Would create Stripe Checkout Session\n"));
-          return;
-        }
-
-        // Create checkout
-        process.stderr.write(chalk.dim("Creating checkout session...\n"));
-
-        const checkoutData = await graphql<{ createTripPlanCheckout: { url: string } }>(
-          CREATE_CHECKOUT,
-          {
-            input: {
-              tripPlanId: planId,
-              successUrl: `${baseUrl}/me/plans/${planId}?payment_status=success`,
-              cancelUrl: `${baseUrl}/me/plans/${planId}?payment_status=cancel`,
-            },
-          }
+      // Cart-empty short-circuit
+      if (enriched.length === 0) {
+        throw new CliError(
+          CliErrorCode.VALIDATION,
+          `Cart is empty. Nothing to book.\nSelect flights, hotels, or activities first: voyagier search ... --plan ${planId}`,
         );
+      }
 
-        const checkoutUrl = checkoutData.createTripPlanCheckout.url;
+      // Apply --types filter
+      const typeFilter = (opts.types ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      let workingSet = filterByTypes(enriched, typeFilter);
+      if (typeFilter.length > 0 && workingSet.length === 0) {
+        throw new CliError(
+          CliErrorCode.VALIDATION,
+          `No cart items match --types ${typeFilter.join(",")}.`,
+          { availableTypes: Array.from(new Set(enriched.map((i) => i.type))) },
+        );
+      }
 
+      // Bookability gating
+      const blockers = collectBlockers(workingSet);
+
+      if (opts.validate && blockers.length > 0) {
+        throw new CliError(
+          CliErrorCode.BOOKING_BLOCKED,
+          `Cannot book — ${blockers.length} item${blockers.length === 1 ? " is" : "s are"} not bookable. Re-run without --validate, or pass --only-bookable to skip them.`,
+          { blockers },
+        );
+      }
+
+      if (opts.onlyBookable) {
+        workingSet = filterBookable(workingSet);
+      }
+
+      const bookableInSet = workingSet.filter((i) => i.isBookable);
+      if (bookableInSet.length === 0) {
+        throw new CliError(
+          CliErrorCode.NOT_BOOKABLE,
+          "No bookable items in cart. Voyagier checkout requires at least one bookable line.",
+          { blockers },
+        );
+      }
+
+      const subtotal = workingSet.reduce((acc, i) => acc + i.price, 0);
+      const planContext = {
+        planId: plan.id,
+        title: plan.title,
+        url: planUrl,
+        urlForCli: `voyagier plans get ${plan.id}`,
+      };
+
+      // --dry-run
+      if (opts.dryRun) {
         if (opts.json) {
           process.stdout.write(JSON.stringify({
-            planId,
-            title: plan.title,
-            checkoutUrl,
-            subtotal,
-            note: "Final total (with travel fee) shown on Stripe checkout page",
-            url: `${baseUrl}/plans/${planId}`,
+            ok: true,
+            data: {
+              dryRun: true,
+              items: workingSet.map((i) => ({
+                name: i.name, type: i.type, price: i.price, isBookable: i.isBookable, source: i.source,
+              })),
+              subtotal,
+              currency: cart.currency,
+              blockers,
+              filters: { types: typeFilter, onlyBookable: Boolean(opts.onlyBookable) },
+              note: "Travel fee added at checkout",
+              message: "Would create Stripe Checkout Session",
+            },
+            planContext,
           }, null, 2) + "\n");
           return;
         }
-
         if (opts.agent) {
-          const planUrl = `${baseUrl}/plans/${planId}`;
-          const lines = [
-            "✅ **Checkout session created!**",
-            "",
-            `💳 **Pay here:** ${checkoutUrl}`,
-            "",
-            `**Subtotal:** ${formatPrice(subtotal)}`,
-            "_(Travel fee shown on checkout page)_",
-            "",
-            `👉 **Plan:** ${planUrl}`,
-            "",
-            `**After payment:** \`voyagier book ${planId} --status\``,
-          ];
+          const lines: string[] = [];
+          lines.push(`## 🧾 Dry Run — ${plan.title}`);
+          lines.push("");
+          for (const item of workingSet) {
+            const mark = item.isBookable ? "✓" : "·";
+            lines.push(`- ${mark} ${item.name} (${item.type}) — ${formatPrice(item.price)}`);
+          }
+          lines.push("");
+          lines.push(`**Subtotal:** ${formatPrice(subtotal)}`);
+          if (blockers.length > 0) {
+            lines.push("");
+            lines.push(`⚠️ ${blockers.length} blocker${blockers.length === 1 ? "" : "s"} — won't be charged:`);
+            for (const b of blockers) lines.push(`- ${b.itemName} — ${b.reason}`);
+          }
+          lines.push("");
+          lines.push("_(Travel fee added at checkout — Stripe shows final total.)_");
+          lines.push(`👉 **Plan:** ${planUrl}`);
           process.stdout.write(lines.join("\n") + "\n");
           return;
         }
-
-        console.log(chalk.green.bold("\n  ✓ Checkout session created!\n"));
-        console.log(`  Items:         ${cart.itemCount}`);
-        console.log(`  Subtotal:      ${chalk.bold(formatPrice(subtotal))}`);
-        console.log(`  Travel fee:    ${chalk.dim("included on checkout page")}`);
+        console.log(chalk.bold(`\n🧾  Dry Run — ${plan.title}\n`));
+        for (const item of workingSet) {
+          const mark = item.isBookable ? chalk.green("✓") : chalk.dim("·");
+          console.log(`  ${mark} ${item.name}  ${chalk.dim(`(${item.type})`)}  ${chalk.green(formatPrice(item.price))}`);
+        }
         console.log();
-        console.log(chalk.bold("  Opening Stripe checkout in your browser..."));
-        console.log(chalk.dim(`  ${checkoutUrl}\n`));
+        console.log(chalk.dim("  ─────────────────────────────────"));
+        console.log(`  Subtotal:      ${formatPrice(subtotal)}`);
+        console.log(`  Travel fee:    ${chalk.dim("added at checkout")}`);
+        if (blockers.length > 0) {
+          console.log("\n  " + chalk.yellow(`${blockers.length} non-bookable item${blockers.length === 1 ? "" : "s"} (won't be charged):`));
+          for (const b of blockers) console.log(chalk.yellow(`    • ${b.itemName} — ${b.reason}`));
+        }
+        console.log(hintDryRun());
+        console.log(chalk.dim("\n  [dry-run] Would create Stripe Checkout Session\n"));
+        return;
+      }
 
-        openBrowser(checkoutUrl);
+      // --- Create real checkout session ---
+      if (!opts.json && !opts.agent) {
+        process.stderr.write(chalk.dim("Creating checkout session...\n"));
+      }
 
-        console.log(hintCheckoutCreated());
-        console.log(chalk.dim(`\n  After payment, check status: voyagier book ${planId} --status`));
-        console.log(chalk.dim(`  Plan: ${baseUrl}/plans/${planId}\n`));
+      const input: Record<string, unknown> = {
+        tripPlanId: planId,
+        successUrl: `${baseUrl}/me/plans/${planId}?payment_status=success`,
+        cancelUrl: `${baseUrl}/me/plans/${planId}?payment_status=cancel`,
+      };
+      // CreateTripPlanCheckoutInput currently only accepts the three fields above
+      // (verified against live introspection 2026-05-03). The idempotency key is
+      // surfaced on JSON output for caller awareness; Phase 4 will pass it as an
+      // HTTP header once the API supports it. See command header for details on
+      // server-side filtering caveats with --types / --only-bookable.
 
+      let checkoutUrl: string;
+      try {
+        const checkoutData = await graphql<{ createTripPlanCheckout: { url: string } }>(
+          CREATE_CHECKOUT,
+          { input },
+        );
+        checkoutUrl = checkoutData.createTripPlanCheckout.url;
       } catch (err) {
         if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
         throw new CliError(CliErrorCode.API_ERROR, `Checkout failed: ${message}`);
       }
+
+      if (opts.json) {
+        process.stdout.write(JSON.stringify({
+          ok: true,
+          data: {
+            checkoutUrl,
+            subtotal,
+            currency: cart.currency,
+            itemCount: workingSet.length,
+            bookableCount: bookableInSet.length,
+            skippedBlockers: opts.onlyBookable ? blockers : [],
+            idempotencyKey: opts.idempotencyKey ?? null,
+            note: "Final total (with travel fee) shown on Stripe checkout page",
+          },
+          planContext,
+        }, null, 2) + "\n");
+        return;
+      }
+      if (opts.agent) {
+        const lines = [
+          "✅ **Checkout session created!**",
+          "",
+          `💳 **Pay here:** ${checkoutUrl}`,
+          "",
+          `**Subtotal:** ${formatPrice(subtotal)}`,
+          "_(Travel fee shown on checkout page)_",
+          "",
+          `👉 **Plan:** ${planUrl}`,
+          "",
+          `**After payment:** \`voyagier book ${planId} --status\``,
+        ];
+        process.stdout.write(lines.join("\n") + "\n");
+        return;
+      }
+
+      console.log(chalk.green.bold("\n  ✓ Checkout session created!\n"));
+      console.log(`  Items:         ${workingSet.length}`);
+      console.log(`  Subtotal:      ${chalk.bold(formatPrice(subtotal))}`);
+      console.log(`  Travel fee:    ${chalk.dim("included on checkout page")}`);
+      console.log();
+      console.log(chalk.bold("  Opening Stripe checkout in your browser..."));
+      console.log(chalk.dim(`  ${checkoutUrl}\n`));
+      openBrowser(checkoutUrl);
+      console.log(hintCheckoutCreated());
+      console.log(chalk.dim(`\n  After payment, check status: voyagier book ${planId} --status`));
+      console.log(chalk.dim(`  Plan: ${planUrl}\n`));
     });
 }
 
-async function showBookingStatus(planId: string, baseUrl: string, json: boolean, agent = false): Promise<void> {
-  const data = await graphql<{ tripPlanPaymentCheckouts: PaymentCheckout[] }>(
-    GET_PAYMENT_CHECKOUTS,
-    { tripPlanId: planId }
-  );
-
-  const checkouts = data.tripPlanPaymentCheckouts;
+async function showBookingStatus(planId: string, baseUrl: string, json: boolean, agent: boolean): Promise<void> {
+  let data: { tripPlanPaymentCheckouts: PaymentCheckout[] };
+  try {
+    data = await graphql<{ tripPlanPaymentCheckouts: PaymentCheckout[] }>(
+      GET_PAYMENT_CHECKOUTS,
+      { tripPlanId: planId },
+    );
+  } catch (err) {
+    if (err instanceof CliError) throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    throw new CliError(CliErrorCode.API_ERROR, `Failed to load booking status: ${message}`);
+  }
+  const checkouts = data.tripPlanPaymentCheckouts ?? [];
+  const planUrl = `${baseUrl}/plans/${planId}`;
 
   if (json) {
-    process.stdout.write(JSON.stringify({ planId, checkouts }, null, 2) + "\n");
+    process.stdout.write(JSON.stringify({
+      ok: true,
+      data: { checkouts },
+      planContext: { planId, url: planUrl, urlForCli: `voyagier plans get ${planId}` },
+    }, null, 2) + "\n");
     return;
   }
-
-  const planUrl = `${baseUrl}/plans/${planId}`;
 
   if (agent) {
     const lines: string[] = [];
@@ -276,13 +332,12 @@ async function showBookingStatus(planId: string, baseUrl: string, json: boolean,
       lines.push("_No payment history for this plan._");
     } else {
       for (const checkout of checkouts) {
-        const date = new Date(checkout.createdAt).toLocaleDateString();
-        lines.push(`**${checkout.status}** — ${date}`);
+        lines.push(`**${checkout.status}** — ${checkout.id.slice(0, 8)}`);
         for (const record of checkout.bookingRecords) {
-          const ref = record.pnr ? `PNR: ${record.pnr}` :
-                      record.providerReference ? `Ref: ${record.providerReference}` : "";
-          const amount = formatPrice(record.amount / 100);
-          lines.push(`- ${record.type.replace(/_/g, " ").toLowerCase()} — ${record.status.toLowerCase()}${ref ? ` — ${ref}` : ""} — ${amount}`);
+          const ref = record.pnr
+            ? `PNR: ${record.pnr}`
+            : record.providerReference ? `Ref: ${record.providerReference}` : "";
+          lines.push(`- ${record.type.replace(/_/g, " ").toLowerCase()} — ${record.status.toLowerCase()}${ref ? ` — ${ref}` : ""} — ${formatPrice(record.amount)}`);
         }
         lines.push("");
       }
@@ -296,38 +351,25 @@ async function showBookingStatus(planId: string, baseUrl: string, json: boolean,
     console.log(chalk.dim("\n  No payment history for this plan.\n"));
     return;
   }
-
   console.log(chalk.bold(`\n📑  Booking Status\n`));
-
   for (const checkout of checkouts) {
-    const date = new Date(checkout.createdAt).toLocaleDateString();
-    const statusColor = checkout.status === "PAID" ? chalk.green :
-                        checkout.status === "CANCELLED" ? chalk.red : chalk.yellow;
-
-    console.log(`  ${statusColor(checkout.status.padEnd(10))}  ${chalk.dim(date)}  ${chalk.dim(checkout.id.slice(0, 8))}`);
-
+    const statusColor = checkout.status === "PAID" ? chalk.green
+      : checkout.status === "CANCELLED" ? chalk.red
+      : chalk.yellow;
+    console.log(`  ${statusColor(checkout.status.padEnd(10))}  ${chalk.dim(checkout.id.slice(0, 8))}`);
     for (const record of checkout.bookingRecords) {
-      const recordStatus = record.status === "CONFIRMED" ? chalk.green("✓ confirmed") :
-                           record.status === "PENDING" ? chalk.yellow("⏳ pending") :
-                           chalk.red("✗ " + record.status.toLowerCase());
-      const ref = record.pnr ? chalk.white(`PNR: ${record.pnr}`) :
-                  record.providerReference ? chalk.white(`Ref: ${record.providerReference}`) : "";
-      // amount is stored in cents in BookingRecord
-      const amount = formatPrice(record.amount / 100);
-
-      console.log(`    ${record.type.replace(/_/g, " ").toLowerCase()}  ${recordStatus}  ${ref}  ${amount}`);
+      const recordStatus = record.status === "CONFIRMED" ? chalk.green("✓ confirmed")
+        : record.status === "PENDING" ? chalk.yellow("⏳ pending")
+        : chalk.red("✗ " + record.status.toLowerCase());
+      const ref = record.pnr ? chalk.white(`PNR: ${record.pnr}`)
+        : record.providerReference ? chalk.white(`Ref: ${record.providerReference}`) : "";
+      console.log(`    ${record.type.replace(/_/g, " ").toLowerCase()}  ${recordStatus}  ${ref}  ${formatPrice(record.amount)}`);
     }
     console.log();
   }
-
-  // Show contextual hints based on status
-  const hasConfirmed = checkouts.some(co => co.bookingRecords.some(r => r.status === "CONFIRMED"));
-  const hasPending = checkouts.some(co => co.bookingRecords.some(r => r.status === "PENDING"));
-  if (hasConfirmed) {
-    console.log(hintBookingConfirmed());
-  } else if (hasPending) {
-    console.log(hintBookingPending());
-  }
-
+  const hasConfirmed = checkouts.some((co) => co.bookingRecords.some((r) => r.status === "CONFIRMED"));
+  const hasPending = checkouts.some((co) => co.bookingRecords.some((r) => r.status === "PENDING"));
+  if (hasConfirmed) console.log(hintBookingConfirmed());
+  else if (hasPending) console.log(hintBookingPending());
   console.log(chalk.dim(`\n  Plan: ${planUrl}\n`));
 }
