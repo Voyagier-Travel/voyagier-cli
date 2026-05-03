@@ -12,8 +12,9 @@
  * Filtering:
  *   - `--day <n>` is 1-indexed, relative to plan.startDate
  *   - `--from`/`--to` use ISO date strings (YYYY-MM-DD)
- *   - `--type` filters via `event.metadata.type` if present (best-effort; metadata blob
- *     is not strictly typed in the schema yet — flagged as P3 question for Mark sync)
+ *   - `--type` filters via `event.metadata.{type,eventType,selectionType,kind}` if present
+ *     (best-effort; metadata blob is not strictly typed in the schema yet — flagged as
+ *     P3 question for Mark sync)
  *
  * All filtering happens client-side because the schema doesn't expose typed filter args
  * on `tripPlanEvents` yet. If/when it does, we'll switch to server-side filtering.
@@ -24,7 +25,8 @@ import { graphql } from "../api.js";
 import { jsonOutput, fatal } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { GET_TRIP_PLAN_EVENTS } from "../queries.js";
-import { validateDate } from "../utils.js";
+import { validateDate, deriveBaseUrl } from "../utils.js";
+import { getApiUrl } from "../config.js";
 
 export interface TripPlanEventLocation {
   name?: string | null;
@@ -136,14 +138,26 @@ export function filterEvents(
 
   // Sort by datetime ascending (the resolver should already do this, but guarantee it)
   return [...out].sort((a, b) => {
-    if (!a.datetime) return 1;
-    if (!b.datetime) return -1;
-    return new Date(a.datetime).getTime() - new Date(b.datetime).getTime();
+    const at = parseTimestamp(a.datetime);
+    const bt = parseTimestamp(b.datetime);
+    if (at === null && bt === null) {
+      // Both missing/unparseable → tiebreak by name to keep ordering stable
+      return (a.name ?? "").localeCompare(b.name ?? "");
+    }
+    if (at === null) return 1;   // missing dates sort to the end
+    if (bt === null) return -1;
+    return at - bt;
   });
 }
 
+function parseTimestamp(value?: string | null): number | null {
+  if (!value) return null;
+  const ts = new Date(value).getTime();
+  return Number.isFinite(ts) ? ts : null;
+}
+
 function planUrl(planId: string): string {
-  return `https://app.voyagier.com/plans/${planId}`;
+  return `${deriveBaseUrl(getApiUrl())}/plans/${planId}`;
 }
 
 function formatEventLine(e: TripPlanEvent, planStart: string | null | undefined): string {
@@ -165,7 +179,7 @@ export function registerItineraryCommand(program: Command): void {
     .option("--day <n>", "Filter to a specific day (1-indexed, relative to plan start)")
     .option("--from <date>", "Filter events on or after this date (YYYY-MM-DD)")
     .option("--to <date>", "Filter events on or before this date (YYYY-MM-DD)")
-    .option("--type <type>", "Filter by event type (best-effort; reads event.metadata.type)")
+    .option("--type <type>", "Filter by event type (best-effort; reads event.metadata.{type,eventType,selectionType,kind})")
     .option("--json", "Output raw JSON")
     .action(async (planId: string, opts) => {
       // Validate flags

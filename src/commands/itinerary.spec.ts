@@ -31,6 +31,14 @@ jest.unstable_mockModule("../utils.js", () => ({
       );
     }
   }),
+  deriveBaseUrl: (api: string) => {
+    try { const u = new URL(api); u.pathname = ""; return u.origin; } catch { return "https://travel.voyagier.com"; }
+  },
+}));
+
+jest.unstable_mockModule("../config.js", () => ({
+  getApiUrl: jest.fn().mockReturnValue("https://dev.voyagier.com/api"),
+  CONFIG_DIR: "/tmp/test-config",
 }));
 
 // ── Dynamic imports ────────────────────────────────────────────────────────
@@ -234,6 +242,32 @@ describe("filterEvents", () => {
   it("combines --from and --to as a range", () => {
     const out = filterEvents(allEvents, planStart, { from: "2026-09-16", to: "2026-09-18" });
     expect(out).toHaveLength(2);
+  });
+
+  it("sorts events with missing datetimes deterministically (by name as tiebreaker)", () => {
+    const evtA = { ...event1, name: "Zeta", datetime: null as unknown as string };
+    const evtB = { ...event1, name: "Alpha", datetime: null as unknown as string };
+    const evtC = { ...event1, name: "Beta", datetime: null as unknown as string };
+    const out = filterEvents([evtA, evtB, evtC], planStart, {});
+    // All-missing → alphabetical tiebreak
+    expect((out[0] as typeof evtA).name).toBe("Alpha");
+    expect((out[1] as typeof evtA).name).toBe("Beta");
+    expect((out[2] as typeof evtA).name).toBe("Zeta");
+  });
+
+  it("sorts events with mixed missing+present datetimes (missing go to the end)", () => {
+    const evtMissing = { ...event4UnknownType, name: "Floating", datetime: null as unknown as string };
+    const out = filterEvents([evtMissing, event1, event2], planStart, {});
+    expect((out[0] as typeof event1).name).toBe(event1.name);
+    expect((out[1] as typeof event2).name).toBe(event2.name);
+    expect((out[2] as typeof evtMissing).name).toBe("Floating");
+  });
+
+  it("treats unparseable datetime strings as missing (no NaN bubble-up)", () => {
+    const evtBad = { ...event1, name: "Garbled", datetime: "not-a-date" };
+    const out = filterEvents([evtBad, event1], planStart, {});
+    expect((out[0] as typeof event1).name).toBe(event1.name);
+    expect((out[1] as typeof evtBad).name).toBe("Garbled");
   });
 });
 
