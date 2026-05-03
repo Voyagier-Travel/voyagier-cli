@@ -219,6 +219,102 @@ export function deriveBaseUrl(apiUrl: string): string {
   }
 }
 
+// ----- Strict numeric validators for CLI flags (Group A fixes) -----
+
+/**
+ * Parse a positive integer from a CLI flag. Rejects non-numeric, negative, zero (unless allowZero), NaN.
+ * Returns undefined if value is undefined (flag not provided).
+ * @throws CliError with VALIDATION code if value is invalid.
+ */
+export function parsePositiveInt(
+  value: string | undefined,
+  flagName: string,
+  opts?: { allowZero?: boolean; max?: number; default?: number }
+): number | undefined {
+  if (value === undefined) {
+    // Validate the default against our own contract so callers can't
+    // sneak in invalid defaults (e.g. default: 0 with allowZero: false).
+    if (opts?.default !== undefined) {
+      const def = opts.default;
+      if (!Number.isInteger(def) || def < 0 || (def === 0 && !opts.allowZero) || (opts.max !== undefined && def > opts.max)) {
+        throw new Error(
+          `parsePositiveInt: invalid default ${def} for ${flagName} (allowZero=${!!opts.allowZero}, max=${opts.max})`
+        );
+      }
+    }
+    return opts?.default;
+  }
+  const parsed = parseInt(value, 10);
+  if (isNaN(parsed) || !/^-?\d+$/.test(value)) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Invalid ${flagName}: "${value}". Expected a positive integer.\n  Fix: ${flagName} 10`
+    );
+  }
+  if (parsed < 0 || (parsed === 0 && !opts?.allowZero)) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Invalid ${flagName}: "${value}". Must be ${opts?.allowZero ? "non-negative" : "positive"}.\n  Fix: ${flagName} 10`
+    );
+  }
+  if (opts?.max !== undefined && parsed > opts.max) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Invalid ${flagName}: "${value}". Maximum value is ${opts.max}.\n  Fix: ${flagName} ${opts.max}`
+    );
+  }
+  return parsed;
+}
+
+/**
+ * Parse a non-negative integer from a CLI flag (allows 0).
+ * @throws CliError with VALIDATION code if value is invalid.
+ */
+export function parseNonNegativeInt(
+  value: string | undefined,
+  flagName: string
+): number | undefined {
+  return parsePositiveInt(value, flagName, { allowZero: true });
+}
+
+/**
+ * Parse a float from a CLI flag. Rejects non-numeric, NaN.
+ * @throws CliError with VALIDATION code if value is invalid.
+ */
+export function parseFloatStrict(
+  value: string | undefined,
+  flagName: string,
+  opts?: { min?: number; max?: number; nonNegative?: boolean }
+): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = parseFloat(value);
+  if (isNaN(parsed) || !/^-?\d+(\.\d+)?$/.test(value)) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Invalid ${flagName}: "${value}". Expected a number.\n  Fix: ${flagName} 48.8584`
+    );
+  }
+  if (opts?.nonNegative && parsed < 0) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Invalid ${flagName}: "${value}". Must be non-negative.\n  Fix: ${flagName} 0`
+    );
+  }
+  if (opts?.min !== undefined && parsed < opts.min) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Invalid ${flagName}: "${value}". Must be >= ${opts.min}.\n  Fix: ${flagName} ${opts.min}`
+    );
+  }
+  if (opts?.max !== undefined && parsed > opts.max) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Invalid ${flagName}: "${value}". Must be <= ${opts.max}.\n  Fix: ${flagName} ${opts.max}`
+    );
+  }
+  return parsed;
+}
+
 /**
  * Format an ISO date string (or YYYY-MM-DD) for human display.
  * e.g. "2026-06-15T00:00:00.000Z" → "Jun 15, 2026"
@@ -244,4 +340,35 @@ export function formatDateRange(start?: string, end?: string): string {
   if (sy === ey && sm === em) return `${months[sm - 1]} ${sd}-${ed}, ${sy}`;
   if (sy === ey) return `${months[sm - 1]} ${sd} – ${months[em - 1]} ${ed}, ${sy}`;
   return `${months[sm - 1]} ${sd}, ${sy} – ${months[em - 1]} ${ed}, ${ey}`;
+}
+
+/**
+ * Render a tri-state boolean (true / false / unknown) for human-facing output.
+ * Used for nullable schema fields where null carries semantic meaning distinct
+ * from false (e.g. BlueprintListing.isAvailable, TripPlanSelectOption.isBookable).
+ *
+ * @example
+ *   formatNullableBool(true)  // "Yes"
+ *   formatNullableBool(false) // "No"
+ *   formatNullableBool(null)  // "Unknown"
+ *   formatNullableBool(undefined) // "Unknown"
+ */
+export function formatNullableBool(value: boolean | null | undefined): "Yes" | "No" | "Unknown" {
+  if (value === true) return "Yes";
+  if (value === false) return "No";
+  return "Unknown";
+}
+
+/**
+ * Escape a string for safe inclusion in a Markdown table cell.
+ * Handles the characters that would break table structure or trigger
+ * unintended formatting: pipes, backticks, and newlines.
+ */
+export function escapeMdTableCell(value: string | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  return String(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/`/g, "\\`")
+    .replace(/\r?\n/g, " ");
 }
