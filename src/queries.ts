@@ -516,3 +516,36 @@ export const DOCTOR_PING = `
     __schema { queryType { name } }
   }
 `;
+
+// --- Itinerary (v2.0.0 — computed from selections via tripPlanEvents resolver) ---
+//
+// Per Phase 0 audit: `tripPlanEvents` is FROZEN. Fields exposed at top level:
+//   name, datetime, localTime, duration, description, location { name, address, placeId, metadata }, metadata
+//
+// Note: `eventType` and `selectionId` are NOT direct fields. They may live in `metadata: JSON`.
+// (Open question logged for Mark sync as P3.)
+
+export const GET_TRIP_PLAN_EVENTS = `
+  query TripPlanEvents($id: String!) {
+    tripPlan(id: $id) {
+      id
+      title
+      startDate
+      endDate
+      tripPlanEvents {
+        name
+        datetime
+        localTime
+        duration
+        description
+        metadata
+        location {
+          name
+          address
+          placeId
+          metadata
+        }
+      }
+    }
+  }
+`;
