@@ -63,6 +63,12 @@ export async function graphql<T = unknown>(
     if (res.status === 401) {
       throw new CliError(CliErrorCode.AUTH_FAILED, authFailedMessage("Authentication failed. Your token may be invalid or expired."));
     }
+    if (res.status === 403) {
+      throw new CliError(
+        CliErrorCode.PERMISSION_DENIED,
+        "Permission denied: your token does not have access to this resource.\n  Fix: confirm the token belongs to the right account, or ask a workspace admin for access.",
+      );
+    }
     // Try to extract GraphQL error details from the response body
     let detail = "";
     try {
@@ -86,10 +92,21 @@ export async function graphql<T = unknown>(
     if (code === "UNAUTHENTICATED" || err.message === "Unauthorized") {
       throw new CliError(CliErrorCode.AUTH_FAILED, authFailedMessage("Authentication failed. Your token may be invalid or expired."));
     }
-    const hint = err.message.includes("Cannot query field")
-      ? "\nHint: Your CLI may be out of date. Check: voyagier --version"
-      : "";
-    throw new CliError(CliErrorCode.API_ERROR, `GraphQL error: ${err.message}${hint}`);
+    if (code === "FORBIDDEN") {
+      throw new CliError(
+        CliErrorCode.PERMISSION_DENIED,
+        `Permission denied: ${err.message}`,
+      );
+    }
+    // Schema-drift signals from the GraphQL validator. CLI is out of sync with the server schema.
+    const drifty = /Cannot query field|Unknown argument|Unknown type|Unknown field/.test(err.message);
+    if (drifty) {
+      throw new CliError(
+        CliErrorCode.SCHEMA_DRIFT,
+        `Schema drift detected: ${err.message}\n  Hint: your CLI may be out of date. Run: voyagier doctor (and check: voyagier --version)`,
+      );
+    }
+    throw new CliError(CliErrorCode.API_ERROR, `GraphQL error: ${err.message}`);
   }
   if (!json.data) {
     throw new CliError(CliErrorCode.API_ERROR, "No data returned from API");
