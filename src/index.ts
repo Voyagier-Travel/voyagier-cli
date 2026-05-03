@@ -18,6 +18,8 @@ import { registerAgentDocsCommand } from "./commands/agent-docs.js";
 import { registerClientsCommands } from "./commands/clients.js";
 import { registerDoctorCommand } from "./commands/doctor.js";
 import { registerItineraryCommand } from "./commands/itinerary.js";
+import { registerListingsCommands } from "./commands/listings.js";
+import { registerPlacesCommands } from "./commands/places.js";
 import { trackCommand, getTraceId, isTelemetryEnabled } from "./telemetry.js";
 import { credentialsExist } from "./config.js";
 import { CliError } from "./errors.js";
@@ -58,6 +60,8 @@ registerAgentDocsCommand(program);
 registerClientsCommands(program);
 registerDoctorCommand(program, pkg.version);
 registerItineraryCommand(program);
+registerListingsCommands(program);
+registerPlacesCommands(program);
 
 // Instrument all commands with telemetry
 function instrumentCommands(cmd: Command): void {
