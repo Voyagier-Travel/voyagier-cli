@@ -79,7 +79,7 @@ Always run `voyagier book --validate <planId>` for pre-flight checks. To control
 | `voyagier auth` | Manage PAT / API URL |
 | `voyagier agent-docs` | Print full AI agent integration reference |
 
-Every command supports `--json` for structured output. Use `--plan <id>` on `select` and `pick` to prevent cross-plan state corruption when running parallel workflows.
+Most data-bearing commands accept `--json` for structured output (notable exceptions: `chat`, `telemetry`, several `auth` subcommands). Use `--plan <id>` on `select` and `pick` to prevent cross-plan state corruption when running parallel workflows.
 
 ## For AI Agents
 
@@ -94,7 +94,7 @@ Or read [AGENT.md](./AGENT.md) directly. It covers per-command JSON shapes (the 
 | Variable | Description |
 |----------|-------------|
 | `VOYAGIER_TOKEN` | Personal access token (overrides config) |
-| `VOYAGIER_API_URL` | API base URL (default: `https://travel.voyagier.com`) |
+| `VOYAGIER_API_URL` | API base URL (default: `https://travel.voyagier.com/api`; the CLI appends `/graphql`) |
 
 ## How It Works
 

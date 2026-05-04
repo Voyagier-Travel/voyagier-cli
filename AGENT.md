@@ -30,7 +30,7 @@ For the full breaking-changes table see [`CHANGELOG.md`](./CHANGELOG.md).
 
 ## Quick Start
 
-The fastest grounded loop for an agent against the current alpha:
+The fastest grounded loop for an agent against the current alpha. (`--json` is a per-command flag — supported on every command shown below; not on `chat`, `telemetry`, or `auth login` / `setup`.)
 
 ```bash
 # 0) Health check
@@ -75,15 +75,15 @@ voyagier book <PLAN_ID> --json
 
 ### Output modes
 
-- `--json` — agent-targeted, machine-readable. Default for non-TTY.
-- `--agent` — markdown rendered for AI → human display.
+- `--json` — agent-targeted, machine-readable. **Per-command flag**, not a global default. Most data-bearing commands (`plans`, `clients`, `cart`, `book`, `itinerary`, `listings`, `places`, `bookings`, `whoami`, `doctor`, `search`, `select`, `pick`, `travellers`, ...) accept it. Some commands do not: `chat`, `telemetry`, and most `auth` subcommands have no JSON shape and will reject `--json` with an unknown-option error. When in doubt, run `voyagier <command> --help`.
+- `--agent` — markdown rendered for AI → human display. Same per-command rule applies.
 - (default) — chalk-colored TTY for humans.
 
 ### Success-payload shape: command-specific (NOT yet uniform)
 
 The v2 alpha has two payload styles. Pick the right shape for the command you're calling:
 
-**Style A — wrapped envelope** (cart, book, bookable, itinerary, listings, places — i.e. the Section 3 / 7 surfaces):
+**Style A — wrapped envelope** (doctor, cart, book, bookable, itinerary, listings, places — i.e. the Section 3 / 7 / 9 surfaces):
 
 ```json
 {
@@ -97,7 +97,7 @@ The v2 alpha has two payload styles. Pick the right shape for the command you're
 }
 ```
 
-**Style B — flat / domain-specific** (clients, plans, travellers, search, select, pick, doctor, whoami — the older / Section 1 surfaces):
+**Style B — flat / domain-specific** (clients, plans, travellers, search, select, pick, whoami — the older / Section 1 surfaces):
 
 ```json
 // clients list:    { "clients": [...], "total": 12 }
@@ -180,11 +180,13 @@ Env vars: `VOYAGIER_TOKEN`, `VOYAGIER_API_URL`. Tokens never expire automaticall
 
 Top-level shortcut: `voyagier login` is rewritten to `voyagier auth login`.
 
-### Doctor
+### Doctor (Style A JSON)
 ```bash
 voyagier doctor --json
+# Returns: { ok: boolean, data: { checks: [...], overall: "PASS" | "WARN" | "FAIL" } }
+# `ok` is true unless `overall === "FAIL"`. Process exits 1 on FAIL.
 ```
-Returns a `{ checks: [...], summary }` rollup with PASS / WARN / FAIL per check (auth, schema reachability, state-file health, version). Run this first whenever you encounter an unfamiliar error.
+Each `checks[]` entry is `{ name, status: "PASS" | "WARN" | "FAIL", message, details? }`. The covered checks today are auth, schema reachability, state-file health, and version. Run this first whenever you encounter an unfamiliar error.
 
 ### Clients (advisor CRM, Style B JSON)
 ```bash
@@ -242,17 +244,20 @@ Sourced from the `tripPlanEvents` resolver. Output:
         "datetime": "2026-09-15T18:30:00Z",
         "localTime": "2026-09-15T14:30:00-04:00",
         "duration": "PT7H30M",
-        "location": { "name": "...", "lat": ..., "lng": ... },
+        "description": "...",
+        "location": { "name": "...", "address": "...", "placeId": "...", "metadata": { /* opaque */ } },
         "metadata": { "type": "FLIGHT" }
       }
     ],
     "total": 12,
     "totalUnfiltered": 12,
-    "dayRange": { "first": "2026-09-15", "last": "2026-09-22" }
+    "dayRange": { "first": 1, "last": 8 }
   },
   "planContext": { "planId": "...", "title": "...", "url": "..." }
 }
 ```
+
+`location` shape comes from the schema's `TripPlanEventLocation` (`name`, `address`, `placeId`, `metadata: JSON`); coordinates, when present, live inside `metadata`. `dayRange` is numeric — day indexes computed relative to `plan.startDate` (Day 1 = the plan's start date).
 
 `--type` filtering is best-effort against `metadata.{type|eventType|selectionType|kind}`. Top-level typed fields aren't in the schema today.
 
@@ -296,11 +301,10 @@ voyagier book <planId> --status --json                   # post-payment confirma
 
 > ⚠️ **`--types` and `--only-bookable` are client-side preflight gates today.** They affect what `--validate` considers blocking, but the actual `createTripPlanCheckout` mutation still targets the full cart. To control what's charged, **build a clean cart first** (don't add display-only items, or remove them) and then call `book`.
 
-`--validate` returns blockers without attempting checkout. Sample shape:
+`--validate` returns blockers without attempting checkout. Sample shape (matches the standard error envelope above — there is no top-level `ok`, `data`, or `planContext` on `CliError` output):
 
 ```json
 {
-  "ok": false,
   "error": true,
   "code": "BOOKING_BLOCKED",
   "message": "...",
@@ -311,6 +315,8 @@ voyagier book <planId> --status --json                   # post-payment confirma
   }
 }
 ```
+
+Individual `blockers[]` entries carry their own `fix` strings; the top-level error envelope does not.
 
 ### Listings (Style A JSON — Blueprint advisor inventory)
 ```bash
@@ -412,7 +418,7 @@ Manual lookup: `voyagier search airports "tokyo" --json`.
 
 ```bash
 export VOYAGIER_TOKEN=voy_pat_xxxxx
-export VOYAGIER_API_URL=https://travel.voyagier.com   # optional
+export VOYAGIER_API_URL=https://travel.voyagier.com/api   # optional; CLI appends /graphql
 ```
 
 PATs are created at voyagier.com → Settings → Personal Access Tokens.

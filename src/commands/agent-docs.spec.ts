@@ -53,7 +53,7 @@ describe("agent-docs", () => {
     it("should document the actual two JSON-payload styles (alpha is not uniform)", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
-        // Style A — wrapped envelope used by Section 3 / 7 surfaces.
+        // Style A — wrapped envelope used by Section 3 / 7 / 9 surfaces.
         expect(content).toContain('"ok": true');
         expect(content).toContain("planContext");
         // Style B — domain-specific shapes the older surfaces emit.
@@ -66,6 +66,24 @@ describe("agent-docs", () => {
       }
     });
 
+    it("should classify `voyagier doctor` as Style A (wrapped envelope)", () => {
+      // Regression: an earlier draft put `doctor` under Style B. The runtime
+      // (src/commands/doctor.ts) emits { ok, data: { checks, overall } }, so
+      // it belongs in the Style A list and the doctor section must show the
+      // wrapped shape with `data.checks` and `data.overall`.
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        // Doctor must be named in the Style A surface roster.
+        const styleAHeader = content.match(/Style A.*?\n/);
+        expect(styleAHeader?.[0]?.toLowerCase()).toContain("doctor");
+        // Doctor section heading carries the Style A label.
+        expect(content).toMatch(/###\s+Doctor.*Style A/);
+        // The actual key is `overall`, not `summary`.
+        expect(content).toContain("overall");
+        expect(content).toMatch(/data:\s*{\s*checks/);
+      }
+    });
+
     it("should document the actual error envelope shape (no `fix` field today)", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
@@ -73,6 +91,18 @@ describe("agent-docs", () => {
         expect(content).toContain('"error": true');
         expect(content).toContain('"code"');
         expect(content).toContain('"message"');
+      }
+    });
+
+    it("should not show top-level `ok: false` in error examples", () => {
+      // Regression: the BOOKING_BLOCKED sample used to include `"ok": false`,
+      // which the runtime never emits. The top-level error handler
+      // (src/index.ts) writes only { error, code, message, details? } for
+      // CliError. Strict JSON consumers checking `payload.ok === false` would
+      // have parsed real errors as success.
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        expect(content).not.toContain('"ok": false');
       }
     });
 
