@@ -589,6 +589,18 @@ describe("resolveGroupId", () => {
       code: CliErrorCode.NOT_FOUND,
     });
   });
+
+  it("throws PLAN_NOT_FOUND when tripPlan is null (invalid planId)", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellerGroups: [],
+      tripPlan: null,
+    });
+
+    await expect(resolveGroupId("bad_plan_id", "Adults")).rejects.toMatchObject({
+      code: CliErrorCode.PLAN_NOT_FOUND,
+      message: expect.stringContaining("Trip plan"),
+    });
+  });
 });
 
 describe("parseMemberIds", () => {

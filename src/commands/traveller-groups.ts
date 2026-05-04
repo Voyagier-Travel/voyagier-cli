@@ -111,6 +111,13 @@ export async function resolveGroupId(planId: string, nameOrId: string): Promise<
     tripPlan: TravellerGroupPlanContext | null;
   }>(LIST_TRIP_PLAN_TRAVELLER_GROUPS, { tripPlanId: planId });
 
+  if (!data.tripPlan) {
+    throw new CliError(
+      CliErrorCode.PLAN_NOT_FOUND,
+      `Trip plan "${planId}" not found.\n  Fix: voyagier plans list --json`,
+    );
+  }
+
   const groups = data.tripPlanTravellerGroups ?? [];
   const lower = nameOrId.toLowerCase();
   const match = groups.find(
