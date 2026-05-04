@@ -25,6 +25,9 @@ export enum CliErrorCode {
   LISTING_NOT_FOUND = "LISTING_NOT_FOUND",
   PLACE_NOT_FOUND = "PLACE_NOT_FOUND",
   NO_MONITOR = "NO_MONITOR",
+
+  // v2.0.0 — Section 4 (goals)
+  GOAL_NOT_FOUND = "GOAL_NOT_FOUND",
   // PLAN_REQUIRED and PLACE_ID_REQUIRED were declared in an earlier draft
   // but never thrown — Commander's required-flag validation handles missing
   // --plan / --place-id at the parser layer, so the codes are unused.
