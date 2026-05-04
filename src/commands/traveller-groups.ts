@@ -350,18 +350,30 @@ export function registerTravellerGroupsCommands(program: Command): void {
       }
       const travellerIds = parseMemberIds(opts.travellers, "--travellers");
 
+      // Fetch pre-mutation membership so we can compute the real delta.
+      // The server silently deduplicates existing members, so the only way to
+      // know which IDs were actually added is to diff request vs. pre-state.
+      const preFetch = await graphql<{ tripPlanTravellerGroup: TripPlanTravellerGroup | null }>(
+        GET_TRIP_PLAN_TRAVELLER_GROUP,
+        { id: groupId },
+      );
+      const preMemberIds = new Set(
+        (preFetch.tripPlanTravellerGroup?.travellers ?? []).map((t) => t.id),
+      );
+
       const data = await graphql<{ addTravellersToGroup: TripPlanTravellerGroup }>(
         ADD_TRAVELLERS_TO_GROUP,
         { groupId, travellerIds },
       );
       const g = data.addTravellersToGroup;
+      const addedTravellerIds = travellerIds.filter((id) => !preMemberIds.has(id));
 
       if (opts.json) {
         jsonOutput({
           ok: true,
           data: {
             group: formatGroup(g),
-            addedTravellerIds: travellerIds,
+            addedTravellerIds,
             idempotencyKey: opts.idempotencyKey ?? null,
           },
           planContext: buildGroupPlanContext(g.tripPlan),
@@ -369,7 +381,7 @@ export function registerTravellerGroupsCommands(program: Command): void {
         return;
       }
 
-      console.log(chalk.green(`✓ Added ${travellerIds.length} traveller(s) to group: ${g.name}`));
+      console.log(chalk.green(`✓ Added ${addedTravellerIds.length} traveller(s) to group: ${g.name}`));
       console.log(chalk.dim(`  Group ID: ${g.id}   Members now: ${g.travellers.length}`));
     });
 

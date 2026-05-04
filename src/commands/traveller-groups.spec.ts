@@ -368,7 +368,9 @@ describe("traveller-groups delete", () => {
 });
 
 describe("traveller-groups add-members", () => {
-  it("adds members and returns updated group", async () => {
+  it("all-new members: addedTravellerIds equals full request list", async () => {
+    // Pre-fetch: group has no members yet
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: { ...groupKids, travellers: [] } });
     const updated = { ...groupKids, travellers: [t1] };
     mockGraphql.mockResolvedValueOnce({ addTravellersToGroup: updated });
 
@@ -378,12 +380,41 @@ describe("traveller-groups add-members", () => {
       "--travellers", "t1", "--json",
     ]);
 
-    expect(mockGraphql).toHaveBeenCalledWith(
-      expect.any(String),
-      { groupId: "grp_02", travellerIds: ["t1"] },
-    );
+    expect(mockGraphql).toHaveBeenNthCalledWith(2, expect.any(String), { groupId: "grp_02", travellerIds: ["t1"] });
     const out = lastJson() as { data: { addedTravellerIds: string[] } };
     expect(out.data.addedTravellerIds).toEqual(["t1"]);
+  });
+
+  it("all-existing members: addedTravellerIds is empty (no new members added)", async () => {
+    // Pre-fetch: group already has t1
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: { ...groupAdults, travellers: [t1] } });
+    // Server deduplicates — group unchanged
+    mockGraphql.mockResolvedValueOnce({ addTravellersToGroup: { ...groupAdults, travellers: [t1] } });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "add-members", "grp_01",
+      "--travellers", "t1", "--json",
+    ]);
+
+    const out = lastJson() as { data: { addedTravellerIds: string[] } };
+    expect(out.data.addedTravellerIds).toEqual([]);
+  });
+
+  it("mix of new + existing: addedTravellerIds contains only the new ones", async () => {
+    // Pre-fetch: group already has t1
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: { ...groupAdults, travellers: [t1] } });
+    // After mutation: t1 + t2
+    mockGraphql.mockResolvedValueOnce({ addTravellersToGroup: { ...groupAdults, travellers: [t1, t2] } });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "add-members", "grp_01",
+      "--travellers", "t1,t2", "--json",
+    ]);
+
+    const out = lastJson() as { data: { addedTravellerIds: string[] } };
+    expect(out.data.addedTravellerIds).toEqual(["t2"]);
   });
 
   it("throws MEMBERS_REQUIRED when --travellers is missing", async () => {
@@ -394,6 +425,8 @@ describe("traveller-groups add-members", () => {
   });
 
   it("echoes --idempotency-key in JSON output", async () => {
+    // Pre-fetch: group already has t1 (so t1 is not reported as newly added)
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: groupAdults });
     mockGraphql.mockResolvedValueOnce({ addTravellersToGroup: groupAdults });
 
     const p = buildProgram();
@@ -715,7 +748,9 @@ describe("traveller-groups delete — human output", () => {
 });
 
 describe("traveller-groups add-members — human output", () => {
-  it("success: prints added count, group name, group ID, and updated member total", async () => {
+  it("success: prints actually-added count (not request count), group name, group ID, member total", async () => {
+    // Pre-fetch: group has no members
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: { ...groupKids, travellers: [] } });
     const updated = { ...groupKids, travellers: [t1] };
     mockGraphql.mockResolvedValueOnce({ addTravellersToGroup: updated });
 
@@ -728,6 +763,23 @@ describe("traveller-groups add-members — human output", () => {
     const output = writes.join("");
     expect(output).toContain("Added 1 traveller(s) to group: Kids");
     expect(output).toContain("Group ID: grp_02");
+    expect(output).toContain("Members now: 1");
+  });
+
+  it("existing member re-added: reports 0 added (not 1)", async () => {
+    // Pre-fetch: group already has t1
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: { ...groupKids, travellers: [t1] } });
+    // Server deduplicates — group unchanged
+    mockGraphql.mockResolvedValueOnce({ addTravellersToGroup: { ...groupKids, travellers: [t1] } });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "add-members", "grp_02",
+      "--travellers", "t1",
+    ]);
+
+    const output = writes.join("");
+    expect(output).toContain("Added 0 traveller(s) to group: Kids");
     expect(output).toContain("Members now: 1");
   });
 });
