@@ -7,8 +7,13 @@
  * Surface:
  *   voyagier clients list [--status active|archived] [--type individual|company|group] [--json]
  *   voyagier clients get <id> [--json]
- *   voyagier clients create --name <n> --type <t> [--email] [--phone] [--description] [--avatar] [--json]
- *   voyagier clients update <id> [--name] [--type] [--email] [--phone] [--description] [--avatar] [--status] [--json]
+ *   voyagier clients create --name <n> --type <t> [--email] [--phone] [--description] [--json]
+ *   voyagier clients update <id> [--name] [--type] [--email] [--phone] [--description] [--status] [--json]
+ *
+ * Note (v2.1.0): `--avatar` is deprecated on create/update/upsert and `--description`
+ * is deprecated on upsert. Both still accepted with a stderr warning; will be removed
+ * in v2.2.0. See AGENT-SURFACE-AUDIT.md for the rationale (no upstream agent context
+ * to anchor avatar URLs; free-text on idempotent upsert breaks the idempotency contract).
  *   voyagier clients archive <id> [--json]
  *   voyagier clients upsert --email <e> --name <n> --type <t> [opts] [--json]
  */
@@ -203,8 +208,12 @@ export function registerClientsCommands(program: Command): void {
     .requiredOption("--type <type>", "Client type (individual|company|group)")
     .option("--email <email>", "Email address")
     .option("--phone <phone>", "Phone number")
-    .option("--description <text>", "Notes/description")
-    .option("--avatar <url>", "Avatar URL")
+    .option(
+      "--description <text>",
+      "Agent leverage point: distilled client brief from the agent's upstream context. Pass when the agent has gathered meaningful intent (preferences, family composition, advisor notes); omit when there's nothing concrete to record. Never fill this with auto-generated boilerplate.",
+    )
+    // Deprecated v2.1.0 — see AGENT-SURFACE-AUDIT.md §1. Removed in v2.2.0.
+    .option("--avatar <url>", "[deprecated] Avatar URL. An agent has no upstream context to anchor a valid avatar URL. Use the web UI to set this. Will be removed in v2.2.0.")
     .option("--json", "Output raw JSON")
     .option("--dry-run", "Show the GraphQL mutation without executing")
     .action(async (opts) => {
@@ -215,7 +224,13 @@ export function registerClientsCommands(program: Command): void {
       if (opts.email) input.email = opts.email;
       if (opts.phone) input.phone = opts.phone;
       if (opts.description) input.description = opts.description;
-      if (opts.avatar) input.avatarUrl = opts.avatar;
+      if (opts.avatar) {
+        input.avatarUrl = opts.avatar;
+        // eslint-disable-next-line no-console
+        console.error(
+          "[deprecated] --avatar is deprecated and will be removed in v2.2.0. Set avatars in the web UI.",
+        );
+      }
 
       const data = await graphql<{ createTripPlanClient: TripPlanClient }>(
         CREATE_TRIP_PLAN_CLIENT,
@@ -242,8 +257,12 @@ export function registerClientsCommands(program: Command): void {
     .option("--type <type>", "New client type")
     .option("--email <email>", "New email")
     .option("--phone <phone>", "New phone")
-    .option("--description <text>", "New notes/description")
-    .option("--avatar <url>", "New avatar URL")
+    .option(
+      "--description <text>",
+      "Agent leverage point: refresh the distilled client brief. Pass when the agent has new meaningful intent to record; omit otherwise. Replaces existing description.",
+    )
+    // Deprecated v2.1.0 — see AGENT-SURFACE-AUDIT.md §1. Removed in v2.2.0.
+    .option("--avatar <url>", "[deprecated] New avatar URL. Use the web UI. Will be removed in v2.2.0.")
     .option("--status <status>", "New status (active|archived)")
     .option("--json", "Output raw JSON")
     .option("--dry-run", "Show the GraphQL mutation without executing")
@@ -254,11 +273,17 @@ export function registerClientsCommands(program: Command): void {
       if (opts.email !== undefined) input.email = opts.email;
       if (opts.phone !== undefined) input.phone = opts.phone;
       if (opts.description !== undefined) input.description = opts.description;
-      if (opts.avatar !== undefined) input.avatarUrl = opts.avatar;
+      if (opts.avatar !== undefined) {
+        input.avatarUrl = opts.avatar;
+        // eslint-disable-next-line no-console
+        console.error(
+          "[deprecated] --avatar is deprecated and will be removed in v2.2.0. Set avatars in the web UI.",
+        );
+      }
       if (opts.status !== undefined) input.status = normalizeStatus(opts.status);
 
       if (Object.keys(input).length === 0) {
-        fatal("No fields provided to update. Use at least one of: --name, --type, --email, --phone, --description, --avatar, --status");
+        fatal("No fields provided to update. Use at least one of: --name, --type, --email, --phone, --description, --status");
       }
 
       const data = await graphql<{ updateTripPlanClient: TripPlanClient }>(
@@ -307,8 +332,12 @@ export function registerClientsCommands(program: Command): void {
     .requiredOption("--name <name>", "Name (for create case)")
     .requiredOption("--type <type>", "Client type (individual|company|group)")
     .option("--phone <phone>", "Phone number (for create case)")
-    .option("--description <text>", "Notes/description (for create case)")
-    .option("--avatar <url>", "Avatar URL (for create case)")
+    // Deprecated v2.1.0 — see AGENT-SURFACE-AUDIT.md §1. Free-text on an
+    // idempotent operation breaks the idempotency contract (re-running the same
+    // upsert with a slightly different description string is non-idempotent).
+    // For description, the agent should use `clients update` after upsert resolves.
+    .option("--description <text>", "[deprecated] Notes/description. Use `clients update --description` after upsert instead. Will be removed in v2.2.0.")
+    .option("--avatar <url>", "[deprecated] Avatar URL. Use the web UI. Will be removed in v2.2.0.")
     .option("--json", "Output raw JSON")
     .option("--dry-run", "Show the GraphQL mutation without executing")
     .action(async (opts) => {
@@ -351,8 +380,20 @@ export function registerClientsCommands(program: Command): void {
         email: opts.email,
       };
       if (opts.phone) input.phone = opts.phone;
-      if (opts.description) input.description = opts.description;
-      if (opts.avatar) input.avatarUrl = opts.avatar;
+      if (opts.description) {
+        input.description = opts.description;
+        // eslint-disable-next-line no-console
+        console.error(
+          "[deprecated] --description on `clients upsert` is deprecated and will be removed in v2.2.0. Use `clients update --description` after upsert resolves.",
+        );
+      }
+      if (opts.avatar) {
+        input.avatarUrl = opts.avatar;
+        // eslint-disable-next-line no-console
+        console.error(
+          "[deprecated] --avatar is deprecated and will be removed in v2.2.0. Set avatars in the web UI.",
+        );
+      }
 
       const data = await graphql<{ createTripPlanClient: TripPlanClient }>(
         CREATE_TRIP_PLAN_CLIENT,

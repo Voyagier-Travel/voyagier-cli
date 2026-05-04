@@ -6,6 +6,62 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ---
 
+## [2.1.0] — 2026-05-04
+
+Minor release: ships **Sections 4 (Goals) + 6 (Traveller Groups + Choices)**, agent-surface cleanup, and AGENT.md error-code documentation. Mark unblocked these surfaces in his 2026-05-04 Slack DM: *"TripPlanGoal mutations are frozen along with ParticipantChoice and BlueprintSync."*
+
+### Added
+
+#### New command groups
+- `voyagier plans goals | goal | goal-add | goal-add-with-selection | goal-update | goal-remove | goal-assign-travellers | goal-add-item | goal-add-item-with-selection | goal-reorder` — TripPlanGoal surface ([VOY-1202](https://linear.app/voyagier/issue/VOY-1202) / [PR #49](https://github.com/Voyagier-Travel/voyagier-cli/pull/49)).
+- `voyagier traveller-groups list | get | create | update | delete | add-members | remove-members | upsert` — TripPlanTravellerGroup surface ([VOY-1204](https://linear.app/voyagier/issue/VOY-1204) / [PR #50](https://github.com/Voyagier-Travel/voyagier-cli/pull/50)).
+- `voyagier traveller-choices list` — read-only inspection of per-traveller selection choices with `--pending`, `--traveller`, `--goal`, `--type` filters ([VOY-1204](https://linear.app/voyagier/issue/VOY-1204)).
+
+#### New error codes
+- `GOAL_NOT_FOUND` — goals surface.
+- `GROUP_NAME_REQUIRED`, `MEMBERS_REQUIRED`, `TRAVELLER_NOT_IN_PLAN`, `PLAN_NOT_FOUND` — traveller-groups surface.
+
+### Changed
+
+#### Help text reframing (agent leverage points)
+
+The help text for three flags was rewritten to read as **agent leverage points** rather than fillable form fields. The framing is meant to nudge agents toward passing distilled upstream context (when they have it) and omitting (when they don't) instead of generating boilerplate to fill the field.
+
+- `voyagier clients create --description` / `clients update --description` — framed as "distilled client brief from the agent's upstream context."
+- `voyagier plans goal-add-with-selection --question-template` — framed as "prompt template the traveller will see in the web UI; pass when the agent has distilled meaningful intent."
+- `voyagier plans goal-add-with-selection --initial-search` (renamed from `--initial-query`, see below) — framed as "initial search query that seeds this selection."
+
+#### Renamed
+
+- `voyagier plans goal-add-with-selection --initial-query` is now `--initial-search` for clarity (reads like user intent, not GraphQL plumbing). Old flag name accepted as a deprecated alias — emits a one-line stderr warning and routes to the new flag. Removed in v2.2.0.
+
+### Deprecated
+
+All deprecated flags continue to work in v2.1.0 with a stderr warning. Removal target: **v2.2.0**.
+
+- `voyagier clients create --avatar` / `clients update --avatar` / `clients upsert --avatar` — an agent has no upstream context to anchor a valid avatar URL. Set avatars in the web UI.
+- `voyagier clients upsert --description` — free-text on an idempotent operation breaks the idempotency contract (re-running the same upsert with a slightly different description string is non-idempotent). Use `voyagier clients update --description` after upsert resolves.
+- `voyagier places attach --country-name` — resolved server-side from `--country-id`.
+- `voyagier places attach --description` / `--image` / `--url` — resolved server-side from the upstream Place entity (Google Places / Foursquare cache). Agent-supplied overrides cause drift between the place record and downstream UI surfaces.
+- `voyagier plans goal-add-with-selection --initial-query` — use `--initial-search` instead.
+
+### Documented
+
+- AGENT.md error-code table now covers all v2.x codes including the 5 added in this release.
+- Help text on agent-leverage flags includes concrete "pass when / omit when / never with" guidance per the [agent-surface audit](https://github.com/Voyagier-Travel/voyagier-cli/blob/main/AGENT.md).
+
+### Tests
+
+- 720 → 746 (+26 from cleanup PR; main was at 741 after VOY-1204 merged plus 5 from this cleanup work).
+- All 25 suites passing.
+
+### See also
+
+- [PHASE2-DESIGN-FREEZE.md] — v2 surface lock
+- [AGENT-SURFACE-AUDIT.md] — the audit that drove the cleanup decisions
+
+---
+
 ## [2.0.0] — 2026-05-03
 
 > ⚠️ **Breaking release.** v1.x is broken against the current Voyagier backend schema (37% of GraphQL operations fail on `dev.voyagier.com`). v2.0.0 is a clean rebuild against the new advisor-first / Blueprint trip-plan model.
