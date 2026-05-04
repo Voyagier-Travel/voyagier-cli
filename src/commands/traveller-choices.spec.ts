@@ -25,7 +25,7 @@ jest.unstable_mockModule("../config.js", () => ({
 
 let registerTravellerChoicesCommands: (program: Command) => void;
 let summarizeChoices: (result: unknown) => string;
-let buildNextStepCommand: (q: unknown, planId: string, allIds: string[]) => { command: string; note: string };
+let buildNextStepCommand: (q: unknown, planId: string, allIds: string[]) => { command: string; note: string } | null;
 let filterQuestions: (questions: unknown[], filters: Record<string, unknown>) => unknown[];
 
 beforeAll(async () => {
@@ -290,28 +290,41 @@ describe("traveller-choices list", () => {
 });
 
 describe("nextStep.command formatting", () => {
+  it("returns null for a completed question (no pending travellers)", () => {
+    const q = { ...qFlight, pendingTravellers: [] };
+    const result = buildNextStepCommand(q, "plan_01", ["t1", "t2"]);
+    expect(result).toBeNull();
+  });
+
   it("scope=all when all travellers are pending", () => {
     const q = { ...qHotel, pendingTravellers: [t1, t2] };
     const result = buildNextStepCommand(q, "plan_01", ["t1", "t2"]);
-    expect(result.command).toBe("voyagier select 1 --plan plan_01 --scope all");
-    expect(result.note).toContain("Section 5");
+    expect(result).not.toBeNull();
+    expect(result!.command).toBe(
+      "voyagier select --selection sel_02 --plan plan_01 --scope all --experimental",
+    );
+    expect(result!.note).toContain("Section 5");
   });
 
   it("scope=individual when exactly one traveller is pending", () => {
     const q = { ...qFlight, pendingTravellers: [t2] };
     const result = buildNextStepCommand(q, "plan_01", ["t1", "t2"]);
-    expect(result.command).toBe("voyagier select 1 --plan plan_01 --participants t2 --scope individual");
+    expect(result!.command).toBe(
+      "voyagier select --selection sel_01 --plan plan_01 --participants t2 --scope individual --experimental",
+    );
   });
 
   it("scope=subset when multiple but not all travellers are pending", () => {
     const t3 = { id: "t3", firstName: "Child", lastName: "B" };
     const q = { ...qHotel, pendingTravellers: [t2, t3] };
     const result = buildNextStepCommand(q, "plan_01", ["t1", "t2", "t3"]);
-    expect(result.command).toContain("--scope subset");
-    expect(result.command).toContain("--participants t2,t3");
+    expect(result!.command).toContain("--scope subset");
+    expect(result!.command).toContain("--participants t2,t3");
+    expect(result!.command).toContain("--experimental");
+    expect(result!.command).toContain("--selection sel_02");
   });
 
-  it("nextStep is included in --json output for each question", async () => {
+  it("nextStep is included in --json output for pending questions", async () => {
     mockGraphql.mockResolvedValueOnce({ travellerChoices: baseResult });
 
     const p = buildProgram();
@@ -319,7 +332,22 @@ describe("nextStep.command formatting", () => {
 
     const out = lastJson() as { data: { questions: { nextStep: { command: string } }[] } };
     expect(out.data.questions[0].nextStep).toBeDefined();
+    expect(out.data.questions[0].nextStep).not.toBeNull();
     expect(out.data.questions[0].nextStep.command).toMatch(/voyagier select/);
+    expect(out.data.questions[0].nextStep.command).toContain("--experimental");
+    expect(out.data.questions[0].nextStep.command).toContain("--selection");
+  });
+
+  it("nextStep is null in --json output for a completed question", async () => {
+    const allAnswered = { ...qFlight, answeredTravellers: [t1, t2], pendingTravellers: [] };
+    const result = { ...baseResult, questions: [allAnswered] };
+    mockGraphql.mockResolvedValueOnce({ travellerChoices: result });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-choices", "list", "--plan", "plan_01", "--json"]);
+
+    const out = lastJson() as { data: { questions: { nextStep: unknown }[] } };
+    expect(out.data.questions[0].nextStep).toBeNull();
   });
 });
 

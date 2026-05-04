@@ -86,7 +86,10 @@ function formatChoiceTraveller(t: ChoiceTraveller): { id: string; name: string }
 /**
  * Derive the nextStep scope and command for a question given its pending travellers.
  *
+ * Returns null when the question is fully answered (no action needed).
+ *
  * Scope logic:
+ *   - no pending → null (question complete, no action needed)
  *   - all travellers pending → scope=all (no --participants needed)
  *   - exactly 1 pending → scope=individual, --participants <single-id>
  *   - multiple but not all → scope=subset, --participants <comma-list>
@@ -95,24 +98,27 @@ export function buildNextStepCommand(
   question: TravellerChoiceQuestion,
   planId: string,
   allTravellerIds: string[],
-): { command: string; note: string } {
+): { command: string; note: string } | null {
   const pendingIds = question.pendingTravellers.map((t) => t.id);
   const note = "Choice application requires Section 5 (--experimental in v2.1.0)";
 
-  if (pendingIds.length === 0 || pendingIds.length === allTravellerIds.length) {
+  if (pendingIds.length === 0) {
+    return null;
+  }
+  if (pendingIds.length === allTravellerIds.length) {
     return {
-      command: `voyagier select 1 --plan ${planId} --scope all`,
+      command: `voyagier select --selection ${question.selectionId} --plan ${planId} --scope all --experimental`,
       note,
     };
   }
   if (pendingIds.length === 1) {
     return {
-      command: `voyagier select 1 --plan ${planId} --participants ${pendingIds[0]} --scope individual`,
+      command: `voyagier select --selection ${question.selectionId} --plan ${planId} --participants ${pendingIds[0]} --scope individual --experimental`,
       note,
     };
   }
   return {
-    command: `voyagier select 1 --plan ${planId} --participants ${pendingIds.join(",")} --scope subset`,
+    command: `voyagier select --selection ${question.selectionId} --plan ${planId} --participants ${pendingIds.join(",")} --scope subset --experimental`,
     note,
   };
 }
