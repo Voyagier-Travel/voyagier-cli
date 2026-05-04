@@ -201,11 +201,36 @@ describe("parseGoalDate", () => {
   it("accepts YYYY-MM-DD", () => {
     expect(parseGoalDate("2026-05-04")).toBe("2026-05-04");
   });
-  it("accepts ISO datetime with timezone", () => {
+  it("accepts ISO datetime with Z", () => {
     expect(parseGoalDate("2026-05-04T13:30:00Z")).toBe("2026-05-04T13:30:00Z");
+  });
+  it("accepts ISO datetime with numeric offset (colon)", () => {
+    expect(parseGoalDate("2026-05-04T13:30:00-04:00")).toBe("2026-05-04T13:30:00-04:00");
+  });
+  it("accepts ISO datetime with numeric offset (no colon)", () => {
+    expect(parseGoalDate("2026-05-04T13:30:00-0400")).toBe("2026-05-04T13:30:00-0400");
+  });
+  it("accepts ISO datetime with milliseconds", () => {
+    expect(parseGoalDate("2026-05-04T13:30:00.123Z")).toBe("2026-05-04T13:30:00.123Z");
+  });
+  it("accepts ISO datetime without seconds", () => {
+    expect(parseGoalDate("2026-05-04T13:30Z")).toBe("2026-05-04T13:30Z");
   });
   it("rejects garbage strings", () => {
     expect(() => parseGoalDate("yesterday")).toThrow(CliError);
+  });
+  it("rejects locale-style strings like 'May 4 2026' (Date.parse would accept these)", () => {
+    expect(() => parseGoalDate("May 4 2026")).toThrow(CliError);
+    expect(() => parseGoalDate("5/4/2026")).toThrow(CliError);
+    expect(() => parseGoalDate("2026/05/04")).toThrow(CliError);
+    expect(() => parseGoalDate("2026-5-4")).toThrow(CliError);
+  });
+  it("rejects ISO-shaped but out-of-range months", () => {
+    expect(() => parseGoalDate("2026-13-01")).toThrow(CliError);
+    expect(() => parseGoalDate("2026-99-99")).toThrow(CliError);
+    // Note: Node's Date.parse rolls 2026-02-30 forward to March 2 rather
+    // than rejecting. We accept that quirk — the server is the final
+    // authority on calendar correctness.
   });
   it("rejects empty", () => {
     expect(() => parseGoalDate("")).toThrow(CliError);
@@ -481,6 +506,63 @@ describe("plans goal-add-with-selection <planId>", () => {
         "--json",
       ]),
     ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("rejects --place-before + --sort-order as mutually exclusive", async () => {
+    await expect(
+      runGoals([
+        "goal-add-with-selection", "plan-1",
+        "--type", "Hotel",
+        "--place-before", "g-1",
+        "--sort-order", "3",
+        "--json",
+      ]),
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("rejects --place-after + --sort-order as mutually exclusive", async () => {
+    await expect(
+      runGoals([
+        "goal-add-with-selection", "plan-1",
+        "--type", "Hotel",
+        "--place-after", "g-1",
+        "--sort-order", "3",
+        "--json",
+      ]),
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("rejects all three positioning flags at once", async () => {
+    await expect(
+      runGoals([
+        "goal-add-with-selection", "plan-1",
+        "--type", "Hotel",
+        "--place-before", "g-1",
+        "--place-after", "g-2",
+        "--sort-order", "3",
+        "--json",
+      ]),
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("accepts --sort-order alone", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      createTripPlanGoalWithSelection: {
+        goal: { ...GOAL_FIXTURE, sortOrder: 3 },
+        item: null,
+        selection: null,
+      },
+    });
+    await runGoals([
+      "goal-add-with-selection", "plan-1",
+      "--type", "Hotel",
+      "--sort-order", "3",
+      "--json",
+    ]);
+    const [, vars] = mockGraphql.mock.calls[0];
+    expect((vars as any).input.sortOrder).toBe(3);
+    expect((vars as any).input.placeBeforeGoalId).toBeUndefined();
+    expect((vars as any).input.placeAfterGoalId).toBeUndefined();
   });
 
   it("does not require --name (server may auto-name)", async () => {

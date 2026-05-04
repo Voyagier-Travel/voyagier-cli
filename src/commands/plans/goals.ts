@@ -34,7 +34,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../../api.js";
-import { jsonOutput, fatal } from "../../output.js";
+import { jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
 import {
   LIST_TRIP_PLAN_GOALS,
@@ -167,20 +167,38 @@ export function parseInitialQuery(json: string): Record<string, unknown> {
 }
 
 /**
- * Validate an --date or --relative-day flag. ISO datetime passes through; bad
- * strings throw VALIDATION.
+ * Validate an --date flag. Accepts ISO 8601 date-only (YYYY-MM-DD) or
+ * full datetime (YYYY-MM-DDTHH:MM[:SS[.fff]][Z|±HH:MM]). Bad strings throw
+ * VALIDATION.
+ *
+ * Note: this is intentionally stricter than `Date.parse`, which would accept
+ * locale strings like "May 4 2026". Agents should always pass canonical ISO
+ * forms; loose parsing has historically masked timezone bugs.
  */
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:?\d{2})?$/;
+
 export function parseGoalDate(iso: string): string {
   if (typeof iso !== "string" || iso.trim() === "") {
-    throw new CliError(CliErrorCode.VALIDATION, "--date must be an ISO 8601 datetime.");
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      "--date must be an ISO 8601 date or datetime (e.g., 2026-05-04 or 2026-05-04T13:30:00Z).",
+    );
   }
   const trimmed = iso.trim();
-  // Accept 2026-05-04 or 2026-05-04T13:30:00Z. Date.parse handles both.
+  const matchesIso = ISO_DATE_RE.test(trimmed) || ISO_DATETIME_RE.test(trimmed);
+  if (!matchesIso) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `--date "${iso}" is not a valid ISO 8601 date or datetime (e.g., 2026-05-04 or 2026-05-04T13:30:00Z).`,
+    );
+  }
+  // Belt-and-braces: also reject ISO-shaped but invalid dates like 2026-13-99.
   const ms = Date.parse(trimmed);
   if (!Number.isFinite(ms)) {
     throw new CliError(
       CliErrorCode.VALIDATION,
-      `--date "${iso}" is not a valid ISO 8601 datetime (e.g., 2026-05-04 or 2026-05-04T13:30:00Z).`,
+      `--date "${iso}" is not a real calendar date.`,
     );
   }
   return trimmed;
@@ -468,18 +486,26 @@ export function registerGoalCommands(plans: Command): void {
     .option("--include-all-travellers", "Apply this goal to all travellers on the plan", false)
     .option("--initial-query <json>", "Initial selection query as JSON object (e.g., '{\"query\":\"hotel in Paris\"}')")
     .option("--question-template <s>", "Question template for the agent UI")
-    .option("--place-before <goalId>", "Insert before this existing goal id")
-    .option("--place-after <goalId>", "Insert after this existing goal id")
-    .option("--sort-order <n>", "Explicit sort order (alternative to --place-before/--place-after)")
+    .option("--place-before <goalId>", "Insert before this existing goal id (mutually exclusive with --place-after, --sort-order)")
+    .option("--place-after <goalId>", "Insert after this existing goal id (mutually exclusive with --place-before, --sort-order)")
+    .option("--sort-order <n>", "Explicit sort order (mutually exclusive with --place-before, --place-after)")
     .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
     .action(async (planId: string, opts) => {
       try {
         const type = normalizeSelectionType(opts.type);
-        if (opts.placeBefore && opts.placeAfter) {
+        // --place-before, --place-after, and --sort-order are three different
+        // positioning models; the server accepts at most one. Enforce here so
+        // we never send a mixed payload that produces undefined behavior.
+        const positioningFlags = [
+          opts.placeBefore ? "--place-before" : null,
+          opts.placeAfter ? "--place-after" : null,
+          opts.sortOrder !== undefined ? "--sort-order" : null,
+        ].filter((v): v is string => v !== null);
+        if (positioningFlags.length > 1) {
           throw new CliError(
             CliErrorCode.VALIDATION,
-            "--place-before and --place-after are mutually exclusive.",
+            `${positioningFlags.join(", ")} are mutually exclusive. Pick one positioning model per goal.`,
           );
         }
         const input: Record<string, unknown> = { tripPlanId: planId, type };
