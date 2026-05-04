@@ -621,6 +621,54 @@ describe("traveller-groups upsert", () => {
       ]),
     ).rejects.toMatchObject({ code: CliErrorCode.TRAVELLER_NOT_IN_PLAN });
   });
+
+  it("recovers from race: create fails with duplicate-name error, recovery list finds the group", async () => {
+    // Initial list: no match
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroups: [], tripPlan: samplePlan });
+    // Create: concurrent upsert already created it — unique constraint error
+    mockGraphql.mockRejectedValueOnce(
+      new CliError(CliErrorCode.API_ERROR, "GraphQL error: Group already exists with this name"),
+    );
+    // Recovery list: winner's group is now visible
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellerGroups: [groupAdults],
+      tripPlan: samplePlan,
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "upsert",
+      "--plan", "plan_01", "--name", "Adults", "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledTimes(3); // list + create(failed) + recovery list
+    const out = lastJson() as {
+      ok: boolean;
+      data: { created: boolean; recoveredFromRace: boolean; group: { name: string } };
+    };
+    expect(out.ok).toBe(true);
+    expect(out.data.created).toBe(false);
+    expect(out.data.recoveredFromRace).toBe(true);
+    expect(out.data.group.name).toBe("Adults");
+  });
+
+  it("throws original error when race recovery list also finds no group", async () => {
+    const originalErr = new CliError(CliErrorCode.API_ERROR, "unique constraint: duplicate name adults");
+    // Initial list: no match
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroups: [], tripPlan: samplePlan });
+    // Create: fails with duplicate error
+    mockGraphql.mockRejectedValueOnce(originalErr);
+    // Recovery list: group still not found (genuine error, not a race)
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroups: [], tripPlan: samplePlan });
+
+    const p = buildProgram();
+    await expect(
+      p.parseAsync([
+        "node", "test", "traveller-groups", "upsert",
+        "--plan", "plan_01", "--name", "Adults", "--json",
+      ]),
+    ).rejects.toMatchObject({ code: CliErrorCode.API_ERROR, message: expect.stringContaining("duplicate name adults") });
+  });
 });
 
 describe("resolveGroupId", () => {

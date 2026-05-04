@@ -542,6 +542,42 @@ export function registerTravellerGroupsCommands(program: Command): void {
             `One or more travellers are not in this trip plan. Only plan travellers can be added to groups.\n  Fix: voyagier travellers list --plan ${opts.plan}`,
           );
         }
+        // Race condition: two concurrent upserts may both pass the "no existing group"
+        // check, then both reach create — the second hits a unique-constraint error.
+        // Recovery: do a second list pass to find the group the winner just created.
+        // If still not found, throw the original error (genuinely something else went wrong).
+        if (
+          err instanceof CliError &&
+          err.code === CliErrorCode.API_ERROR &&
+          /already.*exists|duplicate.*name|unique.*constraint/i.test(err.message)
+        ) {
+          const recoveryData = await graphql<{
+            tripPlanTravellerGroups: TripPlanTravellerGroup[];
+            tripPlan: TravellerGroupPlanContext | null;
+          }>(LIST_TRIP_PLAN_TRAVELLER_GROUPS, { tripPlanId: opts.plan });
+          const recovered = (recoveryData.tripPlanTravellerGroups ?? []).find(
+            (g) => g.name.toLowerCase() === name.toLowerCase(),
+          );
+          if (recovered) {
+            const planCtx = recoveryData.tripPlan ?? recovered.tripPlan;
+            if (opts.json) {
+              jsonOutput({
+                ok: true,
+                data: {
+                  group: formatGroup(recovered),
+                  created: false,
+                  recoveredFromRace: true,
+                  idempotencyKey: opts.idempotencyKey ?? null,
+                },
+                planContext: buildGroupPlanContext(planCtx),
+              });
+              return;
+            }
+            console.log(chalk.cyan(`◆ Found existing group (recovered): ${recovered.name}`));
+            console.log(chalk.dim(`  ID: ${recovered.id}`));
+            return;
+          }
+        }
         throw err;
       }
       const g = createData.createTripPlanTravellerGroup;
