@@ -2,7 +2,7 @@
  * Places command surface (v2.0.0).
  *
  * Backed by the geo/place layer (TripPlanPlace + Google Places). STABLE per
- * Phase 0 schema audit (PHASE2-DESIGN-FREEZE.md Section 7).
+ * Phase 0 schema audit (Section 7 of the v2 design freeze).
  *
  * Surface:
  *   voyagier places search --query <q> [--source google|internal] [--country <code|id>]
@@ -410,11 +410,16 @@ export function registerPlacesCommands(program: Command): void {
     .requiredOption("--place-id <id>", "Place ID")
     .option("--type <type>", "Place type (Hotel, Restaurant, City, Airport, etc.)")
     .option("--country-id <id>", "Country ID")
-    .option("--country-name <name>", "Country name")
-    .option("--description <d>", "Description")
-    .option("--image <url>", "Image URL")
+    // Deprecated v2.1.0; removed v2.2.0.
+    // The server resolves these from the upstream Place entity (Google Places /
+    // Foursquare cache). Agent-supplied overrides cause drift between the place
+    // record and downstream UI surfaces. Pass `--place-id` only and let the
+    // resolver populate the rest.
+    .option("--country-name <name>", "[deprecated] Country name. Resolved server-side from --country-id. Will be removed in v2.2.0.")
+    .option("--description <d>", "[deprecated] Description. Resolved server-side from upstream Place entity. Will be removed in v2.2.0.")
+    .option("--image <url>", "[deprecated] Image URL. Resolved server-side from upstream Place entity. Will be removed in v2.2.0.")
     .option("--iata-code <code>", "IATA code (for airports)")
-    .option("--url <url>", "URL")
+    .option("--url <url>", "[deprecated] URL. Resolved server-side from upstream Place entity. Will be removed in v2.2.0.")
     .option("--place-timezone <tz>", "Timezone")
     .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
@@ -428,15 +433,36 @@ export function registerPlacesCommands(program: Command): void {
       };
       if (opts.type) input.type = normalizePlaceType(opts.type);
       if (opts.countryId) input.countryId = opts.countryId;
-      if (opts.countryName) input.countryName = opts.countryName;
-      if (opts.description) input.description = opts.description;
-      if (opts.image) input.image = opts.image;
+      // --country-name, --description, --image, --url are deprecated in v2.1.0.
+      // We continue to send them to the API when explicitly provided so existing
+      // scripts don't break, but each emits a one-line stderr warning. The server
+      // already populates these from the upstream Place entity; agent-supplied
+      // values drift over time. Removal in v2.2.0.
+      if (opts.countryName) {
+        input.countryName = opts.countryName;
+        // eslint-disable-next-line no-console
+        console.error("[deprecated] --country-name is deprecated; resolved server-side from --country-id. Will be removed in v2.2.0.");
+      }
+      if (opts.description) {
+        input.description = opts.description;
+        // eslint-disable-next-line no-console
+        console.error("[deprecated] --description on `places attach` is deprecated; resolved server-side from the upstream Place entity. Will be removed in v2.2.0.");
+      }
+      if (opts.image) {
+        input.image = opts.image;
+        // eslint-disable-next-line no-console
+        console.error("[deprecated] --image on `places attach` is deprecated; resolved server-side from the upstream Place entity. Will be removed in v2.2.0.");
+      }
       if (opts.iataCode) {
         // Match the rest of the CLI: validate IATA at the boundary, not at the API.
         validateIata(opts.iataCode, "--iata-code");
         input.iataCode = opts.iataCode.toUpperCase();
       }
-      if (opts.url) input.url = opts.url;
+      if (opts.url) {
+        input.url = opts.url;
+        // eslint-disable-next-line no-console
+        console.error("[deprecated] --url on `places attach` is deprecated; resolved server-side from the upstream Place entity. Will be removed in v2.2.0.");
+      }
       if (opts.placeTimezone) input.placeTimezone = opts.placeTimezone;
 
       const data = await graphql<{ upsertTripPlanPlace: TripPlanPlace }>(
