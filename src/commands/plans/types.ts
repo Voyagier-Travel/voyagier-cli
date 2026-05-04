@@ -125,3 +125,50 @@ export function typeIcon(type: string, title?: string): string {
       return "📌";
   }
 }
+
+// --- Goals (v2.0.0 — Section 4) ---
+
+export const SELECTION_TYPES = [
+  "Activity", "ActivityList", "ActivityOption", "ActivityOptionList",
+  "Airport", "BookingAnswer", "Currency", "Date", "Destination", "Duration",
+  "Flight", "FlightClass", "FlightClassList", "FlightJourney", "FlightJourneyList", "FlightList",
+  "Hotel", "HotelList", "HotelRoom", "HotelRoomList",
+  "Location", "LocationList", "Passport",
+  "Restaurant", "RestaurantList", "RestaurantReservation", "Ride", "RoomArrangement",
+  "Time", "TimeList", "TransportEvent", "TravellerList",
+] as const;
+export type SelectionType = (typeof SELECTION_TYPES)[number];
+
+export const SELECTION_SCOPES = ["Group", "Traveller", "Trip"] as const;
+export type SelectionScope = (typeof SELECTION_SCOPES)[number];
+
+export interface TripPlanGoalSummary {
+  id: string;
+  name: string | null;
+  type: SelectionType;
+  scope: SelectionScope | null;
+  sortOrder: number;
+  relativeDay: number | null;
+  date: string | null;
+  isFulfilled: boolean;
+  includeAllTravellers: boolean;
+  groupName: string | null;
+  primaryItemId: string | null;
+  tripPlanId?: string;
+}
+
+export interface TripPlanGoalDeep extends TripPlanGoalSummary {
+  items?: Array<{
+    id: string;
+    title: string;
+    goalId: string;
+    selections?: Array<{ id: string; type: string; isLocked: boolean }>;
+  }>;
+  travellers?: Array<{ id: string; firstName?: string | null; lastName?: string | null }>;
+}
+
+export interface CreateGoalResult {
+  goal: TripPlanGoalSummary;
+  item?: { id: string; title?: string; goalId?: string };
+  selection?: { id: string; type: string; isLocked?: boolean };
+}
