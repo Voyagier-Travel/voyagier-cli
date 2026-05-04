@@ -890,3 +890,202 @@ export const UNHIGHLIGHT_TRIP_PLACE = `
     unhighlightTripPlace(tripId: $tripId, detectedPlaceId: $detectedPlaceId)
   }
 `;
+
+// --- Goals (v2.0.0 — Section 4 — TripPlanGoal surface) ---
+//
+// Mark confirmed 2026-05-04 (Slack DM ts 1777910418): TripPlanGoal mutations
+// are FROZEN. Build CLI commands without --experimental gate.
+//
+// Schema corrections caught during planning (PHASE2-DESIGN-FREEZE.md draft):
+//   - No `goalReorder` mutation; CLI synthesizes via parallel updateTripPlanGoal calls.
+//   - createTripPlanGoalWithSelection uses placeBeforeGoalId/placeAfterGoalId
+//     for positional inserts (separate from sortOrder on the bare-create path).
+//   - assignTravellersToGoal is a separate post-create mutation.
+//   - addItemWithSelectionToGoal returns { item, selection }, not Boolean.
+//   - addConstraintToGoal exists but is web-UI-only for v2.0.0-alpha (deferred).
+
+export const LIST_TRIP_PLAN_GOALS = `
+  query TripPlanGoals($tripPlanId: String!) {
+    tripPlanGoals(tripPlanId: $tripPlanId) {
+      id
+      name
+      type
+      scope
+      sortOrder
+      relativeDay
+      date
+      isFulfilled
+      includeAllTravellers
+      groupName
+      primaryItemId
+    }
+  }
+`;
+
+export const LIST_TRIP_PLAN_GOALS_DEEP = `
+  query TripPlanGoalsDeep($tripPlanId: String!) {
+    tripPlanGoals(tripPlanId: $tripPlanId) {
+      id
+      name
+      type
+      scope
+      sortOrder
+      relativeDay
+      date
+      isFulfilled
+      includeAllTravellers
+      groupName
+      primaryItemId
+      items {
+        id
+        title
+        goalId
+        selections {
+          id
+          type
+          isLocked
+        }
+      }
+      travellers {
+        id
+        firstName
+        lastName
+      }
+    }
+  }
+`;
+
+export const GET_TRIP_PLAN_GOAL = `
+  query TripPlanGoal($id: String!) {
+    tripPlanGoal(id: $id) {
+      id
+      name
+      type
+      scope
+      sortOrder
+      relativeDay
+      date
+      isFulfilled
+      includeAllTravellers
+      groupName
+      primaryItemId
+      tripPlanId
+      travellers {
+        id
+        firstName
+        lastName
+      }
+      items {
+        id
+        title
+        goalId
+        selections {
+          id
+          type
+          isLocked
+        }
+      }
+    }
+  }
+`;
+
+export const CREATE_TRIP_PLAN_GOAL = `
+  mutation CreateTripPlanGoal($input: CreateTripPlanGoalInput!) {
+    createTripPlanGoal(input: $input) {
+      id
+      name
+      type
+      scope
+      sortOrder
+      relativeDay
+      date
+      isFulfilled
+      includeAllTravellers
+      groupName
+      primaryItemId
+      tripPlanId
+    }
+  }
+`;
+
+export const CREATE_TRIP_PLAN_GOAL_WITH_SELECTION = `
+  mutation CreateTripPlanGoalWithSelection($input: CreateGoalWithSelectionInput!) {
+    createTripPlanGoalWithSelection(input: $input) {
+      goal {
+        id
+        name
+        type
+        scope
+        sortOrder
+        relativeDay
+        date
+        isFulfilled
+        includeAllTravellers
+        groupName
+        primaryItemId
+        tripPlanId
+      }
+      item {
+        id
+        title
+        goalId
+      }
+      selection {
+        id
+        type
+        isLocked
+      }
+    }
+  }
+`;
+
+export const UPDATE_TRIP_PLAN_GOAL = `
+  mutation UpdateTripPlanGoal($id: String!, $input: UpdateTripPlanGoalInput!) {
+    updateTripPlanGoal(id: $id, input: $input) {
+      id
+      name
+      type
+      scope
+      sortOrder
+      relativeDay
+      date
+      isFulfilled
+      tripPlanId
+    }
+  }
+`;
+
+export const DELETE_TRIP_PLAN_GOAL = `
+  mutation DeleteTripPlanGoal($id: String!) {
+    deleteTripPlanGoal(id: $id)
+  }
+`;
+
+export const ADD_ITEM_TO_GOAL = `
+  mutation AddItemToGoal($goalId: String!, $itemId: String!) {
+    addItemToGoal(goalId: $goalId, itemId: $itemId)
+  }
+`;
+
+export const ADD_ITEM_WITH_SELECTION_TO_GOAL = `
+  mutation AddItemWithSelectionToGoal($goalId: String!, $tripPlanId: String!, $type: SelectionType!) {
+    addItemWithSelectionToGoal(goalId: $goalId, tripPlanId: $tripPlanId, type: $type) {
+      item {
+        id
+        title
+        goalId
+      }
+      selection {
+        id
+        type
+        isLocked
+      }
+    }
+  }
+`;
+
+export const ASSIGN_TRAVELLERS_TO_GOAL = `
+  mutation AssignTravellersToGoal($goalId: String!, $travellerIds: [String!]!) {
+    assignTravellersToGoal(goalId: $goalId, travellerIds: $travellerIds)
+  }
+`;

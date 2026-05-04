@@ -4,6 +4,7 @@ import { registerItemCommands } from "./items.js";
 import { registerSharingCommands } from "./sharing.js";
 import { registerSocialCommands } from "./social.js";
 import { registerBookableCommand } from "./bookable.js";
+import { registerGoalCommands } from "./goals.js";
 
 export function registerPlanCommands(program: Command): void {
   const plans = program.command("plans").description("Manage trip plans");
@@ -13,4 +14,5 @@ export function registerPlanCommands(program: Command): void {
   registerSharingCommands(plans);
   registerSocialCommands(plans);
   registerBookableCommand(plans);
+  registerGoalCommands(plans);
 }
