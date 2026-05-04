@@ -437,18 +437,29 @@ export function registerTravellerGroupsCommands(program: Command): void {
       }
       const travellerIds = parseMemberIds(opts.travellers, "--travellers");
 
+      // Fetch pre-mutation membership to compute the real delta (same pattern
+      // as add-members: server silently no-ops for non-members).
+      const preFetchRm = await graphql<{ tripPlanTravellerGroup: TripPlanTravellerGroup | null }>(
+        GET_TRIP_PLAN_TRAVELLER_GROUP,
+        { id: groupId },
+      );
+      const preMemberIdsRm = new Set(
+        (preFetchRm.tripPlanTravellerGroup?.travellers ?? []).map((t) => t.id),
+      );
+
       const data = await graphql<{ removeTravellersFromGroup: TripPlanTravellerGroup }>(
         REMOVE_TRAVELLERS_FROM_GROUP,
         { groupId, travellerIds },
       );
       const g = data.removeTravellersFromGroup;
+      const removedTravellerIds = travellerIds.filter((id) => preMemberIdsRm.has(id));
 
       if (opts.json) {
         jsonOutput({
           ok: true,
           data: {
             group: formatGroup(g),
-            removedTravellerIds: travellerIds,
+            removedTravellerIds,
             idempotencyKey: opts.idempotencyKey ?? null,
           },
           planContext: buildGroupPlanContext(g.tripPlan),
@@ -457,7 +468,7 @@ export function registerTravellerGroupsCommands(program: Command): void {
       }
 
       console.log(
-        chalk.green(`✓ Removed ${travellerIds.length} traveller(s) from group: ${g.name}`),
+        chalk.green(`✓ Removed ${removedTravellerIds.length} traveller(s) from group: ${g.name}`),
       );
       console.log(chalk.dim(`  Group ID: ${g.id}   Members now: ${g.travellers.length}`));
     });

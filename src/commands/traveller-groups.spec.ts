@@ -472,7 +472,9 @@ describe("traveller-groups add-members", () => {
 });
 
 describe("traveller-groups remove-members", () => {
-  it("removes members and returns updated group", async () => {
+  it("removes members and returns updated group with accurate removedTravellerIds", async () => {
+    // Pre-fetch: group has t1 and t2
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: groupAdults });
     const updated = { ...groupAdults, travellers: [t2] };
     mockGraphql.mockResolvedValueOnce({ removeTravellersFromGroup: updated });
 
@@ -482,12 +484,25 @@ describe("traveller-groups remove-members", () => {
       "--travellers", "t1", "--json",
     ]);
 
-    expect(mockGraphql).toHaveBeenCalledWith(
-      expect.any(String),
-      { groupId: "grp_01", travellerIds: ["t1"] },
-    );
+    expect(mockGraphql).toHaveBeenNthCalledWith(2, expect.any(String), { groupId: "grp_01", travellerIds: ["t1"] });
     const out = lastJson() as { data: { removedTravellerIds: string[] } };
     expect(out.data.removedTravellerIds).toEqual(["t1"]);
+  });
+
+  it("non-member removal: removedTravellerIds is empty (not over-counted)", async () => {
+    // Pre-fetch: group has only t2 — t1 is not a member
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: { ...groupAdults, travellers: [t2] } });
+    // Server no-ops; group unchanged
+    mockGraphql.mockResolvedValueOnce({ removeTravellersFromGroup: { ...groupAdults, travellers: [t2] } });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "remove-members", "grp_01",
+      "--travellers", "t1", "--json",
+    ]);
+
+    const out = lastJson() as { data: { removedTravellerIds: string[] } };
+    expect(out.data.removedTravellerIds).toEqual([]);
   });
 
   it("throws MEMBERS_REQUIRED when --travellers is missing", async () => {
@@ -498,6 +513,8 @@ describe("traveller-groups remove-members", () => {
   });
 
   it("echoes --idempotency-key in JSON output", async () => {
+    // Pre-fetch: group has t1
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: groupAdults });
     mockGraphql.mockResolvedValueOnce({ removeTravellersFromGroup: groupAdults });
 
     const p = buildProgram();
@@ -845,7 +862,9 @@ describe("traveller-groups add-members — human output", () => {
 });
 
 describe("traveller-groups remove-members — human output", () => {
-  it("success: prints removed count, group name, group ID, and updated member total", async () => {
+  it("success: prints actually-removed count (not request count), group name, group ID, member total", async () => {
+    // Pre-fetch: group has t1 and t2
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: groupAdults });
     const updated = { ...groupAdults, travellers: [t2] };
     mockGraphql.mockResolvedValueOnce({ removeTravellersFromGroup: updated });
 
@@ -859,6 +878,21 @@ describe("traveller-groups remove-members — human output", () => {
     expect(output).toContain("Removed 1 traveller(s) from group: Adults");
     expect(output).toContain("Group ID: grp_01");
     expect(output).toContain("Members now: 1");
+  });
+
+  it("non-member removal: reports 0 removed (not 1)", async () => {
+    // Pre-fetch: group has only t2, t1 is not a member
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: { ...groupAdults, travellers: [t2] } });
+    mockGraphql.mockResolvedValueOnce({ removeTravellersFromGroup: { ...groupAdults, travellers: [t2] } });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "remove-members", "grp_01",
+      "--travellers", "t1",
+    ]);
+
+    const output = writes.join("");
+    expect(output).toContain("Removed 0 traveller(s) from group: Adults");
   });
 });
 
