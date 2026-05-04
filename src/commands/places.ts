@@ -2,7 +2,7 @@
  * Places command surface (v2.0.0).
  *
  * Backed by the geo/place layer (TripPlanPlace + Google Places). STABLE per
- * Phase 0 schema audit (PHASE2-DESIGN-FREEZE.md Section 7).
+ * Phase 0 schema audit (Section 7 of the v2 design freeze).
  *
  * Surface:
  *   voyagier places search --query <q> [--source google|internal] [--country <code|id>]
@@ -410,7 +410,7 @@ export function registerPlacesCommands(program: Command): void {
     .requiredOption("--place-id <id>", "Place ID")
     .option("--type <type>", "Place type (Hotel, Restaurant, City, Airport, etc.)")
     .option("--country-id <id>", "Country ID")
-    // Deprecated v2.1.0 — see AGENT-SURFACE-AUDIT.md §7. Removed in v2.2.0.
+    // Deprecated v2.1.0; removed v2.2.0.
     // The server resolves these from the upstream Place entity (Google Places /
     // Foursquare cache). Agent-supplied overrides cause drift between the place
     // record and downstream UI surfaces. Pass `--place-id` only and let the

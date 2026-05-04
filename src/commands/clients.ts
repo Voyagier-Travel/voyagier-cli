@@ -12,8 +12,9 @@
  *
  * Note (v2.1.0): `--avatar` is deprecated on create/update/upsert and `--description`
  * is deprecated on upsert. Both still accepted with a stderr warning; will be removed
- * in v2.2.0. See AGENT-SURFACE-AUDIT.md for the rationale (no upstream agent context
- * to anchor avatar URLs; free-text on idempotent upsert breaks the idempotency contract).
+ * in v2.2.0. Rationale: an agent has no upstream context to anchor a valid avatar URL,
+ * and free-text on the idempotent `upsert` operation breaks the idempotency contract
+ * (re-running with a slightly different description string is non-idempotent).
  *   voyagier clients archive <id> [--json]
  *   voyagier clients upsert --email <e> --name <n> --type <t> [opts] [--json]
  */
@@ -212,7 +213,7 @@ export function registerClientsCommands(program: Command): void {
       "--description <text>",
       "Agent leverage point: distilled client brief from the agent's upstream context. Pass when the agent has gathered meaningful intent (preferences, family composition, advisor notes); omit when there's nothing concrete to record. Never fill this with auto-generated boilerplate.",
     )
-    // Deprecated v2.1.0 — see AGENT-SURFACE-AUDIT.md §1. Removed in v2.2.0.
+    // Deprecated v2.1.0; removed v2.2.0.
     .option("--avatar <url>", "[deprecated] Avatar URL. An agent has no upstream context to anchor a valid avatar URL. Use the web UI to set this. Will be removed in v2.2.0.")
     .option("--json", "Output raw JSON")
     .option("--dry-run", "Show the GraphQL mutation without executing")
@@ -261,7 +262,7 @@ export function registerClientsCommands(program: Command): void {
       "--description <text>",
       "Agent leverage point: refresh the distilled client brief. Pass when the agent has new meaningful intent to record; omit otherwise. Replaces existing description.",
     )
-    // Deprecated v2.1.0 — see AGENT-SURFACE-AUDIT.md §1. Removed in v2.2.0.
+    // Deprecated v2.1.0; removed v2.2.0.
     .option("--avatar <url>", "[deprecated] New avatar URL. Use the web UI. Will be removed in v2.2.0.")
     .option("--status <status>", "New status (active|archived)")
     .option("--json", "Output raw JSON")
@@ -283,7 +284,7 @@ export function registerClientsCommands(program: Command): void {
       if (opts.status !== undefined) input.status = normalizeStatus(opts.status);
 
       if (Object.keys(input).length === 0) {
-        fatal("No fields provided to update. Use at least one of: --name, --type, --email, --phone, --description, --status");
+        fatal("No fields provided to update. Use at least one of: --name, --type, --email, --phone, --description, --status, --avatar (deprecated)");
       }
 
       const data = await graphql<{ updateTripPlanClient: TripPlanClient }>(
@@ -332,10 +333,10 @@ export function registerClientsCommands(program: Command): void {
     .requiredOption("--name <name>", "Name (for create case)")
     .requiredOption("--type <type>", "Client type (individual|company|group)")
     .option("--phone <phone>", "Phone number (for create case)")
-    // Deprecated v2.1.0 — see AGENT-SURFACE-AUDIT.md §1. Free-text on an
-    // idempotent operation breaks the idempotency contract (re-running the same
-    // upsert with a slightly different description string is non-idempotent).
-    // For description, the agent should use `clients update` after upsert resolves.
+    // Deprecated v2.1.0; removed v2.2.0. Free-text on an idempotent operation
+    // breaks the idempotency contract (re-running the same upsert with a
+    // slightly different description string is non-idempotent). For description,
+    // the agent should use `clients update --description` after upsert resolves.
     .option("--description <text>", "[deprecated] Notes/description. Use `clients update --description` after upsert instead. Will be removed in v2.2.0.")
     .option("--avatar <url>", "[deprecated] Avatar URL. Use the web UI. Will be removed in v2.2.0.")
     .option("--json", "Output raw JSON")
@@ -346,7 +347,7 @@ export function registerClientsCommands(program: Command): void {
       // row and both call createTripPlanClient. Until the API exposes server-side
       // uniqueness on email or an explicit upsertTripPlanClient mutation, the CLI
       // workaround is best-effort and assumes serial agent flows. Tracking with Mark
-      // sync (P1 question — see PHASE2-DESIGN-FREEZE.md §1). Wrap calling code with an
+      // sync (tracked as a P1 follow-up). Wrap calling code with an
       // idempotency-key + retry on duplicate-conflict when the server side lands.
       const list = await graphql<{ tripPlanClients: TripPlanClient[] }>(LIST_TRIP_PLAN_CLIENTS);
       const sameEmail = list.tripPlanClients.filter(

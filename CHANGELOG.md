@@ -48,17 +48,12 @@ All deprecated flags continue to work in v2.1.0 with a stderr warning. Removal t
 ### Documented
 
 - AGENT.md error-code table now covers all v2.x codes including the 5 added in this release.
-- Help text on agent-leverage flags includes concrete "pass when / omit when / never with" guidance per the [agent-surface audit](https://github.com/Voyagier-Travel/voyagier-cli/blob/main/AGENT.md).
+- Help text on agent-leverage flags includes concrete "pass when / omit when / never with" guidance — see [./AGENT.md](./AGENT.md).
 
 ### Tests
 
 - 720 → 746 (+26 from cleanup PR; main was at 741 after VOY-1204 merged plus 5 from this cleanup work).
 - All 25 suites passing.
-
-### See also
-
-- [PHASE2-DESIGN-FREEZE.md] — v2 surface lock
-- [AGENT-SURFACE-AUDIT.md] — the audit that drove the cleanup decisions
 
 ---
 

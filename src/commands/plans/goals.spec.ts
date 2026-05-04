@@ -188,7 +188,7 @@ describe("parseInitialSearch", () => {
       expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
     }
   });
-  it("error message references the new flag name even though the input went through the old path", () => {
+  it("error messages reference the new flag name (no leakage of the old `--initial-query`)", () => {
     try {
       parseInitialSearch("{not json");
       fail("expected throw");
@@ -216,6 +216,15 @@ describe("parseInitialQuery (deprecated alias)", () => {
     expect(parseInitialQuery('{"query":"hotel"}')).toEqual(
       parseInitialSearch('{"query":"hotel"}'),
     );
+  });
+  it("error messages on the alias path also reference the new flag name (callers see migration nudge in errors)", () => {
+    try {
+      parseInitialQuery("{not json");
+      fail("expected throw");
+    } catch (err) {
+      expect((err as Error).message).toContain("--initial-search");
+      expect((err as Error).message).not.toContain("--initial-query");
+    }
   });
 });
 
