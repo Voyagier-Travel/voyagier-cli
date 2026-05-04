@@ -19,7 +19,7 @@ This is a **clean rebuild** against the new advisor-first / Blueprint trip-plan 
 
 For the full breaking-changes table see [`CHANGELOG.md`](./CHANGELOG.md).
 
-> ⚠️ **Known gaps in this alpha (don't rely on these yet):**
+> ⚠️ **Known gaps in this release (don't rely on these yet):**
 >
 > - `voyagier plan-trip --auto-select navigator` is broken on the v2 schema (tracked as [VOY-1189](https://linear.app/voyagier/issue/VOY-1189)). Use the manual flow below.
 > - `voyagier plans create` and `plan-trip` do **not** yet take a `--client` flag, even though every TripPlan must server-side belong to a client per the new model. Plan creation today still uses the v1 input shape; `clientId` wiring is tracked as [VOY-1193](https://linear.app/voyagier/issue/VOY-1193).
@@ -30,7 +30,7 @@ For the full breaking-changes table see [`CHANGELOG.md`](./CHANGELOG.md).
 
 ## Quick Start
 
-The fastest grounded loop for an agent against the current alpha. (`--json` is a per-command flag — supported on every command shown below; not on `chat`, `telemetry`, or `auth login` / `setup`.)
+The fastest grounded loop for an agent against the current release. (`--json` is a per-command flag — supported on every command shown below; not on `chat`, `telemetry`, or `auth login` / `setup`.)
 
 ```bash
 # 0) Health check
@@ -81,7 +81,7 @@ voyagier book <PLAN_ID> --json
 
 ### Success-payload shape: command-specific (NOT yet uniform)
 
-The v2 alpha has two payload styles. Pick the right shape for the command you're calling:
+v2.0.0 has two payload styles. Pick the right shape for the command you're calling:
 
 **Style A — wrapped envelope** (doctor, cart, book, bookable, itinerary, listings, places — i.e. the Section 3 / 7 / 9 surfaces):
 

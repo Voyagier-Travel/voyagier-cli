@@ -3,12 +3,12 @@
 Search flights, book activities, manage trip plans — from your terminal. Everything syncs to [voyagier.com](https://voyagier.com).
 
 ```bash
-npm install -g @voyagier/cli@alpha
+npm install -g @voyagier/cli
 voyagier auth set-token <your-token>
 voyagier doctor   # confirm auth + schema reachability
 ```
 
-> **v2.0.0-alpha** is a clean rebuild against Voyagier's advisor-first / Blueprint trip-plan model. v1.x is broken against the current backend and is deprecated. See [CHANGELOG.md](./CHANGELOG.md) for the breaking-changes summary and known gaps.
+> **v2.0.0** is a clean rebuild against Voyagier's advisor-first / Blueprint trip-plan model. v1.x is broken against the current backend and is deprecated. See [CHANGELOG.md](./CHANGELOG.md) for the breaking-changes summary and known gaps.
 
 ## Quick Start
 
@@ -87,7 +87,7 @@ Most data-bearing commands accept `--json` for structured output (notable except
 voyagier agent-docs    # full reference (AGENT.md)
 ```
 
-Or read [AGENT.md](./AGENT.md) directly. It covers per-command JSON shapes (the v2 alpha is not yet uniform — VOY-1192), the error code table, the bookability matrix, and the canonical manual flow.
+Or read [AGENT.md](./AGENT.md) directly. It covers per-command JSON shapes (v2.0.0 is not yet uniform — VOY-1192), the error code table, the bookability matrix, and the canonical manual flow.
 
 ## Environment Variables
 
