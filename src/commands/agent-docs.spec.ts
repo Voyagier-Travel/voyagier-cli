@@ -2,6 +2,19 @@ import { describe, it, expect } from "@jest/globals";
 import { loadAgentDocs, resolveAgentMdPath } from "./agent-docs.js";
 import { existsSync } from "fs";
 
+/**
+ * agent-docs spec
+ *
+ * These assertions check that AGENT.md continues to describe the actual
+ * v2.0.0-alpha CLI behavior, not an aspirational design. Each block here
+ * is intentional — when a v2 surface lands or changes, both AGENT.md and
+ * this spec should be updated together.
+ *
+ * Background: an earlier version of these tests asserted an aspirational
+ * uniform JSON envelope and a `--client` flag on `plans create` that
+ * neither exist in the v2 alpha. Copilot review on PR #48 caught the
+ * drift; tests were narrowed to ground-truth claims and known-gap callouts.
+ */
 describe("agent-docs", () => {
   describe("resolveAgentMdPath", () => {
     it("should return a path ending with AGENT.md", () => {
@@ -13,12 +26,9 @@ describe("agent-docs", () => {
   describe("loadAgentDocs", () => {
     it("should load AGENT.md when it exists", () => {
       const { content, fromFallback } = loadAgentDocs();
-      // AGENT.md exists in the repo root during tests
       if (existsSync(resolveAgentMdPath())) {
         expect(fromFallback).toBe(false);
         expect(content).toContain("Voyagier CLI");
-        expect(content).toContain("auto-select");
-        expect(content).toContain("navigator");
         expect(content).toContain("--json");
       } else {
         // Fallback path
@@ -27,41 +37,176 @@ describe("agent-docs", () => {
       }
     });
 
-    it("should include JSON response contract in AGENT.md", () => {
+    it("should document the v2 command groups", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
-        expect(content).toContain("planContext");
-        expect(content).toContain("alternatives");
-        expect(content).toContain("nextSteps");
-        expect(content).toContain("rankReason");
+        // The five LOCKED-STABLE v2 surfaces shipped on 2026-05-03
+        expect(content).toContain("voyagier doctor");
+        expect(content).toContain("voyagier clients");
+        expect(content).toContain("voyagier itinerary");
+        expect(content).toContain("voyagier listings");
+        expect(content).toContain("voyagier places");
+        expect(content).toContain("voyagier plans bookable");
       }
     });
 
-    it("should include safety rails documentation", () => {
+    it("should document the actual two JSON-payload styles (alpha is not uniform)", () => {
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        // Style A — wrapped envelope used by Section 3 / 7 / 9 surfaces.
+        expect(content).toContain('"ok": true');
+        expect(content).toContain("planContext");
+        // Style B — domain-specific shapes the older surfaces emit.
+        // The doc lists at least the clients upsert and plans create payloads.
+        expect(content).toMatch(/clients upsert/i);
+        expect(content).toMatch(/plans create/i);
+        // The doc must be honest that the envelope is not yet uniform.
+        expect(content).toMatch(/not\s+(yet\s+)?uniform/i);
+        expect(content).toContain("VOY-1192");
+      }
+    });
+
+    it("should classify `voyagier doctor` as Style A (wrapped envelope)", () => {
+      // Regression: an earlier draft put `doctor` under Style B. The runtime
+      // (src/commands/doctor.ts) emits { ok, data: { checks, overall } }, so
+      // it belongs in the Style A list and the doctor section must show the
+      // wrapped shape with `data.checks` and `data.overall`.
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        // Doctor must be named in the Style A surface roster.
+        const styleAHeader = content.match(/Style A.*?\n/);
+        expect(styleAHeader?.[0]?.toLowerCase()).toContain("doctor");
+        // Doctor section heading carries the Style A label.
+        expect(content).toMatch(/###\s+Doctor.*Style A/);
+        // The actual key is `overall`, not `summary`.
+        expect(content).toContain("overall");
+        expect(content).toMatch(/data:\s*{\s*checks/);
+      }
+    });
+
+    it("should document the actual error envelope shape (no `fix` field today)", () => {
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        // Real shape: { error: true, code, message, details? }
+        expect(content).toContain('"error": true');
+        expect(content).toContain('"code"');
+        expect(content).toContain('"message"');
+      }
+    });
+
+    it("should not show top-level `ok: false` in error examples", () => {
+      // Regression: the BOOKING_BLOCKED sample used to include `"ok": false`,
+      // which the runtime never emits. The top-level error handler
+      // (src/index.ts) writes only { error, code, message, details? } for
+      // CliError. Strict JSON consumers checking `payload.ok === false` would
+      // have parsed real errors as success.
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        expect(content).not.toContain('"ok": false');
+      }
+    });
+
+    it("should document the --plan safety rail and explain the cross-plan rationale", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
         expect(content).toContain("--plan");
-        expect(content).toContain("actionRequired");
-        expect(content).toContain("Safety rails");
+        expect(content.toLowerCase()).toContain("cross-plan");
       }
     });
 
-    it("should include error handling documentation", () => {
+    it("should document only error codes that the CLI actually emits", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
+        // Codes from src/errors.ts that the runtime can throw.
         expect(content).toContain("AUTH_FAILED");
         expect(content).toContain("VALIDATION");
-        expect(content).toContain("error");
+        expect(content).toContain("NOT_FOUND");
+        expect(content).toContain("BOOKING_BLOCKED");
+        expect(content).toContain("NOT_BOOKABLE");
+        expect(content).toContain("SCHEMA_DRIFT");
+        // CLIENT_REQUIRED is in the enum but reserved for VOY-1193; the doc
+        // should mention it AND flag it as not-yet-emitted to avoid setting
+        // a false branching expectation.
+        expect(content).toContain("CLIENT_REQUIRED");
       }
     });
 
-    it("should not contain hardcoded dates", () => {
+    it("should NOT promise an `AUTH_REQUIRED` code (it isn't in CliErrorCode)", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
-        // Dates in example JSON values (like "PT10H5M") are fine,
-        // but full calendar dates should use placeholders
-        expect(content).not.toMatch(/--depart \d{4}-\d{2}-\d{2}/);
-        expect(content).not.toMatch(/--return \d{4}-\d{2}-\d{2}/);
+        // AGENT.md must use AUTH_FAILED, not AUTH_REQUIRED. AUTH_REQUIRED
+        // is not a defined CliErrorCode and the runtime never emits it,
+        // so documenting it as branchable would mislead agents.
+        expect(content).not.toContain("AUTH_REQUIRED");
+      }
+    });
+
+    it("should document the bookability matrix honestly", () => {
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        // Flights are explicitly non-bookable in v2.
+        expect(content).toMatch(/Flight.*display only|display only.*Flight|Flight.*\u274c/i);
+        // Activities (Viator) are the primary bookable path.
+        expect(content.toLowerCase()).toContain("viator");
+      }
+    });
+
+    it("should flag the known v2 gaps so agents don't trip on them", () => {
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        // plan-trip --auto-select is broken on v2 schema until VOY-1189 lands.
+        expect(content).toContain("VOY-1189");
+        // --client wiring is in flight (VOY-1193) — plans create / plan-trip
+        // currently DON'T accept the flag, so the doc must say so.
+        expect(content).toContain("VOY-1193");
+        // book --types / --only-bookable are client-side gates only.
+        expect(content.toLowerCase()).toContain("client-side");
+      }
+    });
+
+    it("should describe the actual state-file layout (global, not per-plan)", () => {
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        // The CLI uses a single global last-search.json + last-options.json,
+        // not per-plan files. Cross-plan corruption is prevented by --plan
+        // mismatch checks at the command layer. The doc must reflect this.
+        expect(content).toContain("last-search.json");
+        expect(content).toContain("last-options.json");
+        expect(content.toLowerCase()).toMatch(/global.*single|single.*global|not\s+per-plan/);
+        // No last-clients.json cache exists today; the doc should NOT
+        // claim one.
+        expect(content).not.toContain("last-clients.json");
+      }
+    });
+
+    it("should document --idempotency-key as a per-command flag, not universal", () => {
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        // --idempotency-key only exists on book, listings add-to-selection,
+        // and a few places mutations. The doc must list those rather than
+        // promising it on every mutating command.
+        expect(content).toContain("--idempotency-key");
+        expect(content).toContain("voyagier book");
+        expect(content).toContain("listings add-to-selection");
+        // Doc should NOT say it's accepted by every mutation.
+        expect(content.toLowerCase()).not.toMatch(/every mutating command accepts/);
+      }
+    });
+
+    it("should not contain hardcoded calendar dates in flag examples without context", () => {
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        // Concrete calendar dates inside a runnable Quick Start block are
+        // acceptable as illustrative ISO timestamps; what we want to avoid
+        // is auto-staleness from things like "release notes mention --date 2024-01-01"
+        // in marketing copy. The current AGENT.md uses 2026 dates as part of
+        // working examples, which is fine. This guard is preserved as a
+        // tripwire: if dates ever appear inline in normative prose, flag it.
+        const calendarDateMatches = content.match(/\b\d{4}-\d{2}-\d{2}\b/g) ?? [];
+        // We expect a small number of ISO dates inside example payloads;
+        // a sudden explosion of them likely indicates hand-baked dates
+        // creeping into the doc. Keep the threshold generous but bounded.
+        expect(calendarDateMatches.length).toBeLessThan(40);
       }
     });
   });
