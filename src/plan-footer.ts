@@ -16,11 +16,12 @@ const PLAN_FOOTER_QUERY = `query PlanFooter($id: String!) { tripPlan(id: $id) { 
 // Fetches minimal plan data and prints a 2-line footer. Fails silently.
 export async function printPlanFooter(planId: string): Promise<void> {
   try {
-    const data = await graphql<{ tripPlan: PlanFooterData }>(
+    const data = await graphql<{ tripPlan: PlanFooterData | null }>(
       PLAN_FOOTER_QUERY,
       { id: planId }
     );
     const p = data.tripPlan;
+    if (!p) return;
     const url = `${deriveBaseUrl(getApiUrl())}/plans/${planId}`;
     const dates = formatDateRange(p.startDate, p.endDate);
     const tc = p.travellers?.length ?? 0;
@@ -34,11 +35,12 @@ export async function printPlanFooter(planId: string): Promise<void> {
 // Returns plan summary object for --json mode. Returns null on failure.
 export async function getPlanSummary(planId: string): Promise<object | null> {
   try {
-    const data = await graphql<{ tripPlan: PlanFooterData }>(
+    const data = await graphql<{ tripPlan: PlanFooterData | null }>(
       PLAN_FOOTER_QUERY,
       { id: planId }
     );
     const p = data.tripPlan;
+    if (!p) return null;
     return {
       title: p.title,
       url: `${deriveBaseUrl(getApiUrl())}/plans/${planId}`,

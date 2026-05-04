@@ -1089,3 +1089,97 @@ export const ASSIGN_TRAVELLERS_TO_GOAL = `
     assignTravellersToGoal(goalId: $goalId, travellerIds: $travellerIds)
   }
 `;
+
+// --- Traveller Groups (v2.1.0 — Section 6) ---
+//
+// Schema-verified from introspection 2026-05-04.
+// TripPlanTravellerGroup fields: id, name, color (nullable), sortOrder, tripPlanId, tripPlan, travellers
+// CreateTripPlanTravellerGroupInput: name (required), color, travellerIds
+// UpdateTripPlanTravellerGroupInput: name, color, sortOrder (color/sortOrder NOT exposed as CLI inputs per audit)
+
+const TRAVELLER_GROUP_FIELDS = `
+  id
+  name
+  color
+  sortOrder
+  tripPlanId
+  tripPlan { id title travellers { id } }
+  travellers { id firstName lastName email }
+`;
+
+export const LIST_TRIP_PLAN_TRAVELLER_GROUPS = `
+  query TripPlanTravellerGroups($tripPlanId: String!) {
+    tripPlanTravellerGroups(tripPlanId: $tripPlanId) {
+      id name color sortOrder
+      travellers { id firstName lastName email }
+    }
+    tripPlan(id: $tripPlanId) { id title travellers { id } }
+  }
+`;
+
+export const GET_TRIP_PLAN_TRAVELLER_GROUP = `
+  query TripPlanTravellerGroup($id: String!) {
+    tripPlanTravellerGroup(id: $id) { ${TRAVELLER_GROUP_FIELDS} }
+  }
+`;
+
+export const CREATE_TRIP_PLAN_TRAVELLER_GROUP = `
+  mutation CreateTripPlanTravellerGroup($input: CreateTripPlanTravellerGroupInput!, $tripPlanId: String!) {
+    createTripPlanTravellerGroup(input: $input, tripPlanId: $tripPlanId) { ${TRAVELLER_GROUP_FIELDS} }
+  }
+`;
+
+export const UPDATE_TRIP_PLAN_TRAVELLER_GROUP = `
+  mutation UpdateTripPlanTravellerGroup($id: String!, $input: UpdateTripPlanTravellerGroupInput!) {
+    updateTripPlanTravellerGroup(id: $id, input: $input) { ${TRAVELLER_GROUP_FIELDS} }
+  }
+`;
+
+export const DELETE_TRIP_PLAN_TRAVELLER_GROUP = `
+  mutation DeleteTripPlanTravellerGroup($id: String!) {
+    deleteTripPlanTravellerGroup(id: $id)
+  }
+`;
+
+export const ADD_TRAVELLERS_TO_GROUP = `
+  mutation AddTravellersToGroup($groupId: String!, $travellerIds: [String!]!) {
+    addTravellersToGroup(groupId: $groupId, travellerIds: $travellerIds) { ${TRAVELLER_GROUP_FIELDS} }
+  }
+`;
+
+export const REMOVE_TRAVELLERS_FROM_GROUP = `
+  mutation RemoveTravellersFromGroup($groupId: String!, $travellerIds: [String!]!) {
+    removeTravellersFromGroup(groupId: $groupId, travellerIds: $travellerIds) { ${TRAVELLER_GROUP_FIELDS} }
+  }
+`;
+
+// --- Traveller Choices (v2.1.0 — Section 6) ---
+//
+// travellerChoices returns TravellerChoicesResult! (non-null per introspection).
+// TripPlanSelectOption uses `name` not `label` (see SECTION6-DISCOVERIES.md).
+// TripPlanSelectionInput fields: id, fieldName, fieldLabel, isRequired (see SECTION6-DISCOVERIES.md).
+
+export const GET_TRAVELLER_CHOICES = `
+  query TravellerChoices($tripPlanId: String!) {
+    travellerChoices(tripPlanId: $tripPlanId) {
+      title
+      startDate
+      endDate
+      numberOfDays
+      numberOfNights
+      travellers { id firstName lastName }
+      questions {
+        selectionId
+        selectionType
+        title
+        goalId
+        groupName
+        questionTemplate
+        options { id name isBookable }
+        inputs { id fieldName fieldLabel isRequired }
+        answeredTravellers { id firstName lastName }
+        pendingTravellers { id firstName lastName }
+      }
+    }
+  }
+`;
