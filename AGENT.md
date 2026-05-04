@@ -145,6 +145,11 @@ Branch on `code`. The CLI exits 1 for `CliError`s, 2 for unexpected errors. Pass
 | `LISTING_NOT_FOUND` | Blueprint listing missing or unavailable | `voyagier listings recent --selection <id>` |
 | `PLACE_NOT_FOUND` | Place ID does not resolve | `voyagier places search --query ...` |
 | `NO_MONITOR` | Selection has no Blueprint monitor attached | (advisor must enable monitoring; not yet exposed in CLI) |
+| `GOAL_NOT_FOUND` | Trip plan goal id doesn't exist on the plan | `voyagier plans goals <planId>` to list valid ids |
+| `PLAN_NOT_FOUND` | Trip plan id doesn't exist or isn't accessible | `voyagier plans list --json` |
+| `GROUP_NAME_REQUIRED` | `traveller-groups create` / `update` called without `--name` | provide `--name "<group name>"` |
+| `MEMBERS_REQUIRED` | Empty `--members` / `--travellers` list passed to a group mutation | provide at least one traveller id (CSV) |
+| `TRAVELLER_NOT_IN_PLAN` | Adding a traveller to a group when they aren't a plan traveller yet | `voyagier travellers list --plan <planId>` to see who's on the plan; add the missing traveller first via `voyagier travellers add` |
 
 ### Idempotency
 

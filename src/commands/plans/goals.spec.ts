@@ -19,7 +19,8 @@ let normalizeSelectionType: (v: string) => string;
 let normalizeSelectionScope: (v: string) => string;
 let parseTravellerIds: (csv: string) => string[];
 let parseCsvIds: (csv: string, flag: string, opts?: { dedupe?: boolean }) => string[];
-let parseInitialQuery: (json: string) => Record<string, unknown>;
+let parseInitialSearch: (json: string) => Record<string, unknown>;
+let parseInitialQuery: (json: string) => Record<string, unknown>; // deprecated alias — kept for v2.1.0
 let parseGoalDate: (iso: string) => string;
 let computeReorderUpdates: (
   goals: Array<{ id: string; sortOrder: number }>,
@@ -33,6 +34,7 @@ beforeAll(async () => {
   normalizeSelectionScope = mod.normalizeSelectionScope;
   parseTravellerIds = mod.parseTravellerIds;
   parseCsvIds = mod.parseCsvIds;
+  parseInitialSearch = mod.parseInitialSearch;
   parseInitialQuery = mod.parseInitialQuery;
   parseGoalDate = mod.parseGoalDate;
   computeReorderUpdates = mod.computeReorderUpdates;
@@ -174,26 +176,55 @@ describe("parseTravellerIds", () => {
   });
 });
 
-describe("parseInitialQuery", () => {
+describe("parseInitialSearch", () => {
   it("parses a JSON object", () => {
-    expect(parseInitialQuery('{"query":"hotel"}')).toEqual({ query: "hotel" });
+    expect(parseInitialSearch('{"query":"hotel"}')).toEqual({ query: "hotel" });
   });
   it("rejects invalid JSON", () => {
     try {
-      parseInitialQuery("{not json");
+      parseInitialSearch("{not json");
       fail("expected throw");
     } catch (err) {
       expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
     }
   });
+  it("error messages reference the new flag name (no leakage of the old `--initial-query`)", () => {
+    try {
+      parseInitialSearch("{not json");
+      fail("expected throw");
+    } catch (err) {
+      expect((err as Error).message).toContain("--initial-search");
+      expect((err as Error).message).not.toContain("--initial-query");
+    }
+  });
   it("rejects non-objects (arrays, primitives)", () => {
-    expect(() => parseInitialQuery("[1,2]")).toThrow(CliError);
-    expect(() => parseInitialQuery('"plain"')).toThrow(CliError);
-    expect(() => parseInitialQuery("123")).toThrow(CliError);
+    expect(() => parseInitialSearch("[1,2]")).toThrow(CliError);
+    expect(() => parseInitialSearch('"plain"')).toThrow(CliError);
+    expect(() => parseInitialSearch("123")).toThrow(CliError);
   });
   it("rejects empty input", () => {
-    expect(() => parseInitialQuery("")).toThrow(CliError);
-    expect(() => parseInitialQuery("   ")).toThrow(CliError);
+    expect(() => parseInitialSearch("")).toThrow(CliError);
+    expect(() => parseInitialSearch("   ")).toThrow(CliError);
+  });
+});
+
+describe("parseInitialQuery (deprecated alias)", () => {
+  it("is a reference to parseInitialSearch (same function, no behavior drift)", () => {
+    expect(parseInitialQuery).toBe(parseInitialSearch);
+  });
+  it("parses identically to parseInitialSearch", () => {
+    expect(parseInitialQuery('{"query":"hotel"}')).toEqual(
+      parseInitialSearch('{"query":"hotel"}'),
+    );
+  });
+  it("error messages on the alias path also reference the new flag name (callers see migration nudge in errors)", () => {
+    try {
+      parseInitialQuery("{not json");
+      fail("expected throw");
+    } catch (err) {
+      expect((err as Error).message).toContain("--initial-search");
+      expect((err as Error).message).not.toContain("--initial-query");
+    }
   });
 });
 
@@ -550,7 +581,7 @@ describe("plans goal-add-with-selection <planId>", () => {
       "--type", "Hotel",
       "--name", "Paris hotel",
       "--place-before", "g-anchor",
-      "--initial-query", '{"query":"hotel in Paris"}',
+      "--initial-search", '{"query":"hotel in Paris"}',
       "--json",
     ]);
     const [, vars] = mockGraphql.mock.calls[0];
@@ -562,6 +593,58 @@ describe("plans goal-add-with-selection <planId>", () => {
       initialQuery: { query: "hotel in Paris" },
     });
     expect(lastJsonOutput().data.selection.id).toBe("sel-9");
+  });
+
+  it("accepts deprecated --initial-query as alias for --initial-search and emits a stderr warning", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      createTripPlanGoalWithSelection: {
+        goal: { ...GOAL_FIXTURE, id: "g-old" },
+        item: { id: "i-old", goalId: "g-old" },
+        selection: { id: "sel-old", type: "Hotel", isLocked: false },
+      },
+    });
+    const consoleErrSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await runGoals([
+        "goal-add-with-selection", "plan-1",
+        "--type", "Hotel",
+        "--initial-query", '{"query":"old flag"}',
+        "--json",
+      ]);
+      const [, vars] = mockGraphql.mock.calls[0];
+      expect((vars as any).input.initialQuery).toEqual({ query: "old flag" });
+      const warnings = consoleErrSpy.mock.calls.flat().join("\n");
+      expect(warnings).toContain("--initial-query is deprecated");
+      expect(warnings).toContain("v2.2.0");
+    } finally {
+      consoleErrSpy.mockRestore();
+    }
+  });
+
+  it("prefers --initial-search over deprecated --initial-query when both are passed (no warning)", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      createTripPlanGoalWithSelection: {
+        goal: { ...GOAL_FIXTURE, id: "g-new" },
+        item: { id: "i-new", goalId: "g-new" },
+        selection: { id: "sel-new", type: "Hotel", isLocked: false },
+      },
+    });
+    const consoleErrSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await runGoals([
+        "goal-add-with-selection", "plan-1",
+        "--type", "Hotel",
+        "--initial-query", '{"query":"old"}',
+        "--initial-search", '{"query":"new"}',
+        "--json",
+      ]);
+      const [, vars] = mockGraphql.mock.calls[0];
+      expect((vars as any).input.initialQuery).toEqual({ query: "new" });
+      const warnings = consoleErrSpy.mock.calls.flat().join("\n");
+      expect(warnings).not.toContain("deprecated");
+    } finally {
+      consoleErrSpy.mockRestore();
+    }
   });
 
   it("rejects --place-before + --place-after as mutually exclusive", async () => {
