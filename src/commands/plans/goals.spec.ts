@@ -437,18 +437,52 @@ describe("plans goal-add <planId>", () => {
   it("calls assignTravellersToGoal after a successful create when --travellers given", async () => {
     mockGraphql
       .mockResolvedValueOnce({ createTripPlanGoal: { ...GOAL_FIXTURE } })
-      .mockResolvedValueOnce({ assignTravellersToGoal: true });
+      .mockResolvedValueOnce({ assignTravellersToGoal: true })
+      .mockResolvedValueOnce({ tripPlanGoal: { ...GOAL_FIXTURE, travellers: [{ id: "t-1" }, { id: "t-2" }] } });
     await runGoals([
       "goal-add", "plan-1", "--type", "Hotel",
       "--travellers", "t-1, t-2 , t-1",
       "--json",
     ]);
-    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    expect(mockGraphql).toHaveBeenCalledTimes(3);
     const [, assignVars] = mockGraphql.mock.calls[1];
     expect(assignVars).toEqual({ goalId: "g-1", travellerIds: ["t-1", "t-2"] });
     const out = lastJsonOutput();
     expect(out.data.travellersAssigned).toEqual(["t-1", "t-2"]);
     expect(out.data.warning).toBeUndefined();
+  });
+
+  it("reports server-verified subset when server drops unknown ids after create+assign", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlanGoal: { ...GOAL_FIXTURE } })
+      .mockResolvedValueOnce({ assignTravellersToGoal: true })
+      .mockResolvedValueOnce({ tripPlanGoal: { ...GOAL_FIXTURE, travellers: [{ id: "t-1" }] } });
+    await runGoals([
+      "goal-add", "plan-1", "--type", "Hotel",
+      "--travellers", "t-1, t-99",
+      "--json",
+    ]);
+    const out = lastJsonOutput();
+    expect(out.ok).toBe(true);
+    expect(out.data.travellersAssigned).toEqual(["t-1"]);
+    expect(out.data.warning).toBeUndefined();
+  });
+
+  it("falls back to requested ids with travellersWarning when re-fetch fails after create+assign", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlanGoal: { ...GOAL_FIXTURE } })
+      .mockResolvedValueOnce({ assignTravellersToGoal: true })
+      .mockRejectedValueOnce(new Error("re-fetch network error"));
+    await runGoals([
+      "goal-add", "plan-1", "--type", "Hotel",
+      "--travellers", "t-1, t-2",
+      "--json",
+    ]);
+    const out = lastJsonOutput();
+    expect(out.ok).toBe(true);
+    expect(out.data.travellersAssigned).toEqual(["t-1", "t-2"]);
+    expect(out.data.warning).toContain("re-fetch failed");
+    expect(out.data.goal.id).toBe("g-1");
   });
 
   it("surfaces traveller-assign failure as a non-fatal warning", async () => {
@@ -645,8 +679,10 @@ describe("plans goal-remove <goalId>", () => {
 });
 
 describe("plans goal-assign-travellers <goalId>", () => {
-  it("dedupes traveller ids and calls the mutation", async () => {
-    mockGraphql.mockResolvedValueOnce({ assignTravellersToGoal: true });
+  it("dedupes traveller ids, calls the mutation, and re-fetches for verified ids", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ assignTravellersToGoal: true })
+      .mockResolvedValueOnce({ tripPlanGoal: { ...GOAL_FIXTURE, travellers: [{ id: "t-1" }, { id: "t-2" }] } });
     await runGoals([
       "goal-assign-travellers", "g-1",
       "--travellers", "t-1, t-2, t-1",
@@ -654,6 +690,40 @@ describe("plans goal-assign-travellers <goalId>", () => {
     ]);
     const [, vars] = mockGraphql.mock.calls[0];
     expect(vars).toEqual({ goalId: "g-1", travellerIds: ["t-1", "t-2"] });
+    const out = lastJsonOutput();
+    expect(out.ok).toBe(true);
+    expect(out.data.assignedTravellerIds).toEqual(["t-1", "t-2"]);
+    expect(out.data.warning).toBeUndefined();
+  });
+
+  it("reports server-verified subset when server drops unknown ids", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ assignTravellersToGoal: true })
+      .mockResolvedValueOnce({ tripPlanGoal: { ...GOAL_FIXTURE, travellers: [{ id: "t-1" }] } });
+    await runGoals([
+      "goal-assign-travellers", "g-1",
+      "--travellers", "t-1, t-99",
+      "--json",
+    ]);
+    const out = lastJsonOutput();
+    expect(out.ok).toBe(true);
+    expect(out.data.assignedTravellerIds).toEqual(["t-1"]);
+    expect(out.data.warning).toBeUndefined();
+  });
+
+  it("returns ok:true with warning when re-fetch fails after assignment", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ assignTravellersToGoal: true })
+      .mockRejectedValueOnce(new Error("network timeout"));
+    await runGoals([
+      "goal-assign-travellers", "g-1",
+      "--travellers", "t-1, t-2",
+      "--json",
+    ]);
+    const out = lastJsonOutput();
+    expect(out.ok).toBe(true);
+    expect(out.data.assignedTravellerIds).toEqual(["t-1", "t-2"]);
+    expect(out.data.warning).toContain("re-fetch failed");
   });
 
   it("rejects empty --travellers", async () => {

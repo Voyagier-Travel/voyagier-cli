@@ -442,7 +442,23 @@ export function registerGoalCommands(plans: Command): void {
               ASSIGN_TRAVELLERS_TO_GOAL,
               { goalId: goal.id, travellerIds },
             );
-            travellersAssigned = travellerIds;
+            // Re-fetch to get the server-verified assignment.
+            try {
+              const refetch = await graphql<{ tripPlanGoal: TripPlanGoalDeep | null }>(
+                GET_TRIP_PLAN_GOAL,
+                { id: goal.id },
+              );
+              if (refetch.tripPlanGoal) {
+                travellersAssigned = (refetch.tripPlanGoal.travellers ?? []).map(t => t.id);
+              } else {
+                travellersAssigned = travellerIds;
+                travellersWarning = `Travellers assigned but re-fetch returned null; showing requested ids`;
+              }
+            } catch (refetchErr) {
+              const message = refetchErr instanceof Error ? refetchErr.message : String(refetchErr);
+              travellersAssigned = travellerIds;
+              travellersWarning = `Travellers assigned but re-fetch failed: ${message}`;
+            }
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             travellersWarning = `Goal created (id=${goal.id}) but traveller assignment failed: ${message}`;
@@ -703,23 +719,56 @@ export function registerGoalCommands(plans: Command): void {
         );
         const ok = data.assignTravellersToGoal === true;
 
+        if (!ok) {
+          if (opts.json) {
+            jsonOutput({
+              ok,
+              data: {
+                goalId,
+                travellerIds,
+                idempotencyKey: opts.idempotencyKey ?? null,
+              },
+            });
+            return;
+          }
+          console.log(chalk.yellow(`\n  ⚠ Server returned false for assignTravellersToGoal\n`));
+          return;
+        }
+
+        // Mutation succeeded — re-fetch to get the server-verified assignment.
+        let assignedTravellerIds: string[] = travellerIds;
+        let goalName: string | null = null;
+        let verificationWarning: string | null = null;
+        try {
+          const refetch = await graphql<{ tripPlanGoal: TripPlanGoalDeep | null }>(
+            GET_TRIP_PLAN_GOAL,
+            { id: goalId },
+          );
+          if (refetch.tripPlanGoal) {
+            assignedTravellerIds = (refetch.tripPlanGoal.travellers ?? []).map(t => t.id);
+            goalName = refetch.tripPlanGoal.name ?? null;
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          verificationWarning = `Assignment succeeded but re-fetch failed: ${message}`;
+        }
+
         if (opts.json) {
           jsonOutput({
-            ok,
+            ok: true,
             data: {
               goalId,
-              travellerIds,
+              assignedTravellerIds,
+              ...(verificationWarning ? { warning: verificationWarning } : {}),
               idempotencyKey: opts.idempotencyKey ?? null,
             },
           });
           return;
         }
 
-        if (ok) {
-          console.log(chalk.green(`\n  ✓ Assigned ${travellerIds.length} traveller(s) to goal ${goalId}\n`));
-        } else {
-          console.log(chalk.yellow(`\n  ⚠ Server returned false for assignTravellersToGoal\n`));
-        }
+        const label = goalName ? `goal: ${goalName}` : `goal ${goalId}`;
+        console.log(chalk.green(`\n  ✓ Assigned ${assignedTravellerIds.length} traveller(s) to ${label}\n`));
+        if (verificationWarning) console.log(chalk.yellow(`  ⚠ ${verificationWarning}`));
       } catch (err) {
         if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
