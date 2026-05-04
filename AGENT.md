@@ -10,131 +10,159 @@
 
 This is a **clean rebuild** against the new advisor-first / Blueprint trip-plan model. v1.x is broken against the current backend schema and is deprecated. Highlights:
 
-- Every trip plan now belongs to a **client** (advisor CRM). `--client <id>` is required on plan creation.
-- The **itinerary is computed**, not authored. Use `voyagier itinerary <planId>` to read the time-sorted view.
-- **Bookability is per-option.** Flights are display-only. Activities (Viator) are bookable. Hotels (Blueprint Listings) are searchable but checkout coverage is partial.
-- New command groups: `clients`, `itinerary`, `listings`, `places`, `doctor`, `plans bookable`.
-
-> ⚠️ **Known gap (VOY-1189):** `voyagier plan-trip --auto-select navigator` is currently broken on the v2 schema. Use the manual flow described in [Building a Plan](#building-a-plan) until VOY-1189 lands.
+- **Computed itinerary** replaces hand-crafted item metadata. `voyagier itinerary <planId>` reads the platform's `tripPlanEvents` resolver.
+- **Advisor CRM** is a first-class concept. New `voyagier clients` command group.
+- **Multi-source bookability.** Flights are display-only (`isBookable = false`). Activities (Viator) are the primary bookable inventory. Hotels (Blueprint Listings) are searchable but checkout coverage is partial.
+- **Inventory escape hatch.** New `voyagier listings` command group surfaces Blueprint Listing change events.
+- **Place / geo layer.** New `voyagier places` command group wraps Google Places + the internal place catalog + TripPlanPlace management.
+- **Self-check.** New `voyagier doctor` command verifies auth, schema reachability, state, and version.
 
 For the full breaking-changes table see [`CHANGELOG.md`](./CHANGELOG.md).
+
+> ⚠️ **Known gaps in this alpha (don't rely on these yet):**
+>
+> - `voyagier plan-trip --auto-select navigator` is broken on the v2 schema (tracked as [VOY-1189](https://linear.app/voyagier/issue/VOY-1189)). Use the manual flow below.
+> - `voyagier plans create` and `plan-trip` do **not** yet take a `--client` flag, even though every TripPlan must server-side belong to a client per the new model. Plan creation today still uses the v1 input shape; `clientId` wiring is tracked as [VOY-1193](https://linear.app/voyagier/issue/VOY-1193).
+> - The `--json` envelope is **not yet uniform** across commands. The newer surfaces (cart, book, bookable, itinerary, listings, places) emit `{ ok: true, data, planContext? }`. The older surfaces (clients, plans) emit ad-hoc shapes documented per-command below. Unification tracked as [VOY-1192](https://linear.app/voyagier/issue/VOY-1192).
+> - `voyagier book --types` and `--only-bookable` are **client-side preflight gates only** — they do not yet pass an item filter to the `createTripPlanCheckout` mutation. Use `--validate` first, and only invoke `book` once the cart actually contains the items you want to charge.
 
 ---
 
 ## Quick Start
 
-The fastest grounded loop for an agent:
+The fastest grounded loop for an agent against the current alpha:
 
 ```bash
-# 0) Make sure auth + schema + state are healthy
+# 0) Health check
 voyagier doctor --json
 
 # 1) Resolve a client (idempotent by email)
 voyagier clients upsert --email "smith@example.com" --name "Smith Family" --type Individual --json
+# Returns: { client: { id, name, ... }, ok: true, created: true|false }
 
-# 2) Create the plan with that client
-voyagier plans create --client <CLIENT_ID> --title "Smith — Tokyo" --json
+# 2) Create the plan (server-side will require a clientId once VOY-1193 lands;
+#    until then the CLI doesn't pass it. The plan is created against your
+#    user account.)
+voyagier plans create --title "Smith — Tokyo" --start 2026-09-15 --end 2026-09-22 --json
+# Returns: { ...plan, url, planSummary }
 
 # 3) Add travellers
 voyagier travellers add --plan <PLAN_ID> --first John --last Smith --type Adult --json
 
-# 4) Search → select → pick → cart → book
+# 4) Search → select → pick
 voyagier search flights --plan <PLAN_ID> --from JFK --to NRT \
-  --date <DEPART_DATE> --return <RETURN_DATE> --json
+  --date 2026-09-15 --return 2026-09-22 --json
 voyagier select 1 --plan <PLAN_ID> --json
 voyagier select 1 --plan <PLAN_ID> --json    # return leg
 voyagier options <PLAN_ID> --json
 voyagier pick 1 --plan <PLAN_ID> --json      # cabin
 
-voyagier search hotels --plan <PLAN_ID> --location Tokyo \
-  --checkin <DEPART_DATE> --checkout <RETURN_DATE> --json
-voyagier select 1 --plan <PLAN_ID> --json
-voyagier options <PLAN_ID> --json
-voyagier pick 1 --plan <PLAN_ID> --json      # room type
-
 voyagier search activities --plan <PLAN_ID> --destination Tokyo \
-  --date <DEPART_DATE> --query "sushi tour" --json
-voyagier select 1 --plan <PLAN_ID> --json    # the actually-bookable one
+  --date 2026-09-16 --query "sushi tour" --json
+voyagier select 1 --plan <PLAN_ID> --json
 
-# 5) Pre-flight bookability + book
+# 5) Pre-flight + book
 voyagier book <PLAN_ID> --validate --json    # see what's actually bookable
-voyagier book <PLAN_ID> --types ACTIVITY,HOTEL --json
+# Then build a fresh cart with only the items you want and call book again.
+voyagier book <PLAN_ID> --json
 ```
 
-`--plan <id>` on `select` and `pick` is mandatory. It prevents cross-plan state corruption when an agent runs multiple workflows in parallel.
+`--plan <id>` on `select` and `pick` is mandatory. It guards against cross-plan state corruption when you run multiple workflows in parallel.
 
 ---
 
-## Universal Conventions
+## Output Conventions
 
 ### Output modes
-- `--json` — agent-targeted, stable shape with `planContext` envelope. Default for non-TTY.
-- `--agent` — markdown for AI → human display.
+
+- `--json` — agent-targeted, machine-readable. Default for non-TTY.
+- `--agent` — markdown rendered for AI → human display.
 - (default) — chalk-colored TTY for humans.
 
-### JSON envelope (success)
+### Success-payload shape: command-specific (NOT yet uniform)
+
+The v2 alpha has two payload styles. Pick the right shape for the command you're calling:
+
+**Style A — wrapped envelope** (cart, book, bookable, itinerary, listings, places — i.e. the Section 3 / 7 surfaces):
+
 ```json
 {
   "ok": true,
-  "data": { /* command-specific */ },
+  "data": { /* command-specific payload */ },
   "planContext": {
     "planId": "...",
     "title": "...",
-    "url": "https://app.voyagier.com/plans/...",
-    "client": { "id": "...", "name": "...", "type": "Individual" },
-    "isBookable": false
+    "url": "https://app.voyagier.com/plans/..."
   }
 }
 ```
 
-### JSON envelope (error)
+**Style B — flat / domain-specific** (clients, plans, travellers, search, select, pick, doctor, whoami — the older / Section 1 surfaces):
+
+```json
+// clients list:    { "clients": [...], "total": 12 }
+// clients get:     { "client": { id, name, ... } }
+// clients upsert:  { "client": { ... }, "ok": true, "created": false }
+// plans create:    { "id": "...", "title": "...", "url": "...", "planSummary": "..." }
+// plans list:      { "items": [...], "total": 12, "page": 1, "limit": 20 }
+// search flights:  { "options": [...], "planContext": { ... } }
+```
+
+When in doubt: pipe `--json` through `jq keys` to inspect. The unification work is tracked as [VOY-1192](https://linear.app/voyagier/issue/VOY-1192).
+
+### Error envelope (uniform across commands)
+
 ```json
 {
-  "ok": false,
   "error": true,
   "code": "ERROR_CODE",
   "message": "Human-readable explanation.",
-  "fix": "voyagier <command> --flag value",
-  "details": { /* optional structured context */ }
+  "details": { /* optional structured context, e.g. blockers[] */ }
 }
 ```
 
-`fix` is meant to be machine-readable: branch on `code`, surface or run the suggested command.
+Branch on `code`. The CLI exits 1 for `CliError`s, 2 for unexpected errors. Pass `--stacktrace` to get the full stack on stderr alongside the JSON.
 
-### Error codes (agents should branch on these)
+### Error codes (what the CLI actually emits today)
 
-| Code | Meaning | Typical fix |
+| Code | Meaning | Typical recovery |
 |---|---|---|
-| `AUTH_REQUIRED` | No PAT or expired | `voyagier auth login` |
-| `AUTH_FAILED` | PAT rejected | `voyagier auth set-token <PAT>` |
+| `AUTH_FAILED` | No PAT, expired, or rejected | `voyagier auth set-token <PAT>` or `voyagier auth login` |
 | `NOT_FOUND` | Resource doesn't exist | (resource-specific) |
-| `PERMISSION_DENIED` | RBAC failure (non-advisor on advisor-gated mutation) | (escalate to user) |
-| `VALIDATION` | Input failed CLI-side validation | follow `fix` string |
-| `CLIENT_REQUIRED` | `plans create` / `plan-trip` invoked without `--client` | `voyagier clients upsert --email ... --name ... --type Individual` |
+| `VALIDATION` | Input failed CLI-side validation | follow `message` |
+| `API_ERROR` | Backend GraphQL error | inspect `details`; may indicate `SCHEMA_DRIFT` |
+| `NETWORK` | Couldn't reach the API | check connectivity; `voyagier doctor --json` |
+| `STATE_CORRUPT` | Local state file unreadable | delete affected file under `~/.voyagier/` |
 | `NO_CLIENTS` | Account has no ACTIVE clients | `voyagier clients create --name ... --type Individual` |
-| `MULTIPLE_CLIENTS` | Ambiguous email match in `upsert` | pass `--client <id>` directly |
+| `MULTIPLE_CLIENTS` | Ambiguous email match in upsert | pass an explicit `--client <id>` (where supported) |
+| `CLIENT_REQUIRED` | Reserved for the in-flight VOY-1193 work; not currently emitted | — |
+| `PERMISSION_DENIED` | RBAC failure (non-advisor on advisor-gated mutation) | escalate to user |
+| `SCHEMA_DRIFT` | CLI is older than backend; queries don't validate | `npm i -g @voyagier/cli@latest` |
+| `NOT_BOOKABLE` | Selection type is display-only (e.g. flight) | filter the cart manually before booking |
+| `BOOKING_BLOCKED` | Pre-flight blockers found by `book --validate` | each blocker carries its own context in `details.blockers[]` |
+| `EXPIRED_OFFER` | Selection option no longer available | re-run `voyagier search ...` |
+| `STALE_PLAN_STATE` | Cached search/option expired | re-run `voyagier search ...` with `--plan <id>` |
 | `LISTING_NOT_FOUND` | Blueprint listing missing or unavailable | `voyagier listings recent --selection <id>` |
 | `PLACE_NOT_FOUND` | Place ID does not resolve | `voyagier places search --query ...` |
 | `NO_MONITOR` | Selection has no Blueprint monitor attached | (advisor must enable monitoring; not yet exposed in CLI) |
-| `BOOKING_BLOCKED` | Pre-flight checks failed | each blocker carries its own `fix` in `details.blockers[]` |
-| `NOT_BOOKABLE` | Selection type is display-only (e.g. flight) | filter with `--types ACTIVITY,HOTEL` |
-| `EXPIRED_OFFER` | Selection option no longer available | re-run `voyagier search ...` for current pricing |
-| `STALE_PLAN_STATE` | Cached search/option expired | re-run `voyagier search ...` with `--plan <id>` |
-| `SCHEMA_DRIFT` | CLI built against older schema than backend | upgrade: `npm i -g @voyagier/cli@latest` |
 
 ### Idempotency
 
-Every mutating command accepts `--idempotency-key <ulid>`. The key is **echoed in JSON output** (`data.idempotencyKey`) so agents can track retries on their side. Server-side de-duplication is on the roadmap; the flag is forward-compatible.
+A subset of mutating commands accept `--idempotency-key <ulid>`:
 
-### State files
+- `voyagier book`
+- `voyagier listings add-to-selection`
+- `voyagier places attach`, `places highlight`, `places unhighlight`, `places remove`
 
-Local state lives in `~/.voyagier/`:
-- `credentials.json` — PAT + API URL.
-- `last-search.json` — most recent search results, scoped per-plan.
-- `last-options.json` — last sub-option list, scoped per-plan.
-- `last-clients.json` — client list cache (1h TTL).
+The key is **echoed in `--json` output today** (e.g. `data.idempotencyKey`) so agents can track retries on their side. Server-side de-duplication is a future change. **Other mutating commands** (`clients create/update/upsert`, `plans create`, `travellers add`, etc.) do **not** accept the flag — passing it will fail option parsing.
 
-State is plan-scoped; running parallel workflows for different plans does not corrupt each other.
+### State files (`~/.voyagier/`)
+
+- `credentials.json` — PAT + API URL (managed by `voyagier auth`)
+- `last-search.json` — most recent search results, **global single file** (cross-plan corruption prevented by `--plan <id>` mismatch checks on `select`)
+- `last-options.json` — last sub-option list, **global single file** (same protection)
+
+There is no client-list cache file today; `voyagier clients list` always hits the network.
 
 ---
 
@@ -144,43 +172,57 @@ State is plan-scoped; running parallel workflows for different plans does not co
 ```bash
 voyagier auth set-token <PAT>      # save Personal Access Token
 voyagier auth status --json        # verify connection
+voyagier auth login                # browser-based flow
 voyagier auth logout
 ```
 
-Env vars: `VOYAGIER_TOKEN`, `VOYAGIER_API_URL`.
+Env vars: `VOYAGIER_TOKEN`, `VOYAGIER_API_URL`. Tokens never expire automatically; rotate when team membership changes.
 
-Get a PAT: voyagier.com → Settings → Personal Access Tokens.
+Top-level shortcut: `voyagier login` is rewritten to `voyagier auth login`.
 
 ### Doctor
 ```bash
-voyagier doctor --json    # auth + schema + reachability + state + version
+voyagier doctor --json
 ```
-Returns `{ "ok": true, "checks": [{ name, status: "PASS"|"WARN"|"FAIL", details }], "summary": "..." }`. Run this first whenever you encounter an unfamiliar error.
+Returns a `{ checks: [...], summary }` rollup with PASS / WARN / FAIL per check (auth, schema reachability, state-file health, version). Run this first whenever you encounter an unfamiliar error.
 
-### Clients (advisor CRM)
+### Clients (advisor CRM, Style B JSON)
 ```bash
 voyagier clients list [--status active|archived] [--type individual|company|group] --json
+# Returns: { clients: [...], total }
+
 voyagier clients get <id> --json
+# Returns: { client }
+
 voyagier clients create --name <n> --type individual|company|group [--email] [--phone] [--avatar] [--description] --json
+# Returns: { client, ok: true }
+
 voyagier clients update <id> [--name] [--type] [--email] [--phone] [--avatar] [--description] [--status active|archived] --json
 voyagier clients archive <id> --json
-voyagier clients upsert --email <e> --name <n> --type <t> [opts] --json
+voyagier clients upsert --email <e> --name <n> --type <t> [--phone] [--avatar] [--description] --json
+# upsert returns: { client, ok: true, created: boolean }
 ```
-**`upsert` is the agent-friendly idempotency primitive.** Returns existing match by email or creates new. Lowercase input (`individual`) is normalized to PascalCase (`Individual`) for the schema.
 
-### Plans
+`upsert` is the agent-friendly idempotency primitive: returns existing match by email or creates new. Lowercase input (`individual`) is normalized to PascalCase (`Individual`) for the schema.
+
+### Plans (Style B JSON)
 ```bash
-voyagier plans create --client <CLIENT_ID> --title "<title>" --json
-voyagier plans list --json
+voyagier plans create --title <title> [--start <YYYY-MM-DD>] [--end <YYYY-MM-DD>] [--description <text>] --json
+# Returns: { ...plan, url, planSummary }
+# NOTE: server-side now expects clientId; the CLI does not yet pass it (VOY-1193).
+
+voyagier plans list [--active] [--page <n>] [--limit <n>] --json
 voyagier plans get <id> --json
-voyagier plans summary <id> --json     # reads tripPlanEvents
-voyagier plans bookable <id> --json    # pre-flight bookability with per-item blockers
+voyagier plans summary <id> --json
+# NOTE: summary still iterates plan.items for compat. The canonical time-sorted view is voyagier itinerary <id> (VOY-1194).
+
+voyagier plans bookable <id> --json
+# Style A: { ok: true, data: { items: [...], blockers: [...], summary }, planContext }
+
 voyagier plans delete <id> --json
 ```
 
-`plans create` requires `--client`. It does **not** accept `--start`, `--end`, or `--description` at create time — those live on goals/selections.
-
-### Itinerary
+### Itinerary (Style A JSON)
 ```bash
 voyagier itinerary <planId> --json
 voyagier itinerary <planId> --day 3 --json
@@ -188,7 +230,8 @@ voyagier itinerary <planId> --from 2026-09-15 --to 2026-09-18 --json
 voyagier itinerary <planId> --type flight --json
 ```
 
-Sourced from the `tripPlanEvents` resolver. Output shape:
+Sourced from the `tripPlanEvents` resolver. Output:
+
 ```json
 {
   "ok": true,
@@ -200,181 +243,113 @@ Sourced from the `tripPlanEvents` resolver. Output shape:
         "localTime": "2026-09-15T14:30:00-04:00",
         "duration": "PT7H30M",
         "location": { "name": "...", "lat": ..., "lng": ... },
-        "metadata": { "type": "FLIGHT", "selectionId": "..." }
+        "metadata": { "type": "FLIGHT" }
       }
     ],
     "total": 12,
+    "totalUnfiltered": 12,
     "dayRange": { "first": "2026-09-15", "last": "2026-09-22" }
-  }
+  },
+  "planContext": { "planId": "...", "title": "...", "url": "..." }
 }
 ```
 
-`--type` filtering is best-effort against `metadata.{type|eventType|selectionType|kind}`. Schema doesn't expose typed top-level fields yet.
+`--type` filtering is best-effort against `metadata.{type|eventType|selectionType|kind}`. Top-level typed fields aren't in the schema today.
 
-### Travellers
+### Travellers (Style B JSON)
 ```bash
 voyagier travellers add --plan <id> --first <f> --last <l> --type Adult|Child|Infant --json
 voyagier travellers list --plan <id> --json
-voyagier travellers update <travellerId> [opts] --json
+voyagier travellers update <travellerId> [...] --json
 voyagier travellers remove <travellerId> --json
 ```
 
 ### Search → Select → Pick
 
 ```bash
-# Search
 voyagier search flights --plan <id> --from <iata> --to <iata> --date <YYYY-MM-DD> [--return <YYYY-MM-DD>] --json
 voyagier search hotels --plan <id> --location <city> --checkin <date> --checkout <date> --json
 voyagier search activities --plan <id> --destination <city> --date <date> [--query <q>] --json
 voyagier search airports "<query>" --json
 
-# Select an option from the last search (1-indexed)
-voyagier select <n> --plan <id> --json
-
-# Sub-options (cabin class, room type)
-voyagier options <planId> --json
-voyagier pick <n> --plan <id> --json
+voyagier select <n> --plan <id> --json     # 1-indexed pick from last search
+voyagier options <planId> --json           # surfaces sub-options (cabin, room type)
+voyagier pick <n> --plan <id> --json       # picks from last sub-options
 ```
 
-For round-trip flights, `select` is run twice (departure, then return). The departure response includes `actionRequired` pointing to the next command.
+For round-trip flights, `select` is run twice (departure, then return). The departure response includes an `actionRequired` field pointing at the next command.
 
-### Cart + Book
+### Cart + Book (Style A JSON)
 ```bash
 voyagier cart <planId> --json
+# Returns: { ok, data: { items, blockers, summary }, planContext }
 ```
-Returns cart items grouped by goal, total, currency, and a per-item `isBookable` flag with `source` (SABRE | VIATOR | BLUEPRINT | UNKNOWN).
 
 ```bash
-voyagier book <planId> --validate --json                 # pre-flight only
-voyagier book <planId> --only-bookable --json            # skip display-only items silently
-voyagier book <planId> --types ACTIVITY,HOTEL --json     # type filter
-voyagier book <planId> --idempotency-key <ulid> --json
-voyagier book <planId> --dry-run --json                  # preview, no Sabre PNR / Stripe
-voyagier book <planId> --status --json                   # post-payment confirmation
+voyagier book <planId> --validate --json                 # pre-flight only; reports blockers, no Stripe call
+voyagier book <planId> --only-bookable --json            # client-side filter; skips display-only items in the preflight gate
+voyagier book <planId> --types Activity,Hotel --json     # client-side filter; case-insensitive match against CartItemType
+voyagier book <planId> --idempotency-key <ulid> --json   # echoed in JSON; not yet sent server-side
+voyagier book <planId> --dry-run --json                  # show GraphQL without executing
+voyagier book <planId> --status --json                   # post-payment confirmation lookup
 ```
 
-`--validate` returns blockers without attempting checkout. Sample blocker shape:
+> ⚠️ **`--types` and `--only-bookable` are client-side preflight gates today.** They affect what `--validate` considers blocking, but the actual `createTripPlanCheckout` mutation still targets the full cart. To control what's charged, **build a clean cart first** (don't add display-only items, or remove them) and then call `book`.
+
+`--validate` returns blockers without attempting checkout. Sample shape:
+
 ```json
 {
-  "blockers": [
-    { "selectionId": "...", "code": "NOT_BOOKABLE", "message": "Flight items are display-only.", "fix": "voyagier book <planId> --types ACTIVITY,HOTEL" }
-  ]
+  "ok": false,
+  "error": true,
+  "code": "BOOKING_BLOCKED",
+  "message": "...",
+  "details": {
+    "blockers": [
+      { "selectionId": "...", "code": "NOT_BOOKABLE", "message": "Flight items are display-only.", "fix": "Remove flight selections before booking." }
+    ]
+  }
 }
 ```
 
-### Listings (Blueprint Listings — advisor inventory escape hatch)
+### Listings (Style A JSON — Blueprint advisor inventory)
 ```bash
 voyagier listings recent --selection <id> [--type <changeType>] [--limit <n>] --json
-voyagier listings add-to-selection <selectionId> --listing <listingId> --json
+voyagier listings add-to-selection <selectionId> --listing <listingId> [--idempotency-key <ulid>] --json
 ```
 
-`listings recent` first fetches the selection's `blueprintMonitorId`. If the selection has no monitor, returns `NO_MONITOR`.
+`listings recent` first fetches the selection's `blueprintMonitorId`. If the selection has no monitor, returns `NO_MONITOR`. `--type` accepts kebab-case (`availability-changed`, `new-listing`, `price-changed`); normalized to PascalCase server-side.
 
-`--type` accepts kebab-case (`availability-changed`, `new-listing`, `price-changed`); normalized to PascalCase.
-
-### Places (geo / place layer)
+### Places (Style A JSON — geo / place layer)
 ```bash
 voyagier places search --query <q> [--source google|internal] [--country <code|id>] \
                        [--lat <f>] [--lng <f>] [--radius <m>] [--type <type>] \
                        [--limit <n>] [--page <n>] --json
 
-voyagier places get <id> [--external] --json                # default: internal id; --external: Google Place ID
+voyagier places get <id> [--external] --json   # default: internal; --external: Google Place ID
 
-voyagier places attach --plan <id> --name <n> --place-id <pid> \
-                       [--type <PlaceType>] [--country-id] [--country-name] \
-                       [--description] [--image] [--iata-code <CODE>] [--url] [--place-timezone] --json
-
+voyagier places attach --plan <id> --name <n> --place-id <pid> [...] [--idempotency-key <ulid>] --json
 voyagier places list --plan <id> [--highlighted --category attraction|hotel|restaurant] --json
-
-voyagier places highlight --plan <id> --place <detectedPlaceId> --category <c> [--ranking <n>] --json
-voyagier places unhighlight --plan <id> --place <detectedPlaceId> --json
-voyagier places remove --id <tripPlanPlaceId> --json
+voyagier places highlight --plan <id> --place <detectedPlaceId> --category <c> [--ranking <n>] [--idempotency-key <ulid>] --json
+voyagier places unhighlight --plan <id> --place <detectedPlaceId> [--idempotency-key <ulid>] --json
+voyagier places remove --id <tripPlanPlaceId> [--idempotency-key <ulid>] --json
 ```
 
-`--source google` uses Google Places (only `query` / `country` / `lat` / `lng` / `radius` are forwarded; `type` / `limit` / `page` are ignored).
-`--source internal` uses Voyagier's internal place catalog (all flags supported).
-`--type` and `--category` are normalized to PascalCase. `--iata-code` is validated as 3-letter alpha and uppercased.
+`--source google` uses Google Places (forwards `query` / `country` / `lat` / `lng` / `radius` only; `type` / `limit` / `page` are ignored). `--source internal` uses Voyagier's catalog (all flags supported). `--type` and `--category` are normalized to PascalCase. `--iata-code` on `attach` is validated as 3-letter alpha and uppercased.
 
 ### Bookings
 ```bash
 voyagier bookings list --json
 voyagier bookings get <id> --json
 ```
-Read confirmed booking records (post-payment).
 
 ### Misc
 ```bash
-voyagier whoami --json                  # identity + profile
-voyagier chat                           # interactive AI assistant
+voyagier whoami --json                # identity + profile
+voyagier chat                         # interactive AI assistant
 voyagier chat -m "<single prompt>"
 voyagier telemetry status|on|off
-voyagier agent-docs                     # prints this file
-```
-
----
-
-## Building a Plan (manual flow — current canonical agent path)
-
-Until VOY-1189 lands, `plan-trip --auto-select navigator` is broken. Use this manual flow:
-
-```bash
-# 1) Health check
-voyagier doctor --json
-
-# 2) Client (idempotent)
-CLIENT_ID=$(voyagier clients upsert --email "$CLIENT_EMAIL" --name "$CLIENT_NAME" --type Individual --json | jq -r '.data.client.id')
-
-# 3) Plan
-PLAN_ID=$(voyagier plans create --client "$CLIENT_ID" --title "$TITLE" --json | jq -r '.data.plan.id')
-
-# 4) Travellers
-voyagier travellers add --plan "$PLAN_ID" --first "$FIRST" --last "$LAST" --type Adult --json
-
-# 5) Flight: outbound + return
-voyagier search flights --plan "$PLAN_ID" --from "$FROM" --to "$TO" \
-  --date "$DEPART" --return "$RETURN" --json
-voyagier select 1 --plan "$PLAN_ID" --json    # outbound (response includes actionRequired)
-voyagier select 1 --plan "$PLAN_ID" --json    # return
-voyagier options "$PLAN_ID" --json
-voyagier pick 1 --plan "$PLAN_ID" --json      # cabin class
-
-# 6) Hotel
-voyagier search hotels --plan "$PLAN_ID" --location "$DEST" \
-  --checkin "$DEPART" --checkout "$RETURN" --json
-voyagier select 1 --plan "$PLAN_ID" --json
-voyagier options "$PLAN_ID" --json
-voyagier pick 1 --plan "$PLAN_ID" --json      # room type
-
-# 7) Activities (the bookable inventory)
-voyagier search activities --plan "$PLAN_ID" --destination "$DEST" \
-  --date "$DEPART" --query "$ACTIVITY_QUERY" --json
-voyagier select 1 --plan "$PLAN_ID" --json
-
-# 8) Itinerary preview + bookability check
-voyagier itinerary "$PLAN_ID" --json
-voyagier book "$PLAN_ID" --validate --json
-
-# 9) Book (only the actually-bookable items)
-voyagier book "$PLAN_ID" --only-bookable --idempotency-key "$ULID" --json
-```
-
-### Plan composability
-
-A plan is a shopping cart. Add legs and items by passing `--plan <id>` to subsequent commands:
-
-```bash
-# Add a second leg with a fresh search (do NOT pass --travellers again — they're reused)
-voyagier search flights --plan "$PLAN_ID" --from "$LEG_2_FROM" --to "$LEG_2_TO" \
-  --date "$LEG_2_DATE" --json
-voyagier select 1 --plan "$PLAN_ID" --json
-
-# Add another activity
-voyagier search activities --plan "$PLAN_ID" --destination "$LEG_2_DEST" \
-  --date "$LEG_2_DATE" --query "$Q" --json
-voyagier select 1 --plan "$PLAN_ID" --json
-
-# One checkout for everything bookable
-voyagier book "$PLAN_ID" --only-bookable --json
+voyagier agent-docs                   # prints this file
 ```
 
 ---
@@ -383,19 +358,19 @@ voyagier book "$PLAN_ID" --only-bookable --json
 
 | Selection | Bookable? | Source | Notes |
 |---|---|---|---|
-| Flight | ❌ | Sabre (display only) | `is_bookable = false` per platform migration #377. Itinerary display only. |
-| Activity | ✅ per time slot | Viator | Primary bookable inventory. Pre-check via cart `isBookable` flag. |
-| Hotel | ⚠️ partial | Blueprint Listings | Search/watch works. Checkout coverage is incomplete; default `book` skips unless `--types HOTEL`. |
+| Activity | ✅ per slot | Viator | Primary bookable inventory. Pre-check via cart `isBookable` flag. |
+| Hotel | ⚠️ partial | Blueprint Listings | Search/watch works. Checkout coverage is incomplete. |
+| Flight | ❌ display only | Sabre | `is_bookable = false` per platform migration #377. Itinerary view only. |
 | Ride | ❌ | TBD | Selection type exists; no booking source wired. |
 | Restaurant | ❌ | Internal | Selection type exists; booking path unclear. |
 
-Always run `voyagier book --validate <planId>` before checkout. Branch on `data.blockers[]`.
+Always `voyagier book --validate <planId>` before checkout. Branch on `details.blockers[]`. Build a clean cart for the `book` call rather than relying on `--types` to filter the mutation.
 
 ---
 
 ## Airport Resolution
 
-`--from` and `--to` accept city names; CLI resolves to the primary IATA:
+`--from` and `--to` accept city names; the CLI resolves to the primary IATA:
 
 | Input | Resolves to |
 |---|---|
@@ -410,22 +385,23 @@ Manual lookup: `voyagier search airports "tokyo" --json`.
 
 ## Known Quirks
 
+- **JSON shape is not uniform across commands** (see Output Conventions above). Tracked as VOY-1192.
+- **`plan-trip --auto-select` is broken** on the v2 schema (VOY-1189). Use the manual flow.
+- **`plans create` and `plan-trip` do not yet take `--client`** (VOY-1193). Plans are created against the user account today; the server-side `clientId` requirement isn't yet plumbed through the CLI.
+- **`book --types` and `--only-bookable` are client-side gates only** — they don't filter the checkout mutation. Build a clean cart before calling `book`.
+- **`plans summary` reads `plan.items`**, not `tripPlanEvents` (VOY-1194). Use `voyagier itinerary <planId>` for the canonical time-sorted view.
+- **State files are global, not per-plan.** Cross-plan corruption is prevented by `--plan <id>` mismatch checks, not by file partitioning.
 - **Flight prices are per-person.** Multiply by traveller count for total.
 - **Travel fee (~6%)** is added at checkout, not in cart subtotal.
-- **Hotel search is Sabre-backed** with limited coverage; Blueprint Listings supplements but checkout is partial (see bookability matrix).
-- **Search results expire ~2h.** Re-run `voyagier search ...` if `EXPIRED_OFFER` fires.
 - **PNR is reserved at checkout time, not selection time.** A successful `select` does not lock the price.
-- **Sub-selection navigation** (`options` → `pick`) operates on a separate `last-options.json` from search's `last-search.json`. Use `select` for primary selections, `pick` for sub-options.
-- **`plan-trip --auto-select`** is broken on v2 schema (VOY-1189). Use the manual flow above.
+- **Search results expire ~2h.** Re-run `voyagier search ...` if `EXPIRED_OFFER` fires.
 
 ---
 
 ## When You're Lost
 
-If the CLI returns something unexpected:
-
 1. `voyagier doctor --json` — health check (auth, schema, state, version).
-2. Read the error envelope: `code` tells you which class of failure; `fix` gives the next command.
+2. Read the error envelope: `code` tells you the failure class; `message` and `details` give context.
 3. If `code` is `SCHEMA_DRIFT`: the CLI is older than the backend; upgrade.
 4. If `code` is `STALE_PLAN_STATE` or `EXPIRED_OFFER`: re-run the relevant `voyagier search ...`.
 5. For everything else, fall back to the manual flow above, one command at a time.
@@ -435,15 +411,12 @@ If the CLI returns something unexpected:
 ## Auth: Programmatic
 
 ```bash
-export VOYAGIER_TOKEN=voy_pat_xxxxx          # PAT
-export VOYAGIER_API_URL=https://dev.voyagier.com   # optional (defaults to prod)
+export VOYAGIER_TOKEN=voy_pat_xxxxx
+export VOYAGIER_API_URL=https://travel.voyagier.com   # optional
 ```
 
-PATs are created at voyagier.com → Settings → Personal Access Tokens. They never expire automatically; rotate when team membership changes.
+PATs are created at voyagier.com → Settings → Personal Access Tokens.
 
 ---
 
-*Print this in your shell at any time:*
-```bash
-voyagier agent-docs
-```
+*Print this in your shell at any time:* `voyagier agent-docs`
