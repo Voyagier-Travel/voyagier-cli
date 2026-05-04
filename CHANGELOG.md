@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ---
 
-## [2.0.0-alpha.0] — 2026-05-03 (unreleased)
+## [2.0.0] — 2026-05-03
 
 > ⚠️ **Breaking release.** v1.x is broken against the current Voyagier backend schema (37% of GraphQL operations fail on `dev.voyagier.com`). v2.0.0 is a clean rebuild against the new advisor-first / Blueprint trip-plan model.
 >
@@ -112,12 +112,12 @@ For the full per-operation breaking-changes table, see `projects/api-strategy/BR
 
 ## [1.8.1] — 2026-03-18
 
-> ⚠️ **Deprecated.** This version is broken against the current `dev.voyagier.com` schema. Upgrade to `2.0.0-alpha` or higher.
+> ⚠️ **Deprecated.** This version is broken against the current `dev.voyagier.com` schema. Upgrade to `2.0.0` or higher.
 
 - Last release of the v1.x line.
 - Detailed v1 history is preserved in git tags (`v1.0.0` … `v1.8.1`).
 
 ---
 
-[2.0.0-alpha.0]: https://github.com/Voyagier-Travel/voyagier-cli/releases/tag/v2.0.0-alpha.0
+[2.0.0]: https://github.com/Voyagier-Travel/voyagier-cli/releases/tag/v2.0.0
 [1.8.1]: https://github.com/Voyagier-Travel/voyagier-cli/releases/tag/v1.8.1
