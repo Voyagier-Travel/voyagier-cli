@@ -433,16 +433,37 @@ export function registerGoalCommands(plans: Command): void {
         const goal = data.createTripPlanGoal;
 
         // Best-effort post-create traveller assignment.
-        let travellersAssigned: string[] = [];
+        let travellersAssigned: string[] | null = [];
         let travellersWarning: string | null = null;
         if (opts.travellers) {
           const travellerIds = parseTravellerIds(opts.travellers);
           try {
-            await graphql<{ assignTravellersToGoal: boolean }>(
+            const assignData = await graphql<{ assignTravellersToGoal: boolean }>(
               ASSIGN_TRAVELLERS_TO_GOAL,
               { goalId: goal.id, travellerIds },
             );
-            travellersAssigned = travellerIds;
+            if (assignData.assignTravellersToGoal !== true) {
+              travellersAssigned = [];
+              travellersWarning = `Goal created but server rejected traveller assignment`;
+            } else {
+              // Re-fetch to get the server-verified assignment.
+              try {
+                const refetch = await graphql<{ tripPlanGoal: TripPlanGoalDeep | null }>(
+                  GET_TRIP_PLAN_GOAL,
+                  { id: goal.id },
+                );
+                if (refetch.tripPlanGoal) {
+                  travellersAssigned = (refetch.tripPlanGoal.travellers ?? []).map(t => t.id);
+                } else {
+                  travellersAssigned = null;
+                  travellersWarning = `Goal created but goal not found in re-fetch; traveller assignment unverified`;
+                }
+              } catch (refetchErr) {
+                const message = refetchErr instanceof Error ? refetchErr.message : String(refetchErr);
+                travellersAssigned = travellerIds;
+                travellersWarning = `Travellers assigned but re-fetch failed: ${message}`;
+              }
+            }
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             travellersWarning = `Goal created (id=${goal.id}) but traveller assignment failed: ${message}`;
@@ -464,7 +485,7 @@ export function registerGoalCommands(plans: Command): void {
 
         console.log(chalk.green(`\n  ✓ Goal created`));
         console.log(formatGoalLine(goal));
-        if (travellersAssigned.length > 0) {
+        if (travellersAssigned && travellersAssigned.length > 0) {
           console.log(`      ${chalk.dim("travellers:")} ${travellersAssigned.length} assigned`);
         }
         if (travellersWarning) console.log(chalk.yellow(`      ⚠ ${travellersWarning}`));
@@ -703,23 +724,60 @@ export function registerGoalCommands(plans: Command): void {
         );
         const ok = data.assignTravellersToGoal === true;
 
+        if (!ok) {
+          if (opts.json) {
+            jsonOutput({
+              ok: false,
+              data: {
+                goalId,
+                assignedTravellerIds: null,
+                idempotencyKey: opts.idempotencyKey ?? null,
+              },
+            });
+            return;
+          }
+          console.log(chalk.yellow(`\n  ⚠ Server returned false for assignTravellersToGoal\n`));
+          return;
+        }
+
+        // Mutation succeeded — re-fetch to get the server-verified assignment.
+        let assignedTravellerIds: string[] | null = travellerIds;
+        let goalName: string | null = null;
+        let verificationWarning: string | null = null;
+        try {
+          const refetch = await graphql<{ tripPlanGoal: TripPlanGoalDeep | null }>(
+            GET_TRIP_PLAN_GOAL,
+            { id: goalId },
+          );
+          if (refetch.tripPlanGoal) {
+            assignedTravellerIds = (refetch.tripPlanGoal.travellers ?? []).map(t => t.id);
+            goalName = refetch.tripPlanGoal.name ?? null;
+          } else {
+            assignedTravellerIds = null;
+            verificationWarning = "Could not verify assignment: goal not found in re-fetch (may have been deleted)";
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          verificationWarning = `Assignment succeeded but re-fetch failed: ${message}`;
+        }
+
         if (opts.json) {
           jsonOutput({
-            ok,
+            ok: true,
             data: {
               goalId,
-              travellerIds,
+              assignedTravellerIds,
+              ...(verificationWarning ? { warning: verificationWarning } : {}),
               idempotencyKey: opts.idempotencyKey ?? null,
             },
           });
           return;
         }
 
-        if (ok) {
-          console.log(chalk.green(`\n  ✓ Assigned ${travellerIds.length} traveller(s) to goal ${goalId}\n`));
-        } else {
-          console.log(chalk.yellow(`\n  ⚠ Server returned false for assignTravellersToGoal\n`));
-        }
+        const label = goalName ? `goal: ${goalName}` : `goal ${goalId}`;
+        const assignedCount = assignedTravellerIds !== null ? assignedTravellerIds.length : "?";
+        console.log(chalk.green(`\n  ✓ Assigned ${assignedCount} traveller(s) to ${label}\n`));
+        if (verificationWarning) console.log(chalk.yellow(`  ⚠ ${verificationWarning}`));
       } catch (err) {
         if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
