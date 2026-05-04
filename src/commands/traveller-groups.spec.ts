@@ -72,6 +72,8 @@ const groupKids = {
 
 let stdoutSpy: jest.SpiedFunction<(buf: string | Uint8Array) => boolean>;
 let stderrSpy: jest.SpiedFunction<(buf: string | Uint8Array) => boolean>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let consoleLogSpy: jest.SpiedFunction<(...data: any[]) => void>;
 let writes: string[];
 
 function buildProgram(): Command {
@@ -97,11 +99,16 @@ beforeEach(() => {
     return true;
   });
   stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  consoleLogSpy = jest.spyOn(console, "log").mockImplementation((...args: any[]) => {
+    writes.push(args.map(String).join(" ") + "\n");
+  });
 });
 
 afterEach(() => {
   stdoutSpy.mockRestore();
   stderrSpy.mockRestore();
+  consoleLogSpy.mockRestore();
 });
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -566,5 +573,214 @@ describe("parseMemberIds", () => {
 
   it("throws MEMBERS_REQUIRED for whitespace-only string", () => {
     expect(() => parseMemberIds("   ,   ")).toThrow(expect.objectContaining({ code: CliErrorCode.MEMBERS_REQUIRED }));
+  });
+});
+
+describe("traveller-groups list — human output", () => {
+  it("empty groups: prints plan name and create hint", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroups: [], tripPlan: samplePlan });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-groups", "list", "--plan", "plan_01"]);
+
+    const output = writes.join("");
+    expect(output).toContain("No traveller groups for plan");
+    expect(output).toContain("Paris Family Trip");
+    expect(output).toContain("Create one:");
+  });
+
+  it("populated: sortOrder index, name, member count, ID line; Color shown/absent conditionally", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellerGroups: [groupAdults, groupKids],
+      tripPlan: samplePlan,
+    });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-groups", "list", "--plan", "plan_01"]);
+
+    const output = writes.join("");
+    expect(output).toContain("[1]");
+    expect(output).toContain("Adults");
+    expect(output).toContain("2 members");
+    expect(output).toContain("ID: grp_01");
+    expect(output).toContain("Color: #0057FF");   // groupAdults has color
+    expect(output).toContain("[2]");
+    expect(output).toContain("Kids");
+    expect(output).toContain("0 members");
+    expect(output).toContain("ID: grp_02");
+    expect(output).not.toContain("Color: null");  // groupKids has no color
+  });
+});
+
+describe("traveller-groups get — human output", () => {
+  it("with color and members: shows name, plan, Color, Sort, members list", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: groupAdults });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-groups", "get", "grp_01"]);
+
+    const output = writes.join("");
+    expect(output).toContain("Adults");
+    expect(output).toContain("grp_01");
+    expect(output).toContain("Plan:");
+    expect(output).toContain("Color:");
+    expect(output).toContain("#0057FF");
+    expect(output).toContain("Sort:");
+    expect(output).toContain("Members (2):");
+    expect(output).toContain("Daniel Gardner");
+    expect(output).toContain("Adrieli Gardner");
+  });
+
+  it("without color: Color line omitted", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: groupKids });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-groups", "get", "grp_02"]);
+
+    const output = writes.join("");
+    expect(output).toContain("Kids");
+    expect(output).not.toContain("Color:");
+    expect(output).toContain("Members (0):");
+  });
+});
+
+describe("traveller-groups create — human output", () => {
+  it("with members: prints '✓ Created group', ID, and member count", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlanTravellerGroup: groupAdults });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "create",
+      "--plan", "plan_01", "--name", "Adults", "--members", "t1,t2",
+    ]);
+
+    const output = writes.join("");
+    expect(output).toContain("Created group: Adults");
+    expect(output).toContain("ID: grp_01");
+    expect(output).toContain("Members: 2");
+  });
+
+  it("without members: no Members line", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlanTravellerGroup: groupKids });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "create",
+      "--plan", "plan_01", "--name", "Kids",
+    ]);
+
+    const output = writes.join("");
+    expect(output).toContain("Created group: Kids");
+    expect(output).not.toContain("Members:");
+  });
+});
+
+describe("traveller-groups update — human output", () => {
+  it("success: prints '✓ Updated group' with new name and ID", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      updateTripPlanTravellerGroup: { ...groupAdults, name: "Grown-Ups" },
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "update", "grp_01", "--name", "Grown-Ups",
+    ]);
+
+    const output = writes.join("");
+    expect(output).toContain("Updated group: Grown-Ups");
+    expect(output).toContain("ID: grp_01");
+  });
+});
+
+describe("traveller-groups delete — human output", () => {
+  it("deleted=true: prints green success message", async () => {
+    mockGraphql.mockResolvedValueOnce({ deleteTripPlanTravellerGroup: true });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-groups", "delete", "grp_01"]);
+
+    const output = writes.join("");
+    expect(output).toContain("Deleted group: grp_01");
+  });
+
+  it("deleted=false: prints warning message", async () => {
+    mockGraphql.mockResolvedValueOnce({ deleteTripPlanTravellerGroup: false });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-groups", "delete", "grp_01"]);
+
+    const output = writes.join("");
+    expect(output).toContain("Server returned false for delete of group grp_01");
+  });
+});
+
+describe("traveller-groups add-members — human output", () => {
+  it("success: prints added count, group name, group ID, and updated member total", async () => {
+    const updated = { ...groupKids, travellers: [t1] };
+    mockGraphql.mockResolvedValueOnce({ addTravellersToGroup: updated });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "add-members", "grp_02",
+      "--travellers", "t1",
+    ]);
+
+    const output = writes.join("");
+    expect(output).toContain("Added 1 traveller(s) to group: Kids");
+    expect(output).toContain("Group ID: grp_02");
+    expect(output).toContain("Members now: 1");
+  });
+});
+
+describe("traveller-groups remove-members — human output", () => {
+  it("success: prints removed count, group name, group ID, and updated member total", async () => {
+    const updated = { ...groupAdults, travellers: [t2] };
+    mockGraphql.mockResolvedValueOnce({ removeTravellersFromGroup: updated });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "remove-members", "grp_01",
+      "--travellers", "t1",
+    ]);
+
+    const output = writes.join("");
+    expect(output).toContain("Removed 1 traveller(s) from group: Adults");
+    expect(output).toContain("Group ID: grp_01");
+    expect(output).toContain("Members now: 1");
+  });
+});
+
+describe("traveller-groups upsert — human output", () => {
+  it("found existing: prints '◆ Found existing group' with name and ID", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellerGroups: [groupAdults, groupKids],
+      tripPlan: samplePlan,
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "upsert",
+      "--plan", "plan_01", "--name", "Adults",
+    ]);
+
+    const output = writes.join("");
+    expect(output).toContain("Found existing group: Adults");
+    expect(output).toContain("ID: grp_01");
+  });
+
+  it("created new: prints '✓ Created group' with name and ID", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ tripPlanTravellerGroups: [groupAdults], tripPlan: samplePlan })
+      .mockResolvedValueOnce({ createTripPlanTravellerGroup: groupKids });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "upsert",
+      "--plan", "plan_01", "--name", "Kids",
+    ]);
+
+    const output = writes.join("");
+    expect(output).toContain("Created group: Kids");
+    expect(output).toContain("ID: grp_02");
   });
 });

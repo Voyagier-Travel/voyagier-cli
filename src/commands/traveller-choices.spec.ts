@@ -94,6 +94,8 @@ const emptyResult = {
 
 let stdoutSpy: jest.SpiedFunction<(buf: string | Uint8Array) => boolean>;
 let stderrSpy: jest.SpiedFunction<(buf: string | Uint8Array) => boolean>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let consoleLogSpy: jest.SpiedFunction<(...data: any[]) => void>;
 let writes: string[];
 
 function buildProgram(): Command {
@@ -119,11 +121,16 @@ beforeEach(() => {
     return true;
   });
   stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  consoleLogSpy = jest.spyOn(console, "log").mockImplementation((...args: any[]) => {
+    writes.push(args.map(String).join(" ") + "\n");
+  });
 });
 
 afterEach(() => {
   stdoutSpy.mockRestore();
   stderrSpy.mockRestore();
+  consoleLogSpy.mockRestore();
 });
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -386,5 +393,118 @@ describe("filterQuestions", () => {
     // qHotel: goalId=goal_02 → fails goal filter
     expect(out).toHaveLength(1);
     expect((out[0] as { selectionId: string }).selectionId).toBe("sel_01");
+  });
+});
+
+describe("traveller-choices list — human output", () => {
+  it("empty plan: no questions at all → prints 'No choice questions on this plan yet.'", async () => {
+    mockGraphql.mockResolvedValueOnce({ travellerChoices: emptyResult });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-choices", "list", "--plan", "plan_01"]);
+
+    const output = writes.join("");
+    expect(output).toContain("No choice questions on this plan yet.");
+  });
+
+  it("filter excludes everything → prints 'No questions match your filters. (N total)'", async () => {
+    mockGraphql.mockResolvedValueOnce({ travellerChoices: baseResult });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-choices", "list", "--plan", "plan_01", "--type", "Activity",
+    ]);
+
+    const output = writes.join("");
+    expect(output).toContain("No questions match your filters.");
+    expect(output).toContain("2 total");
+  });
+
+  it("multi-question: [1]/[2] indexing, pending badges, Selection/Goal/Options/Pending/Answered lines", async () => {
+    mockGraphql.mockResolvedValueOnce({ travellerChoices: baseResult });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-choices", "list", "--plan", "plan_01"]);
+
+    const output = writes.join("");
+    // Index labels
+    expect(output).toContain("[1]");
+    expect(output).toContain("[2]");
+    // Pending badges
+    expect(output).toContain("1 pending");          // qFlight: t2 pending
+    expect(output).toContain("2 pending");          // qHotel: t1+t2 pending
+    // Detail lines
+    expect(output).toContain("Selection: sel_01");
+    expect(output).toContain("Goal: goal_01");
+    expect(output).toContain("Options: Economy, Business");
+    expect(output).toContain("Pending: Child A");
+    expect(output).toContain("Answered: Daniel Gardner");
+    // Footer
+    expect(output).toContain("2 questions shown");
+    expect(output).toContain("2 with pending travellers");
+  });
+
+  it("goalId present → Goal: line shown; goalId null → Goal: line omitted; options empty → Options: line omitted", async () => {
+    const qNoGoalNoOpts = { ...qHotel, goalId: null, options: [] };
+    const result = { ...baseResult, questions: [qFlight, qNoGoalNoOpts] };
+    mockGraphql.mockResolvedValueOnce({ travellerChoices: result });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-choices", "list", "--plan", "plan_01"]);
+
+    const output = writes.join("");
+    expect(output).toContain("Goal: goal_01");            // qFlight has goalId
+    const goalLines = output.match(/Goal:/g) ?? [];
+    expect(goalLines).toHaveLength(1);                    // no Goal: line for null goalId
+    // Options line omitted when options array is empty
+    const optionLines = output.match(/Options:/g) ?? [];
+    expect(optionLines).toHaveLength(1);                  // only qFlight has options
+  });
+
+  it("footer: all questions answered → 'done' badge, no 'with pending travellers' line", async () => {
+    const answered = { ...qFlight, answeredTravellers: [t1, t2], pendingTravellers: [] };
+    const result = { ...baseResult, questions: [answered] };
+    mockGraphql.mockResolvedValueOnce({ travellerChoices: result });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-choices", "list", "--plan", "plan_01"]);
+
+    const output = writes.join("");
+    expect(output).toContain("done");
+    expect(output).toContain("1 question shown");
+    expect(output).not.toContain("with pending travellers");
+  });
+
+  it("dates: both startDate and endDate present → date range line rendered", async () => {
+    mockGraphql.mockResolvedValueOnce({ travellerChoices: baseResult });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-choices", "list", "--plan", "plan_01"]);
+
+    const output = writes.join("");
+    expect(output).toContain("2026-07-15");
+    expect(output).toContain("2026-07-22");
+  });
+
+  it("dates: startDate present, endDate null → shows ? for missing end", async () => {
+    const result = { ...baseResult, startDate: "2026-07-15", endDate: null, questions: [] };
+    mockGraphql.mockResolvedValueOnce({ travellerChoices: result });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-choices", "list", "--plan", "plan_01"]);
+
+    const output = writes.join("");
+    expect(output).toContain("2026-07-15");
+    expect(output).toContain("?");
+  });
+
+  it("dates: both null → no date range line (no → separator in output)", async () => {
+    mockGraphql.mockResolvedValueOnce({ travellerChoices: emptyResult }); // startDate: null, endDate: null
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-choices", "list", "--plan", "plan_01"]);
+
+    const output = writes.join("");
+    expect(output).not.toContain("→");
   });
 });
