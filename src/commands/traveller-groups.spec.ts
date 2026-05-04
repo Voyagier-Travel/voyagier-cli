@@ -1,0 +1,570 @@
+import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals";
+import { Command } from "commander";
+import { CliError, CliErrorCode } from "../errors.js";
+
+// ── Mocks ──────────────────────────────────────────────────────────────────
+
+const mockGraphql = jest.fn();
+const mockJsonOutput = jest.fn().mockImplementation((data: unknown) => {
+  process.stdout.write(JSON.stringify(data) + "\n");
+});
+
+jest.unstable_mockModule("../api.js", () => ({
+  graphql: mockGraphql,
+}));
+
+jest.unstable_mockModule("../output.js", () => ({
+  jsonOutput: mockJsonOutput,
+}));
+
+jest.unstable_mockModule("../config.js", () => ({
+  getApiUrl: jest.fn().mockReturnValue("https://dev.voyagier.com/api"),
+  CONFIG_DIR: "/tmp/test-config",
+}));
+
+// ── Dynamic imports ────────────────────────────────────────────────────────
+
+let registerTravellerGroupsCommands: (program: Command) => void;
+let resolveGroupId: (planId: string, nameOrId: string) => Promise<string>;
+let parseMemberIds: (csv: string, flagName?: string) => string[];
+let formatGroup: (g: unknown) => Record<string, unknown>;
+
+beforeAll(async () => {
+  const mod = await import("./traveller-groups.js");
+  registerTravellerGroupsCommands = mod.registerTravellerGroupsCommands;
+  resolveGroupId = mod.resolveGroupId;
+  parseMemberIds = mod.parseMemberIds;
+  formatGroup = mod.formatGroup as (g: unknown) => Record<string, unknown>;
+});
+
+// ── Fixtures ───────────────────────────────────────────────────────────────
+
+const samplePlan = {
+  id: "plan_01",
+  title: "Paris Family Trip",
+  travellers: [{ id: "t1" }, { id: "t2" }],
+};
+
+const t1 = { id: "t1", firstName: "Daniel", lastName: "Gardner", email: "d@example.com" };
+const t2 = { id: "t2", firstName: "Adrieli", lastName: "Gardner", email: "a@example.com" };
+
+const groupAdults = {
+  id: "grp_01",
+  name: "Adults",
+  color: "#0057FF",
+  sortOrder: 1,
+  tripPlanId: "plan_01",
+  tripPlan: samplePlan,
+  travellers: [t1, t2],
+};
+
+const groupKids = {
+  id: "grp_02",
+  name: "Kids",
+  color: null,
+  sortOrder: 2,
+  tripPlanId: "plan_01",
+  tripPlan: samplePlan,
+  travellers: [],
+};
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+let stdoutSpy: jest.SpiedFunction<(buf: string | Uint8Array) => boolean>;
+let stderrSpy: jest.SpiedFunction<(buf: string | Uint8Array) => boolean>;
+let writes: string[];
+
+function buildProgram(): Command {
+  const p = new Command();
+  p.exitOverride();
+  registerTravellerGroupsCommands(p);
+  return p;
+}
+
+function lastJson(): unknown {
+  const joined = writes.join("");
+  const trimmed = joined.trim();
+  if (!trimmed) return null;
+  return JSON.parse(trimmed);
+}
+
+beforeEach(() => {
+  mockGraphql.mockReset();
+  mockJsonOutput.mockClear();
+  writes = [];
+  stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((b: string | Uint8Array) => {
+    writes.push(typeof b === "string" ? b : Buffer.from(b).toString());
+    return true;
+  });
+  stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+});
+
+afterEach(() => {
+  stdoutSpy.mockRestore();
+  stderrSpy.mockRestore();
+});
+
+// ── Tests ──────────────────────────────────────────────────────────────────
+
+describe("traveller-groups list", () => {
+  it("returns empty list with planContext in --json mode", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroups: [], tripPlan: samplePlan });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-groups", "list", "--plan", "plan_01", "--json"]);
+
+    expect(mockJsonOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ok: true,
+        data: expect.objectContaining({ groups: [], total: 0 }),
+        planContext: expect.objectContaining({ planId: "plan_01", title: "Paris Family Trip", travellerCount: 2 }),
+      }),
+    );
+  });
+
+  it("returns single group with formatted travellers", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellerGroups: [groupAdults],
+      tripPlan: samplePlan,
+    });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-groups", "list", "--plan", "plan_01", "--json"]);
+
+    const out = lastJson() as { data: { groups: unknown[] } };
+    expect(out.data.groups).toHaveLength(1);
+    expect(out.data.groups[0]).toMatchObject({
+      id: "grp_01",
+      name: "Adults",
+      color: "#0057FF",
+      sortOrder: 1,
+      travellerCount: 2,
+    });
+  });
+
+  it("sorts multi-group result by sortOrder asc", async () => {
+    const groupC = { ...groupKids, id: "grp_03", name: "Couple", sortOrder: 0 };
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellerGroups: [groupAdults, groupKids, groupC],
+      tripPlan: samplePlan,
+    });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-groups", "list", "--plan", "plan_01", "--json"]);
+
+    const out = lastJson() as { data: { groups: { id: string }[] } };
+    expect(out.data.groups.map((g) => g.id)).toEqual(["grp_03", "grp_01", "grp_02"]);
+  });
+
+  it("throws NOT_FOUND when tripPlan is null (invalid planId)", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroups: [], tripPlan: null });
+
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "traveller-groups", "list", "--plan", "bad_id", "--json"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.NOT_FOUND });
+  });
+});
+
+describe("traveller-groups get", () => {
+  it("returns group with planContext in --json mode", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: groupAdults });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-groups", "get", "grp_01", "--json"]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(expect.any(String), { id: "grp_01" });
+    expect(mockJsonOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ok: true,
+        data: expect.objectContaining({ group: expect.objectContaining({ id: "grp_01", name: "Adults" }) }),
+        planContext: expect.objectContaining({ planId: "plan_01" }),
+      }),
+    );
+  });
+
+  it("throws NOT_FOUND for null group", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: null });
+
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "traveller-groups", "get", "grp_MISSING", "--json"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.NOT_FOUND });
+  });
+
+  it("formats travellers with combined name", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: groupAdults });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-groups", "get", "grp_01", "--json"]);
+
+    const out = lastJson() as { data: { group: { travellers: { name: string }[] } } };
+    expect(out.data.group.travellers[0].name).toBe("Daniel Gardner");
+  });
+});
+
+describe("traveller-groups create", () => {
+  it("creates a group with minimal options", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlanTravellerGroup: groupKids });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "create",
+      "--plan", "plan_01", "--name", "Kids", "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.any(String),
+      { input: { name: "Kids" }, tripPlanId: "plan_01" },
+    );
+    expect(mockJsonOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: true, data: expect.objectContaining({ group: expect.objectContaining({ name: "Kids" }) }) }),
+    );
+  });
+
+  it("creates a group with --members (includes travellerIds in input)", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlanTravellerGroup: groupAdults });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "create",
+      "--plan", "plan_01", "--name", "Adults", "--members", "t1,t2", "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.any(String),
+      { input: { name: "Adults", travellerIds: ["t1", "t2"] }, tripPlanId: "plan_01" },
+    );
+  });
+
+  it("echoes --idempotency-key in JSON output", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlanTravellerGroup: groupKids });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "create",
+      "--plan", "plan_01", "--name", "Kids", "--idempotency-key", "01HXKEY", "--json",
+    ]);
+
+    const out = lastJson() as { data: { idempotencyKey: string } };
+    expect(out.data.idempotencyKey).toBe("01HXKEY");
+  });
+
+  it("throws GROUP_NAME_REQUIRED when --name is missing", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "traveller-groups", "create", "--plan", "plan_01", "--json"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.GROUP_NAME_REQUIRED });
+  });
+
+  it("propagates TRAVELLER_NOT_IN_PLAN error from API", async () => {
+    mockGraphql.mockRejectedValueOnce(
+      new CliError(CliErrorCode.TRAVELLER_NOT_IN_PLAN, "Traveller not in plan"),
+    );
+
+    const p = buildProgram();
+    await expect(
+      p.parseAsync([
+        "node", "test", "traveller-groups", "create",
+        "--plan", "plan_01", "--name", "Adults", "--members", "t_OUTSIDER", "--json",
+      ]),
+    ).rejects.toMatchObject({ code: CliErrorCode.TRAVELLER_NOT_IN_PLAN });
+  });
+});
+
+describe("traveller-groups update", () => {
+  it("updates the group name", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      updateTripPlanTravellerGroup: { ...groupAdults, name: "Grown-Ups" },
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "update", "grp_01",
+      "--name", "Grown-Ups", "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.any(String),
+      { id: "grp_01", input: { name: "Grown-Ups" } },
+    );
+    const out = lastJson() as { data: { group: { name: string } } };
+    expect(out.data.group.name).toBe("Grown-Ups");
+  });
+
+  it("throws NOT_FOUND when update returns null", async () => {
+    mockGraphql.mockResolvedValueOnce({ updateTripPlanTravellerGroup: null });
+
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "traveller-groups", "update", "grp_MISSING", "--name", "X", "--json"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.NOT_FOUND });
+  });
+
+  it("echoes --idempotency-key in JSON output", async () => {
+    mockGraphql.mockResolvedValueOnce({ updateTripPlanTravellerGroup: groupAdults });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "update", "grp_01",
+      "--name", "Adults", "--idempotency-key", "01HXKEY2", "--json",
+    ]);
+
+    const out = lastJson() as { data: { idempotencyKey: string } };
+    expect(out.data.idempotencyKey).toBe("01HXKEY2");
+  });
+
+  it("throws GROUP_NAME_REQUIRED when --name is missing", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "traveller-groups", "update", "grp_01", "--json"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.GROUP_NAME_REQUIRED });
+  });
+});
+
+describe("traveller-groups delete", () => {
+  it("reports deleted: true when server returns true", async () => {
+    mockGraphql.mockResolvedValueOnce({ deleteTripPlanTravellerGroup: true });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-groups", "delete", "grp_01", "--json"]);
+
+    const out = lastJson() as { ok: boolean; data: { deleted: boolean; groupId: string } };
+    expect(out.ok).toBe(true);
+    expect(out.data.deleted).toBe(true);
+    expect(out.data.groupId).toBe("grp_01");
+  });
+
+  it("reports deleted: false when server returns false (soft-delete issue)", async () => {
+    mockGraphql.mockResolvedValueOnce({ deleteTripPlanTravellerGroup: false });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "traveller-groups", "delete", "grp_01", "--json"]);
+
+    const out = lastJson() as { ok: boolean; data: { deleted: boolean } };
+    expect(out.ok).toBe(false);
+    expect(out.data.deleted).toBe(false);
+  });
+
+  it("echoes --idempotency-key in JSON output", async () => {
+    mockGraphql.mockResolvedValueOnce({ deleteTripPlanTravellerGroup: true });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "delete", "grp_01",
+      "--idempotency-key", "01HXDEL", "--json",
+    ]);
+
+    const out = lastJson() as { data: { idempotencyKey: string } };
+    expect(out.data.idempotencyKey).toBe("01HXDEL");
+  });
+});
+
+describe("traveller-groups add-members", () => {
+  it("adds members and returns updated group", async () => {
+    const updated = { ...groupKids, travellers: [t1] };
+    mockGraphql.mockResolvedValueOnce({ addTravellersToGroup: updated });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "add-members", "grp_02",
+      "--travellers", "t1", "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.any(String),
+      { groupId: "grp_02", travellerIds: ["t1"] },
+    );
+    const out = lastJson() as { data: { addedTravellerIds: string[] } };
+    expect(out.data.addedTravellerIds).toEqual(["t1"]);
+  });
+
+  it("throws MEMBERS_REQUIRED when --travellers is missing", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "traveller-groups", "add-members", "grp_02", "--json"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.MEMBERS_REQUIRED });
+  });
+
+  it("echoes --idempotency-key in JSON output", async () => {
+    mockGraphql.mockResolvedValueOnce({ addTravellersToGroup: groupAdults });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "add-members", "grp_01",
+      "--travellers", "t1", "--idempotency-key", "01HXADD", "--json",
+    ]);
+
+    const out = lastJson() as { data: { idempotencyKey: string } };
+    expect(out.data.idempotencyKey).toBe("01HXADD");
+  });
+});
+
+describe("traveller-groups remove-members", () => {
+  it("removes members and returns updated group", async () => {
+    const updated = { ...groupAdults, travellers: [t2] };
+    mockGraphql.mockResolvedValueOnce({ removeTravellersFromGroup: updated });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "remove-members", "grp_01",
+      "--travellers", "t1", "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.any(String),
+      { groupId: "grp_01", travellerIds: ["t1"] },
+    );
+    const out = lastJson() as { data: { removedTravellerIds: string[] } };
+    expect(out.data.removedTravellerIds).toEqual(["t1"]);
+  });
+
+  it("throws MEMBERS_REQUIRED when --travellers is missing", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "traveller-groups", "remove-members", "grp_01", "--json"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.MEMBERS_REQUIRED });
+  });
+
+  it("echoes --idempotency-key in JSON output", async () => {
+    mockGraphql.mockResolvedValueOnce({ removeTravellersFromGroup: groupAdults });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "remove-members", "grp_01",
+      "--travellers", "t1", "--idempotency-key", "01HXRM", "--json",
+    ]);
+
+    const out = lastJson() as { data: { idempotencyKey: string } };
+    expect(out.data.idempotencyKey).toBe("01HXRM");
+  });
+});
+
+describe("traveller-groups upsert", () => {
+  it("returns existing group when name matches (case-insensitive)", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellerGroups: [groupAdults, groupKids],
+      tripPlan: samplePlan,
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "upsert",
+      "--plan", "plan_01", "--name", "adults", "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledTimes(1); // list only, no create
+    const out = lastJson() as { data: { created: boolean; group: { name: string } } };
+    expect(out.data.created).toBe(false);
+    expect(out.data.group.name).toBe("Adults");
+  });
+
+  it("creates new group when no name match found", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ tripPlanTravellerGroups: [groupAdults], tripPlan: samplePlan })
+      .mockResolvedValueOnce({ createTripPlanTravellerGroup: groupKids });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "upsert",
+      "--plan", "plan_01", "--name", "Kids", "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledTimes(2); // list + create
+    const out = lastJson() as { data: { created: boolean; group: { name: string } } };
+    expect(out.data.created).toBe(true);
+    expect(out.data.group.name).toBe("Kids");
+  });
+
+  it("passes --members to create call when no match found", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ tripPlanTravellerGroups: [], tripPlan: samplePlan })
+      .mockResolvedValueOnce({ createTripPlanTravellerGroup: groupAdults });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "upsert",
+      "--plan", "plan_01", "--name", "Adults", "--members", "t1,t2", "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenNthCalledWith(
+      2,
+      expect.any(String),
+      { input: { name: "Adults", travellerIds: ["t1", "t2"] }, tripPlanId: "plan_01" },
+    );
+  });
+
+  it("echoes --idempotency-key whether created or found", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellerGroups: [groupAdults],
+      tripPlan: samplePlan,
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "traveller-groups", "upsert",
+      "--plan", "plan_01", "--name", "Adults", "--idempotency-key", "01HXUPS", "--json",
+    ]);
+
+    const out = lastJson() as { data: { idempotencyKey: string } };
+    expect(out.data.idempotencyKey).toBe("01HXUPS");
+  });
+
+  it("throws GROUP_NAME_REQUIRED when --name is missing", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "traveller-groups", "upsert", "--plan", "plan_01", "--json"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.GROUP_NAME_REQUIRED });
+  });
+});
+
+describe("resolveGroupId", () => {
+  it("returns the group id for an exact id match", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellerGroups: [{ id: "grp_01", name: "Adults" }],
+      tripPlan: samplePlan,
+    });
+
+    const id = await resolveGroupId("plan_01", "grp_01");
+    expect(id).toBe("grp_01");
+  });
+
+  it("returns the group id for a case-insensitive name match", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellerGroups: [{ id: "grp_01", name: "Adults" }],
+      tripPlan: samplePlan,
+    });
+
+    const id = await resolveGroupId("plan_01", "ADULTS");
+    expect(id).toBe("grp_01");
+  });
+
+  it("throws NOT_FOUND when name/id has no match", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellerGroups: [{ id: "grp_01", name: "Adults" }],
+      tripPlan: samplePlan,
+    });
+
+    await expect(resolveGroupId("plan_01", "Nonexistent")).rejects.toMatchObject({
+      code: CliErrorCode.NOT_FOUND,
+    });
+  });
+});
+
+describe("parseMemberIds", () => {
+  it("parses and dedupes comma-separated ids", () => {
+    expect(parseMemberIds("t1,t2,t1")).toEqual(["t1", "t2"]);
+  });
+
+  it("trims whitespace around ids", () => {
+    expect(parseMemberIds(" t1 , t2 ")).toEqual(["t1", "t2"]);
+  });
+
+  it("throws MEMBERS_REQUIRED for empty string", () => {
+    expect(() => parseMemberIds("")).toThrow(expect.objectContaining({ code: CliErrorCode.MEMBERS_REQUIRED }));
+  });
+
+  it("throws MEMBERS_REQUIRED for whitespace-only string", () => {
+    expect(() => parseMemberIds("   ,   ")).toThrow(expect.objectContaining({ code: CliErrorCode.MEMBERS_REQUIRED }));
+  });
+});

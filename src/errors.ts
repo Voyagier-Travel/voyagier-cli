@@ -32,6 +32,11 @@ export enum CliErrorCode {
   // but never thrown — Commander's required-flag validation handles missing
   // --plan / --place-id at the parser layer, so the codes are unused.
   // Reintroduce here only when there's a real path that needs to throw them.
+
+  // v2.1.0 — Section 6 (traveller groups + choices)
+  GROUP_NAME_REQUIRED = "GROUP_NAME_REQUIRED",
+  TRAVELLER_NOT_IN_PLAN = "TRAVELLER_NOT_IN_PLAN",
+  MEMBERS_REQUIRED = "MEMBERS_REQUIRED",
 }
 
 export class CliError extends Error {
