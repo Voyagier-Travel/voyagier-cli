@@ -255,10 +255,25 @@ export function registerTravellerGroupsCommands(program: Command): void {
         input.travellerIds = parseMemberIds(opts.members, "--members");
       }
 
-      const data = await graphql<{
-        createTripPlanTravellerGroup: TripPlanTravellerGroup;
-      }>(CREATE_TRIP_PLAN_TRAVELLER_GROUP, { input, tripPlanId: opts.plan });
-      const g = data.createTripPlanTravellerGroup;
+      let createResult: { createTripPlanTravellerGroup: TripPlanTravellerGroup };
+      try {
+        createResult = await graphql<{
+          createTripPlanTravellerGroup: TripPlanTravellerGroup;
+        }>(CREATE_TRIP_PLAN_TRAVELLER_GROUP, { input, tripPlanId: opts.plan });
+      } catch (err) {
+        if (
+          err instanceof CliError &&
+          err.code === CliErrorCode.API_ERROR &&
+          /traveller.*not.*in.*plan|not.*member.*plan|not.*in.*trip/i.test(err.message)
+        ) {
+          throw new CliError(
+            CliErrorCode.TRAVELLER_NOT_IN_PLAN,
+            `One or more travellers are not in this trip plan. Only plan travellers can be added to groups.\n  Fix: voyagier travellers list --plan ${opts.plan}`,
+          );
+        }
+        throw err;
+      }
+      const g = createResult.createTripPlanTravellerGroup;
 
       if (opts.json) {
         jsonOutput({
@@ -368,11 +383,26 @@ export function registerTravellerGroupsCommands(program: Command): void {
         (preFetch.tripPlanTravellerGroup?.travellers ?? []).map((t) => t.id),
       );
 
-      const data = await graphql<{ addTravellersToGroup: TripPlanTravellerGroup }>(
-        ADD_TRAVELLERS_TO_GROUP,
-        { groupId, travellerIds },
-      );
-      const g = data.addTravellersToGroup;
+      let mutData: { addTravellersToGroup: TripPlanTravellerGroup };
+      try {
+        mutData = await graphql<{ addTravellersToGroup: TripPlanTravellerGroup }>(
+          ADD_TRAVELLERS_TO_GROUP,
+          { groupId, travellerIds },
+        );
+      } catch (err) {
+        if (
+          err instanceof CliError &&
+          err.code === CliErrorCode.API_ERROR &&
+          /traveller.*not.*in.*plan|not.*member.*plan|not.*in.*trip/i.test(err.message)
+        ) {
+          throw new CliError(
+            CliErrorCode.TRAVELLER_NOT_IN_PLAN,
+            `One or more travellers are not in this trip plan. Only plan travellers can be added to groups.\n  Fix: voyagier travellers list --plan <planId>`,
+          );
+        }
+        throw err;
+      }
+      const g = mutData.addTravellersToGroup;
       const addedTravellerIds = travellerIds.filter((id) => !preMemberIds.has(id));
 
       if (opts.json) {
@@ -485,9 +515,24 @@ export function registerTravellerGroupsCommands(program: Command): void {
         input.travellerIds = parseMemberIds(opts.members, "--members");
       }
 
-      const createData = await graphql<{
-        createTripPlanTravellerGroup: TripPlanTravellerGroup;
-      }>(CREATE_TRIP_PLAN_TRAVELLER_GROUP, { input, tripPlanId: opts.plan });
+      let createData: { createTripPlanTravellerGroup: TripPlanTravellerGroup };
+      try {
+        createData = await graphql<{
+          createTripPlanTravellerGroup: TripPlanTravellerGroup;
+        }>(CREATE_TRIP_PLAN_TRAVELLER_GROUP, { input, tripPlanId: opts.plan });
+      } catch (err) {
+        if (
+          err instanceof CliError &&
+          err.code === CliErrorCode.API_ERROR &&
+          /traveller.*not.*in.*plan|not.*member.*plan|not.*in.*trip/i.test(err.message)
+        ) {
+          throw new CliError(
+            CliErrorCode.TRAVELLER_NOT_IN_PLAN,
+            `One or more travellers are not in this trip plan. Only plan travellers can be added to groups.\n  Fix: voyagier travellers list --plan ${opts.plan}`,
+          );
+        }
+        throw err;
+      }
       const g = createData.createTripPlanTravellerGroup;
 
       if (opts.json) {

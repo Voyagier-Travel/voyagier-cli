@@ -277,6 +277,20 @@ describe("traveller-groups create", () => {
       ]),
     ).rejects.toMatchObject({ code: CliErrorCode.TRAVELLER_NOT_IN_PLAN });
   });
+
+  it("reclassifies API_ERROR as TRAVELLER_NOT_IN_PLAN when response contains 'not in plan' message", async () => {
+    mockGraphql.mockRejectedValueOnce(
+      new CliError(CliErrorCode.API_ERROR, "GraphQL error: Traveller t_OUTSIDER is not in this trip plan"),
+    );
+
+    const p = buildProgram();
+    await expect(
+      p.parseAsync([
+        "node", "test", "traveller-groups", "create",
+        "--plan", "plan_01", "--name", "Adults", "--members", "t_OUTSIDER", "--json",
+      ]),
+    ).rejects.toMatchObject({ code: CliErrorCode.TRAVELLER_NOT_IN_PLAN });
+  });
 });
 
 describe("traveller-groups update", () => {
@@ -417,6 +431,23 @@ describe("traveller-groups add-members", () => {
     expect(out.data.addedTravellerIds).toEqual(["t2"]);
   });
 
+  it("reclassifies API_ERROR as TRAVELLER_NOT_IN_PLAN when mutation returns 'not in plan' message", async () => {
+    // Pre-fetch succeeds
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroup: { ...groupKids, travellers: [] } });
+    // Mutation fails with API_ERROR containing the known pattern
+    mockGraphql.mockRejectedValueOnce(
+      new CliError(CliErrorCode.API_ERROR, "GraphQL error: Traveller t_OUTSIDER is not in this trip plan"),
+    );
+
+    const p = buildProgram();
+    await expect(
+      p.parseAsync([
+        "node", "test", "traveller-groups", "add-members", "grp_02",
+        "--travellers", "t_OUTSIDER", "--json",
+      ]),
+    ).rejects.toMatchObject({ code: CliErrorCode.TRAVELLER_NOT_IN_PLAN });
+  });
+
   it("throws MEMBERS_REQUIRED when --travellers is missing", async () => {
     const p = buildProgram();
     await expect(
@@ -555,6 +586,23 @@ describe("traveller-groups upsert", () => {
     await expect(
       p.parseAsync(["node", "test", "traveller-groups", "upsert", "--plan", "plan_01", "--json"]),
     ).rejects.toMatchObject({ code: CliErrorCode.GROUP_NAME_REQUIRED });
+  });
+
+  it("reclassifies API_ERROR as TRAVELLER_NOT_IN_PLAN in create path when response contains 'not in plan'", async () => {
+    // List call: no existing group with this name
+    mockGraphql.mockResolvedValueOnce({ tripPlanTravellerGroups: [], tripPlan: samplePlan });
+    // Create call: fails with 'not in plan' API error
+    mockGraphql.mockRejectedValueOnce(
+      new CliError(CliErrorCode.API_ERROR, "GraphQL error: Traveller t_OUTSIDER is not in this trip plan"),
+    );
+
+    const p = buildProgram();
+    await expect(
+      p.parseAsync([
+        "node", "test", "traveller-groups", "upsert",
+        "--plan", "plan_01", "--name", "NewGroup", "--members", "t_OUTSIDER", "--json",
+      ]),
+    ).rejects.toMatchObject({ code: CliErrorCode.TRAVELLER_NOT_IN_PLAN });
   });
 });
 
