@@ -107,10 +107,14 @@ describe("state", () => {
       expect(isSearchStateStale(old)).toBe(true);
     });
 
-    it("should return false for state at exactly 2 hours", () => {
+    it("should return false for state just under 2 hours old", () => {
+      // Use a small buffer (1 second) to avoid CI timing flakes: the elapsed
+      // time between constructing `timestamp` and calling `isSearchStateStale`
+      // is non-zero, so a value of exactly `Date.now() - maxAge` flips to
+      // stale on slow runners. Anything strictly under 2h must be fresh.
       const borderline: SearchState = {
         ...MOCK_STATE,
-        timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        timestamp: new Date(Date.now() - (2 * 60 * 60 * 1000 - 1000)).toISOString(),
       };
       expect(isSearchStateStale(borderline)).toBe(false);
     });
