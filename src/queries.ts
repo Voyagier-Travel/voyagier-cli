@@ -326,7 +326,7 @@ export const UPDATE_VOTE = `
 // --- Travellers ---
 
 export const CREATE_TRAVELLER = `
-  mutation CreateTraveller($tripPlanId: String!, $input: CreateTravellerInput!) {
+  mutation CreateTraveller($tripPlanId: String!, $input: CreateTripPlanTravellerInput!) {
     createTripPlanTraveller(tripPlanId: $tripPlanId, input: $input) {
       id firstName lastName email dateOfBirth gender declaredTravellerType
     }
@@ -334,7 +334,7 @@ export const CREATE_TRAVELLER = `
 `;
 
 export const CREATE_TRAVELLER_BRIEF = `
-  mutation CreateTraveller($tripPlanId: String!, $input: CreateTravellerInput!) {
+  mutation CreateTraveller($tripPlanId: String!, $input: CreateTripPlanTravellerInput!) {
     createTripPlanTraveller(tripPlanId: $tripPlanId, input: $input) {
       id firstName lastName
     }

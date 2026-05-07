@@ -39,17 +39,27 @@ voyagier doctor --json
 voyagier clients upsert --email "smith@example.com" --name "Smith Family" --type Individual --json
 # Returns: { client: { id, name, ... }, ok: true, created: true|false }
 
-# 2) Create the plan. clientId is required server-side; `plan-trip` accepts
-#    `--client` (id, email, or name). Omit `--client` to auto-pick if you
-#    have exactly one active client; the CLI logs `auto-resolved client: ...`
-#    to stderr.
+# 2) Create the plan. clientId is required server-side. Both `plans create`
+#    and `plan-trip` accept `--client` (id, email, or name). Omit `--client`
+#    to auto-pick when you have exactly one active client; the CLI logs
+#    `auto-resolved client: ...` to stderr.
 #
-#    Note: `voyagier plans create` does not yet accept `--client` and is not
-#    the supported plan-creation entry point for agents — use `plan-trip`.
+#    Use `plans create` when you want a stub plan and will populate the rest
+#    incrementally:
+voyagier plans create --client "Smith Family" --title "Smith — Tokyo" --json
+# Returns: { ...plan, url, planSummary }
+#
+#    Or use `plan-trip` to create the plan and search/select flights+hotels
+#    in one shot:
 voyagier plan-trip --client "Smith Family" --title "Smith — Tokyo" \
   --from JFK --to NRT --depart 2026-09-15 --return 2026-09-22 \
   --travellers "John Smith" --auto-select navigator --json
 # Returns: { ...plan, url, planSummary, ...selected options }
+#
+#    Note: `plans create` accepts `--start/--end/--description` flags but the
+#    current schema's CreateTripPlanInput only takes { clientId, title }. The
+#    extras are no-ops and will warn on stderr until a follow-on mutation
+#    wires them through.
 
 # 3) Add travellers
 voyagier travellers add --plan <PLAN_ID> --first John --last Smith --type Adult --json

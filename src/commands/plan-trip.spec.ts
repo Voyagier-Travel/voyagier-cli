@@ -1289,6 +1289,34 @@ describe("plan-trip --travellers", () => {
     const travellerCalls = calls.filter(([q]) => q.includes("createTripPlanTraveller"));
     expect(travellerCalls.length).toBe(2);
   });
+
+  it("declares the traveller mutation variable with the correct schema type CreateTripPlanTravellerInput!", async () => {
+    // Regression guard: dev schema renamed the input type from CreateTravellerInput
+    // to CreateTripPlanTravellerInput. Anything else 400s with "Unknown type".
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("createTripPlanTraveller")) return Promise.resolve(MOCK_TRAVELLER);
+      if (query.includes("CreateFlightSelection")) return Promise.resolve(MOCK_FLIGHT_SELECTION);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--title", "Paris Trip",
+      "--client", "clt_test",
+      "--travellers", "John Doe",
+      "--to", "CDG",
+      "--from", "DCA",
+      "--depart", "2026-03-23",
+      "--json",
+    ]);
+
+    const calls = mockGraphql.mock.calls as [string][];
+    const travellerCall = calls.find(([q]) => q.includes("createTripPlanTraveller"));
+    expect(travellerCall).toBeDefined();
+    const [query] = travellerCall as [string];
+    expect(query).toContain("$input: CreateTripPlanTravellerInput!");
+    expect(query).not.toContain("$input: CreateTravellerInput!");
+  });
 });
 
 // ── Integration tests: --client resolution (VOY-1211) ──────────────────────
