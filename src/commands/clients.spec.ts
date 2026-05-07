@@ -405,3 +405,63 @@ describe("resolveClientId", () => {
     });
   });
 });
+
+// ── Pagination ─────────────────────────────────────────────────────────────
+
+describe("fetchAllClients pagination", () => {
+  // The page size constant lives in clients.ts (CLIENTS_PAGE_SIZE = 100). To
+  // exercise the pagination loop without producing 100-element fixtures, the
+  // tests rely on the early-exit semantics: a *short* page ends iteration. So
+  // we send a full page on iteration 1, then a short page on iteration 2.
+  const PAGE_SIZE = 100;
+
+  function makeClient(i: number): typeof sampleClient {
+    return { ...sampleClient, id: `clt_${i.toString().padStart(4, "0")}` };
+  }
+
+  it("walks every page until a short page is returned", async () => {
+    const fullPage = Array.from({ length: PAGE_SIZE }, (_, i) => makeClient(i));
+    const shortPage = [makeClient(PAGE_SIZE), makeClient(PAGE_SIZE + 1)];
+
+    mockGraphql
+      .mockResolvedValueOnce({
+        tripPlanClients: { items: fullPage, count: PAGE_SIZE + 2, page: 1, limit: PAGE_SIZE },
+      })
+      .mockResolvedValueOnce({
+        tripPlanClients: { items: shortPage, count: PAGE_SIZE + 2, page: 2, limit: PAGE_SIZE },
+      });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "clients", "list", "--json"]);
+
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    expect(mockGraphql).toHaveBeenNthCalledWith(
+      1,
+      expect.any(String),
+      { page: 1, limit: PAGE_SIZE },
+    );
+    expect(mockGraphql).toHaveBeenNthCalledWith(
+      2,
+      expect.any(String),
+      { page: 2, limit: PAGE_SIZE },
+    );
+    expect(mockJsonOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ total: PAGE_SIZE + 2 }),
+    );
+  });
+
+  it("stops after the first page when it is short", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: { items: [sampleClient], count: 1, page: 1, limit: PAGE_SIZE },
+    });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "clients", "list", "--json"]);
+
+    expect(mockGraphql).toHaveBeenCalledTimes(1);
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.any(String),
+      { page: 1, limit: PAGE_SIZE },
+    );
+  });
+});

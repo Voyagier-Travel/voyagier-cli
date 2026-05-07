@@ -66,9 +66,37 @@ function normalizeStatus(value: string): TripPlanClient["status"] {
   return (lower.charAt(0).toUpperCase() + lower.slice(1)) as TripPlanClient["status"];
 }
 
+// Page size for tripPlanClients pagination. Server default is 20; we ask for
+// 100 to minimize round-trips while staying well under any reasonable per-page
+// cap. The accumulator below keeps fetching until a short page (or count) ends
+// the loop.
+const CLIENTS_PAGE_SIZE = 100;
+// Hard ceiling on pages walked, in case a buggy server keeps returning full
+// pages forever. 50 * 100 = 5,000 clients is well above any realistic advisor
+// roster; if you hit this, something is wrong with the server response.
+const CLIENTS_MAX_PAGES = 50;
+
 async function fetchAllClients(): Promise<TripPlanClient[]> {
-  const data = await graphql<{ tripPlanClients: { items: TripPlanClient[] } }>(LIST_TRIP_PLAN_CLIENTS);
-  return data.tripPlanClients.items ?? [];
+  const out: TripPlanClient[] = [];
+  let page = 1;
+  while (page <= CLIENTS_MAX_PAGES) {
+    const data = await graphql<{
+      tripPlanClients: {
+        items: TripPlanClient[];
+        count: number;
+        page: number;
+        limit: number;
+      };
+    }>(LIST_TRIP_PLAN_CLIENTS, { page, limit: CLIENTS_PAGE_SIZE });
+    const items = data.tripPlanClients.items ?? [];
+    out.push(...items);
+    // Stop when the server returns a short page (last page) or when we've
+    // collected every record per server-reported count.
+    if (items.length < CLIENTS_PAGE_SIZE) break;
+    if (out.length >= data.tripPlanClients.count) break;
+    page += 1;
+  }
+  return out;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -99,10 +127,10 @@ export interface ResolvedClient {
  * surface "we picked this for you" feedback.
  *
  * Accepted forms for `explicit`:
- *   - empty string         → CLIENT_REQUIRED error (explicit-but-empty signal)
- *   - email (`x@y`)        → looked up by email (Active only)
- *   - canonical id (`clt_…`) → returned directly, no lookup
- *   - any other string     → looked up as case-insensitive name match (Active only)
+ *   - empty string                → CLIENT_REQUIRED error (explicit-but-empty signal)
+ *   - email (`x@y`)               → looked up by email (Active only)
+ *   - canonical id — UUID or `clt_…` prefix → returned directly, no lookup
+ *   - any other string            → looked up as case-insensitive name match (Active only)
  */
 export async function resolveClient(explicit?: string): Promise<ResolvedClient> {
   if (explicit === "") {

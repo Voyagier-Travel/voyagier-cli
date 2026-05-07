@@ -499,8 +499,11 @@ export const LIST_CHAT_SESSIONS = `
 // --- Clients (v2.0.0 — TripPlanClient surface) ---
 
 export const LIST_TRIP_PLAN_CLIENTS = `
-  query TripPlanClients {
-    tripPlanClients {
+  query TripPlanClients($page: Int!, $limit: Int!) {
+    tripPlanClients(page: $page, limit: $limit) {
+      count
+      page
+      limit
       items {
         id
         name

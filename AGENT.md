@@ -39,15 +39,17 @@ voyagier doctor --json
 voyagier clients upsert --email "smith@example.com" --name "Smith Family" --type Individual --json
 # Returns: { client: { id, name, ... }, ok: true, created: true|false }
 
-# 2) Create the plan (a clientId is required server-side; pass --client with an
-#    id, email, or name. Omit --client to auto-pick if you have exactly one
-#    active client; the CLI logs `auto-resolved client: ...` to stderr.)
-voyagier plans create --client "Smith Family" --title "Smith — Tokyo" --start 2026-09-15 --end 2026-09-22 --json
-# Returns: { ...plan, url, planSummary }
-# Or with plan-trip in one shot:
+# 2) Create the plan. clientId is required server-side; `plan-trip` accepts
+#    `--client` (id, email, or name). Omit `--client` to auto-pick if you
+#    have exactly one active client; the CLI logs `auto-resolved client: ...`
+#    to stderr.
+#
+#    Note: `voyagier plans create` does not yet accept `--client` and is not
+#    the supported plan-creation entry point for agents — use `plan-trip`.
 voyagier plan-trip --client "Smith Family" --title "Smith — Tokyo" \
   --from JFK --to NRT --depart 2026-09-15 --return 2026-09-22 \
   --travellers "John Smith" --auto-select navigator --json
+# Returns: { ...plan, url, planSummary, ...selected options }
 
 # 3) Add travellers
 voyagier travellers add --plan <PLAN_ID> --first John --last Smith --type Adult --json
@@ -137,7 +139,7 @@ Branch on `code`. The CLI exits 1 for `CliError`s, 2 for unexpected errors. Pass
 | `NETWORK` | Couldn't reach the API | check connectivity; `voyagier doctor --json` |
 | `STATE_CORRUPT` | Local state file unreadable | delete affected file under `~/.voyagier/` |
 | `NO_CLIENTS` | Account has no ACTIVE clients | `voyagier clients create --name ... --type Individual` |
-| `MULTIPLE_CLIENTS` | Ambiguous email match in upsert | pass an explicit `--client <id>` (where supported) |
+| `MULTIPLE_CLIENTS` | Client resolution is ambiguous: (a) `--client` omitted and account has multiple ACTIVE clients, (b) `--client <name>` matched multiple ACTIVE clients, or (c) `clients upsert --email` matched multiple existing clients | pass an explicit `--client <id>` |
 | `CLIENT_REQUIRED` | `plan-trip --client ""` was passed (explicit-but-empty) | drop the flag (auto-resolves) or pass an id/email/name |
 | `PERMISSION_DENIED` | RBAC failure (non-advisor on advisor-gated mutation) | escalate to user |
 | `SCHEMA_DRIFT` | CLI is older than backend; queries don't validate | `npm i -g @voyagier/cli@latest` |

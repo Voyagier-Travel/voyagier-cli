@@ -90,7 +90,7 @@ All deprecated flags continue to work in v2.1.0 with a stderr warning. Removal t
 - `NOT_BOOKABLE`, `BOOKING_BLOCKED`, `EXPIRED_OFFER`, `STALE_PLAN_STATE` — booking pre-flight ([VOY-1188](https://linear.app/voyagier/issue/VOY-1188)).
 - `SCHEMA_DRIFT` — when CLI is built against an older schema than the backend.
 - `PERMISSION_DENIED` — RBAC failures (e.g., non-advisors attempting plan creation).
-- `NO_CLIENTS`, `MULTIPLE_CLIENTS`, `CLIENT_REQUIRED` — client-resolution surfaces. `CLIENT_REQUIRED` is reserved for the in-flight `--client` wiring on `plans create` / `plan-trip` ([VOY-1193](https://linear.app/voyagier/issue/VOY-1193)) and is not currently emitted.
+- `NO_CLIENTS`, `MULTIPLE_CLIENTS`, `CLIENT_REQUIRED` — client-resolution surfaces. `CLIENT_REQUIRED` is emitted by `plan-trip --client ""` (explicit-but-empty); `NO_CLIENTS` and `MULTIPLE_CLIENTS` are emitted by the `plan-trip` auto-resolve path. `plans create --client` wiring is still pending ([VOY-1193](https://linear.app/voyagier/issue/VOY-1193)).
 
 #### Helpers (exported for downstream tooling)
 - Numeric validators: `parsePositiveInt`, `parseNonNegativeInt`, `parseFloatStrict({min, max, nonNegative})`.
@@ -131,7 +131,7 @@ All deprecated flags continue to work in v2.1.0 with a stderr warning. Removal t
 ### Known Issues
 
 - **`voyagier plan-trip --auto-select navigator` is broken** on the v2 schema. The composite path uses removed `TripPlanItem.selection` (singular). Tracked as [VOY-1189](https://linear.app/voyagier/issue/VOY-1189). Use the manual flow described in [`AGENT.md`](./AGENT.md) until VOY-1189 lands.
-- **`voyagier plans create` and `plan-trip` do not yet take `--client`** even though the server-side guard requires `clientId`. Plans are created against the user account today; full client wiring tracked as [VOY-1193](https://linear.app/voyagier/issue/VOY-1193).
+- **`voyagier plans create` does not yet take `--client`** even though the server-side guard requires `clientId`. Use `voyagier plan-trip --client <id|email|name>` for now (added in v2.1.1); `plans create --client` wiring tracked as [VOY-1193](https://linear.app/voyagier/issue/VOY-1193).
 - **`voyagier book --types` and `--only-bookable` are client-side preflight gates only.** They affect what `--validate` reports, but the actual `createTripPlanCheckout` mutation still targets the full cart. Build a clean cart (don't add display-only items) before calling `book` to control what's charged. Server-side filtering is a future enhancement.
 - **The `--json` envelope is not yet uniform across commands.** Cart, book, bookable, itinerary, listings, and places emit `{ ok: true, data, planContext? }`. Clients, plans, travellers, search, select, pick, doctor, and whoami emit ad-hoc per-command shapes. Unification tracked as [VOY-1192](https://linear.app/voyagier/issue/VOY-1192). Per-command shapes are documented in `AGENT.md`.
 - **Error envelope is `{ error, code, message, details? }`** today (no top-level `ok: false`, no `fix` field). Branch on `code`.
