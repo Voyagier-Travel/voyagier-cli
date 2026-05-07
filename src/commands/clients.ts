@@ -66,6 +66,17 @@ function normalizeStatus(value: string): TripPlanClient["status"] {
   return (lower.charAt(0).toUpperCase() + lower.slice(1)) as TripPlanClient["status"];
 }
 
+async function fetchAllClients(): Promise<TripPlanClient[]> {
+  const data = await graphql<{ tripPlanClients: { items: TripPlanClient[] } }>(LIST_TRIP_PLAN_CLIENTS);
+  return data.tripPlanClients.items ?? [];
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function looksLikeClientId(s: string): boolean {
+  return UUID_RE.test(s) || s.startsWith("clt_");
+}
+
 /**
  * Format a client for human-readable TTY output (color, single line).
  */
@@ -76,28 +87,34 @@ function formatClientLine(c: TripPlanClient): string {
   return `${statusBadge} ${typeLabel} ${chalk.bold(c.name)}${contact}  ${chalk.dim(c.id)}`;
 }
 
+export interface ResolvedClient {
+  id: string;
+  name: string;
+  autoResolved: boolean;
+}
+
 /**
  * Resolve the active client when a command needs one.
- * Returns the resolved clientId, throwing structured CliErrors with `fix` strings on failure.
+ * Returns id, display name, and an autoResolved flag for callers that want to
+ * surface "we picked this for you" feedback.
  *
- * Used by other v2 commands (plans create, plan-trip) that need a clientId.
- *
- * @param explicit - user-provided --client flag (id or email)
- * @returns resolved clientId
+ * Accepted forms for `explicit`:
+ *   - empty string         → CLIENT_REQUIRED error (explicit-but-empty signal)
+ *   - email (`x@y`)        → looked up by email (Active only)
+ *   - canonical id (`clt_…`) → returned directly, no lookup
+ *   - any other string     → looked up as case-insensitive name match (Active only)
  */
-export async function resolveClientId(explicit?: string): Promise<string> {
-  // Empty-string is an explicit-but-empty signal (e.g. `--client ""`). Treat as required-but-missing.
+export async function resolveClient(explicit?: string): Promise<ResolvedClient> {
   if (explicit === "") {
     throw new CliError(
       CliErrorCode.CLIENT_REQUIRED,
-      "--client was provided but empty. Pass an id, email, or omit the flag to auto-resolve.",
+      "--client was provided but empty. Pass an id, email, name, or omit the flag to auto-resolve.",
     );
   }
   if (explicit) {
-    // Heuristic: if it looks like an email, look it up; otherwise treat as id.
     if (explicit.includes("@")) {
-      const data = await graphql<{ tripPlanClients: TripPlanClient[] }>(LIST_TRIP_PLAN_CLIENTS);
-      const match = data.tripPlanClients.find(
+      const items = await fetchAllClients();
+      const match = items.find(
         (c) => c.email?.toLowerCase() === explicit.toLowerCase() && c.status === "Active"
       );
       if (!match) {
@@ -106,14 +123,37 @@ export async function resolveClientId(explicit?: string): Promise<string> {
           `No ACTIVE client found with email "${explicit}".\n  Fix: voyagier clients list --json  (then pick an id)\n  Or:  voyagier clients create --name "..." --type individual --email "${explicit}"`
         );
       }
-      return match.id;
+      return { id: match.id, name: match.name, autoResolved: false };
     }
-    return explicit;
+    if (looksLikeClientId(explicit)) {
+      // Canonical client id (UUID or clt_ prefix) — trust it without a roundtrip.
+      return { id: explicit, name: explicit, autoResolved: false };
+    }
+    // Otherwise treat as a name (case-insensitive exact match against Active clients).
+    const items = await fetchAllClients();
+    const target = explicit.toLowerCase();
+    const matches = items.filter(
+      (c) => c.name.toLowerCase() === target && c.status === "Active"
+    );
+    if (matches.length === 0) {
+      throw new CliError(
+        CliErrorCode.NOT_FOUND,
+        `No ACTIVE client found matching "${explicit}".\n  Fix: voyagier clients list --json  (then pick an id)`
+      );
+    }
+    if (matches.length > 1) {
+      const list = matches.map((c) => `    ${c.id}  ${c.name}`).join("\n");
+      throw new CliError(
+        CliErrorCode.MULTIPLE_CLIENTS,
+        `Multiple ACTIVE clients matched "${explicit}". Specify --client <id>:\n${list}`
+      );
+    }
+    return { id: matches[0].id, name: matches[0].name, autoResolved: false };
   }
 
   // No explicit value: auto-resolve.
-  const data = await graphql<{ tripPlanClients: TripPlanClient[] }>(LIST_TRIP_PLAN_CLIENTS);
-  const active = data.tripPlanClients.filter((c) => c.status === "Active");
+  const items = await fetchAllClients();
+  const active = items.filter((c) => c.status === "Active");
 
   if (active.length === 0) {
     throw new CliError(
@@ -125,10 +165,18 @@ export async function resolveClientId(explicit?: string): Promise<string> {
     const list = active.map((c) => `    ${c.id}  ${c.name}`).join("\n");
     throw new CliError(
       CliErrorCode.MULTIPLE_CLIENTS,
-      `Multiple ACTIVE clients found. Specify --client <id>:\n${list}\n  Fix: voyagier plans create --client <id>`
+      `Multiple ACTIVE clients found. Specify --client <id>:\n${list}\n  Fix: voyagier plan-trip --client <id>`
     );
   }
-  return active[0].id;
+  return { id: active[0].id, name: active[0].name, autoResolved: true };
+}
+
+/**
+ * Thin wrapper around resolveClient — returns just the id.
+ * Kept for backward compatibility with existing callers that don't need name/autoResolved.
+ */
+export async function resolveClientId(explicit?: string): Promise<string> {
+  return (await resolveClient(explicit)).id;
 }
 
 export function registerClientsCommands(program: Command): void {
@@ -144,8 +192,7 @@ export function registerClientsCommands(program: Command): void {
     .option("--type <type>", "Filter by client type (individual|company|group)")
     .option("--json", "Output raw JSON")
     .action(async (opts) => {
-      const data = await graphql<{ tripPlanClients: TripPlanClient[] }>(LIST_TRIP_PLAN_CLIENTS);
-      let list = data.tripPlanClients;
+      let list = await fetchAllClients();
       if (opts.status) {
         const statusFilter = normalizeStatus(opts.status);
         list = list.filter((c) => c.status === statusFilter);
@@ -349,8 +396,8 @@ export function registerClientsCommands(program: Command): void {
       // workaround is best-effort and assumes serial agent flows. Tracking with Mark
       // sync (tracked as a P1 follow-up). Wrap calling code with an
       // idempotency-key + retry on duplicate-conflict when the server side lands.
-      const list = await graphql<{ tripPlanClients: TripPlanClient[] }>(LIST_TRIP_PLAN_CLIENTS);
-      const sameEmail = list.tripPlanClients.filter(
+      const allClients = await fetchAllClients();
+      const sameEmail = allClients.filter(
         (c) => c.email?.toLowerCase() === opts.email.toLowerCase()
       );
       // Only an Active record is reusable downstream (resolveClientId requires Active);

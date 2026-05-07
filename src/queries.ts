@@ -501,16 +501,21 @@ export const LIST_CHAT_SESSIONS = `
 export const LIST_TRIP_PLAN_CLIENTS = `
   query TripPlanClients {
     tripPlanClients {
-      id
-      name
-      email
-      phone
-      avatarUrl
-      description
-      clientType
-      status
-      createdAt
-      updatedAt
+      items {
+        id
+        name
+        email
+        phone
+        avatarUrl
+        description
+        clientType
+        status
+        createdAt
+        updatedAt
+      }
+      count
+      page
+      limit
     }
   }
 `;

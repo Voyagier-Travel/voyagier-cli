@@ -22,7 +22,6 @@ For the full breaking-changes table see [`CHANGELOG.md`](./CHANGELOG.md).
 > ⚠️ **Known gaps in this release (don't rely on these yet):**
 >
 > - `voyagier plan-trip --auto-select navigator` is broken on the v2 schema (tracked as [VOY-1189](https://linear.app/voyagier/issue/VOY-1189)). Use the manual flow below.
-> - `voyagier plans create` and `plan-trip` do **not** yet take a `--client` flag, even though every TripPlan must server-side belong to a client per the new model. Plan creation today still uses the v1 input shape; `clientId` wiring is tracked as [VOY-1193](https://linear.app/voyagier/issue/VOY-1193).
 > - The `--json` envelope is **not yet uniform** across commands. The newer surfaces (cart, book, bookable, itinerary, listings, places) emit `{ ok: true, data, planContext? }`. The older surfaces (clients, plans) emit ad-hoc shapes documented per-command below. Unification tracked as [VOY-1192](https://linear.app/voyagier/issue/VOY-1192).
 > - `voyagier book --types` and `--only-bookable` are **client-side preflight gates only** — they do not yet pass an item filter to the `createTripPlanCheckout` mutation. Use `--validate` first, and only invoke `book` once the cart actually contains the items you want to charge.
 
@@ -40,11 +39,15 @@ voyagier doctor --json
 voyagier clients upsert --email "smith@example.com" --name "Smith Family" --type Individual --json
 # Returns: { client: { id, name, ... }, ok: true, created: true|false }
 
-# 2) Create the plan (server-side will require a clientId once VOY-1193 lands;
-#    until then the CLI doesn't pass it. The plan is created against your
-#    user account.)
-voyagier plans create --title "Smith — Tokyo" --start 2026-09-15 --end 2026-09-22 --json
+# 2) Create the plan (a clientId is required server-side; pass --client with an
+#    id, email, or name. Omit --client to auto-pick if you have exactly one
+#    active client; the CLI logs `auto-resolved client: ...` to stderr.)
+voyagier plans create --client "Smith Family" --title "Smith — Tokyo" --start 2026-09-15 --end 2026-09-22 --json
 # Returns: { ...plan, url, planSummary }
+# Or with plan-trip in one shot:
+voyagier plan-trip --client "Smith Family" --title "Smith — Tokyo" \
+  --from JFK --to NRT --depart 2026-09-15 --return 2026-09-22 \
+  --travellers "John Smith" --auto-select navigator --json
 
 # 3) Add travellers
 voyagier travellers add --plan <PLAN_ID> --first John --last Smith --type Adult --json
@@ -135,7 +138,7 @@ Branch on `code`. The CLI exits 1 for `CliError`s, 2 for unexpected errors. Pass
 | `STATE_CORRUPT` | Local state file unreadable | delete affected file under `~/.voyagier/` |
 | `NO_CLIENTS` | Account has no ACTIVE clients | `voyagier clients create --name ... --type Individual` |
 | `MULTIPLE_CLIENTS` | Ambiguous email match in upsert | pass an explicit `--client <id>` (where supported) |
-| `CLIENT_REQUIRED` | Reserved for the in-flight VOY-1193 work; not currently emitted | — |
+| `CLIENT_REQUIRED` | `plan-trip --client ""` was passed (explicit-but-empty) | drop the flag (auto-resolves) or pass an id/email/name |
 | `PERMISSION_DENIED` | RBAC failure (non-advisor on advisor-gated mutation) | escalate to user |
 | `SCHEMA_DRIFT` | CLI is older than backend; queries don't validate | `npm i -g @voyagier/cli@latest` |
 | `NOT_BOOKABLE` | Selection type is display-only (e.g. flight) | filter the cart manually before booking |
@@ -398,7 +401,7 @@ Manual lookup: `voyagier search airports "tokyo" --json`.
 
 - **JSON shape is not uniform across commands** (see Output Conventions above). Tracked as VOY-1192.
 - **`plan-trip --auto-select` is broken** on the v2 schema (VOY-1189). Use the manual flow.
-- **`plans create` and `plan-trip` do not yet take `--client`** (VOY-1193). Plans are created against the user account today; the server-side `clientId` requirement isn't yet plumbed through the CLI.
+- **`plan-trip` requires a client.** Pass `--client <id|email|name>`. With exactly one active client the flag is optional and the CLI auto-picks (logs `auto-resolved client: ...` to stderr). With zero active clients you get `NO_CLIENTS`; with multiple, `MULTIPLE_CLIENTS`.
 - **`book --types` and `--only-bookable` are client-side gates only** — they don't filter the checkout mutation. Build a clean cart before calling `book`.
 - **`plans summary` reads `plan.items`**, not `tripPlanEvents` (VOY-1194). Use `voyagier itinerary <planId>` for the canonical time-sorted view.
 - **State files are global, not per-plan.** Cross-plan corruption is prevented by `--plan <id>` mismatch checks, not by file partitioning.

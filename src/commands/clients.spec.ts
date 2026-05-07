@@ -90,7 +90,7 @@ afterEach(() => {
 
 describe("clients list", () => {
   it("returns all clients in --json mode", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [sampleClient, archivedClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient, archivedClient] } });
 
     const p = buildProgram();
     await p.parseAsync(["node", "test", "clients", "list", "--json"]);
@@ -103,7 +103,7 @@ describe("clients list", () => {
   });
 
   it("filters by --status active", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [sampleClient, archivedClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient, archivedClient] } });
 
     const p = buildProgram();
     await p.parseAsync(["node", "test", "clients", "list", "--status", "active", "--json"]);
@@ -115,7 +115,7 @@ describe("clients list", () => {
   });
 
   it("filters by --type group", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [sampleClient, archivedClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient, archivedClient] } });
 
     const p = buildProgram();
     await p.parseAsync(["node", "test", "clients", "list", "--type", "group", "--json"]);
@@ -127,7 +127,7 @@ describe("clients list", () => {
   });
 
   it("rejects invalid --type values", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [sampleClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient] } });
 
     const p = buildProgram();
     await expect(
@@ -239,7 +239,7 @@ describe("clients archive", () => {
 
 describe("clients upsert", () => {
   it("returns existing client when email matches", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [sampleClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient] } });
 
     const p = buildProgram();
     await p.parseAsync([
@@ -260,7 +260,7 @@ describe("clients upsert", () => {
 
   it("creates new client when email doesn't match", async () => {
     mockGraphql
-      .mockResolvedValueOnce({ tripPlanClients: [archivedClient] })
+      .mockResolvedValueOnce({ tripPlanClients: { items: [archivedClient] } })
       .mockResolvedValueOnce({ createTripPlanClient: sampleClient });
 
     const p = buildProgram();
@@ -281,7 +281,7 @@ describe("clients upsert", () => {
   });
 
   it("matches email case-insensitively", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [sampleClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient] } });
 
     const p = buildProgram();
     await p.parseAsync([
@@ -306,7 +306,7 @@ describe("clients upsert", () => {
       id: "clt_ARCH",
       email: "smith@example.com",
     };
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [archivedSmith] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [archivedSmith] } });
 
     const p = buildProgram();
     p.exitOverride();
@@ -333,7 +333,7 @@ describe("clients upsert", () => {
       id: "clt_ARCH",
       email: "smith@example.com",
     };
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [archivedSmith, activeSmith] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [archivedSmith, activeSmith] } });
 
     const p = buildProgram();
     await p.parseAsync([
@@ -368,14 +368,14 @@ describe("resolveClientId", () => {
 
   it("looks up email and returns matching active client", async () => {
     mockGraphql.mockResolvedValueOnce({
-      tripPlanClients: [sampleClient, archivedClient],
+      tripPlanClients: { items: [sampleClient, archivedClient] },
     });
     const id = await resolveClientId("smith@example.com");
     expect(id).toBe("clt_01HX");
   });
 
   it("throws NOT_FOUND when email has no active match", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [archivedClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [archivedClient] } });
     await expect(resolveClientId("nomatch@example.com")).rejects.toMatchObject({
       code: CliErrorCode.NOT_FOUND,
     });
@@ -383,14 +383,14 @@ describe("resolveClientId", () => {
 
   it("auto-picks the single active client when no explicit value", async () => {
     mockGraphql.mockResolvedValueOnce({
-      tripPlanClients: [sampleClient, archivedClient],
+      tripPlanClients: { items: [sampleClient, archivedClient] },
     });
     const id = await resolveClientId();
     expect(id).toBe("clt_01HX");
   });
 
   it("throws NO_CLIENTS when no active clients exist", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [archivedClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [archivedClient] } });
     await expect(resolveClientId()).rejects.toMatchObject({
       code: CliErrorCode.NO_CLIENTS,
     });
@@ -398,7 +398,7 @@ describe("resolveClientId", () => {
 
   it("throws MULTIPLE_CLIENTS when more than one active", async () => {
     mockGraphql.mockResolvedValueOnce({
-      tripPlanClients: [sampleClient, { ...sampleClient, id: "clt_OTHER" }],
+      tripPlanClients: { items: [sampleClient, { ...sampleClient, id: "clt_OTHER" }] },
     });
     await expect(resolveClientId()).rejects.toMatchObject({
       code: CliErrorCode.MULTIPLE_CLIENTS,

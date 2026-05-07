@@ -466,6 +466,7 @@ describe("plan-trip --auto-select (round-trip flight)", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -486,6 +487,7 @@ describe("plan-trip --auto-select (round-trip flight)", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -503,6 +505,7 @@ describe("plan-trip --auto-select (round-trip flight)", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -520,6 +523,7 @@ describe("plan-trip --auto-select (round-trip flight)", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -550,6 +554,7 @@ describe("plan-trip --auto-select (round-trip flight)", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -585,6 +590,7 @@ describe("plan-trip --auto-select (round-trip flight)", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -607,6 +613,7 @@ describe("plan-trip --auto-select (round-trip flight)", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -627,6 +634,7 @@ describe("plan-trip --auto-select (round-trip flight)", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -647,6 +655,7 @@ describe("plan-trip --auto-select (round-trip flight)", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -700,6 +709,7 @@ describe("plan-trip --auto-select (one-way flight)", () => {
 
     await runPlanTrip([
       "--title", "One-way Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -742,6 +752,7 @@ describe("plan-trip --auto-select validation", () => {
     try {
       await runPlanTrip([
         "--title", "Trip",
+        "--client", "clt_test",
         "--to", "CDG",
         "--depart", "2026-03-23",
         "--auto-select", "invalid-strategy",
@@ -765,6 +776,7 @@ describe("plan-trip --auto-select validation", () => {
       try {
         await runPlanTrip([
           "--title", "Trip",
+          "--client", "clt_test",
           "--auto-select", strategy,
           "--json",
         ]);
@@ -813,6 +825,7 @@ describe("plan-trip without --auto-select (backward compat)", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -834,6 +847,7 @@ describe("plan-trip without --auto-select (backward compat)", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -888,6 +902,7 @@ describe("plan-trip --auto-select --agent output", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -916,6 +931,7 @@ describe("plan-trip --auto-select --agent output", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -939,6 +955,7 @@ describe("plan-trip --auto-select --agent output", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -991,6 +1008,7 @@ describe("plan-trip --auto-select human output", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -1015,6 +1033,7 @@ describe("plan-trip --auto-select human output", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--to", "CDG",
       "--from", "DCA",
       "--depart", "2026-03-23",
@@ -1079,6 +1098,7 @@ describe("plan-trip --hotel with --auto-select", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--hotel", "Paris",
       "--depart", "2026-03-23",
       "--return", "2026-03-25",
@@ -1107,6 +1127,7 @@ describe("plan-trip --hotel with --auto-select", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--hotel", "Paris",
       "--depart", "2026-03-23",
       "--return", "2026-03-25",
@@ -1135,6 +1156,7 @@ describe("plan-trip --hotel with --auto-select", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--hotel", "Paris",
       "--depart", "2026-03-23",
       "--return", "2026-03-25",
@@ -1233,6 +1255,7 @@ describe("plan-trip --travellers", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--travellers", "John Doe",
       "--to", "CDG",
       "--from", "DCA",
@@ -1254,6 +1277,7 @@ describe("plan-trip --travellers", () => {
 
     await runPlanTrip([
       "--title", "Paris Trip",
+      "--client", "clt_test",
       "--travellers", "John Doe, Jane Smith",
       "--to", "CDG",
       "--from", "DCA",
@@ -1264,5 +1288,174 @@ describe("plan-trip --travellers", () => {
     const calls = mockGraphql.mock.calls as [string][];
     const travellerCalls = calls.filter(([q]) => q.includes("createTripPlanTraveller"));
     expect(travellerCalls.length).toBe(2);
+  });
+});
+
+// ── Integration tests: --client resolution (VOY-1211) ──────────────────────
+
+describe("plan-trip --client", () => {
+  let stdoutSpy: ReturnType<typeof jest.spyOn>;
+  let stderrOutput: string[];
+  let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+  beforeEach(() => {
+    process.env.VOYAGIER_TOKEN = "test-token";
+    stderrOutput = [];
+    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation(() => true);
+    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      stderrOutput.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    mockGraphql.mockReset();
+  });
+
+  afterEach(() => {
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+    delete process.env.VOYAGIER_TOKEN;
+  });
+
+  it("uses an explicit clt_ id directly without listing clients", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("tripPlanTravellers")) return Promise.resolve(MOCK_TRAVELLERS_EMPTY);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--client", "clt_explicit_abc",
+      "--title", "Trip",
+      "--json",
+    ]);
+
+    const calls = mockGraphql.mock.calls as [string, Record<string, unknown>][];
+    expect(calls.some(([q]) => q.includes("TripPlanClients"))).toBe(false);
+    const create = calls.find(([q]) => q.includes("mutation CreateTripPlan"));
+    expect(create).toBeDefined();
+    expect(create![1]).toEqual({ input: { clientId: "clt_explicit_abc", title: "Trip" } });
+  });
+
+  it("resolves an email via LIST_TRIP_PLAN_CLIENTS and sends the matched id", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("TripPlanClients")) {
+        return Promise.resolve({
+          tripPlanClients: {
+            items: [
+              { id: "clt_smith", name: "Smith Family", email: "smith@example.com", clientType: "Group", status: "Active" },
+              { id: "clt_old", name: "Old Co", email: "old@example.com", clientType: "Company", status: "Archived" },
+            ],
+          },
+        });
+      }
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("tripPlanTravellers")) return Promise.resolve(MOCK_TRAVELLERS_EMPTY);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--client", "smith@example.com",
+      "--title", "Trip",
+      "--json",
+    ]);
+
+    const calls = mockGraphql.mock.calls as [string, Record<string, unknown>][];
+    const create = calls.find(([q]) => q.includes("mutation CreateTripPlan"));
+    expect(create![1]).toEqual({ input: { clientId: "clt_smith", title: "Trip" } });
+  });
+
+  it("throws NO_CLIENTS when --client is omitted and no active clients exist", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("TripPlanClients")) {
+        return Promise.resolve({
+          tripPlanClients: {
+            items: [
+              { id: "clt_old", name: "Old Co", email: "old@example.com", clientType: "Company", status: "Archived" },
+            ],
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    let err: unknown;
+    try {
+      await runPlanTrip(["--title", "Trip", "--json"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ code: "NO_CLIENTS" });
+  });
+
+  it("auto-picks the single active client and logs to stderr when --client is omitted", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("TripPlanClients")) {
+        return Promise.resolve({
+          tripPlanClients: {
+            items: [
+              { id: "clt_only", name: "Only Active", email: "only@example.com", clientType: "Individual", status: "Active" },
+            ],
+          },
+        });
+      }
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("tripPlanTravellers")) return Promise.resolve(MOCK_TRAVELLERS_EMPTY);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip(["--title", "Trip", "--json"]);
+
+    const stderrJoined = stderrOutput.join("");
+    expect(stderrJoined).toContain("auto-resolved client: Only Active (clt_only)");
+    const calls = mockGraphql.mock.calls as [string, Record<string, unknown>][];
+    const create = calls.find(([q]) => q.includes("mutation CreateTripPlan"));
+    expect(create![1]).toEqual({ input: { clientId: "clt_only", title: "Trip" } });
+  });
+
+  it("throws MULTIPLE_CLIENTS when --client is omitted and multiple active clients exist", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("TripPlanClients")) {
+        return Promise.resolve({
+          tripPlanClients: {
+            items: [
+              { id: "clt_a", name: "Alpha", email: "a@example.com", clientType: "Individual", status: "Active" },
+              { id: "clt_b", name: "Bravo", email: "b@example.com", clientType: "Individual", status: "Active" },
+            ],
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    let err: unknown;
+    try {
+      await runPlanTrip(["--title", "Trip", "--json"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ code: "MULTIPLE_CLIENTS" });
+  });
+
+  it("createTripPlan input contains only clientId + title (no startDate/endDate even when --depart/--return given)", async () => {
+    mockGraphql.mockImplementation((query: string) => {
+      if (query.includes("mutation CreateTripPlan")) return Promise.resolve(MOCK_PLAN);
+      if (query.includes("tripPlanTravellers")) return Promise.resolve(MOCK_TRAVELLERS_EMPTY);
+      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
+    });
+
+    await runPlanTrip([
+      "--client", "clt_explicit",
+      "--title", "Trip",
+      "--depart", "2026-03-23",
+      "--return", "2026-03-25",
+      "--json",
+    ]);
+
+    const calls = mockGraphql.mock.calls as [string, Record<string, unknown>][];
+    const create = calls.find(([q]) => q.includes("mutation CreateTripPlan"));
+    expect(create).toBeDefined();
+    const input = (create![1] as { input: Record<string, unknown> }).input;
+    expect(input).toEqual({ clientId: "clt_explicit", title: "Trip" });
+    expect(input).not.toHaveProperty("startDate");
+    expect(input).not.toHaveProperty("endDate");
   });
 });

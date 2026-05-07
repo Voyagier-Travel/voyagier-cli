@@ -155,7 +155,7 @@ async function checkReachability(): Promise<DoctorCheck> {
  */
 async function checkSchema(): Promise<DoctorCheck> {
   const probes: Array<{ name: string; query: string }> = [
-    { name: "tripPlanClients", query: "{ tripPlanClients { id } }" },
+    { name: "tripPlanClients", query: "{ tripPlanClients { count } }" },
     { name: "tripPlans", query: "{ tripPlans(page: 1, limit: 1) { count } }" },
   ];
 
