@@ -1,6 +1,6 @@
 import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals";
 import { Command } from "commander";
-import { CliError, CliErrorCode } from "../../errors.js";
+import { CliErrorCode } from "../../errors.js";
 
 const mockGraphql = jest.fn();
 
@@ -60,12 +60,6 @@ afterEach(() => {
   stderrSpy.mockRestore();
   logSpy.mockRestore();
 });
-
-function lastJsonOutput(): any {
-  const joined = writes.join("").trim();
-  if (!joined) return null;
-  return JSON.parse(joined);
-}
 
 async function runPlansCreate(args: string[]): Promise<void> {
   const program = new Command();
