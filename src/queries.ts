@@ -326,7 +326,7 @@ export const UPDATE_VOTE = `
 // --- Travellers ---
 
 export const CREATE_TRAVELLER = `
-  mutation CreateTraveller($tripPlanId: String!, $input: CreateTravellerInput!) {
+  mutation CreateTraveller($tripPlanId: String!, $input: CreateTripPlanTravellerInput!) {
     createTripPlanTraveller(tripPlanId: $tripPlanId, input: $input) {
       id firstName lastName email dateOfBirth gender declaredTravellerType
     }
@@ -334,7 +334,7 @@ export const CREATE_TRAVELLER = `
 `;
 
 export const CREATE_TRAVELLER_BRIEF = `
-  mutation CreateTraveller($tripPlanId: String!, $input: CreateTravellerInput!) {
+  mutation CreateTraveller($tripPlanId: String!, $input: CreateTripPlanTravellerInput!) {
     createTripPlanTraveller(tripPlanId: $tripPlanId, input: $input) {
       id firstName lastName
     }
@@ -499,18 +499,26 @@ export const LIST_CHAT_SESSIONS = `
 // --- Clients (v2.0.0 — TripPlanClient surface) ---
 
 export const LIST_TRIP_PLAN_CLIENTS = `
-  query TripPlanClients {
-    tripPlanClients {
-      id
-      name
-      email
-      phone
-      avatarUrl
-      description
-      clientType
-      status
-      createdAt
-      updatedAt
+  query TripPlanClients($page: Int!, $limit: Int!) {
+    tripPlanClients(page: $page, limit: $limit) {
+      count
+      page
+      limit
+      items {
+        id
+        name
+        email
+        phone
+        avatarUrl
+        description
+        clientType
+        status
+        createdAt
+        updatedAt
+      }
+      count
+      page
+      limit
     }
   }
 `;
