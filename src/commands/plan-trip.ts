@@ -21,6 +21,7 @@ import { CliError, CliErrorCode } from "../errors.js";
 import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
 import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
+import { resolveClient } from "./clients.js";
 
 interface TripPlan {
   id: string;
@@ -268,18 +269,19 @@ export function registerPlanTripCommand(program: Command): void {
     .addHelpText("after", `
 Examples:
   # Book a round-trip flight + hotel (two commands total):
-  voyagier plan-trip --title "Paris Trip" --from DCA --to Paris \\
-    --depart <YYYY-MM-DD> --return <YYYY-MM-DD> --hotel Paris \\
-    --travellers "John Doe" --auto-select navigator --json
+  voyagier plan-trip --client "Smith Family" --title "Paris Trip" \\
+    --from DCA --to Paris --depart <YYYY-MM-DD> --return <YYYY-MM-DD> \\
+    --hotel Paris --travellers "John Doe" --auto-select navigator --json
   voyagier book <PLAN_ID> --json
 
-  # One-way, cheapest option:
+  # One-way, cheapest option (omit --client to auto-pick if you have exactly one):
   voyagier plan-trip --title "London" --from JFK --to London \\
     --depart <YYYY-MM-DD> --travellers "Jane Smith" --auto-select cheapest --json
 
   Full agent reference: voyagier agent-docs
 `)
     .option("--plan <id>", "Add to an existing trip plan instead of creating a new one")
+    .option("--client <ref>", "Client ID, email, or name (required when creating a plan; auto-picked if you have exactly one active client)")
     .option("--title <title>", "Trip plan title (required when --plan is not used)")
     .option("--from <code>", "Origin airport code (defaults to home airport)")
     .option("--to <code>", "Destination airport code")
@@ -353,11 +355,12 @@ Examples:
           );
           plan = planData.tripPlan;
         } else {
+          const resolved = await resolveClient(opts.client);
+          if (resolved.autoResolved) {
+            process.stderr.write(`auto-resolved client: ${resolved.name} (${resolved.id})\n`);
+          }
           if (!json && !agent) progress("Creating trip plan...");
-          const planInput: Record<string, unknown> = { title: opts.title };
-          if (opts.depart) planInput.startDate = opts.depart;
-          const endDate = opts.return ?? opts.checkout;
-          if (endDate) planInput.endDate = endDate;
+          const planInput: Record<string, unknown> = { clientId: resolved.id, title: opts.title };
 
           const planData = await graphql<{ createTripPlan: TripPlan }>(
             CREATE_TRIP_PLAN_BASIC,
