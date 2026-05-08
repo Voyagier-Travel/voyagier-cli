@@ -37,7 +37,7 @@ program
   .option("--stacktrace", "show full error stack traces")
   .addHelpText("after", `
 AI Agent Quick Start:
-  voyagier plan-trip --title "Trip" --from DCA --to CDG --depart <DATE> --return <DATE> --hotel Paris --travellers "Name" --auto-select navigator --json
+  voyagier plan-trip --client "Client Name" --title "Trip" --from DCA --to CDG --depart <DATE> --return <DATE> --hotel Paris --travellers "Name" --auto-select navigator --json
   voyagier search activities --plan <ID> --destination Paris --date <DATE> --query "wine tour" --json
   voyagier select 1 --plan <ID> --json
   voyagier book <ID> --json

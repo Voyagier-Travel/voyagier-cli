@@ -90,7 +90,7 @@ afterEach(() => {
 
 describe("clients list", () => {
   it("returns all clients in --json mode", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [sampleClient, archivedClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient, archivedClient] } });
 
     const p = buildProgram();
     await p.parseAsync(["node", "test", "clients", "list", "--json"]);
@@ -103,7 +103,7 @@ describe("clients list", () => {
   });
 
   it("filters by --status active", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [sampleClient, archivedClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient, archivedClient] } });
 
     const p = buildProgram();
     await p.parseAsync(["node", "test", "clients", "list", "--status", "active", "--json"]);
@@ -115,7 +115,7 @@ describe("clients list", () => {
   });
 
   it("filters by --type group", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [sampleClient, archivedClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient, archivedClient] } });
 
     const p = buildProgram();
     await p.parseAsync(["node", "test", "clients", "list", "--type", "group", "--json"]);
@@ -127,7 +127,7 @@ describe("clients list", () => {
   });
 
   it("rejects invalid --type values", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [sampleClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient] } });
 
     const p = buildProgram();
     await expect(
@@ -239,7 +239,7 @@ describe("clients archive", () => {
 
 describe("clients upsert", () => {
   it("returns existing client when email matches", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [sampleClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient] } });
 
     const p = buildProgram();
     await p.parseAsync([
@@ -260,7 +260,7 @@ describe("clients upsert", () => {
 
   it("creates new client when email doesn't match", async () => {
     mockGraphql
-      .mockResolvedValueOnce({ tripPlanClients: [archivedClient] })
+      .mockResolvedValueOnce({ tripPlanClients: { items: [archivedClient] } })
       .mockResolvedValueOnce({ createTripPlanClient: sampleClient });
 
     const p = buildProgram();
@@ -281,7 +281,7 @@ describe("clients upsert", () => {
   });
 
   it("matches email case-insensitively", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [sampleClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient] } });
 
     const p = buildProgram();
     await p.parseAsync([
@@ -306,7 +306,7 @@ describe("clients upsert", () => {
       id: "clt_ARCH",
       email: "smith@example.com",
     };
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [archivedSmith] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [archivedSmith] } });
 
     const p = buildProgram();
     p.exitOverride();
@@ -333,7 +333,7 @@ describe("clients upsert", () => {
       id: "clt_ARCH",
       email: "smith@example.com",
     };
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [archivedSmith, activeSmith] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [archivedSmith, activeSmith] } });
 
     const p = buildProgram();
     await p.parseAsync([
@@ -368,14 +368,14 @@ describe("resolveClientId", () => {
 
   it("looks up email and returns matching active client", async () => {
     mockGraphql.mockResolvedValueOnce({
-      tripPlanClients: [sampleClient, archivedClient],
+      tripPlanClients: { items: [sampleClient, archivedClient] },
     });
     const id = await resolveClientId("smith@example.com");
     expect(id).toBe("clt_01HX");
   });
 
   it("throws NOT_FOUND when email has no active match", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [archivedClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [archivedClient] } });
     await expect(resolveClientId("nomatch@example.com")).rejects.toMatchObject({
       code: CliErrorCode.NOT_FOUND,
     });
@@ -383,14 +383,14 @@ describe("resolveClientId", () => {
 
   it("auto-picks the single active client when no explicit value", async () => {
     mockGraphql.mockResolvedValueOnce({
-      tripPlanClients: [sampleClient, archivedClient],
+      tripPlanClients: { items: [sampleClient, archivedClient] },
     });
     const id = await resolveClientId();
     expect(id).toBe("clt_01HX");
   });
 
   it("throws NO_CLIENTS when no active clients exist", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanClients: [archivedClient] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [archivedClient] } });
     await expect(resolveClientId()).rejects.toMatchObject({
       code: CliErrorCode.NO_CLIENTS,
     });
@@ -398,10 +398,70 @@ describe("resolveClientId", () => {
 
   it("throws MULTIPLE_CLIENTS when more than one active", async () => {
     mockGraphql.mockResolvedValueOnce({
-      tripPlanClients: [sampleClient, { ...sampleClient, id: "clt_OTHER" }],
+      tripPlanClients: { items: [sampleClient, { ...sampleClient, id: "clt_OTHER" }] },
     });
     await expect(resolveClientId()).rejects.toMatchObject({
       code: CliErrorCode.MULTIPLE_CLIENTS,
     });
+  });
+});
+
+// ── Pagination ─────────────────────────────────────────────────────────────
+
+describe("fetchAllClients pagination", () => {
+  // The page size constant lives in clients.ts (CLIENTS_PAGE_SIZE = 100). To
+  // exercise the pagination loop without producing 100-element fixtures, the
+  // tests rely on the early-exit semantics: a *short* page ends iteration. So
+  // we send a full page on iteration 1, then a short page on iteration 2.
+  const PAGE_SIZE = 100;
+
+  function makeClient(i: number): typeof sampleClient {
+    return { ...sampleClient, id: `clt_${i.toString().padStart(4, "0")}` };
+  }
+
+  it("walks every page until a short page is returned", async () => {
+    const fullPage = Array.from({ length: PAGE_SIZE }, (_, i) => makeClient(i));
+    const shortPage = [makeClient(PAGE_SIZE), makeClient(PAGE_SIZE + 1)];
+
+    mockGraphql
+      .mockResolvedValueOnce({
+        tripPlanClients: { items: fullPage, count: PAGE_SIZE + 2, page: 1, limit: PAGE_SIZE },
+      })
+      .mockResolvedValueOnce({
+        tripPlanClients: { items: shortPage, count: PAGE_SIZE + 2, page: 2, limit: PAGE_SIZE },
+      });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "clients", "list", "--json"]);
+
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    expect(mockGraphql).toHaveBeenNthCalledWith(
+      1,
+      expect.any(String),
+      { page: 1, limit: PAGE_SIZE },
+    );
+    expect(mockGraphql).toHaveBeenNthCalledWith(
+      2,
+      expect.any(String),
+      { page: 2, limit: PAGE_SIZE },
+    );
+    expect(mockJsonOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ total: PAGE_SIZE + 2 }),
+    );
+  });
+
+  it("stops after the first page when it is short", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: { items: [sampleClient], count: 1, page: 1, limit: PAGE_SIZE },
+    });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "clients", "list", "--json"]);
+
+    expect(mockGraphql).toHaveBeenCalledTimes(1);
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.any(String),
+      { page: 1, limit: PAGE_SIZE },
+    );
   });
 });
