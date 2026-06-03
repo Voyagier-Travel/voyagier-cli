@@ -37,14 +37,12 @@ export interface TripPlan {
   endDate?: string;
 }
 
+// NOTE: date/startTime/endTime/day were dropped from TripPlanItem in API PR #386
+// (timing now lives on tripPlanEvents). Do not re-add them here — see VOY-1407.
 export interface TripPlanItem {
   id: string;
   type: string;
   title: string;
-  date?: string;
-  startTime?: string;
-  endTime?: string;
-  day?: number;
 }
 
 export interface Traveller {
@@ -54,13 +52,32 @@ export interface Traveller {
   declaredTravellerType?: string;
 }
 
+export interface SelectionOption {
+  id: string;
+  name: string;
+  price?: number | null;
+  status?: string;
+}
+
 export interface SelectionInfo {
   id: string;
-  selectedOption?: { id: string; name: string; price?: number; status: string };
+  type?: string;
+  isLocked?: boolean;
+  // The chosen option's id (matches one of options[].id), or null/undefined when
+  // nothing is selected yet. Replaces the old singular `selectedOption` node.
+  parentOptionId?: string | null;
+  options?: SelectionOption[];
+}
+
+/** Resolve the chosen option for a selection, or null if none is selected yet. */
+export function chosenOption(sel: SelectionInfo): SelectionOption | null {
+  if (!sel.parentOptionId) return null;
+  return (sel.options ?? []).find((o) => o.id === sel.parentOptionId) ?? null;
 }
 
 export interface TripPlanItemDetail extends TripPlanItem {
-  selection?: SelectionInfo;
+  // selections (plural) replaced the singular `selection` field in the API.
+  selections?: SelectionInfo[];
 }
 
 export interface PaginatedTripPlans {
