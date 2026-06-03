@@ -1,6 +1,6 @@
 import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals";
 import { Command } from "commander";
-import { CliError, CliErrorCode } from "../errors.js";
+import { CliError } from "../errors.js";
 
 // ── Mocks (must be declared before dynamic imports) ────────────────────────
 
@@ -140,6 +140,34 @@ describe("selection-options command (VOY-1415)", () => {
     expect(lastJson().status).toBe("READY");
     // selection + monitor reads only; no REFRESH mutation call.
     expect(mockGraphql).toHaveBeenCalledTimes(2);
+  });
+
+  it("--wait polls through a refresh + one cycle, then resolves READY", async () => {
+    // 1st read: FETCHING (monitor present, attempted, no options yet).
+    // refresh mutation (Boolean). 2nd read after backoff sleep: READY.
+    mockGraphql
+      .mockResolvedValueOnce(selectionResult({ options: [] })) // selection #1
+      .mockResolvedValueOnce(monitorResult({ fetchedAt: null, lastFetchAttempt: "2026-06-03T00:00:00Z" })) // monitor #1 -> FETCHING
+      .mockResolvedValueOnce({ refreshTripPlanSelectionOptions: true }) // REFRESH
+      .mockResolvedValueOnce(selectionResult({ options: [OPTION] })) // selection #2
+      .mockResolvedValueOnce(monitorResult()); // monitor #2 -> READY
+    await run([SEL_ID, "--wait", "--timeout", "10"]);
+    const out = lastJson();
+    expect(out.status).toBe("READY");
+    expect(out.optionCount).toBe(1);
+    // selection#1 + monitor#1 + refresh + selection#2 + monitor#2 = 5 calls.
+    expect(mockGraphql).toHaveBeenCalledTimes(5);
+  }, 15000);
+
+  it("--human renders multiple option rows", async () => {
+    const opt2 = { ...OPTION, id: "opt-2", name: "BWI \u2192 MCO direct", price: 412, sortOrder: 1 };
+    mockGraphql
+      .mockResolvedValueOnce(selectionResult({ options: [OPTION, opt2] }))
+      .mockResolvedValueOnce(monitorResult());
+    await run([SEL_ID, "--human"]);
+    expect(mockJsonOutput).not.toHaveBeenCalled();
+    expect(stdout).toMatch(/opt-1|BWI/);
+    expect(stdout).toMatch(/412|direct/);
   });
 
   it("NOT_FOUND when getTripPlanSelection is null", async () => {
