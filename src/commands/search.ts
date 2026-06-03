@@ -294,10 +294,20 @@ export function registerSearchCommands(program: Command): void {
 
         const result = data.createTripPlanFlightSelection;
         const sortBy = (opts.sort ?? "default") as SortField;
-        const options = sortOptions(
-          result.options.sort((a, b) => a.sortOrder - b.sortOrder),
-          sortBy
-        );
+        // --max-stops is a client-side presentation filter over the options the
+        // backend returned (same layer as --sort), not a goal-input constraint.
+        let filtered = result.options.sort((a, b) => a.sortOrder - b.sortOrder);
+        if (opts.maxStops !== undefined) {
+          const maxStops = Number(opts.maxStops);
+          if (!Number.isInteger(maxStops) || maxStops < 0) {
+            throw new CliError(
+              CliErrorCode.VALIDATION,
+              `--max-stops must be a non-negative integer (got "${opts.maxStops}").`,
+            );
+          }
+          filtered = filtered.filter((o) => parseStops(o.bookingData) <= maxStops);
+        }
+        const options = sortOptions(filtered, sortBy);
 
         const searchResults = options.map((opt, i) => ({
           index: i + 1,

@@ -87,6 +87,7 @@ let generateAlternativeReason: (alt: unknown, selected: unknown) => string;
 let getRankReason: (strategy: string) => string;
 let parseDurationMinutes: (d?: string) => number;
 let parseStops: (bd?: Record<string, unknown>) => number;
+let nextDay: (d?: string) => string | undefined;
 
 beforeAll(async () => {
   const mod = await import("./plan-trip.js");
@@ -97,6 +98,7 @@ beforeAll(async () => {
   getRankReason = mod.getRankReason as (strategy: string) => string;
   parseDurationMinutes = mod.parseDurationMinutes as (d?: string) => number;
   parseStops = mod.parseStops as (bd?: Record<string, unknown>) => number;
+  nextDay = mod.nextDay as (d?: string) => string | undefined;
 });
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
@@ -278,6 +280,25 @@ describe("parseDurationMinutes", () => {
     expect(parseDurationMinutes(undefined)).toBe(Infinity);
     expect(parseDurationMinutes("")).toBe(Infinity);
     expect(parseDurationMinutes("unknown")).toBe(Infinity);
+  });
+});
+
+// ── Unit tests: nextDay ───────────────────────────────────────────────────
+
+describe("nextDay", () => {
+  it("returns the next calendar day for a YYYY-MM-DD string", () => {
+    expect(nextDay("2026-09-01")).toBe("2026-09-02");
+  });
+  it("rolls month/year boundaries (UTC-safe)", () => {
+    expect(nextDay("2026-09-30")).toBe("2026-10-01");
+    expect(nextDay("2026-12-31")).toBe("2027-01-01");
+    expect(nextDay("2028-02-28")).toBe("2028-02-29"); // leap year
+  });
+  it("returns undefined for missing or malformed input", () => {
+    expect(nextDay(undefined)).toBeUndefined();
+    expect(nextDay("")).toBeUndefined();
+    expect(nextDay("not-a-date")).toBeUndefined();
+    expect(nextDay("2026/09/01")).toBeUndefined();
   });
 });
 
@@ -515,6 +536,33 @@ describe("plan-trip scaffold (VOY-1414)", () => {
     expect(hotelStep).toContain("--location 'Grand Plaza Hotel'");
     // And not left bare/unquoted.
     expect(hotelStep).not.toMatch(/--location Grand Plaza Hotel/);
+  });
+
+  it("hotel next-step ALWAYS carries --checkin/--checkout, deriving checkout when missing (thread 8)", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-h", title: "Trip" } })
+      .mockResolvedValueOnce({ tripPlanTravellers: [] });
+
+    // --hotel given with a depart date but NO checkout/return: command must still
+    // be runnable (checkout derived from checkin + 1 day).
+    await runPlanTrip(["--client", "client-1", "--title", "Trip", "--hotel", "Marriott", "--depart", "2026-09-01", "--json"]);
+
+    const hotelStep = jsonOutputCalls().nextSteps.find((s: string) => s.includes("search hotels"));
+    expect(hotelStep).toContain("--checkin 2026-09-01");
+    expect(hotelStep).toContain("--checkout 2026-09-02");
+  });
+
+  it("hotel next-step uses placeholders when there is no date context at all (thread 8)", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-h2", title: "Trip" } })
+      .mockResolvedValueOnce({ tripPlanTravellers: [] });
+
+    await runPlanTrip(["--client", "client-1", "--title", "Trip", "--hotel", "Marriott", "--json"]);
+
+    const hotelStep = jsonOutputCalls().nextSteps.find((s: string) => s.includes("search hotels"));
+    // Placeholders contain spaces, so they must be quoted, and both flags present.
+    expect(hotelStep).toMatch(/--checkin '<checkin/);
+    expect(hotelStep).toMatch(/--checkout '<checkout/);
   });
 
   it("reuses an existing plan with --plan (fetch, no create)", async () => {

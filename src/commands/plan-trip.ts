@@ -83,6 +83,19 @@ export function parseDurationMinutes(duration?: string): number {
   return Infinity;
 }
 
+/**
+ * Given a YYYY-MM-DD date string, return the next calendar day in the same
+ * format (UTC-safe). Returns undefined for anything that isn't a clean date,
+ * so callers can fall back to a placeholder.
+ */
+export function nextDay(date?: string): string | undefined {
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return undefined;
+  const d = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return undefined;
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 export function parseStops(bookingData?: Record<string, unknown>): number {
   if (!bookingData) return Infinity;
   if (typeof bookingData.stops === "number") return bookingData.stops;
@@ -378,10 +391,17 @@ Examples:
           );
         }
         if (opts.hotel) {
+          // `search hotels` requires BOTH dates, so the suggested command must
+          // always carry runnable --checkin/--checkout. Derive checkout from
+          // checkin + 1 day when it's missing; fall back to a clear placeholder
+          // when there's no date context at all.
           const checkin = opts.checkin || opts.depart;
-          const checkout = opts.checkout || opts.return;
-          const datePart = checkin && checkout ? ` --checkin ${shellArg(checkin)} --checkout ${shellArg(checkout)}` : "";
-          nextSteps.push(`voyagier search hotels --plan ${plan.id} --location ${shellArg(opts.hotel)}${datePart} --json`);
+          const checkout = opts.checkout || opts.return || (checkin ? nextDay(checkin) : undefined);
+          const ci = checkin || "<checkin YYYY-MM-DD>";
+          const co = checkout || "<checkout YYYY-MM-DD>";
+          nextSteps.push(
+            `voyagier search hotels --plan ${plan.id} --location ${shellArg(opts.hotel)} --checkin ${shellArg(ci)} --checkout ${shellArg(co)} --json`,
+          );
         }
         nextSteps.push(`voyagier plans goals ${plan.id} --json   # inspect the goal graph + readiness`);
         nextSteps.push(`voyagier selection-options <selectionId> --wait --json   # poll options for a selection`);
