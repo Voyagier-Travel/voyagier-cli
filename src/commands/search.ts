@@ -372,13 +372,13 @@ export function registerSearchCommands(program: Command): void {
         if (!dryRun) {
           try {
             const planData = await graphql<{
-              tripPlan: { items: Array<{ id: string; title: string; selection?: { type: string } }> };
+              tripPlan: { items: Array<{ id: string; title: string; selections?: Array<{ type: string }> }> };
             }>(
               GET_TRIP_PLAN_ITEM_TYPES,
               { id: tripPlanId }
             );
             const hotelItems = planData.tripPlan.items.filter(
-              (item) => item.selection?.type === "HOTEL"
+              (item) => (item.selections ?? []).some((s) => s.type === "HOTEL")
             );
             if (hotelItems.length > 0) {
               if (opts.replace) {
@@ -536,13 +536,13 @@ export function registerSearchCommands(program: Command): void {
         if (!dryRun) {
           try {
             const planData = await graphql<{
-              tripPlan: { items: Array<{ id: string; title: string; selection?: { type: string } }> };
+              tripPlan: { items: Array<{ id: string; title: string; selections?: Array<{ type: string }> }> };
             }>(
               GET_TRIP_PLAN_ITEM_TYPES,
               { id: tripPlanId }
             );
             const activityItems = planData.tripPlan.items.filter(
-              (item) => item.selection?.type === "ACTIVITY"
+              (item) => (item.selections ?? []).some((s) => s.type === "ACTIVITY")
             );
             if (activityItems.length > 0) {
               if (opts.replace) {
