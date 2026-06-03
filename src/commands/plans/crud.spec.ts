@@ -1,7 +1,8 @@
 import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals";
 import { Command } from "commander";
 import { CliErrorCode } from "../../errors.js";
-import { GET_TRIP_PLAN, GET_TRIP_PLAN_SUMMARY } from "../../queries.js";
+import { GET_TRIP_PLAN, GET_TRIP_PLAN_SUMMARY, GET_PLAN_DEEP, GET_TRIP_PLAN_ITEM_TYPES } from "../../queries.js";
+import { itemStatus, deepSubSelections, deepChosenOption, DeepItem } from "./types.js";
 
 const mockGraphql = jest.fn();
 
@@ -326,5 +327,56 @@ describe("VOY-1407 — plans get/summary schema alignment", () => {
     // hotel selection has no parentOptionId => nothing chosen yet
     const hotel = out.items.find((i: any) => i.title === "Hotel in Paris");
     expect(hotel.selections[0].selected).toBeNull();
+  });
+});
+
+// --- VOY-1412 regression: GET_PLAN_DEEP / item-types queries must use live schema ---
+
+describe("VOY-1412 — GET_PLAN_DEEP schema alignment", () => {
+  it("GET_PLAN_DEEP uses selections[]/options[]/childSelections, not dropped fields", () => {
+    expect(GET_PLAN_DEEP).toContain("selections {");
+    expect(GET_PLAN_DEEP).toContain("childSelections {");
+    expect(GET_PLAN_DEEP).toContain("parentOptionId");
+    expect(GET_PLAN_DEEP).not.toMatch(/\bselection\s*\{/);
+    expect(GET_PLAN_DEEP).not.toContain("selectedOption");
+    expect(GET_PLAN_DEEP).not.toContain("subSelections");
+  });
+
+  it("GET_TRIP_PLAN_ITEM_TYPES uses selections (plural)", () => {
+    expect(GET_TRIP_PLAN_ITEM_TYPES).toContain("selections {");
+    expect(GET_TRIP_PLAN_ITEM_TYPES).not.toMatch(/\bselection\s*\{/);
+  });
+
+  it("deepChosenOption resolves the option matching parentOptionId", () => {
+    const sel = { id: "s", parentOptionId: "o2", options: [{ id: "o1", name: "A" }, { id: "o2", name: "B" }] };
+    expect(deepChosenOption(sel)?.name).toBe("B");
+    expect(deepChosenOption({ id: "s", parentOptionId: null, options: [{ id: "o1", name: "A" }] })).toBeNull();
+  });
+
+  it("deepSubSelections finds childSelections hanging off the chosen option", () => {
+    const item: DeepItem = {
+      id: "i", type: "Selection", title: "Flight",
+      selections: [{
+        id: "s1", type: "Flight", isLocked: false, parentOptionId: "opt-1",
+        options: [{
+          id: "opt-1", name: "AA",
+          childSelections: [{ id: "sub-1", type: "FLIGHT_CLASS", parentOptionId: null, options: [{ id: "eco", name: "Economy" }] }],
+        }],
+      }],
+    };
+    const subs = deepSubSelections(item);
+    expect(subs).toHaveLength(1);
+    expect(subs[0].selection.id).toBe("sub-1");
+    expect(subs[0].parentOption.name).toBe("AA");
+    // status: chosen parent + pending child = needs_sub_selection
+    expect(itemStatus(item)).toBe("needs_sub_selection");
+  });
+
+  it("itemStatus is pending when a selection has no chosen option", () => {
+    const item: DeepItem = {
+      id: "i", type: "Selection", title: "Hotel",
+      selections: [{ id: "s", type: "Hotel", parentOptionId: null, options: [{ id: "h1", name: "Hotel" }] }],
+    };
+    expect(itemStatus(item)).toBe("pending");
   });
 });

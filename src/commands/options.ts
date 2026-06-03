@@ -8,6 +8,7 @@ import { saveOptionsState, loadOptionsState, clearOptionsState } from "../state.
 import { GET_PLAN_DEEP, SET_SUB_SELECTION, REFRESH_SUB_SELECTION } from "../queries.js";
 import { progress, jsonOutput, jsonOutputWithPlan } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
+import { DeepItem, deepChosenOption, deepSubSelections } from "./plans/types.js";
 
 interface SubSelectionOption {
   id: string;
@@ -29,41 +30,46 @@ interface SubSelection {
   options: SubSelectionOption[];
 }
 
-interface PlanItemWithSubs {
-  id: string;
-  title: string;
-  selection?: {
-    id: string;
-    isLocked: boolean;
-    selectedOption?: {
-      id: string;
-      name: string;
-      price?: number;
-      status: string;
-      subSelections?: SubSelection[];
-    };
-  };
-}
-
 interface PendingSubSelectionFull {
   itemTitle: string;
   parentOptionName: string;
   subSelection: SubSelection;
 }
 
-function findAllSubSelections(items: PlanItemWithSubs[]): PendingSubSelectionFull[] {
+// Adapt the deep plan model (item.selections[].options[].childSelections[]) into the
+// flat SubSelection shape the rendering logic below expects. A "sub-selection" is a
+// childSelection hanging off a chosen option; its chosen option (parentOptionId) maps
+// to the old `selectedOption`/`selectedOptionId`.
+function findAllSubSelections(items: DeepItem[]): PendingSubSelectionFull[] {
   const result: PendingSubSelectionFull[] = [];
   for (const item of items) {
-    if (!item.selection?.selectedOption?.subSelections) continue;
-    if (item.selection.isLocked) continue;
-    for (const sub of item.selection.selectedOption.subSelections) {
-      if (sub.options.length > 0) {
-        result.push({
-          itemTitle: item.title,
-          parentOptionName: item.selection.selectedOption.name,
-          subSelection: sub,
-        });
-      }
+    for (const { selection: child, parentOption } of deepSubSelections(item)) {
+      if (child.isLocked) continue;
+      const opts: SubSelectionOption[] = (child.options ?? []).map((o) => ({
+        id: o.id,
+        name: o.name,
+        description: o.description,
+        price: o.price,
+        currency: o.currency,
+        optionType: o.optionType ?? child.type ?? "",
+        status: o.status ?? "",
+        isBookable: o.isBookable ?? false,
+        sortOrder: o.sortOrder ?? 0,
+      }));
+      if (opts.length === 0) continue;
+      const chosen = deepChosenOption(child);
+      const sub: SubSelection = {
+        id: child.id,
+        type: child.type ?? "",
+        selectedOptionId: child.parentOptionId ?? undefined,
+        selectedOption: chosen ? { id: chosen.id, name: chosen.name, price: chosen.price, description: chosen.description } : undefined,
+        options: opts,
+      };
+      result.push({
+        itemTitle: item.title,
+        parentOptionName: parentOption.name,
+        subSelection: sub,
+      });
     }
   }
   return result;
@@ -87,7 +93,7 @@ export function registerOptionsCommands(program: Command): void {
     .action(async (planId: string, opts) => {
       try {
         const data = await graphql<{
-          tripPlan: { id: string; title: string; items: PlanItemWithSubs[] };
+          tripPlan: { id: string; title: string; items: DeepItem[] };
         }>(GET_PLAN_DEEP, { id: planId });
 
         const plan = data.tripPlan;

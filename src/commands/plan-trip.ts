@@ -20,6 +20,7 @@ import { progress, warn, fatal, jsonOutput, jsonOutputWithPlan } from "../output
 import { CliError, CliErrorCode } from "../errors.js";
 import { agentFlightOptions, agentHotelOptions } from "../agent-output.js";
 import { searchAirports } from "../data/airports.js";
+import { DeepItem, deepSubSelections } from "./plans/types.js";
 import { findMetroArea } from "../data/metro-areas.js";
 import { resolveClient } from "./clients.js";
 
@@ -657,44 +658,17 @@ Examples:
               try {
                 if (!json && !agent) progress("Auto-selecting sub-options...");
                 const deepData = await graphql<{
-                  tripPlan: {
-                    id: string;
-                    title: string;
-                    items: Array<{
-                      id: string;
-                      title: string;
-                      selection?: {
-                        id: string;
-                        isLocked: boolean;
-                        selectedOption?: {
-                          id: string;
-                          name: string;
-                          price?: number;
-                          status: string;
-                          subSelections?: Array<{
-                            id: string;
-                            type: string;
-                            selectedOptionId?: string;
-                            options: Array<{
-                              id: string;
-                              name: string;
-                              price?: number;
-                              sortOrder: number;
-                            }>;
-                          }>;
-                        };
-                      };
-                    }>;
-                  };
+                  tripPlan: { id: string; title: string; items: DeepItem[] };
                 }>(GET_PLAN_DEEP, { id: plan.id });
 
+                // A sub-selection is a childSelection hanging off a chosen option
+                // (was selection.selectedOption.subSelections in the old model).
                 for (const item of deepData.tripPlan.items) {
-                  if (!item.selection?.selectedOption?.subSelections) continue;
-                  if (item.selection.isLocked) continue;
-
-                  for (const sub of item.selection.selectedOption.subSelections) {
-                    if (sub.options.length === 0) continue;
-                    const cheapestOpt = [...sub.options].sort(
+                  for (const { selection: sub } of deepSubSelections(item)) {
+                    if (sub.isLocked) continue;
+                    const subOptions = sub.options ?? [];
+                    if (subOptions.length === 0) continue;
+                    const cheapestOpt = [...subOptions].sort(
                       (a, b) => (a.price ?? Infinity) - (b.price ?? Infinity)
                     )[0];
 
@@ -715,7 +689,7 @@ Examples:
                       }
                     } catch (subErr) {
                       const msg = subErr instanceof Error ? subErr.message : String(subErr);
-                      warn(`Could not auto-pick ${sub.type}: ${msg}`);
+                      warn(`Could not auto-pick ${sub.type ?? "sub-option"}: ${msg}`);
                     }
                   }
                 }

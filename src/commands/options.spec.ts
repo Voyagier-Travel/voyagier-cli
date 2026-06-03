@@ -59,6 +59,8 @@ beforeAll(async () => {
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
+// New model: item.selections[] where the chosen option (parentOptionId === options[].id)
+// carries childSelections[] (the "sub-selections" — cabin class, room type, etc.).
 const MOCK_PLAN_WITH_SUBS = {
   tripPlan: {
     id: "plan-123",
@@ -67,27 +69,37 @@ const MOCK_PLAN_WITH_SUBS = {
       {
         id: "item-1",
         title: "Flight DCA→CDG",
-        selection: {
-          id: "sel-1",
-          isLocked: false,
-          selectedOption: {
-            id: "opt-1",
-            name: "AA 100",
-            price: 600,
-            status: "ACTIVE",
-            subSelections: [
+        type: "Selection",
+        selections: [
+          {
+            id: "sel-1",
+            type: "Flight",
+            isLocked: false,
+            parentOptionId: "opt-1",
+            options: [
               {
-                id: "sub-1",
-                type: "FLIGHT_CLASS",
-                selectedOptionId: undefined,
-                options: [
-                  { id: "eco-1", name: "Economy", price: 0, optionType: "CABIN", status: "ACTIVE", isBookable: true, sortOrder: 0 },
-                  { id: "biz-1", name: "Business", price: 500, optionType: "CABIN", status: "ACTIVE", isBookable: true, sortOrder: 1 },
+                id: "opt-1",
+                name: "AA 100",
+                price: 600,
+                status: "ACTIVE",
+                isBookable: true,
+                sortOrder: 0,
+                childSelections: [
+                  {
+                    id: "sub-1",
+                    type: "FLIGHT_CLASS",
+                    isLocked: false,
+                    parentOptionId: null,
+                    options: [
+                      { id: "eco-1", name: "Economy", price: 0, optionType: "CABIN", status: "ACTIVE", isBookable: true, sortOrder: 0 },
+                      { id: "biz-1", name: "Business", price: 500, optionType: "CABIN", status: "ACTIVE", isBookable: true, sortOrder: 1 },
+                    ],
+                  },
                 ],
               },
             ],
           },
-        },
+        ],
       },
     ],
   },
@@ -101,17 +113,18 @@ const MOCK_PLAN_NO_SUBS = {
       {
         id: "item-1",
         title: "Flight DCA→CDG",
-        selection: {
-          id: "sel-1",
-          isLocked: false,
-          selectedOption: {
-            id: "opt-1",
-            name: "AA 100",
-            price: 600,
-            status: "ACTIVE",
-            subSelections: [],
+        type: "Selection",
+        selections: [
+          {
+            id: "sel-1",
+            type: "Flight",
+            isLocked: false,
+            parentOptionId: "opt-1",
+            options: [
+              { id: "opt-1", name: "AA 100", price: 600, status: "ACTIVE", isBookable: true, sortOrder: 0, childSelections: [] },
+            ],
           },
-        },
+        ],
       },
     ],
   },

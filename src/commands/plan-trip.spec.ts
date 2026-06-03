@@ -160,6 +160,7 @@ const MOCK_SET_SELECTED = {
   },
 };
 
+// New model: item.selections[]; chosen option (parentOptionId) carries childSelections[].
 const MOCK_PLAN_DEEP_WITH_SUBS = {
   tripPlan: {
     id: "plan-1",
@@ -168,27 +169,37 @@ const MOCK_PLAN_DEEP_WITH_SUBS = {
       {
         id: "item-1",
         title: "Flight DCA→CDG",
-        selection: {
-          id: "sel-1",
-          isLocked: false,
-          selectedOption: {
-            id: "final-1",
-            name: "Combined B6",
-            price: 598,
-            status: "ACTIVE",
-            subSelections: [
+        type: "Selection",
+        selections: [
+          {
+            id: "sel-1",
+            type: "Flight",
+            isLocked: false,
+            parentOptionId: "final-1",
+            options: [
               {
-                id: "sub-1",
-                type: "FLIGHT_CLASS",
-                selectedOptionId: undefined,
-                options: [
-                  { id: "class-eco", name: "Economy", price: 0, sortOrder: 0 },
-                  { id: "class-biz", name: "Business", price: 500, sortOrder: 1 },
+                id: "final-1",
+                name: "Combined B6",
+                price: 598,
+                status: "ACTIVE",
+                isBookable: true,
+                sortOrder: 0,
+                childSelections: [
+                  {
+                    id: "sub-1",
+                    type: "FLIGHT_CLASS",
+                    isLocked: false,
+                    parentOptionId: null,
+                    options: [
+                      { id: "class-eco", name: "Economy", price: 0, sortOrder: 0 },
+                      { id: "class-biz", name: "Business", price: 500, sortOrder: 1 },
+                    ],
+                  },
                 ],
               },
             ],
           },
-        },
+        ],
       },
     ],
   },
