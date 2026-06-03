@@ -938,7 +938,19 @@ export const LIST_TRIP_PLAN_GOALS = `
       sortOrder
       relativeDay
       date
-      isFulfilled
+      isDecided
+      isBooked
+      checkoutReadiness {
+        isReady
+        requirements {
+          label
+          isFulfilled
+          isRequired
+          selectionId
+          type
+          missingTravellerIds
+        }
+      }
       includeAllTravellers
       groupName
       primaryItemId
@@ -956,7 +968,19 @@ export const LIST_TRIP_PLAN_GOALS_DEEP = `
       sortOrder
       relativeDay
       date
-      isFulfilled
+      isDecided
+      isBooked
+      checkoutReadiness {
+        isReady
+        requirements {
+          label
+          isFulfilled
+          isRequired
+          selectionId
+          type
+          missingTravellerIds
+        }
+      }
       includeAllTravellers
       groupName
       primaryItemId
@@ -989,7 +1013,19 @@ export const GET_TRIP_PLAN_GOAL = `
       sortOrder
       relativeDay
       date
-      isFulfilled
+      isDecided
+      isBooked
+      checkoutReadiness {
+        isReady
+        requirements {
+          label
+          isFulfilled
+          isRequired
+          selectionId
+          type
+          missingTravellerIds
+        }
+      }
       includeAllTravellers
       groupName
       primaryItemId
@@ -1023,7 +1059,8 @@ export const CREATE_TRIP_PLAN_GOAL = `
       sortOrder
       relativeDay
       date
-      isFulfilled
+      isDecided
+      isBooked
       includeAllTravellers
       groupName
       primaryItemId
@@ -1043,7 +1080,8 @@ export const CREATE_TRIP_PLAN_GOAL_WITH_SELECTION = `
         sortOrder
         relativeDay
         date
-        isFulfilled
+        isDecided
+        isBooked
         includeAllTravellers
         groupName
         primaryItemId
@@ -1073,7 +1111,8 @@ export const UPDATE_TRIP_PLAN_GOAL = `
       sortOrder
       relativeDay
       date
-      isFulfilled
+      isDecided
+      isBooked
       tripPlanId
     }
   }
