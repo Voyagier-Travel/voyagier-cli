@@ -372,3 +372,17 @@ export function escapeMdTableCell(value: string | null | undefined): string {
     .replace(/`/g, "\\`")
     .replace(/\r?\n/g, " ");
 }
+
+/**
+ * Quote a value for safe inclusion in a copy/pasteable shell command.
+ * Bare values that contain whitespace or shell metacharacters (e.g. a city
+ * "New York" or a hotel "Grand Plaza") would break or mis-parse when pasted.
+ * Returns the value unquoted when it's a simple, safe token; otherwise wraps it
+ * in single quotes (escaping embedded single quotes the POSIX way).
+ */
+export function shellArg(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  const s = String(value);
+  if (s.length > 0 && /^[A-Za-z0-9_./:@%+,=-]+$/.test(s)) return s;
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}

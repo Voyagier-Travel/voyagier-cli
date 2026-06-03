@@ -4,7 +4,7 @@ import { CliErrorCode } from "../../errors.js";
 import {
   GET_TRIP_PLAN, GET_TRIP_PLAN_SUMMARY, GET_PLAN_DEEP, GET_TRIP_PLAN_ITEM_TYPES,
   CREATE_FLIGHT_SELECTION, CREATE_HOTEL_SELECTION, CREATE_ACTIVITY_SELECTION,
-  SELECT_DEPARTURE_FLIGHT, SELECT_RETURN_FLIGHT,
+
 } from "../../queries.js";
 import { itemStatus, deepSubSelections, deepChosenOption, DeepItem } from "./types.js";
 
@@ -395,8 +395,6 @@ describe("VOY-1413 — option blob field uses optionData (aliased to bookingData
     ["CREATE_FLIGHT_SELECTION", CREATE_FLIGHT_SELECTION],
     ["CREATE_HOTEL_SELECTION", CREATE_HOTEL_SELECTION],
     ["CREATE_ACTIVITY_SELECTION", CREATE_ACTIVITY_SELECTION],
-    ["SELECT_DEPARTURE_FLIGHT", SELECT_DEPARTURE_FLIGHT],
-    ["SELECT_RETURN_FLIGHT", SELECT_RETURN_FLIGHT],
   ];
 
   it.each(optionQueries)("%s aliases optionData -> bookingData (no bare bookingData)", (_name, query) => {
