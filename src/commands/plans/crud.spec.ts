@@ -261,7 +261,7 @@ describe("VOY-1407 — plans get/summary schema alignment", () => {
   });
 
   it("GET_TRIP_PLAN_SUMMARY query uses the live selections/options shape, not dropped fields", () => {
-    for (const dead of ["startTime", "endTime", "day"]) {
+    for (const dead of ["date", "startTime", "endTime", "day"]) {
       expect(GET_TRIP_PLAN_SUMMARY).not.toMatch(new RegExp(`\\b${dead}\\b`));
     }
     expect(GET_TRIP_PLAN_SUMMARY).toContain("selections {");
@@ -285,6 +285,34 @@ describe("VOY-1407 — plans get/summary schema alignment", () => {
     expect(chosen0.name).toBe("B6 DCA→CDG");
     expect(sels[1].parentOptionId).toBe("o2");
     expect(sels[0]).not.toHaveProperty("selectedOption");
+  });
+
+  it("plans get --agent surfaces pending selections even when a sibling is chosen", async () => {
+    // Item with one chosen + one pending selection must show BOTH lines,
+    // not hide the pending one (VOY-1407 Copilot review).
+    const mixed = {
+      id: "plan-2",
+      title: "Mixed",
+      description: null,
+      startDate: null,
+      endDate: null,
+      items: [
+        {
+          id: "i1", type: "Selection", title: "Flights",
+          selections: [
+            { id: "s-dep", type: "Flight", isLocked: false, parentOptionId: "o1", options: [{ id: "o1", name: "Outbound B6", price: 200, status: "None" }] },
+            { id: "s-ret", type: "Flight", isLocked: false, parentOptionId: null, options: [{ id: "o2", name: "Return UA", price: 250, status: "None" }] },
+          ],
+        },
+      ],
+      travellers: [],
+    };
+    mockGraphql.mockResolvedValueOnce({ tripPlan: mixed });
+    await runPlans(["get", "plan-2", "--agent"]);
+    const out = writes.join("");
+    expect(out).toContain("Outbound B6");
+    // the pending sibling must still be visible
+    expect(out).toContain("awaiting selection");
   });
 
   it("plans summary --json resolves the chosen option per selection via parentOptionId", async () => {

@@ -243,20 +243,22 @@ export function registerCrudCommands(plans: Command): void {
             for (const item of plan.items) {
               const icon = typeIcon(item.type, item.title);
               const selections = item.selections ?? [];
-              const chosen = selections
-                .map((s) => chosenOption(s))
-                .filter((o): o is NonNullable<typeof o> => o != null);
-              if (chosen.length > 0) {
+              if (selections.length === 0) {
                 lines.push(`- ${icon} **${item.title}**`);
-                for (const sel of chosen) {
+                continue;
+              }
+              // Render one line per selection so partially-pending items are not
+              // hidden when a sibling selection is already chosen (VOY-1407 review).
+              lines.push(`- ${icon} **${item.title}**`);
+              for (const s of selections) {
+                const sel = chosenOption(s);
+                if (sel) {
                   const price = sel.price != null ? ` · ${formatPrice(sel.price)}` : "";
                   const status = sel.status && sel.status !== "NONE" && sel.status !== "None" ? ` [${sel.status}]` : "";
                   lines.push(`  → ${sel.name}${price}${status}`);
+                } else {
+                  lines.push(`  → ⏳ awaiting selection`);
                 }
-              } else if (selections.length > 0) {
-                lines.push(`- ${icon} **${item.title}** → ⏳ awaiting selection`);
-              } else {
-                lines.push(`- ${icon} **${item.title}**`);
               }
             }
           }
@@ -286,21 +288,22 @@ export function registerCrudCommands(plans: Command): void {
           for (const item of plan.items) {
             const icon = typeIcon(item.type, item.title);
             const selections = item.selections ?? [];
-            const chosen = selections
-              .map((s) => chosenOption(s))
-              .filter((o): o is NonNullable<typeof o> => o != null);
-
-            if (chosen.length > 0) {
+            if (selections.length === 0) {
               console.log(`    ${icon}  ${item.title}`);
-              for (const sel of chosen) {
+              continue;
+            }
+            // One line per selection so a partially-pending item is not shown as
+            // fully resolved when a sibling selection is already chosen (VOY-1407 review).
+            console.log(`    ${icon}  ${item.title}`);
+            for (const s of selections) {
+              const sel = chosenOption(s);
+              if (sel) {
                 const price = sel.price != null ? ` · ${formatPrice(sel.price)}` : "";
                 const status = sel.status && sel.status !== "NONE" && sel.status !== "None" ? ` [${sel.status}]` : "";
                 console.log(chalk.green(`        → ${sel.name}${price}${status}`));
+              } else {
+                console.log(chalk.yellow(`        → awaiting selection`));
               }
-            } else if (selections.length > 0) {
-              console.log(`    ${icon}  ${item.title}` + chalk.yellow("  → awaiting selection"));
-            } else {
-              console.log(`    ${icon}  ${item.title}`);
             }
           }
         }
