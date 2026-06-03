@@ -8,47 +8,47 @@ voyagier auth set-token <your-token>
 voyagier doctor   # confirm auth + schema reachability
 ```
 
-> **v2.0.0** is a clean rebuild against Voyagier's advisor-first / Blueprint trip-plan model. v1.x is broken against the current backend and is deprecated. See [CHANGELOG.md](./CHANGELOG.md) for the breaking-changes summary and known gaps.
-
 ## Quick Start
 
-> ⚠️ The composite agent fast path (`plan-trip --auto-select`) is broken on the v2 schema (tracked as VOY-1189). The flow below is the manual path that works today.
+A trip plan is a **goal graph**: the plan ships with goals (flights, hotel, dates, destination, travellers) and you compose the trip by searching against those goals and selecting options. Searches are **asynchronous** — a search creates a selection, and options arrive shortly after, so you poll for them.
 
 ```bash
 # 1) Resolve a client (idempotent by email)
 voyagier clients upsert --email "smith@example.com" --name "Smith Family" \
   --type Individual --json
-# Returns: { client: { id, name, ... }, ok: true, created: true|false }
 
-# 2) Create a plan
-voyagier plans create --title "Smith — Tokyo" \
-  --start 2026-09-15 --end 2026-09-22 --json
-# Returns: { ...plan, url, planSummary }
-# (server-side requires clientId; CLI wiring is tracked as VOY-1193)
+# 2) Scaffold a plan (creates the plan + default goal graph; optionally adds
+#    travellers if you pass --travellers)
+voyagier plan-trip --client "Smith Family" --title "Smith — Tokyo" --json
+# Returns a scaffold summary: { ok, tripPlanId, title, travellerIds, scaffolded,
+# note, url, nextSteps } — the nextSteps are the compose commands for this plan.
 
 # 3) Add a traveller
 voyagier travellers add --plan <PLAN_ID> --first John --last Smith \
   --type Adult --json
 
-# 4) Search → select → pick
+# 4) Search flights → poll for options → select
 voyagier search flights --plan <PLAN_ID> --from JFK --to NRT \
   --date 2026-09-15 --return 2026-09-22 --json
-voyagier select 1 --plan <PLAN_ID> --json    # outbound
-voyagier select 1 --plan <PLAN_ID> --json    # return
-voyagier options <PLAN_ID> --json
-voyagier pick 1 --plan <PLAN_ID> --json      # cabin
+# Returns a selectionId. Options are fetched asynchronously:
+voyagier selection-options <SELECTION_ID> --wait --json
+voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
 
-voyagier search activities --plan <PLAN_ID> --destination Tokyo \
-  --date 2026-09-16 --query "sushi tour" --json
-voyagier select 1 --plan <PLAN_ID> --json
+# 5) Search a hotel → poll → select
+voyagier search hotels --plan <PLAN_ID> --location Tokyo \
+  --checkin 2026-09-15 --checkout 2026-09-22 --json
+voyagier selection-options <SELECTION_ID> --wait --json
+voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
 
-# 5) Pre-flight bookability check, then checkout
+# 6) Inspect readiness at any time
+voyagier plans goals <PLAN_ID> --json
+
+# 7) Pre-flight bookability check, then checkout
 voyagier book <PLAN_ID> --validate --json
-# Build a clean cart (only items you actually want to charge) before this:
 voyagier book <PLAN_ID> --json
 ```
 
-## What's Bookable (v2)
+## What's Bookable
 
 | Selection | Bookable? | Source |
 |-----------|-----------|--------|
@@ -56,7 +56,7 @@ voyagier book <PLAN_ID> --json
 | Hotel | ⚠️ partial | Blueprint Listings (checkout coverage incomplete) |
 | Flight | ❌ display only | Sabre (itinerary view only — `is_bookable = false`) |
 
-Always run `voyagier book --validate <planId>` for pre-flight checks. To control what gets charged, **curate the cart** (don't add display-only items) before invoking `book` — `--types` and `--only-bookable` are client-side preflight gates today, not server-side filters.
+Always run `voyagier book --validate <planId>` for pre-flight checks. To control what gets charged, **curate the cart** (don't add display-only items) before invoking `book` — `--types` and `--only-bookable` are client-side preflight gates, not server-side filters.
 
 ## Commands
 
@@ -64,22 +64,23 @@ Always run `voyagier book --validate <planId>` for pre-flight checks. To control
 |---------|-------------|
 | `voyagier doctor` | Self-check: auth, schema, reachability, state, version |
 | `voyagier clients` | Advisor CRM (`list`, `get`, `create`, `update`, `archive`, `upsert`) |
-| `voyagier plans` | `create`, `list`, `get`, `summary`, `delete`; `plans bookable` for pre-flight |
+| `voyagier plans` | `create`, `list`, `get`, `summary`, `delete`; `plans goals` for the goal graph + readiness; `plans bookable` for pre-flight |
+| `voyagier plan-trip` | Scaffold a plan (plan + default goal graph; adds travellers only if `--travellers` is given) and print compose next-steps |
 | `voyagier travellers` | Add, list, update, remove travellers |
-| `voyagier search` | Flights, hotels, activities, airports |
-| `voyagier select <n>` | Select from last search results (1-indexed) |
-| `voyagier options` / `pick` | Sub-options (cabin class, room type) |
+| `voyagier search` | Flights, hotels, activities, airports — creates a selection; options arrive async |
+| `voyagier selection-options <selectionId>` | Read / poll a selection's options (`--wait` to poll until ready) |
+| `voyagier select` | Choose an option (`--selection-id <id> --option-id <id>`, or by index from last search) |
 | `voyagier itinerary` | Computed itinerary (sourced from `tripPlanEvents`) |
 | `voyagier listings` | Blueprint Listings — recent change events, add to selection |
 | `voyagier places` | Search / get / attach / list / highlight (Google Places + internal catalog) |
 | `voyagier cart` | View cart with by-goal grouping and per-item bookability |
-| `voyagier book` | Stripe checkout with `--validate` / `--only-bookable` / `--types` / `--idempotency-key` (preflight gates today) |
+| `voyagier book` | Stripe checkout with `--validate` / `--only-bookable` / `--types` / `--idempotency-key` |
 | `voyagier bookings` | View booking records |
 | `voyagier chat` | Interactive AI trip planning |
 | `voyagier auth` | Manage PAT / API URL |
 | `voyagier agent-docs` | Print full AI agent integration reference |
 
-Most data-bearing commands accept `--json` for structured output (notable exceptions: `chat`, `telemetry`, several `auth` subcommands). Use `--plan <id>` on `select` and `pick` to prevent cross-plan state corruption when running parallel workflows.
+Most data-bearing commands accept `--json` for structured output (notable exceptions: `chat`, `telemetry`, several `auth` subcommands). Use `--plan <id>` on `select` to prevent cross-plan state corruption when running parallel workflows.
 
 ## For AI Agents
 
@@ -87,7 +88,7 @@ Most data-bearing commands accept `--json` for structured output (notable except
 voyagier agent-docs    # full reference (AGENT.md)
 ```
 
-Or read [AGENT.md](./AGENT.md) directly. It covers per-command JSON shapes (v2.0.0 is not yet uniform — VOY-1192), the error code table, the bookability matrix, and the canonical manual flow.
+Or read [AGENT.md](./AGENT.md) directly. It covers the goal-graph compose model, async option fetch, per-command JSON shapes, the error code table, and the bookability matrix.
 
 ## Environment Variables
 
@@ -98,7 +99,7 @@ Or read [AGENT.md](./AGENT.md) directly. It covers per-command JSON shapes (v2.0
 
 ## How It Works
 
-Thin client over Voyagier's GraphQL API — the same API the web app uses. Everything syncs both ways. Blueprint Listings, Viator, Google Places, and Sabre are all surfaced through the unified selection model.
+Thin client over Voyagier's GraphQL API — the same API the web app uses. Everything syncs both ways. A plan is a goal graph; searching composes selections against goals, and Blueprint Listings, Viator, Google Places, and Sabre are all surfaced through the unified selection model.
 
 ## License
 

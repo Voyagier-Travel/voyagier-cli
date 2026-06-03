@@ -63,13 +63,10 @@ jest.unstable_mockModule("../utils.js", () => ({
 // ── Dynamic imports after mocks ────────────────────────────────────────────
 
 let registerSelectCommands: (program: Command) => void;
-let registerOptionsCommands: (program: Command) => void;
 
 beforeAll(async () => {
   const selectMod = await import("./select.js");
   registerSelectCommands = selectMod.registerSelectCommands;
-  const optionsMod = await import("./options.js");
-  registerOptionsCommands = optionsMod.registerOptionsCommands;
 });
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
@@ -86,14 +83,6 @@ const MOCK_SEARCH_STATE = {
   timestamp: new Date().toISOString(),
 };
 
-const MOCK_OPTIONS_STATE = {
-  tripPlanId: "plan-123",
-  results: [
-    { index: 1, subSelectionId: "sub-1", optionId: "opt-1", summary: "Economy · $500" },
-  ],
-  timestamp: new Date().toISOString(),
-};
-
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 async function runSelect(args: string[]): Promise<void> {
@@ -101,13 +90,6 @@ async function runSelect(args: string[]): Promise<void> {
   program.exitOverride();
   registerSelectCommands(program);
   await program.parseAsync(["node", "voyagier", "select", ...args]);
-}
-
-async function runPick(args: string[]): Promise<void> {
-  const program = new Command();
-  program.exitOverride();
-  registerOptionsCommands(program);
-  await program.parseAsync(["node", "voyagier", "pick", ...args]);
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
