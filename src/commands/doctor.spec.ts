@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { buildSchema, introspectionFromSchema, buildClientSchema, getIntrospectionQuery } from "graphql";
 import { CliError, CliErrorCode } from "../errors.js";
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
@@ -38,12 +39,33 @@ jest.unstable_mockModule("../output.js", () => ({
 
 let registerDoctorCommand: (program: Command, version: string) => void;
 let rollUpStatus: (checks: { status: "PASS" | "WARN" | "FAIL" }[]) => "PASS" | "WARN" | "FAIL";
+let collectCliOperations: () => Array<{ name: string; operation: string }>;
+let validateOperationsAgainstSchema: (
+  schema: any,
+  ops: Array<{ name: string; operation: string }>,
+) => Array<{ name: string; errors: string[] }>;
 
 beforeAll(async () => {
   const mod = await import("./doctor.js");
   registerDoctorCommand = mod.registerDoctorCommand;
   rollUpStatus = mod.rollUpStatus;
+  collectCliOperations = mod.collectCliOperations;
+  validateOperationsAgainstSchema = mod.validateOperationsAgainstSchema;
 });
+
+// A small but real introspection result, used to drive the live-schema check
+// without a 900KB fixture. Build SDL -> introspection -> client schema.
+function fixtureIntrospection() {
+  const sdl = `
+    type Query {
+      tripPlans(page: Int, limit: Int): PlanPage
+      tripPlanClients: ClientPage
+    }
+    type PlanPage { count: Int }
+    type ClientPage { count: Int }
+  `;
+  return introspectionFromSchema(buildSchema(sdl));
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -139,9 +161,17 @@ describe("rollUpStatus", () => {
 });
 
 describe("voyagier doctor", () => {
-  it("reports PASS when everything is healthy", async () => {
+  // Note: the command-level schema check validates the REAL CLI surface
+  // (collectCliOperations) against whatever schema introspection returns.
+  // Driving all ~88 ops to PASS would require serving the full live schema as
+  // a fixture, so the end-to-end command tests assert the auth/version/state
+  // wiring and the schema-check's resilience branches; the field-by-field
+  // validation correctness is unit-tested directly against a fixture schema
+  // below (validateOperationsAgainstSchema / collectCliOperations).
+  it("reports PASS for non-schema checks; schema WARNs inconclusive when introspection can't build", async () => {
     mockCredentialsExist.mockReturnValue(true);
     mockGetUserContext.mockReturnValue({ email: "daniel@voyagier.com" });
+    // Auth ping ok; introspection returns an unbuildable shape => schema WARN (not FAIL).
     mockGraphql.mockResolvedValue({ __schema: { queryType: { name: "Query" } } });
 
     const p = buildProgram();
@@ -152,10 +182,13 @@ describe("voyagier doctor", () => {
       ok: boolean;
       data: { overall: string; checks: Array<{ name: string; status: string }> };
     };
+    // WARN rolls up to overall WARN, ok=true (not a hard fail).
     expect(reported.ok).toBe(true);
-    expect(reported.data.overall).toBe("PASS");
     expect(reported.data.checks.find((c) => c.name === "auth")?.status).toBe("PASS");
     expect(reported.data.checks.find((c) => c.name === "version")?.status).toBe("PASS");
+    const schema = reported.data.checks.find((c) => c.name === "schema");
+    expect(schema?.status).toBe("WARN");
+    expect(schema?.message).toMatch(/inconclusive/i);
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
@@ -224,24 +257,30 @@ describe("voyagier doctor", () => {
     expect(version?.message).toMatch(/2\.0\.0/);
   });
 
-  it("flags schema drift when a probe query reports an unknown field", async () => {
+  it("flags schema drift when a real shipped operation has an unknown field", async () => {
     mockCredentialsExist.mockReturnValue(true);
     mockGetUserContext.mockReturnValue({ email: "daniel@voyagier.com" });
-    // First call: doctor ping (auth check). Subsequent: schema probes.
-    mockGraphql
-      .mockResolvedValueOnce({ __schema: { queryType: { name: "Query" } } }) // auth ping
-      .mockRejectedValueOnce(new Error("Cannot query field \"tripPlanClients\" on type \"Query\".")) // probe 1
-      .mockResolvedValueOnce({ tripPlans: { count: 0 } }); // probe 2
+    // Auth ping ok; introspection returns the tiny fixture schema. The real CLI
+    // ops (goals, plans get, etc.) reference types the fixture doesn't define =>
+    // genuine drift => schema FAIL. This proves the live-validation path catches
+    // exactly the class of break VOY-1411 was about (the old 2-probe check missed).
+    mockGraphql.mockImplementation(async (query: string) => {
+      if (query.includes("IntrospectionQuery")) return fixtureIntrospection();
+      return { __schema: { queryType: { name: "Query" } } };
+    });
 
     const p = buildProgram();
     await p.parseAsync(["node", "test", "doctor", "--json"]);
 
     const reported = mockJsonOutput.mock.calls[0][0] as {
-      data: { overall: string; checks: Array<{ name: string; status: string; details?: unknown }> };
+      data: { overall: string; checks: Array<{ name: string; status: string; details?: { drifted?: string[] } }> };
     };
     const schema = reported.data.checks.find((c) => c.name === "schema");
     expect(schema?.status).toBe("FAIL");
+    expect(schema?.message).toMatch(/drift detected on \d+\/\d+ operation/);
+    expect(Array.isArray(schema?.details?.drifted)).toBe(true);
     expect(reported.data.overall).toBe("FAIL");
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("warns but doesn't fail when version registry is unreachable", async () => {
@@ -271,6 +310,73 @@ describe("voyagier doctor", () => {
     // Version warn shouldn't fail the report
     expect(reported.ok).toBe(true);
     expect(reported.data.overall).toBe("WARN");
+  });
+});
+
+// ── live-schema validation (the VOY-1411 fix) ───────────────────────────────
+//
+// The end-to-end command tests above exercise the wiring + resilience. These
+// unit tests pin the field-by-field validation correctness against a fixture
+// schema, and — critically — guard against the original bug ever returning:
+// doctor must validate the WHOLE queries.ts surface, not a hardcoded subset.
+
+describe("collectCliOperations", () => {
+  it("collects every GraphQL operation exported from queries.ts", () => {
+    const ops = collectCliOperations();
+    // The surface is large; the exact count drifts as queries are added. The
+    // invariant that matters: it's the WHOLE surface, not a tiny hardcoded set.
+    expect(ops.length).toBeGreaterThan(50);
+    // Known ops that were part of the historical drift chain must be present.
+    const names = ops.map((o) => o.name);
+    expect(names).toContain("LIST_TRIP_PLAN_GOALS");
+    expect(names).toContain("GET_PLAN_DEEP");
+    // Every collected entry is a non-empty operation document.
+    for (const o of ops) {
+      expect(typeof o.operation).toBe("string");
+      expect(o.operation.length).toBeGreaterThan(0);
+      expect(o.operation).toMatch(/^(query|mutation|subscription|fragment|\{)/);
+    }
+  });
+});
+
+describe("validateOperationsAgainstSchema", () => {
+  const schema = buildClientSchema(
+    introspectionFromSchema(
+      buildSchema(`
+        type Query { tripPlans(page: Int, limit: Int): PlanPage }
+        type PlanPage { count: Int name: String }
+      `),
+    ),
+  );
+
+  it("returns [] when all operations are valid", () => {
+    const drift = validateOperationsAgainstSchema(schema as any, [
+      { name: "GOOD", operation: "{ tripPlans(page:1, limit:1){ count name } }" },
+    ]);
+    expect(drift).toEqual([]);
+  });
+
+  it("reports the field-level error for a drifted operation", () => {
+    const drift = validateOperationsAgainstSchema(schema as any, [
+      { name: "GOOD", operation: "{ tripPlans { count } }" },
+      { name: "DRIFTED", operation: "{ tripPlans { isFulfilled } }" },
+    ]);
+    expect(drift).toHaveLength(1);
+    expect(drift[0].name).toBe("DRIFTED");
+    expect(drift[0].errors.join(" ")).toMatch(/Cannot query field "isFulfilled"/);
+  });
+
+  it("treats a malformed operation as drift (parse error), not a crash", () => {
+    const drift = validateOperationsAgainstSchema(schema as any, [
+      { name: "BROKEN", operation: "{ tripPlans { " },
+    ]);
+    expect(drift).toHaveLength(1);
+    expect(drift[0].errors[0]).toMatch(/parse error/i);
+  });
+
+  it("validates introspection query helper is the canonical graphql one", () => {
+    // Guard: checkSchema fetches via getIntrospectionQuery(); ensure it's the real thing.
+    expect(getIntrospectionQuery()).toMatch(/IntrospectionQuery/);
   });
 });
 
