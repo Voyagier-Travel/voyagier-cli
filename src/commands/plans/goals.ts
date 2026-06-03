@@ -143,11 +143,6 @@ export function parseTravellerIds(csv: string): string[] {
 /**
  * Parse an --initial-search JSON blob into an object. Wraps JSON.parse with a
  * friendly error message.
- *
- * Renamed from `parseInitialQuery` in v2.1.0 (the flag is now `--initial-search`).
- * Error messages reference the new flag name even when the deprecated
- * `--initial-query` alias was used; that's intentional so the migration path
- * is obvious in error output.
  */
 export function parseInitialSearch(json: string): Record<string, unknown> {
   if (typeof json !== "string" || json.trim() === "") {
@@ -171,12 +166,6 @@ export function parseInitialSearch(json: string): Record<string, unknown> {
   }
   return parsed as Record<string, unknown>;
 }
-
-/**
- * Deprecated alias kept for v2.1.0 compatibility. Removed in v2.2.0.
- * @deprecated Use parseInitialSearch instead.
- */
-export const parseInitialQuery = parseInitialSearch;
 
 /**
  * Validate an --date flag. Accepts ISO 8601 date-only (YYYY-MM-DD) or
@@ -590,11 +579,6 @@ export function registerGoalCommands(plans: Command): void {
       "--initial-search <json>",
       "Agent leverage point: initial search query as a JSON object that seeds this selection (e.g., '{\"query\":\"hotel in Paris\"}'). Pass when the agent has a concrete user intent to anchor with; omit when the goal is exploratory and the user will refine in the web UI. Server uses this as the starting point for the search; selection options will refresh from it.",
     )
-    // Deprecated v2.1.0 — alias for --initial-search; will be removed in v2.2.0.
-    // We accept --initial-query <json> silently and route to the same handler;
-    // a one-line warning is emitted to stderr in the action handler so scripts
-    // using the old flag still work but get nudged.
-    .option("--initial-query <json>", "[deprecated] Alias for --initial-search. Will be removed in v2.2.0.")
     .option(
       "--question-template <s>",
       "Agent leverage point: prompt template the traveller will see in the web UI when answering this goal (e.g., 'Given your luxury preferences and the kids' Paris itinerary, which hotel feels right?'). Pass when the agent has distilled meaningful intent from the user's brief that will improve the downstream traveller UX. Omit when there's nothing concrete to add — the server uses a generic default. Never pass auto-generated boilerplate.",
@@ -631,22 +615,8 @@ export function registerGoalCommands(plans: Command): void {
         if (opts.includeAllTravellers) {
           input.includeAllTravellers = true;
         }
-        // Resolve --initial-search vs deprecated --initial-query.
-        // If both are passed, --initial-search wins (new name takes precedence).
-        // If only --initial-query is passed, emit a one-line stderr warning so
-        // scripts get nudged to update.
-        let initialSearchRaw: string | undefined;
         if (opts.initialSearch !== undefined) {
-          initialSearchRaw = String(opts.initialSearch);
-        } else if (opts.initialQuery !== undefined) {
-          initialSearchRaw = String(opts.initialQuery);
-          // eslint-disable-next-line no-console
-          console.error(
-            "[deprecated] --initial-query is deprecated and will be removed in v2.2.0. Use --initial-search instead.",
-          );
-        }
-        if (initialSearchRaw !== undefined) {
-          input.initialQuery = parseInitialSearch(initialSearchRaw);
+          input.initialQuery = parseInitialSearch(String(opts.initialSearch));
         }
         if (opts.questionTemplate !== undefined) {
           input.questionTemplate = String(opts.questionTemplate);
