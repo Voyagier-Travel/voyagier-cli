@@ -126,11 +126,14 @@ export function registerListingsCommands(program: Command): void {
       // Group A: Strict validation for --limit
       const limit = parsePositiveInt(opts.limit, "--limit", { default: 20, max: 100 }) ?? 20;
 
+      // GET_SELECTION_WITH_MONITOR is now the generic, shape-agnostic union query
+      // (getTripPlanSelection(tripPlanSelectionId)); listings only needs id +
+      // blueprintMonitorId, which the union returns as a superset.
       const selectionData = await graphql<{
-        getTripPlanHotelSelection: { id: string; blueprintMonitorId?: string | null } | null;
-      }>(GET_SELECTION_WITH_MONITOR, { id: selectionId });
+        getTripPlanSelection: { id: string; blueprintMonitorId?: string | null } | null;
+      }>(GET_SELECTION_WITH_MONITOR, { tripPlanSelectionId: selectionId });
 
-      const selection = selectionData.getTripPlanHotelSelection;
+      const selection = selectionData.getTripPlanSelection;
       if (!selection) {
         throw new CliError(
           CliErrorCode.NOT_FOUND,
