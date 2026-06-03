@@ -3,6 +3,7 @@ import {
   GET_GOALS_FOR_SEARCH,
   UPDATE_AIRPORT_SELECTION,
   ADD_DATE_OPTION,
+  SET_SELECTION_INPUT_VALUE,
   SET_DESTINATION_VALUE,
 } from "../queries.js";
 import { CliError, CliErrorCode } from "../errors.js";
@@ -26,6 +27,7 @@ import { CliError, CliErrorCode } from "../errors.js";
 export interface GoalSelection {
   id: string;
   type: string | null;
+  segmentIndex?: number | null;
 }
 
 export interface SearchGoal {
@@ -99,6 +101,39 @@ export function requireAirports(goal: SearchGoal, min: number): string[] {
     );
   }
   return ids;
+}
+
+/** Highest child segmentIndex within a goal (outbound = 0, return = 1), or null. */
+function goalSegmentIndex(goal: SearchGoal): number | null {
+  let seg: number | null = null;
+  for (const item of goal.items ?? []) {
+    for (const sel of item.selections ?? []) {
+      if (typeof sel.segmentIndex === "number") {
+        seg = seg == null ? sel.segmentIndex : Math.max(seg, sel.segmentIndex);
+      }
+    }
+  }
+  return seg;
+}
+
+/**
+ * Find the RETURN-leg Flight goal (segmentIndex 1) for a round-trip plan, so its
+ * Airport inputs get wired too. Without this only the outbound goal's airports
+ * are set and the return segment's monitor query stays insufficient (VOY-1421).
+ *
+ * Identified by child selection segmentIndex (robust) rather than goal name.
+ * Returns null when there's no distinct return goal (one-way plans).
+ */
+export function resolveReturnFlightGoal(
+  goals: SearchGoal[],
+  outboundGoalId: string,
+): SearchGoal | null {
+  const flightGoals = goals.filter((g) => g.type === "Flight" && g.id !== outboundGoalId);
+  // Prefer an explicit segmentIndex === 1; fall back to a single remaining
+  // Flight goal if segment indices aren't populated.
+  const bySeg = flightGoals.find((g) => goalSegmentIndex(g) === 1);
+  if (bySeg) return bySeg;
+  return flightGoals.length === 1 ? flightGoals[0] : null;
 }
 
 /**
@@ -178,4 +213,70 @@ export function findDateSelection(goals: SearchGoal[]): string | null {
 
 export async function addDateOption(selectionId: string, startDate: string): Promise<void> {
   await graphql(ADD_DATE_OPTION, { selectionId, startDate });
+}
+
+/**
+ * Whole calendar days between two YYYY-MM-DD dates (UTC-safe, end - start).
+ * Returns null for malformed input or a non-positive span (same-day / reversed),
+ * so callers can skip the duration step rather than send a bad value.
+ */
+export function daysBetween(startDate: string, endDate: string): number | null {
+  const a = parseUtcDate(startDate);
+  const b = parseUtcDate(endDate);
+  if (a == null || b == null) return null;
+  const days = Math.round((b - a) / 86_400_000);
+  return days > 0 ? days : null;
+}
+
+/**
+ * Parse a strict YYYY-MM-DD string to a UTC epoch (ms), rejecting impossible
+ * calendar dates (e.g. 2026-02-30). Returns null on any malformed/nonexistent
+ * date. Round-trips the components through Date.UTC so overflow normalization
+ * (Feb 30 -> Mar 2) is caught rather than silently accepted.
+ */
+function parseUtcDate(value: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
+    return null;
+  }
+  return d.getTime();
+}
+
+/**
+ * Fully RESOLVE a Date selection so BOTH its startDate and endDate outputs are
+ * populated — the precondition for the flight/hotel monitor query to become
+ * "sufficient" and start fetching inventory (VOY-1421).
+ *
+ * `addTripPlanDateOption` only sets the startDate output. For a range (round-trip
+ * return leg, or hotel check-out) we additionally set the Date selection's
+ * `duration` input, which the backend uses to compute endDate = startDate + N days.
+ * One-way / single-date searches pass no endDate and only the startDate resolves.
+ */
+export async function resolveDateRange(
+  selectionId: string,
+  startDate: string,
+  endDate?: string,
+): Promise<void> {
+  // Validate the full range BEFORE any mutation so an invalid range can't leave
+  // a stray start-date option on the selection (partial-mutation on error path).
+  let days: number | null = null;
+  if (endDate) {
+    days = daysBetween(startDate, endDate);
+    if (days == null) {
+      throw new CliError(
+        CliErrorCode.VALIDATION,
+        `End date "${endDate}" must be a valid date after the start date "${startDate}".`,
+      );
+    }
+  }
+
+  await graphql(ADD_DATE_OPTION, { selectionId, startDate });
+  if (days == null) return;
+  await graphql(SET_SELECTION_INPUT_VALUE, {
+    selectionId,
+    fieldName: "duration",
+    value: days,
+  });
 }

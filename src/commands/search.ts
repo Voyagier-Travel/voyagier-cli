@@ -17,7 +17,9 @@ import {
   resolveMirrorList,
   setAirport,
   addDateOption,
+  resolveDateRange,
   requireAirports,
+  resolveReturnFlightGoal,
   requireDateSelection,
   setDestination,
 } from "./search-helpers.js";
@@ -281,8 +283,21 @@ export function registerSearchCommands(program: Command): void {
         const dateSel = requireDateSelection(goals);
         await setAirport(aps[0], origin);
         await setAirport(aps[1], destination);
-        await addDateOption(dateSel, opts.date);
-        if (opts.return) await addDateOption(dateSel, opts.return);
+        // Round-trip: also wire the RETURN-leg goal's airports (reversed:
+        // destination -> origin), or its segment query stays insufficient and
+        // no inventory is fetched (VOY-1421). One-way plans have no return goal.
+        if (isRoundTrip) {
+          const returnGoal = resolveReturnFlightGoal(goals, goal.id);
+          if (returnGoal) {
+            const returnAps = requireAirports(returnGoal, 2);
+            await setAirport(returnAps[0], destination);
+            await setAirport(returnAps[1], origin);
+          }
+        }
+        // Resolve BOTH date outputs so the round-trip monitor query is
+        // sufficient (VOY-1421): startDate from --date, endDate via duration
+        // when --return is given.
+        await resolveDateRange(dateSel, opts.date, opts.return);
 
         const data = await graphql<{ createTripPlanFlightSelection: SelectionResult }>(
           CREATE_FLIGHT_SELECTION,
@@ -343,21 +358,43 @@ export function registerSearchCommands(program: Command): void {
           const lines: string[] = [];
           lines.push(`### Flights (${origin} → ${destination})`);
           if (options.length === 0) {
-            lines.push("_No flights found for this route and date._");
+            // Options are produced asynchronously by the monitor once the goal's
+            // inputs are sufficient. Empty here usually means "still fetching",
+            // not "no results" — point at the async-aware poll (VOY-1421).
+            lines.push("_No options yet — the search is still fetching inventory._");
+            lines.push("");
+            lines.push(`**Next:** \`voyagier selection-options ${result.selection.id} --wait --json\``);
+            if (isRoundTrip) {
+              lines.push("");
+              lines.push(
+                "_Known limitation (VOY-1422): round-trip searches may stay empty because the " +
+                  "return leg does not yet trigger the combined flight search on the backend. " +
+                  "Outbound + return airports and dates are set correctly; tracked for a backend fix._",
+              );
+            }
           } else {
             lines.push(agentFlightOptions(options));
+            lines.push("");
+            if (isRoundTrip) lines.push("_Note: Select departure first, then return._");
+            lines.push("**Next:** `voyagier select <number>`");
           }
           lines.push("");
           lines.push(`👉 **Plan:** ${planUrl}`);
-          lines.push("");
-          if (isRoundTrip) lines.push("_Note: Select departure first, then return._");
-          lines.push("**Next:** `voyagier select <number>`");
           process.stdout.write(lines.join("\n") + "\n");
           return;
         }
 
         if (options.length === 0) {
-          process.stderr.write(chalk.dim("No flights found for this route and date.\n"));
+          process.stderr.write(chalk.dim("No options yet — the search is still fetching inventory.\n"));
+          process.stderr.write(chalk.dim(`  Poll: voyagier selection-options ${result.selection.id} --wait\n`));
+          if (isRoundTrip) {
+            process.stderr.write(
+              chalk.yellow(
+                "  Note: round-trip searches may stay empty (VOY-1422) — the return leg does not\n" +
+                "  yet trigger the combined search on the backend. Inputs are set correctly.\n",
+              ),
+            );
+          }
           return;
         }
 
@@ -486,8 +523,9 @@ export function registerSearchCommands(program: Command): void {
         // inherit destination via bindings; there's no per-Hotel location input).
         // Throws if no Destination selection exists, so the flag never silently no-ops.
         if (opts.location) await setDestination(goals, opts.location);
-        await addDateOption(dateSel, opts.checkin);
-        await addDateOption(dateSel, opts.checkout);
+        // Resolve check-in + check-out so the hotel monitor query is sufficient
+        // (VOY-1421): check-out is derived as a duration from check-in.
+        await resolveDateRange(dateSel, opts.checkin, opts.checkout);
 
         const data = await graphql<{ createTripPlanHotelSelection: SelectionResult }>(
           CREATE_HOTEL_SELECTION,
@@ -532,21 +570,27 @@ export function registerSearchCommands(program: Command): void {
           const lines: string[] = [];
           lines.push(`### Hotels (${opts.location})`);
           if (options.length === 0) {
-            lines.push("_No hotels found for this location and dates._");
+            // Empty immediately after create usually means the monitor is still
+            // fetching, not that there are no hotels — poll first (VOY-1421).
+            lines.push("_No options yet — the search is still fetching inventory._");
+            lines.push("");
+            lines.push(`**Next:** \`voyagier selection-options ${result.selection.id} --wait --json\``);
           } else {
             lines.push(agentHotelOptions(options));
+            lines.push("");
+            lines.push("**Next:** `voyagier select <number>`");
           }
           lines.push("");
           lines.push(`👉 **Plan:** ${planUrl}`);
-          lines.push("");
-          lines.push("**Next:** `voyagier select <number>`");
           process.stdout.write(lines.join("\n") + "\n");
           return;
         }
 
         if (options.length === 0) {
           const loc = opts.location as string;
-          process.stderr.write(chalk.yellow(`No hotels found for "${loc}" on these dates.\n\n`));
+          process.stderr.write(chalk.dim(`No options yet — the search may still be fetching inventory.\n`));
+          process.stderr.write(chalk.dim(`  Poll: voyagier selection-options ${result.selection.id} --wait\n\n`));
+          process.stderr.write(chalk.yellow(`If it stays empty, no hotels matched "${loc}" on these dates.\n\n`));
           process.stderr.write(chalk.dim("Suggestions:\n"));
           if (looksLikeAirportCode(loc)) {
             process.stderr.write(chalk.dim(`  • "${loc.toUpperCase()}" looks like an airport code — the API needs a city name\n`));

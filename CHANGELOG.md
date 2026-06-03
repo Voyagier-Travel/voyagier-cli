@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **`search` now fully resolves query inputs so the backend monitor can fetch inventory** ([VOY-1421](https://linear.app/voyagier/issue/VOY-1421)). Previously a CLI-built search added a start-date *option* but never populated the Date selection's `endDate` output, and never set the **return leg's** airports — so the monitor query stayed "insufficient" and sat in `AWAITING_INPUT` forever.
+  - `search flights | hotels` now resolve a full date *range* (start + end via the Date selection's `duration` input), and `search flights` now wires the **return-leg airports** (reversed) for round-trips.
+  - Empty-immediately-after-search now points at `voyagier selection-options <id> --wait` (“still fetching”) instead of a misleading “no results.”
+  - **Known limitation:** round-trip flight searches may still stay empty pending a backend fix ([VOY-1422](https://linear.app/voyagier/issue/VOY-1422)) — the return leg does not yet trigger the combined `FlightJourney` search on the first save. The CLI sets all inputs correctly; the CLI surfaces this note when a round-trip search returns no options.
+
+---
+
 ## [2.1.1] — 2026-06-03
 
 Composable goal-graph write path. A trip plan is a goal graph; you compose a trip by searching against the plan's goals and selecting options on the resulting selections.
