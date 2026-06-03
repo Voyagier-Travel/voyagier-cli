@@ -150,6 +150,51 @@ describe("graphql wrappers", () => {
   });
 });
 
+describe("daysBetween", () => {
+  it("counts whole calendar days, end - start", () => {
+    expect(SH.daysBetween("2026-09-15", "2026-09-22")).toBe(7);
+    expect(SH.daysBetween("2026-08-01", "2026-08-10")).toBe(9);
+  });
+
+  it("is UTC-safe across a month boundary", () => {
+    expect(SH.daysBetween("2026-01-30", "2026-02-02")).toBe(3);
+  });
+
+  it("returns null for same-day, reversed, or malformed input", () => {
+    expect(SH.daysBetween("2026-09-15", "2026-09-15")).toBeNull();
+    expect(SH.daysBetween("2026-09-22", "2026-09-15")).toBeNull();
+    expect(SH.daysBetween("not-a-date", "2026-09-15")).toBeNull();
+    expect(SH.daysBetween("2026-09-15", "")).toBeNull();
+  });
+});
+
+describe("resolveDateRange (VOY-1421: populate BOTH date outputs)", () => {
+  it("one-way: only adds the start date option, no duration set", async () => {
+    mockGraphql.mockResolvedValue({});
+    await SH.resolveDateRange("sel-date", "2026-09-15");
+    expect(mockGraphql).toHaveBeenCalledTimes(1);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars).toEqual({ selectionId: "sel-date", startDate: "2026-09-15" });
+  });
+
+  it("round-trip: adds start option, then sets duration = days between", async () => {
+    mockGraphql.mockResolvedValue({});
+    await SH.resolveDateRange("sel-date", "2026-09-15", "2026-09-22");
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    const [, addVars] = mockGraphql.mock.calls[0] as [string, any];
+    const [, durVars] = mockGraphql.mock.calls[1] as [string, any];
+    expect(addVars).toEqual({ selectionId: "sel-date", startDate: "2026-09-15" });
+    expect(durVars).toEqual({ selectionId: "sel-date", fieldName: "duration", value: 7 });
+  });
+
+  it("throws VALIDATION when endDate is not after startDate (and does not set duration)", async () => {
+    mockGraphql.mockResolvedValue({});
+    await expect(SH.resolveDateRange("sel-date", "2026-09-15", "2026-09-10")).rejects.toBeInstanceOf(CliError);
+    // start-date option is still added before the range check fails
+    expect(mockGraphql).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("requireAirports (fail-fast on insufficient inputs)", () => {
   it("returns the ids when the goal has >= min airport selections", () => {
     expect(SH.requireAirports(goal(), 2)).toEqual(["sel-origin", "sel-dest"]);
