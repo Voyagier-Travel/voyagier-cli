@@ -89,10 +89,12 @@ export const GET_PLAN_DEEP = `
       items {
         id
         title
-        selection {
+        type
+        selections {
           id
           type
           isLocked
+          parentOptionId
           assignedTravellers {
             id
             firstName
@@ -100,16 +102,22 @@ export const GET_PLAN_DEEP = `
             dateOfBirth
             gender
           }
-          selectedOption {
+          options {
             id
             name
+            description
             price
+            currency
+            optionType
             status
-            subSelections {
+            isBookable
+            sortOrder
+            sourceOptionId
+            childSelections {
               id
               type
-              selectedOptionId
-              selectedOption { id name price description }
+              isLocked
+              parentOptionId
               options {
                 id
                 name
@@ -380,7 +388,7 @@ export const UPDATE_TRAVELLER = `
 
 // --- Search ---
 
-export const GET_TRIP_PLAN_ITEM_TYPES = `query GetPlan($id: String!) { tripPlan(id: $id) { items { id title selection { type } } } }`;
+export const GET_TRIP_PLAN_ITEM_TYPES = `query GetPlan($id: String!) { tripPlan(id: $id) { items { id title selections { type } } } }`;
 
 export const CREATE_FLIGHT_SELECTION = `
   mutation CreateFlightSelection($tripPlanId: String!, $input: CreateFlightSelectionInput!) {

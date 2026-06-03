@@ -5,7 +5,7 @@ import { GET_PLAN_DEEP, DELETE_TRIP_PLAN_ITEM } from "../../queries.js";
 import { formatPrice } from "../../utils.js";
 import { fatal, jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
-import { typeIcon, inferItemType, itemStatus, DeepItem } from "./types.js";
+import { typeIcon, inferItemType, itemStatus, deepChosenOption, deepSubSelections, DeepItem } from "./types.js";
 
 export function registerItemCommands(plans: Command): void {
   plans
@@ -25,22 +25,29 @@ export function registerItemCommands(plans: Command): void {
             items: plan.items.map(item => {
               const inferredType = inferItemType(item.title);
               const status = itemStatus(item);
-              const sel = item.selection;
+              const selections = item.selections ?? [];
               return {
                 id: item.id,
                 type: item.type,
                 title: item.title,
                 inferredType,
-                selectionId: sel?.id ?? null,
-                selectedOption: sel?.selectedOption
-                  ? { id: sel.selectedOption.id, name: sel.selectedOption.name, price: sel.selectedOption.price ?? null }
-                  : null,
                 status,
-                subSelections: (sel?.selectedOption?.subSelections ?? []).map(s => ({
-                  id: s.id,
-                  type: s.type,
-                  selectedOptionId: s.selectedOptionId ?? null,
-                  optionCount: s.options.length,
+                selections: selections.map(sel => {
+                  const chosen = deepChosenOption(sel);
+                  return {
+                    id: sel.id,
+                    type: sel.type ?? null,
+                    isLocked: sel.isLocked ?? null,
+                    selectedOption: chosen
+                      ? { id: chosen.id, name: chosen.name, price: chosen.price ?? null }
+                      : null,
+                  };
+                }),
+                subSelections: deepSubSelections(item).map(({ selection }) => ({
+                  id: selection.id,
+                  type: selection.type ?? null,
+                  selectedOptionId: selection.parentOptionId ?? null,
+                  optionCount: (selection.options ?? []).length,
                 })),
               };
             }),
@@ -62,11 +69,14 @@ export function registerItemCommands(plans: Command): void {
             : status === "needs_sub_selection"
               ? chalk.yellow("⚠ needs sub-selection")
               : chalk.dim("pending");
-          const sel = item.selection?.selectedOption;
-          const price = sel?.price != null ? chalk.green(` ${formatPrice(sel.price)}`) : "";
-          const selName = sel ? `  → ${sel.name}${price}` : "";
+          // Show the chosen option from the first selection that has one (if any).
+          const selections = item.selections ?? [];
+          const firstChosen = selections.map(deepChosenOption).find((o) => o != null) ?? null;
+          const price = firstChosen?.price != null ? chalk.green(` ${formatPrice(firstChosen.price)}`) : "";
+          const selName = firstChosen ? `  → ${firstChosen.name}${price}` : "";
+          const firstSelId = selections[0]?.id;
           console.log(`  ${icon}  ${chalk.white(item.title)}  ${statusLabel}${selName}`);
-          console.log(chalk.dim(`      ID: ${item.id}${item.selection ? `  ·  sel: ${item.selection.id}` : ""}`));
+          console.log(chalk.dim(`      ID: ${item.id}${firstSelId ? `  ·  sel: ${firstSelId}` : ""}`));
         }
         console.log();
       } catch (err) {
