@@ -121,7 +121,7 @@ describe("normalizeListingChangeType", () => {
 describe("listings recent", () => {
   it("fetches change events and outputs JSON", async () => {
     mockGraphql
-      .mockResolvedValueOnce({ getTripPlanHotelSelection: sampleSelection })
+      .mockResolvedValueOnce({ getTripPlanSelection: sampleSelection })
       .mockResolvedValueOnce({ blueprintListingChangeEvents: [sampleChangeEvent] });
 
     const p = buildProgram();
@@ -141,7 +141,7 @@ describe("listings recent", () => {
 
   it("filters by --type and normalizes to PascalCase", async () => {
     mockGraphql
-      .mockResolvedValueOnce({ getTripPlanHotelSelection: sampleSelection })
+      .mockResolvedValueOnce({ getTripPlanSelection: sampleSelection })
       .mockResolvedValueOnce({ blueprintListingChangeEventsByType: [sampleChangeEvent] });
 
     const p = buildProgram();
@@ -160,7 +160,7 @@ describe("listings recent", () => {
 
   it("respects --limit flag", async () => {
     mockGraphql
-      .mockResolvedValueOnce({ getTripPlanHotelSelection: sampleSelection })
+      .mockResolvedValueOnce({ getTripPlanSelection: sampleSelection })
       .mockResolvedValueOnce({ blueprintListingChangeEvents: [] });
 
     const p = buildProgram();
@@ -178,7 +178,7 @@ describe("listings recent", () => {
   });
 
   it("throws NOT_FOUND when selection doesn't exist", async () => {
-    mockGraphql.mockResolvedValueOnce({ getTripPlanHotelSelection: null });
+    mockGraphql.mockResolvedValueOnce({ getTripPlanSelection: null });
 
     const p = buildProgram();
     await expect(
@@ -187,7 +187,7 @@ describe("listings recent", () => {
   });
 
   it("throws NO_MONITOR when selection has no blueprintMonitorId", async () => {
-    mockGraphql.mockResolvedValueOnce({ getTripPlanHotelSelection: sampleSelectionNoMonitor });
+    mockGraphql.mockResolvedValueOnce({ getTripPlanSelection: sampleSelectionNoMonitor });
 
     const p = buildProgram();
     await expect(
@@ -197,7 +197,7 @@ describe("listings recent", () => {
 
   it("handles empty events list", async () => {
     mockGraphql
-      .mockResolvedValueOnce({ getTripPlanHotelSelection: sampleSelection })
+      .mockResolvedValueOnce({ getTripPlanSelection: sampleSelection })
       .mockResolvedValueOnce({ blueprintListingChangeEvents: [] });
 
     const p = buildProgram();
@@ -271,7 +271,7 @@ describe("listings --agent output", () => {
 
   it("outputs markdown for recent command", async () => {
     mockGraphql
-      .mockResolvedValueOnce({ getTripPlanHotelSelection: sampleSelection })
+      .mockResolvedValueOnce({ getTripPlanSelection: sampleSelection })
       .mockResolvedValueOnce({ blueprintListingChangeEvents: [sampleChangeEvent] });
 
     const p = buildProgram();
@@ -323,7 +323,7 @@ describe("listings recent — strict --limit validation", () => {
 
   it("accepts valid --limit values", async () => {
     mockGraphql
-      .mockResolvedValueOnce({ getTripPlanHotelSelection: sampleSelection })
+      .mockResolvedValueOnce({ getTripPlanSelection: sampleSelection })
       .mockResolvedValueOnce({ blueprintListingChangeEvents: [] });
 
     const p = buildProgram();
@@ -413,7 +413,7 @@ describe("listings recent — formatPrice consistency", () => {
   it("renders prices with thousand-separators in --agent markdown table", async () => {
     mockGraphql
       .mockResolvedValueOnce({
-        getTripPlanHotelSelection: { id: "sel_01HX", blueprintMonitorId: "mon_01HX" },
+        getTripPlanSelection: { id: "sel_01HX", blueprintMonitorId: "mon_01HX" },
       })
       .mockResolvedValueOnce({ blueprintListingChangeEvents: [sampleEventWithPrice] });
 
@@ -459,7 +459,7 @@ describe("listings — nullable boolean rendering", () => {
   it("renders null isAvailable as 'Unknown' (not 'No') in agent markdown", async () => {
     mockGraphql
       .mockResolvedValueOnce({
-        getTripPlanHotelSelection: { id: "sel_01HX", blueprintMonitorId: "mon_01HX" },
+        getTripPlanSelection: { id: "sel_01HX", blueprintMonitorId: "mon_01HX" },
       })
       .mockResolvedValueOnce({ blueprintListingChangeEvents: [eventWithNullAvailable] });
 
@@ -552,7 +552,7 @@ describe("listings recent — markdown table escaping (--agent)", () => {
 
     mockGraphql
       .mockResolvedValueOnce({
-        getTripPlanHotelSelection: { id: "sel_01HX", blueprintMonitorId: "mon_01HX" },
+        getTripPlanSelection: { id: "sel_01HX", blueprintMonitorId: "mon_01HX" },
       })
       .mockResolvedValueOnce({ blueprintListingChangeEvents: [evilEvent] });
 
@@ -593,7 +593,7 @@ describe("listings recent — markdown table escaping (--agent)", () => {
 
     mockGraphql
       .mockResolvedValueOnce({
-        getTripPlanHotelSelection: { id: "sel_01HX", blueprintMonitorId: "mon_01HX" },
+        getTripPlanSelection: { id: "sel_01HX", blueprintMonitorId: "mon_01HX" },
       })
       .mockResolvedValueOnce({ blueprintListingChangeEvents: [eventNoListingName] });
 
