@@ -69,14 +69,17 @@ export function registerItemCommands(plans: Command): void {
             : status === "needs_sub_selection"
               ? chalk.yellow("⚠ needs sub-selection")
               : chalk.dim("pending");
-          // Show the chosen option from the first selection that has one (if any).
+          // Show the chosen option from the first selection that has one (if any),
+          // and print THAT selection's id (not selections[0]) so the displayed sel
+          // matches the shown option. Fall back to the first selection when none chosen.
           const selections = item.selections ?? [];
-          const firstChosen = selections.map(deepChosenOption).find((o) => o != null) ?? null;
+          const chosenSel = selections.find((s) => deepChosenOption(s) != null) ?? null;
+          const firstChosen = chosenSel ? deepChosenOption(chosenSel) : null;
           const price = firstChosen?.price != null ? chalk.green(` ${formatPrice(firstChosen.price)}`) : "";
           const selName = firstChosen ? `  → ${firstChosen.name}${price}` : "";
-          const firstSelId = selections[0]?.id;
+          const shownSelId = (chosenSel ?? selections[0])?.id;
           console.log(`  ${icon}  ${chalk.white(item.title)}  ${statusLabel}${selName}`);
-          console.log(chalk.dim(`      ID: ${item.id}${firstSelId ? `  ·  sel: ${firstSelId}` : ""}`));
+          console.log(chalk.dim(`      ID: ${item.id}${shownSelId ? `  ·  sel: ${shownSelId}` : ""}`));
         }
         console.log();
       } catch (err) {
