@@ -6,7 +6,7 @@ import { validateDate, warnPastDate, formatPrice, formatDateRange } from "../../
 import { fatal, jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
 import { resolveClient } from "../clients.js";
-import { planUrl, typeIcon, TripPlan, TripPlanDetail, PaginatedTripPlans } from "./types.js";
+import { planUrl, typeIcon, chosenOption, TripPlan, TripPlanDetail, PaginatedTripPlans } from "./types.js";
 import {
   CREATE_TRIP_PLAN,
   GET_TRIP_PLANS,
@@ -242,12 +242,18 @@ export function registerCrudCommands(plans: Command): void {
             lines.push("### Items");
             for (const item of plan.items) {
               const icon = typeIcon(item.type, item.title);
-              if (item.selection?.selectedOption) {
-                const sel = item.selection.selectedOption;
-                const price = sel.price != null ? ` · ${formatPrice(sel.price)}` : "";
-                const status = sel.status && sel.status !== "NONE" ? ` [${sel.status}]` : "";
-                lines.push(`- ${icon} **${item.title}** → ${sel.name}${price}${status}`);
-              } else if (item.selection) {
+              const selections = item.selections ?? [];
+              const chosen = selections
+                .map((s) => chosenOption(s))
+                .filter((o): o is NonNullable<typeof o> => o != null);
+              if (chosen.length > 0) {
+                lines.push(`- ${icon} **${item.title}**`);
+                for (const sel of chosen) {
+                  const price = sel.price != null ? ` · ${formatPrice(sel.price)}` : "";
+                  const status = sel.status && sel.status !== "NONE" && sel.status !== "None" ? ` [${sel.status}]` : "";
+                  lines.push(`  → ${sel.name}${price}${status}`);
+                }
+              } else if (selections.length > 0) {
                 lines.push(`- ${icon} **${item.title}** → ⏳ awaiting selection`);
               } else {
                 lines.push(`- ${icon} **${item.title}**`);
@@ -279,20 +285,23 @@ export function registerCrudCommands(plans: Command): void {
           console.log(chalk.bold(`\n  Items (${plan.items.length}):`));
           for (const item of plan.items) {
             const icon = typeIcon(item.type, item.title);
-            const time = item.startTime ? ` at ${item.startTime}` : "";
-            const day = item.day ? ` Day ${item.day}` : "";
-            let line = `    ${icon}  ${item.title}${day}${time}`;
+            const selections = item.selections ?? [];
+            const chosen = selections
+              .map((s) => chosenOption(s))
+              .filter((o): o is NonNullable<typeof o> => o != null);
 
-            if (item.selection?.selectedOption) {
-              const sel = item.selection.selectedOption;
-              const price = sel.price != null ? ` · ${formatPrice(sel.price)}` : "";
-              const status = sel.status && sel.status !== "NONE" ? ` [${sel.status}]` : "";
-              line += chalk.green(`  → ${sel.name}${price}${status}`);
-            } else if (item.selection) {
-              line += chalk.yellow("  → awaiting selection");
+            if (chosen.length > 0) {
+              console.log(`    ${icon}  ${item.title}`);
+              for (const sel of chosen) {
+                const price = sel.price != null ? ` · ${formatPrice(sel.price)}` : "";
+                const status = sel.status && sel.status !== "NONE" && sel.status !== "None" ? ` [${sel.status}]` : "";
+                console.log(chalk.green(`        → ${sel.name}${price}${status}`));
+              }
+            } else if (selections.length > 0) {
+              console.log(`    ${icon}  ${item.title}` + chalk.yellow("  → awaiting selection"));
+            } else {
+              console.log(`    ${icon}  ${item.title}`);
             }
-
-            console.log(line);
           }
         }
 
@@ -328,9 +337,16 @@ export function registerCrudCommands(plans: Command): void {
             items: (plan.items ?? []).map((item) => ({
               type: item.type,
               title: item.title,
-              selected: item.selection?.selectedOption?.name ?? null,
-              price: item.selection?.selectedOption?.price ?? null,
-              status: item.selection?.selectedOption?.status ?? null,
+              selections: (item.selections ?? []).map((s) => {
+                const opt = chosenOption(s);
+                return {
+                  type: s.type ?? null,
+                  isLocked: s.isLocked ?? null,
+                  selected: opt?.name ?? null,
+                  price: opt?.price ?? null,
+                  status: opt?.status ?? null,
+                };
+              }),
             })),
           };
           process.stdout.write(JSON.stringify(summary, null, 2) + "\n");
@@ -356,12 +372,17 @@ export function registerCrudCommands(plans: Command): void {
 
           for (const item of items) {
             const icon = typeIcon(item.type, item.title);
-            const sel = item.selection?.selectedOption;
-            if (sel) {
-              const price = sel.price != null ? ` · ${formatPrice(sel.price)}` : "";
-              const status = sel.status && sel.status !== "NONE" ? ` [${sel.status}]` : "";
-              lines.push(`- ${icon} ${sel.name}${price}${status}`);
-            } else if (item.selection) {
+            const selections = item.selections ?? [];
+            const chosen = selections
+              .map((s) => chosenOption(s))
+              .filter((o): o is NonNullable<typeof o> => o != null);
+            if (chosen.length > 0) {
+              for (const sel of chosen) {
+                const price = sel.price != null ? ` · ${formatPrice(sel.price)}` : "";
+                const status = sel.status && sel.status !== "NONE" && sel.status !== "None" ? ` [${sel.status}]` : "";
+                lines.push(`- ${icon} ${sel.name}${price}${status}`);
+              }
+            } else if (selections.length > 0) {
               lines.push(`- ${icon} ${item.title} ⏳ pending`);
             } else {
               lines.push(`- ${icon} ${item.title}`);
@@ -394,12 +415,17 @@ export function registerCrudCommands(plans: Command): void {
           console.log();
           for (const item of items) {
             const icon = typeIcon(item.type, item.title);
-            const sel = item.selection?.selectedOption;
-            if (sel) {
-              const price = sel.price != null ? chalk.green(` ${formatPrice(sel.price)}`) : "";
-              const status = sel.status && sel.status !== "NONE" ? chalk.dim(` [${sel.status}]`) : "";
-              console.log(`  ${icon}  ${sel.name}${price}${status}`);
-            } else if (item.selection) {
+            const selections = item.selections ?? [];
+            const chosen = selections
+              .map((s) => chosenOption(s))
+              .filter((o): o is NonNullable<typeof o> => o != null);
+            if (chosen.length > 0) {
+              for (const sel of chosen) {
+                const price = sel.price != null ? chalk.green(` ${formatPrice(sel.price)}`) : "";
+                const status = sel.status && sel.status !== "NONE" && sel.status !== "None" ? chalk.dim(` [${sel.status}]`) : "";
+                console.log(`  ${icon}  ${sel.name}${price}${status}`);
+              }
+            } else if (selections.length > 0) {
               console.log(`  ${icon}  ${item.title}  ${chalk.yellow("⏳ pending")}`);
             } else {
               console.log(`  ${icon}  ${item.title}`);

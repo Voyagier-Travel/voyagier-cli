@@ -208,13 +208,21 @@ export const GET_TRIP_PLANS = `
   }
 `;
 
+// NOTE: TripPlanItem.{date,startTime,endTime,day} columns were dropped in API PR #386
+// (itinerary timing now lives on the tripPlanEvents resolver). TripPlanItem.selection
+// (singular, with a single `selectedOption`) was replaced by selections (plural array),
+// where each TripPlanSelection has a list of candidate `options` and the chosen one is
+// identified by `parentOptionId` (matching options[].id), or null when nothing is
+// selected yet. There is no `selectedOption` field on TripPlanSelection.
+// Shape verified against the live dev schema and GET_PLAN_DEEP. VOY-1407 was a prod
+// outage caused by this drift — keep these queries aligned to the live schema.
 export const GET_TRIP_PLAN = `
   query TripPlan($id: String!) {
     tripPlan(id: $id) {
       id title description startDate endDate
       items {
-        id type title date startTime endTime day
-        selection { id selectedOption { id name price status } }
+        id type title
+        selections { id type isLocked parentOptionId options { id name price status } }
       }
       travellers { id firstName lastName declaredTravellerType }
     }
@@ -226,8 +234,8 @@ export const GET_TRIP_PLAN_SUMMARY = `
     tripPlan(id: $id) {
       id title startDate endDate
       items {
-        id type title day
-        selection { id selectedOption { id name price status } }
+        id type title
+        selections { id type isLocked parentOptionId options { id name price status } }
       }
       travellers { id firstName lastName declaredTravellerType }
     }
