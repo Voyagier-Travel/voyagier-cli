@@ -451,6 +451,18 @@ export const ADD_DATE_OPTION = `
   }
 `;
 
+// Location/destination lives on the plan-level Destination selection (a shared
+// Destination goal), NOT per Hotel/Activity goal. setTripPlanDestinationValue
+// applies a freeform place name so the --location/--destination flag takes effect.
+export const SET_DESTINATION_VALUE = `
+  mutation SetTripPlanDestinationValue($selectionId: String!, $name: String!) {
+    setTripPlanDestinationValue(selectionId: $selectionId, name: $name) {
+      id
+      type
+    }
+  }
+`;
+
 // --- Select ---
 
 // NOTE: selectDepartureFlight + selectReturnFlight were DELETED from the schema

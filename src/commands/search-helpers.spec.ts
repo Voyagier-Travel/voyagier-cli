@@ -149,3 +149,64 @@ describe("graphql wrappers", () => {
     expect(vars).toEqual({ selectionId: "sel-1", startDate: "2026-09-01" });
   });
 });
+
+describe("requireAirports (fail-fast on insufficient inputs)", () => {
+  it("returns the ids when the goal has >= min airport selections", () => {
+    expect(SH.requireAirports(goal(), 2)).toEqual(["sel-origin", "sel-dest"]);
+  });
+
+  it("throws VALIDATION (not a silent skip) when the goal has too few airports", () => {
+    const g = goal({ items: [{ selections: [{ id: "a", type: "Airport" }, { id: "l", type: "FlightList" }] }] });
+    try {
+      SH.requireAirports(g, 2);
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(CliError);
+      expect((e as InstanceType<typeof CliError>).code).toBe(CliErrorCode.VALIDATION);
+      expect((e as InstanceType<typeof CliError>).message).toMatch(/plans goals/);
+    }
+  });
+});
+
+describe("requireDateSelection (fail-fast on missing Date)", () => {
+  it("returns the Date selection id when present", () => {
+    const goals = [goal({ id: "d", type: "Date", items: [{ selections: [{ id: "sel-date", type: "Date" }] }] })];
+    expect(SH.requireDateSelection(goals)).toBe("sel-date");
+  });
+
+  it("throws VALIDATION when no Date selection exists", () => {
+    try {
+      SH.requireDateSelection([goal()]);
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect((e as InstanceType<typeof CliError>).code).toBe(CliErrorCode.VALIDATION);
+    }
+  });
+});
+
+describe("findDestinationSelection + setDestination", () => {
+  const goalsWithDest = () => [
+    goal(),
+    goal({ id: "dest", type: "Destination", items: [{ selections: [{ id: "sel-dest-goal", type: "Destination" }] }] }),
+  ];
+
+  it("finds the plan-level Destination selection", () => {
+    expect(SH.findDestinationSelection(goalsWithDest())).toBe("sel-dest-goal");
+  });
+
+  it("returns null when there is no Destination selection", () => {
+    expect(SH.findDestinationSelection([goal()])).toBeNull();
+  });
+
+  it("setDestination applies SET_DESTINATION_VALUE to the Destination selection", async () => {
+    mockGraphql.mockResolvedValue({});
+    await SH.setDestination(goalsWithDest(), "Orlando, FL");
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars).toEqual({ selectionId: "sel-dest-goal", name: "Orlando, FL" });
+  });
+
+  it("setDestination throws VALIDATION (no silent no-op) when there's no Destination selection", async () => {
+    await expect(SH.setDestination([goal()], "Orlando, FL")).rejects.toBeInstanceOf(CliError);
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+});

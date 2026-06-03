@@ -15,10 +15,11 @@ import {
   loadGoals,
   resolveGoal,
   resolveMirrorList,
-  airportSelections,
   setAirport,
-  findDateSelection,
   addDateOption,
+  requireAirports,
+  requireDateSelection,
+  setDestination,
 } from "./search-helpers.js";
 import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels, formatActivities } from "../formatters.js";
@@ -274,14 +275,14 @@ export function registerSearchCommands(program: Command): void {
         const goals = await loadGoals(tripPlanId);
         const goal = resolveGoal(goals, "flights", opts.goal);
         const mirrorListSelectionId = resolveMirrorList(goal, "flights");
-        const aps = airportSelections(goal);
-        if (aps[0]) await setAirport(aps[0], origin);
-        if (aps[1]) await setAirport(aps[1], destination);
-        const dateSel = findDateSelection(goals);
-        if (dateSel) {
-          await addDateOption(dateSel, opts.date);
-          if (opts.return) await addDateOption(dateSel, opts.return);
-        }
+        // Fail fast if the goal graph can't accept the required inputs, rather
+        // than create a selection silently stuck AWAITING_INPUT downstream.
+        const aps = requireAirports(goal, 2);
+        const dateSel = requireDateSelection(goals);
+        await setAirport(aps[0], origin);
+        await setAirport(aps[1], destination);
+        await addDateOption(dateSel, opts.date);
+        if (opts.return) await addDateOption(dateSel, opts.return);
 
         const data = await graphql<{ createTripPlanFlightSelection: SelectionResult }>(
           CREATE_FLIGHT_SELECTION,
@@ -470,11 +471,13 @@ export function registerSearchCommands(program: Command): void {
         const goals = await loadGoals(tripPlanId);
         const goal = resolveGoal(goals, "hotels", opts.goal);
         const mirrorListSelectionId = resolveMirrorList(goal, "hotels");
-        const dateSel = findDateSelection(goals);
-        if (dateSel) {
-          await addDateOption(dateSel, opts.checkin);
-          await addDateOption(dateSel, opts.checkout);
-        }
+        const dateSel = requireDateSelection(goals);
+        // --location applies to the plan-level Destination selection (Hotel goals
+        // inherit destination via bindings; there's no per-Hotel location input).
+        // Throws if no Destination selection exists, so the flag never silently no-ops.
+        if (opts.location) await setDestination(goals, opts.location);
+        await addDateOption(dateSel, opts.checkin);
+        await addDateOption(dateSel, opts.checkout);
 
         const data = await graphql<{ createTripPlanHotelSelection: SelectionResult }>(
           CREATE_HOTEL_SELECTION,
@@ -653,8 +656,11 @@ export function registerSearchCommands(program: Command): void {
         const goals = await loadGoals(tripPlanId);
         const goal = resolveGoal(goals, "activities", opts.goal);
         const mirrorListSelectionId = resolveMirrorList(goal, "activities");
-        const dateSel = findDateSelection(goals);
-        if (dateSel) await addDateOption(dateSel, opts.date);
+        const dateSel = requireDateSelection(goals);
+        // --destination applies to the plan-level Destination selection (Activity
+        // goals inherit destination via bindings; no per-Activity location input).
+        if (opts.destination) await setDestination(goals, opts.destination);
+        await addDateOption(dateSel, opts.date);
 
         const data = await graphql<{ createTripPlanActivitySelection: SelectionResult }>(
           CREATE_ACTIVITY_SELECTION,

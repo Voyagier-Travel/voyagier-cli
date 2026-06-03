@@ -3,6 +3,7 @@ import {
   GET_GOALS_FOR_SEARCH,
   UPDATE_AIRPORT_SELECTION,
   ADD_DATE_OPTION,
+  SET_DESTINATION_VALUE,
 } from "../queries.js";
 import { CliError, CliErrorCode } from "../errors.js";
 
@@ -79,6 +80,73 @@ export function resolveMirrorList(goal: SearchGoal, kind: string): string {
     CliErrorCode.NOT_FOUND,
     `Goal "${goal.name}" has no ${listType} (mirror list) selection to search against.`,
   );
+}
+
+/**
+ * The goal's Airport selections, requiring at least `min` of them. Flights need
+ * origin + destination Airport inputs to feed the FlightList monitor; if the goal
+ * graph can't accept them, fail fast with actionable guidance rather than create
+ * a selection that's silently stuck AWAITING_INPUT.
+ */
+export function requireAirports(goal: SearchGoal, min: number): string[] {
+  const ids = airportSelections(goal);
+  if (ids.length < min) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Goal "${goal.name}" has ${ids.length} Airport input selection(s) but needs ${min} ` +
+        `(origin + destination). The goal graph can't accept these search inputs.\n` +
+        `  Inspect it:  voyagier plans goals <planId> --json`,
+    );
+  }
+  return ids;
+}
+
+/**
+ * Find the shared Date selection or throw. Dates live on a plan-level Date goal;
+ * without one a dated search would create a selection stuck AWAITING_INPUT.
+ */
+export function requireDateSelection(goals: SearchGoal[]): string {
+  const id = findDateSelection(goals);
+  if (!id) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `This plan has no Date selection to bind the search dates to.\n` +
+        `  Inspect the goal graph:  voyagier plans goals <planId> --json`,
+    );
+  }
+  return id;
+}
+
+/**
+ * Find the plan-level Destination selection (location/destination lives on a
+ * shared Destination goal, NOT per Hotel/Activity goal). Returns null if absent.
+ */
+export function findDestinationSelection(goals: SearchGoal[]): string | null {
+  for (const g of goals) {
+    for (const item of g.items ?? []) {
+      for (const sel of item.selections ?? []) {
+        if (sel.type === "Destination") return sel.id;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Apply a freeform location/destination string to the plan-level Destination
+ * selection so the `--location`/`--destination` flag actually takes effect.
+ * Throws if the plan has no Destination selection (rather than silently no-op).
+ */
+export async function setDestination(goals: SearchGoal[], name: string): Promise<void> {
+  const selectionId = findDestinationSelection(goals);
+  if (!selectionId) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Can't apply destination "${name}": this plan has no Destination selection.\n` +
+        `  Inspect the goal graph:  voyagier plans goals <planId> --json`,
+    );
+  }
+  await graphql(SET_DESTINATION_VALUE, { selectionId, name });
 }
 
 /** The goal's Airport selections, in document order (origin first, destination second). */

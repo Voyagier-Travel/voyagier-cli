@@ -1,6 +1,6 @@
 import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals";
 import { Command } from "commander";
-import { CliError, CliErrorCode } from "../errors.js";
+import { CliError } from "../errors.js";
 
 // ── Mocks (must be declared before dynamic imports) ────────────────────────
 

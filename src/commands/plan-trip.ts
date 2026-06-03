@@ -8,7 +8,7 @@ import {
   CREATE_TRAVELLER_BRIEF,
   GET_TRAVELLERS_BRIEF,
 } from "../queries.js";
-import { validateDate, warnPastDate, validateIata, deriveBaseUrl } from "../utils.js";
+import { validateDate, warnPastDate, validateIata, deriveBaseUrl, shellArg } from "../utils.js";
 import { progress, warn, fatal, jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { resolveClient } from "./clients.js";
@@ -372,16 +372,16 @@ Examples:
 
         const nextSteps: string[] = [];
         if (opts.to && opts.depart) {
-          const fromPart = opts.from ? `--from ${opts.from} ` : "";
+          const fromPart = opts.from ? `--from ${shellArg(opts.from)} ` : "";
           nextSteps.push(
-            `voyagier search flights --plan ${plan.id} ${fromPart}--to ${opts.to} --date ${opts.depart}${opts.return ? ` --return ${opts.return}` : ""} --json`,
+            `voyagier search flights --plan ${plan.id} ${fromPart}--to ${shellArg(opts.to)} --date ${shellArg(opts.depart)}${opts.return ? ` --return ${shellArg(opts.return)}` : ""} --json`,
           );
         }
         if (opts.hotel) {
           const checkin = opts.checkin || opts.depart;
           const checkout = opts.checkout || opts.return;
-          const datePart = checkin && checkout ? ` --checkin ${checkin} --checkout ${checkout}` : "";
-          nextSteps.push(`voyagier search hotels --plan ${plan.id} --location ${opts.hotel}${datePart} --json`);
+          const datePart = checkin && checkout ? ` --checkin ${shellArg(checkin)} --checkout ${shellArg(checkout)}` : "";
+          nextSteps.push(`voyagier search hotels --plan ${plan.id} --location ${shellArg(opts.hotel)}${datePart} --json`);
         }
         nextSteps.push(`voyagier plans goals ${plan.id} --json   # inspect the goal graph + readiness`);
         nextSteps.push(`voyagier selection-options <selectionId> --wait --json   # poll options for a selection`);

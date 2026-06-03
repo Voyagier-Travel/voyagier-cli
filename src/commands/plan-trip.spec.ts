@@ -52,6 +52,13 @@ jest.unstable_mockModule("../utils.js", () => ({
   deriveBaseUrl: jest.fn().mockReturnValue("https://app.voyagier.com"),
   formatPrice: jest.fn().mockImplementation((p: unknown) => `$${Number(p).toFixed(2)}`),
   formatDateRange: jest.fn().mockReturnValue("Mar 23-25, 2026"),
+  // Real implementation so next-step shell-safety is actually asserted.
+  shellArg: jest.fn().mockImplementation((v: unknown) => {
+    if (v === null || v === undefined) return "";
+    const s = String(v);
+    if (s.length > 0 && /^[A-Za-z0-9_./:@%+,=-]+$/.test(s)) return s;
+    return `'${s.replace(/'/g, "'\\''")}'`;
+  }),
 }));
 
 jest.unstable_mockModule("../data/airports.js", () => ({
@@ -488,6 +495,26 @@ describe("plan-trip scaffold (VOY-1414)", () => {
     const out = jsonOutputCalls();
     expect(mockGraphql).toHaveBeenCalledTimes(2); // still only create + travellers
     expect(out.nextSteps.some((s: string) => s.includes("search flights") && s.includes("--to MCO"))).toBe(true);
+  });
+
+  it("shell-quotes next-step values that contain spaces (thread 7)", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-q", title: "Trip" } })
+      .mockResolvedValueOnce({ tripPlanTravellers: [] });
+
+    await runPlanTrip([
+      "--client", "client-1", "--title", "Trip",
+      "--hotel", "Grand Plaza Hotel",
+      "--checkin", "2026-09-01", "--checkout", "2026-09-05",
+      "--json",
+    ]);
+
+    const out = jsonOutputCalls();
+    const hotelStep = out.nextSteps.find((s: string) => s.includes("search hotels"));
+    // The spaced value must be single-quoted so the pasted command is valid.
+    expect(hotelStep).toContain("--location 'Grand Plaza Hotel'");
+    // And not left bare/unquoted.
+    expect(hotelStep).not.toMatch(/--location Grand Plaza Hotel/);
   });
 
   it("reuses an existing plan with --plan (fetch, no create)", async () => {
