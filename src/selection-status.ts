@@ -87,11 +87,18 @@ export function classifySelection(
   }
 
   // No options from here down.
-  if (!state.blueprintMonitorId || !monitor) {
-    // Nothing is fetching and nothing can — a required input is missing.
+  if (!state.blueprintMonitorId) {
+    // No monitor exists and none can fetch — a required input is missing.
     // The specific "what's missing" is the OWNING GOAL's checkoutReadiness
     // (surfaced by the caller / VOY-1416), not recomputed here.
     return { status: "AWAITING_INPUT", optionCount: 0 };
+  }
+
+  if (!monitor) {
+    // A monitor id IS set but we couldn't read its state (best-effort read
+    // failed). The selection is auto-fetchable, so this is "fetchable, state
+    // unknown" — FETCHING, NOT "you forgot an input" (AWAITING_INPUT).
+    return { status: "FETCHING", optionCount: 0, retryAfterMs };
   }
 
   if (monitor.lastFetchError && attemptIsNewerThanSuccess(monitor)) {

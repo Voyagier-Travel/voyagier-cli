@@ -102,7 +102,10 @@ export function registerSelectionOptionsCommands(program: Command): void {
     .option("--human", "Force human-readable output")
     .action(async (selectionId: string, opts) => {
       const retryAfterMs = 2000;
-      const timeoutMs = Math.max(1, parseInt(opts.timeout, 10) || 30) * 1000;
+      // Parse THEN clamp: an explicit `--timeout 0` must clamp to 1s (consistent
+      // with the Math.max floor), not silently revert to the 30s default via `|| 30`.
+      const parsedTimeout = parseInt(opts.timeout, 10);
+      const timeoutMs = Math.max(1, Number.isNaN(parsedTimeout) ? 30 : parsedTimeout) * 1000;
       // Agent-first: default to JSON unless --human is explicitly requested.
       const asJson = opts.json || !opts.human;
 

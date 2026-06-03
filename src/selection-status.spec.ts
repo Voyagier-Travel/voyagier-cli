@@ -47,6 +47,18 @@ describe("classifySelection — the silent-empty killer (VOY-1415)", () => {
     expect(r.optionCount).toBe(0);
   });
 
+  it("FETCHING (not AWAITING_INPUT) when a monitor id is set but monitor state is unreadable", () => {
+    // Best-effort monitor read failed: the selection IS auto-fetchable, so this
+    // is "fetchable, state unknown" — must NOT look like a missing input.
+    const r = classifySelection(
+      base({ optionCount: 0, blueprintMonitorId: "m1", monitor: null }),
+      { retryAfterMs: 2000 },
+    );
+    expect(r.status).toBe("FETCHING");
+    expect(r.status).not.toBe("AWAITING_INPUT");
+    expect(r.retryAfterMs).toBe(2000);
+  });
+
   it("FETCH_ERROR when empty and the latest attempt errored (newer than last success)", () => {
     const r = classifySelection(
       base({
@@ -90,13 +102,15 @@ describe("classifySelection — the silent-empty killer (VOY-1415)", () => {
 
   it("never returns a bare empty result without a status (the whole point)", () => {
     // Exhaustive: every empty-options shape resolves to a defined, non-READY status.
-    for (const monitor of [
-      null,
-      { id: "m", fetchedAt: null, lastFetchAttempt: null, lastFetchError: null },
-      { id: "m", fetchedAt: "2026-06-03T00:00:00Z", lastFetchAttempt: "2026-06-03T00:00:00Z", lastFetchError: null },
-      { id: "m", fetchedAt: null, lastFetchAttempt: "2026-06-03T00:00:00Z", lastFetchError: "boom" },
-    ]) {
-      const r = classifySelection(base({ optionCount: 0, blueprintMonitorId: monitor ? "m" : null, monitor }));
+    const shapes: Array<{ monitorId: string | null; monitor: any }> = [
+      { monitorId: null, monitor: null }, // truly no monitor -> AWAITING_INPUT
+      { monitorId: "m", monitor: null }, // monitor id set, state unreadable -> FETCHING
+      { monitorId: "m", monitor: { id: "m", fetchedAt: null, lastFetchAttempt: null, lastFetchError: null } },
+      { monitorId: "m", monitor: { id: "m", fetchedAt: "2026-06-03T00:00:00Z", lastFetchAttempt: "2026-06-03T00:00:00Z", lastFetchError: null } },
+      { monitorId: "m", monitor: { id: "m", fetchedAt: null, lastFetchAttempt: "2026-06-03T00:00:00Z", lastFetchError: "boom" } },
+    ];
+    for (const { monitorId, monitor } of shapes) {
+      const r = classifySelection(base({ optionCount: 0, blueprintMonitorId: monitorId, monitor }));
       expect(["AWAITING_INPUT", "FETCHING", "NO_RESULTS", "FETCH_ERROR"]).toContain(r.status);
       expect(r.status).not.toBe("READY");
     }
