@@ -1,32 +1,59 @@
 import { getApiUrl } from "../../config.js";
 import { deriveBaseUrl } from "../../utils.js";
 
-export interface DeepSubSelection {
-  id: string;
-  type: string;
-  selectedOptionId?: string;
-  options: Array<{ id: string }>;
-}
+// --- Deep plan model (GET_PLAN_DEEP) ---
+// API model (post PR #386 / selections migration): a TripPlanItem has `selections`
+// (plural). Each TripPlanSelection has candidate `options`; the chosen one is the
+// option whose id === parentOptionId. A "sub-selection" (cabin class, room type) is a
+// `childSelections` entry hanging off a chosen option (was `selectedOption.subSelections`).
 
-export interface DeepSelectedOption {
+export interface DeepOption {
   id: string;
   name: string;
+  description?: string;
   price?: number;
-  status: string;
-  subSelections?: DeepSubSelection[];
+  currency?: string;
+  optionType?: string;
+  status?: string;
+  isBookable?: boolean;
+  sortOrder?: number;
+  sourceOptionId?: string | null;
+  childSelections?: DeepSelection[];
 }
 
 export interface DeepSelection {
   id: string;
-  isLocked: boolean;
-  selectedOption?: DeepSelectedOption;
+  type?: string;
+  isLocked?: boolean;
+  parentOptionId?: string | null;
+  assignedTravellers?: Array<{ id: string; firstName?: string; lastName?: string; dateOfBirth?: string; gender?: string }>;
+  options?: DeepOption[];
 }
 
 export interface DeepItem {
   id: string;
   type: string;
   title: string;
-  selection?: DeepSelection;
+  selections?: DeepSelection[];
+}
+
+/** The chosen option of a selection (options[].id === parentOptionId), or null. */
+export function deepChosenOption(sel: DeepSelection): DeepOption | null {
+  if (!sel.parentOptionId) return null;
+  return (sel.options ?? []).find((o) => o.id === sel.parentOptionId) ?? null;
+}
+
+/** All sub-selections (childSelections) hanging off an item's chosen options. */
+export function deepSubSelections(item: DeepItem): Array<{ selection: DeepSelection; parentOption: DeepOption }> {
+  const out: Array<{ selection: DeepSelection; parentOption: DeepOption }> = [];
+  for (const sel of item.selections ?? []) {
+    const chosen = deepChosenOption(sel);
+    if (!chosen) continue;
+    for (const child of chosen.childSelections ?? []) {
+      out.push({ selection: child, parentOption: chosen });
+    }
+  }
+  return out;
 }
 
 export interface TripPlan {
@@ -114,9 +141,14 @@ export function inferItemType(title: string): "flight" | "hotel" | "other" {
 }
 
 export function itemStatus(item: DeepItem): "selected" | "pending" | "needs_sub_selection" {
-  if (!item.selection?.selectedOption) return "pending";
-  const subs = item.selection.selectedOption.subSelections ?? [];
-  const hasPendingSub = subs.some(s => !s.selectedOptionId && s.options.length > 0);
+  const selections = item.selections ?? [];
+  if (selections.length === 0) return "pending";
+  // An item is pending if any of its selections has no chosen option yet.
+  const anyUnchosen = selections.some((s) => !deepChosenOption(s));
+  if (anyUnchosen) return "pending";
+  // All chosen: but a chosen option may have pending child selections (sub-selections).
+  const subs = deepSubSelections(item);
+  const hasPendingSub = subs.some(({ selection }) => !deepChosenOption(selection) && (selection.options ?? []).length > 0);
   return hasPendingSub ? "needs_sub_selection" : "selected";
 }
 
