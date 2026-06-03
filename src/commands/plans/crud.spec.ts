@@ -1,7 +1,11 @@
 import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals";
 import { Command } from "commander";
 import { CliErrorCode } from "../../errors.js";
-import { GET_TRIP_PLAN, GET_TRIP_PLAN_SUMMARY, GET_PLAN_DEEP, GET_TRIP_PLAN_ITEM_TYPES } from "../../queries.js";
+import {
+  GET_TRIP_PLAN, GET_TRIP_PLAN_SUMMARY, GET_PLAN_DEEP, GET_TRIP_PLAN_ITEM_TYPES,
+  CREATE_FLIGHT_SELECTION, CREATE_HOTEL_SELECTION, CREATE_ACTIVITY_SELECTION,
+  SELECT_DEPARTURE_FLIGHT, SELECT_RETURN_FLIGHT,
+} from "../../queries.js";
 import { itemStatus, deepSubSelections, deepChosenOption, DeepItem } from "./types.js";
 
 const mockGraphql = jest.fn();
@@ -378,5 +382,26 @@ describe("VOY-1412 — GET_PLAN_DEEP schema alignment", () => {
       selections: [{ id: "s", type: "Hotel", parentOptionId: null, options: [{ id: "h1", name: "Hotel" }] }],
     };
     expect(itemStatus(item)).toBe("pending");
+  });
+});
+
+// --- VOY-1413 regression: option blob is `optionData` on the API, aliased to bookingData ---
+// `bookingData` was dropped from TripPlanSelectOption (renamed to `optionData`). The CLI
+// aliases it back (`bookingData: optionData`) so consumers (extractFlightToken, parseStops,
+// formatters) keep reading `opt.bookingData` unchanged. Lock the alias so the drift can't
+// silently re-ship and re-break `plan-trip`.
+describe("VOY-1413 — option blob field uses optionData (aliased to bookingData)", () => {
+  const optionQueries: Array<[string, string]> = [
+    ["CREATE_FLIGHT_SELECTION", CREATE_FLIGHT_SELECTION],
+    ["CREATE_HOTEL_SELECTION", CREATE_HOTEL_SELECTION],
+    ["CREATE_ACTIVITY_SELECTION", CREATE_ACTIVITY_SELECTION],
+    ["SELECT_DEPARTURE_FLIGHT", SELECT_DEPARTURE_FLIGHT],
+    ["SELECT_RETURN_FLIGHT", SELECT_RETURN_FLIGHT],
+  ];
+
+  it.each(optionQueries)("%s aliases optionData -> bookingData (no bare bookingData)", (_name, query) => {
+    expect(query).toContain("bookingData: optionData");
+    // No bare `bookingData` field selection (the dropped field) outside the alias.
+    expect(query.replace(/bookingData: optionData/g, "")).not.toMatch(/\bbookingData\b/);
   });
 });

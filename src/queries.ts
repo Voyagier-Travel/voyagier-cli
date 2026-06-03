@@ -395,7 +395,7 @@ export const CREATE_FLIGHT_SELECTION = `
     createTripPlanFlightSelection(tripPlanId: $tripPlanId, input: $input) {
       item { id title tripPlanId }
       selection { id }
-      options { id name price time airline duration bookingData sortOrder }
+      options { id name price time airline duration bookingData: optionData sortOrder }
     }
   }
 `;
@@ -405,7 +405,7 @@ export const CREATE_HOTEL_SELECTION = `
     createTripPlanHotelSelection(tripPlanId: $tripPlanId, input: $input) {
       item { id title tripPlanId }
       selection { id }
-      options { id name price time duration bookingData sortOrder }
+      options { id name price time duration bookingData: optionData sortOrder }
     }
   }
 `;
@@ -415,7 +415,7 @@ export const CREATE_ACTIVITY_SELECTION = `
     createTripPlanActivitySelection(tripPlanId: $tripPlanId, input: $input) {
       item { id title tripPlanId }
       selection { id }
-      options { id name price time duration bookingData sortOrder }
+      options { id name price time duration bookingData: optionData sortOrder }
     }
   }
 `;
@@ -426,7 +426,7 @@ export const SELECT_DEPARTURE_FLIGHT = `
   mutation SelectDeparture($selectionId: String!, $flightToken: String!) {
     selectDepartureFlight(selectionId: $selectionId, flightToken: $flightToken) {
       id
-      options { id name price time airline duration bookingData }
+      options { id name price time airline duration bookingData: optionData }
     }
   }
 `;
@@ -435,7 +435,7 @@ export const SELECT_RETURN_FLIGHT = `
   mutation SelectReturn($selectionId: String!, $flightToken: String!) {
     selectReturnFlight(selectionId: $selectionId, flightToken: $flightToken) {
       id
-      options { id name price time airline duration bookingData }
+      options { id name price time airline duration bookingData: optionData }
     }
   }
 `;
