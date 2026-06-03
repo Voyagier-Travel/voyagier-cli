@@ -191,6 +191,27 @@ export type SelectionType = (typeof SELECTION_TYPES)[number];
 export const SELECTION_SCOPES = ["Group", "Traveller", "Trip"] as const;
 export type SelectionScope = (typeof SELECTION_SCOPES)[number];
 
+/**
+ * One checkout/decision requirement on a goal, as computed server-side
+ * (TripPlanGoal.checkoutReadiness.requirements). This is the canonical,
+ * backend-owned "what is still blocking this goal" signal — the CLI surfaces
+ * it and maps unfulfilled entries to next-step commands; it does NOT recompute
+ * sufficiency itself.
+ */
+export interface CheckoutRequirementStatus {
+  label: string | null;
+  isFulfilled: boolean;
+  isRequired: boolean;
+  selectionId: string | null;
+  type: string | null;
+  missingTravellerIds: string[];
+}
+
+export interface GoalCheckoutReadiness {
+  isReady: boolean;
+  requirements: CheckoutRequirementStatus[];
+}
+
 export interface TripPlanGoalSummary {
   id: string;
   name: string | null;
@@ -199,7 +220,9 @@ export interface TripPlanGoalSummary {
   sortOrder: number;
   relativeDay: number | null;
   date: string | null;
-  isFulfilled: boolean;
+  isDecided: boolean;
+  isBooked: boolean;
+  checkoutReadiness?: GoalCheckoutReadiness | null;
   includeAllTravellers: boolean;
   groupName: string | null;
   primaryItemId: string | null;
