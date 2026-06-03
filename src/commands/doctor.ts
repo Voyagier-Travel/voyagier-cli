@@ -22,11 +22,65 @@ import chalk from "chalk";
 import { readFileSync, existsSync, statSync, readdirSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import {
+  buildClientSchema,
+  getIntrospectionQuery,
+  parse,
+  validate,
+  type IntrospectionQuery,
+  type GraphQLSchema,
+} from "graphql";
 import { graphql, AuthError } from "../api.js";
 import { credentialsExist, getApiUrl, getUserContext } from "../config.js";
 import { jsonOutput } from "../output.js";
 import { CliError } from "../errors.js";
 import { DOCTOR_PING } from "../queries.js";
+import * as queries from "../queries.js";
+
+/**
+ * Every GraphQL operation the CLI ships, as `{ name, operation }`.
+ *
+ * Source of truth is `src/queries.ts` — every `export const NAME = \`...\``
+ * string export is an operation we send to the backend. Iterating the module
+ * (rather than a hand-maintained list) is deliberate: it guarantees `doctor`
+ * validates the WHOLE surface and can never silently drift back to a
+ * hardcoded subset (the original VOY-1411 bug).
+ */
+export function collectCliOperations(): Array<{ name: string; operation: string }> {
+  const ops: Array<{ name: string; operation: string }> = [];
+  for (const [name, value] of Object.entries(queries as Record<string, unknown>)) {
+    if (typeof value !== "string") continue;
+    const op = value.trim();
+    // Must look like a GraphQL operation document.
+    if (!/^(query|mutation|subscription|fragment|\{)/.test(op)) continue;
+    ops.push({ name, operation: op });
+  }
+  return ops;
+}
+
+/**
+ * Validate every CLI operation against a live schema, field-by-field.
+ * Pure (no I/O) so it is trivially unit-testable with a fixture schema.
+ * Returns per-operation drift diagnostics (empty array => all valid).
+ */
+export function validateOperationsAgainstSchema(
+  schema: GraphQLSchema,
+  ops: Array<{ name: string; operation: string }>,
+): Array<{ name: string; errors: string[] }> {
+  const drifted: Array<{ name: string; errors: string[] }> = [];
+  for (const { name, operation } of ops) {
+    let errors: string[] = [];
+    try {
+      const ast = parse(operation);
+      errors = validate(schema, ast).map((e) => e.message);
+    } catch (e) {
+      // A parse error is a malformed op we ship — treat as drift, not a crash.
+      errors = [`parse error: ${e instanceof Error ? e.message : String(e)}`];
+    }
+    if (errors.length > 0) drifted.push({ name, errors });
+  }
+  return drifted;
+}
 
 export type CheckStatus = "PASS" | "WARN" | "FAIL";
 
@@ -144,77 +198,64 @@ async function checkReachability(): Promise<DoctorCheck> {
 }
 
 /**
- * Verify schema compatibility on critical v2 operations.
+ * Verify schema compatibility across the ENTIRE CLI operation surface.
  *
- * Strategy: run a lightweight subset of `audit-cli.mjs` here. For now, ping a
- * few representative queries used by the agent fast path. If any throws a
- * GraphQL validation error (vs. permissions/data), we have schema drift.
+ * Strategy (the VOY-1411 fix): fetch the live schema via a single
+ * introspection query, build a client schema, then field-by-field validate
+ * EVERY operation the CLI ships (collected from src/queries.ts) using
+ * graphql's own `validate()`. This is the same technique as the workspace
+ * audit script, brought into the runtime self-check.
  *
- * Note: full audit lives at projects/api-strategy/schema/audit-cli.mjs and is
- * wired into CI separately. This is the runtime self-check.
+ * Why this replaced the old 2-probe version: the original checkSchema probed
+ * exactly two always-valid queries and reported PASS while `goals`,
+ * `plans get`, `selections`, `options` etc. were all broken (VOY-1407/1412/
+ * 1413/1416). Validating the whole surface against the live schema would have
+ * caught the entire drift chain in one run.
+ *
+ * Side-effect-free: introspection + local validation only. No CLI operation
+ * (including mutations) is ever executed.
  */
 async function checkSchema(): Promise<DoctorCheck> {
-  const probes: Array<{ name: string; query: string }> = [
-    { name: "tripPlanClients", query: "{ tripPlanClients { count } }" },
-    { name: "tripPlans", query: "{ tripPlans(page: 1, limit: 1) { count } }" },
-  ];
-
-  const failures: string[] = [];
-  const transportErrors: string[] = [];
-  for (const probe of probes) {
-    try {
-      await graphql(probe.query);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // Auth failure from any probe means the auth check already failed; skip schema verdict.
-      if (err instanceof CliError && err.code === "AUTH_FAILED") {
-        return {
-          name: "schema",
-          status: "WARN",
-          message: "Schema check skipped (auth failed; fix auth first)",
-        };
-      }
-      // Permission errors are not schema drift; record as a separate signal so we don't
-      // silently report PASS while the user can't reach the data.
-      if (err instanceof CliError && err.code === "PERMISSION_DENIED") {
-        transportErrors.push(`${probe.name}: permission denied`);
-        continue;
-      }
-      // GraphQL validation errors are now surfaced via SCHEMA_DRIFT in api.ts (see recent
-      // changes). Trust the typed code first, then fall back to message heuristic for older
-      // error shapes we haven't normalized yet.
-      const driftCode = err instanceof CliError && err.code === "SCHEMA_DRIFT";
-      const driftMessage =
-        /cannot query field|unknown (?:type|argument|field)|expected type|undefined field|did you mean/i.test(msg);
-      if (driftCode || driftMessage) {
-        failures.push(`${probe.name}: ${msg}`);
-      } else {
-        // NETWORK / API_ERROR / unknown — record as transport so we don't claim PASS.
-        transportErrors.push(`${probe.name}: ${msg}`);
-      }
+  // 1. Fetch the live schema. One introspection query covers the whole surface.
+  let schema: GraphQLSchema;
+  try {
+    const introspection = await graphql<IntrospectionQuery>(getIntrospectionQuery());
+    schema = buildClientSchema(introspection);
+  } catch (err) {
+    if (err instanceof CliError && err.code === "AUTH_FAILED") {
+      return {
+        name: "schema",
+        status: "WARN",
+        message: "Schema check skipped (auth failed; fix auth first)",
+      };
     }
-  }
-
-  if (transportErrors.length > 0 && failures.length === 0) {
+    // Couldn't introspect or build the schema (network blip, permissions, or an
+    // unexpected shape). Inconclusive — WARN, never a false FAIL.
     return {
       name: "schema",
       status: "WARN",
-      message: `Schema check inconclusive — transport/permission errors on ${transportErrors.length} probe(s):\n${transportErrors.map((e) => "    " + e).join("\n")}`,
+      message: `Schema check inconclusive — could not introspect live schema: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 
-  if (failures.length === 0) {
+  // 2. Validate every shipped operation against it.
+  const ops = collectCliOperations();
+  const drifted = validateOperationsAgainstSchema(schema, ops);
+
+  if (drifted.length === 0) {
     return {
       name: "schema",
       status: "PASS",
-      message: `Critical operations valid (${probes.length} probed)`,
+      message: `All ${ops.length} CLI operations valid against live schema`,
     };
   }
   return {
     name: "schema",
     status: "FAIL",
-    message: `Schema drift detected on ${failures.length} operation(s)`,
-    details: { failures },
+    message: `Schema drift detected on ${drifted.length}/${ops.length} operation(s)`,
+    details: {
+      drifted: drifted.map((d) => `${d.name}: ${d.errors.join("; ")}`),
+    },
   };
 }
 
@@ -429,7 +470,13 @@ export function registerDoctorCommand(program: Command, currentVersion: string):
         console.log(`  ${statusIcon(c.status)} ${chalk.bold(c.name.padEnd(14))} ${c.message}`);
         if (c.details && (c.status === "FAIL" || c.status === "WARN")) {
           for (const [k, v] of Object.entries(c.details)) {
-            console.log(chalk.dim(`      ${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}`));
+            if (Array.isArray(v)) {
+              // One entry per line — drift lists get long; comma-joining is unreadable.
+              console.log(chalk.dim(`      ${k}:`));
+              for (const entry of v) console.log(chalk.dim(`        - ${String(entry)}`));
+            } else {
+              console.log(chalk.dim(`      ${k}: ${String(v)}`));
+            }
           }
         }
       }
