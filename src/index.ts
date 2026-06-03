@@ -36,11 +36,12 @@ program
   .version(pkg.version)
   .option("--stacktrace", "show full error stack traces")
   .addHelpText("after", `
-AI Agent Quick Start:
-  voyagier plan-trip --client "Client Name" --title "Trip" --from DCA --to CDG --depart <DATE> --return <DATE> --hotel Paris --travellers "Name" --auto-select navigator --json
-  voyagier search activities --plan <ID> --destination Paris --date <DATE> --query "wine tour" --json
-  voyagier select 1 --plan <ID> --json
-  voyagier book <ID> --json
+AI Agent Quick Start (scaffold, then compose — search is async):
+  voyagier plan-trip --client "Client Name" --title "Trip" --from DCA --to CDG --depart <DATE> --return <DATE> --hotel Paris --travellers "Name" --json
+  voyagier search flights --plan <ID> --from DCA --to CDG --date <DATE> --return <DATE> --json
+  voyagier selection-options <SELECTION_ID> --wait --json
+  voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
+  voyagier book <PLAN_ID> --json
 
 Full reference: voyagier agent-docs`);
 

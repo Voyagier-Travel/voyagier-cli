@@ -26,54 +26,6 @@ interface Traveller {
   lastName: string;
 }
 
-interface SelectOption {
-  id: string;
-  name: string;
-  price?: number;
-  time?: string;
-  airline?: string;
-  duration?: string;
-  bookingData?: Record<string, unknown>;
-  sortOrder: number;
-}
-
-interface SelectionResult {
-  item: { id: string; title: string; tripPlanId: string };
-  selection: { id: string };
-  options: SelectOption[];
-}
-
-interface RawFlightOption {
-  id: string;
-  name: string;
-  price?: number;
-  time?: string;
-  airline?: string;
-  duration?: string;
-  bookingData?: Record<string, unknown>;
-}
-
-type SortField = "price" | "duration" | "stops";
-export type AutoSelectStrategy = "navigator" | "cheapest" | "fastest" | "fewest-stops";
-
-export interface Alternative {
-  rank: number;
-  summary: string;
-  price?: number;
-  reason: string;
-}
-
-interface AutoSelectResult {
-  departure?: { summary: string; airline?: string; duration?: string; price?: number };
-  returnFlight?: { summary: string; airline?: string; duration?: string; price?: number };
-  cabin?: { name: string; price?: number };
-  hotel?: { name: string; price?: number; perNight: boolean };
-  strategy: AutoSelectStrategy;
-  rank: number;
-  rankReason: string;
-  error?: string;
-}
-
 export function parseDurationMinutes(duration?: string): number {
   if (!duration) return Infinity;
   const match = duration.match(/(\d+)h\s*(\d+)?m?/);
@@ -104,126 +56,6 @@ export function parseStops(bookingData?: Record<string, unknown>): number {
   return Infinity;
 }
 
-export function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[] {
-  return [...options].sort((a, b) => {
-    switch (sortBy) {
-      case "price":
-        return (a.price ?? Infinity) - (b.price ?? Infinity);
-      case "duration":
-        return parseDurationMinutes(a.duration) - parseDurationMinutes(b.duration);
-      case "stops":
-        return parseStops(a.bookingData) - parseStops(b.bookingData);
-      default:
-        return 0;
-    }
-  });
-}
-
-// TODO: Replace with booking-api ranking service call
-export function rankByNavigator(options: SelectOption[]): SelectOption[] {
-  if (options.length === 0) return [];
-
-  const byPrice = sortOptions(options, "price");
-  const byDuration = sortOptions(options, "duration");
-  const byStops = sortOptions(options, "stops");
-
-  const priceRank = new Map<string, number>();
-  const durationRank = new Map<string, number>();
-  const stopsRank = new Map<string, number>();
-
-  byPrice.forEach((o, i) => priceRank.set(o.id, i + 1));
-  byDuration.forEach((o, i) => durationRank.set(o.id, i + 1));
-  byStops.forEach((o, i) => stopsRank.set(o.id, i + 1));
-
-  return [...options].sort((a, b) => {
-    const scoreA = (priceRank.get(a.id)! * 0.5) + (durationRank.get(a.id)! * 0.3) + (stopsRank.get(a.id)! * 0.2);
-    const scoreB = (priceRank.get(b.id)! * 0.5) + (durationRank.get(b.id)! * 0.3) + (stopsRank.get(b.id)! * 0.2);
-    return scoreA - scoreB;
-  });
-}
-
-export function applyStrategy(options: SelectOption[], strategy: AutoSelectStrategy): SelectOption[] {
-  switch (strategy) {
-    case "navigator": return rankByNavigator(options);
-    case "cheapest": return sortOptions(options, "price");
-    case "fastest": return sortOptions(options, "duration");
-    case "fewest-stops":
-      return [...options].sort((a, b) => {
-        const stopsA = parseStops(a.bookingData);
-        const stopsB = parseStops(b.bookingData);
-        if (stopsA !== stopsB) return stopsA - stopsB;
-        return (a.price ?? Infinity) - (b.price ?? Infinity);
-      });
-  }
-}
-
-export function getRankReason(strategy: AutoSelectStrategy): string {
-  switch (strategy) {
-    case "navigator": return "Best overall value based on price, duration, and stops";
-    case "cheapest": return "Lowest price";
-    case "fastest": return "Shortest flight duration";
-    case "fewest-stops": return "Fewest layovers, then price";
-  }
-}
-
-function strategyTitle(strategy: AutoSelectStrategy): string {
-  switch (strategy) {
-    case "navigator": return "🧭 Navigator's Pick";
-    case "cheapest": return "💰 Cheapest Pick";
-    case "fastest": return "⚡ Fastest Pick";
-    case "fewest-stops": return "🛬 Fewest Stops Pick";
-  }
-}
-
-export function generateAlternativeReason(alt: SelectOption, selected: SelectOption): string {
-  const altPrice = alt.price;
-  const selPrice = selected.price;
-  const hasPrices = altPrice != null && selPrice != null && selPrice > 0;
-  const altDuration = parseDurationMinutes(alt.duration);
-  const selDuration = parseDurationMinutes(selected.duration);
-  const altStops = parseStops(alt.bookingData);
-  const selStops = parseStops(selected.bookingData);
-
-  if (altStops < selStops && altStops === 0) {
-    if (!hasPrices) return "Direct flight";
-    return altPrice! > selPrice!
-      ? `Direct flight, $${(altPrice! - selPrice!).toFixed(0)} more`
-      : `Direct flight, saves $${(selPrice! - altPrice!).toFixed(0)}`;
-  }
-
-  if (altDuration < selDuration && altDuration !== Infinity && selDuration !== Infinity) {
-    const mins = selDuration - altDuration;
-    const h = Math.floor(mins / 60);
-    const m = mins % 60;
-    const timeStr = h > 0 && m > 0 ? `${h}h${m}m` : h > 0 ? `${h}h` : `${m}m`;
-
-    if (hasPrices) {
-      const ratio = altPrice! / selPrice!;
-      if (ratio >= 1.5) return `${timeStr} faster but ${ratio.toFixed(1)}x price`;
-      const diff = altPrice! - selPrice!;
-      return diff > 0
-        ? `${timeStr} faster but $${diff.toFixed(0)} more`
-        : `${timeStr} faster, saves $${Math.abs(diff).toFixed(0)}`;
-    }
-    return `${timeStr} faster`;
-  }
-
-  if (hasPrices && altPrice! < selPrice!) {
-    const diff = selPrice! - altPrice!;
-    if (altDuration > selDuration && altDuration !== Infinity && selDuration !== Infinity) {
-      const mins = altDuration - selDuration;
-      const h = Math.floor(mins / 60);
-      const m = mins % 60;
-      const timeStr = h > 0 && m > 0 ? `${h}h${m}m` : h > 0 ? `${h}h` : `${m}m`;
-      return `Saves $${diff.toFixed(0)} but ${timeStr} longer`;
-    }
-    return `Saves $${diff.toFixed(0)}`;
-  }
-
-  return alt.airline ? `${alt.airline} service` : "Option";
-}
-
-
 function parseTravellers(names: string): Array<{ firstName: string; lastName: string }> {
   return names.split(",")
     .map(name => name.trim())
@@ -235,24 +67,22 @@ function parseTravellers(names: string): Array<{ firstName: string; lastName: st
     });
 }
 
-const VALID_STRATEGIES: AutoSelectStrategy[] = ["navigator", "cheapest", "fastest", "fewest-stops"];
-
 export function registerPlanTripCommand(program: Command): void {
   program
     .command("plan-trip")
-    .description("Create or extend a trip plan (flights + hotels). Use --plan <id> to add legs. Activities: voyagier search activities")
+    .description("Scaffold a trip plan (plan + travellers + goal graph), then compose it with search / selection-options / select. Use --plan <id> to add to an existing plan.")
     .addHelpText("after", `
 Examples:
-  # Book a round-trip flight + hotel (two commands total):
+  # Scaffold a round-trip flight + hotel plan; prints the compose next-steps:
   voyagier plan-trip --client "Smith Family" --title "Paris Trip" \\
     --from DCA --to Paris --depart <YYYY-MM-DD> --return <YYYY-MM-DD> \\
-    --hotel Paris --travellers "John Doe" --auto-select navigator --json
-  voyagier book <PLAN_ID> --json
+    --hotel Paris --travellers "John Doe" --json
 
-  # One-way, cheapest option (omit --client to auto-pick if you have exactly one):
+  # One-way (omit --client to auto-pick if you have exactly one active client):
   voyagier plan-trip --title "London" --from JFK --to London \\
-    --depart <YYYY-MM-DD> --travellers "Jane Smith" --auto-select cheapest --json
+    --depart <YYYY-MM-DD> --travellers "Jane Smith" --json
 
+  Then follow the printed next-steps: search → selection-options --wait → select.
   Full agent reference: voyagier agent-docs
 `)
     .option("--plan <id>", "Add to an existing trip plan instead of creating a new one")
@@ -267,9 +97,6 @@ Examples:
     .option("--checkout <date>", "Hotel check-out date (defaults to --return or --depart + 1 day)")
     .option("--guests <n>", "Number of guests (defaults to traveller count)")
     .option("--travellers <names>", "Comma-separated traveller names, e.g. \"John Doe, Jane Doe\"")
-    .option("--sort <field>", "Sort options by: price, duration, stops", "price")
-    .option("--max-results <n>", "Max options to show per category", "10")
-    .option("--auto-select <strategy>", "Auto-select best options: navigator, cheapest, fastest, fewest-stops")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
     .action(async (opts) => {
@@ -280,11 +107,6 @@ Examples:
         // Validate --plan / --title
         if (!opts.plan && !opts.title) {
           fatal("--title is required when --plan is not provided.");
-        }
-
-        // Validate --auto-select
-        if (opts.autoSelect && !VALID_STRATEGIES.includes(opts.autoSelect as AutoSelectStrategy)) {
-          fatal(`Invalid --auto-select value "${opts.autoSelect}". Valid: navigator, cheapest, fastest, fewest-stops`);
         }
 
         // Validate inputs
@@ -309,16 +131,6 @@ Examples:
         if (opts.from && /^[A-Za-z]{3}$/.test(opts.from.trim())) {
           validateIata(opts.from, "--from");
         }
-
-        const sortBy = (opts.sort ?? "price") as SortField;
-        if (!["price", "duration", "stops"].includes(sortBy)) {
-          fatal(`Invalid --sort value "${sortBy}". Valid: price, duration, stops`);
-        }
-        const maxResults = parseInt(opts.maxResults ?? "10", 10);
-        if (!Number.isFinite(maxResults) || maxResults < 1) {
-          fatal("--max-results must be a positive integer.");
-        }
-        const baseUrl = deriveBaseUrl(getApiUrl());
 
         // Step 1: Create or fetch plan
         let plan: TripPlan;
