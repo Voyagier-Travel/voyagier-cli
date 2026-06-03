@@ -407,7 +407,7 @@ export const GET_GOALS_FOR_SEARCH = `
       type
       sortOrder
       items {
-        selections { id type }
+        selections { id type segmentIndex }
       }
     }
   }
@@ -446,6 +446,20 @@ export const CREATE_DATE_SELECTION = `
 export const ADD_DATE_OPTION = `
   mutation AddTripPlanDateOption($selectionId: String!, $startDate: String!) {
     addTripPlanDateOption(selectionId: $selectionId, startDate: $startDate) {
+      id
+    }
+  }
+`;
+
+// addTripPlanDateOption only populates the Date selection's startDate output.
+// To resolve a date RANGE (so the endDate output — and thus the return-leg /
+// hotel check-out bindings — become non-null), set the Date selection's
+// `duration` input: endDate = startDate + duration days. Without this the
+// flight/hotel monitor query stays "insufficient" and never fetches inventory
+// (VOY-1421).
+export const SET_SELECTION_INPUT_VALUE = `
+  mutation SetTripPlanSelectionInputValue($selectionId: String!, $fieldName: String!, $value: JSON!) {
+    setTripPlanSelectionInputValue(selectionId: $selectionId, fieldName: $fieldName, value: $value) {
       id
     }
   }
