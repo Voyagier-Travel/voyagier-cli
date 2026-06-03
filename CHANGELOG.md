@@ -6,6 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ---
 
+## [2.1.1] — 2026-06-03
+
+Composable goal-graph write path. The CLI now composes a trip by searching against the plan's goals and selecting options on the resulting selections, instead of a synchronous search-and-attach flow.
+
+### Changed
+
+- **`search` is asynchronous and goal-based.** `search flights | hotels | activities` resolves the target goal (`--goal <id>`, or the first matching goal) and its mirror list, sets the provided inputs, and creates a mirroring selection. The response returns a `selectionId`; options are fetched in the background. New flags: `--goal` (all), `--max-stops` (flights), `--replace` (hotels, activities).
+- **`select` chooses by IDs.** `voyagier select --selection-id <id> --option-id <id>` is the primary path. Index-based `select <n>` still works against the last cached search; `--plan <id>` asserts plan ownership of the cache.
+- **`plan-trip` is a scaffold.** It creates the plan + travellers + default goal graph and prints the exact compose next-steps for that plan. It no longer auto-searches or auto-selects.
+
+### Added
+
+- **`voyagier selection-options <selectionId>`** — read or poll a selection's options. `--wait` polls with backoff until options are ready or a terminal status (e.g. `AWAITING_INPUT`) is reached; `--timeout <seconds>` bounds the wait; `--human` forces readable output.
+
+### Removed
+
+- **`voyagier options` / `voyagier pick`** — the sub-selection model is gone. Use `selection-options` to read/poll options and `select --selection-id --option-id` to choose.
+
+---
+
 ## [2.1.0] — 2026-05-04
 
 Minor release: ships **Sections 4 (Goals) + 6 (Traveller Groups + Choices)**, agent-surface cleanup, and AGENT.md error-code documentation. Mark unblocked these surfaces in his 2026-05-04 Slack DM: *"TripPlanGoal mutations are frozen along with ParticipantChoice and BlueprintSync."*

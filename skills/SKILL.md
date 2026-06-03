@@ -1,6 +1,6 @@
 ---
 name: voyagier-cli
-version: 1.1.0
+version: 1.2.0
 description: "Voyagier CLI — search, plan, and book travel for clients. For human advisors and AI agents."
 metadata:
   openclaw:
@@ -61,15 +61,16 @@ export VOYAGIER_API_URL=https://dev.voyagier.com  # optional
 | `travellers list --plan <id>` | List travellers | ✅ | ✅ |
 | `travellers update <id>` | Update traveller details | ✅ | — |
 | `travellers remove <id>` | Remove traveller | ✅ | — |
-| **Search** | | | |
-| `search flights` | Search flights (`--from`, `--to`, `--date`) | ✅ | ✅ |
-| `search hotels` | Search hotels (`--location`, `--checkin`, `--checkout`) | ✅ | ✅ |
+| **Search** (async — returns a selectionId) | | | |
+| `search flights` | Search flights (`--from`, `--to`, `--date`, `--return`, `--goal`, `--max-stops`) | ✅ | ✅ |
+| `search hotels` | Search hotels (`--location`, `--checkin`, `--checkout`, `--goal`) | ✅ | ✅ |
+| `search activities` | Search Viator experiences (`--destination`, `--date`, `--query`, `--goal`) | ✅ | ✅ |
 | `search airports <query>` | Look up airport codes by city name | ✅ | ✅ |
-| **Selection** | | | |
-| `select <n>` | Select numbered option from last search | ✅ | ✅ |
+| **Options & Selection** | | | |
+| `selection-options <selectionId>` | Read/poll a selection's options (`--wait` to poll until ready) | ✅ | — |
+| `select --selection-id <id> --option-id <id>` | Choose an option (direct mode) | ✅ | ✅ |
+| `select <n>` | Choose by index from last search | ✅ | ✅ |
 | `select --info <n>` | Preview option without selecting | ✅ | — |
-| `options <planId>` | View sub-options (cabin class, room type) | ✅ | ✅ |
-| `pick <n>` | Pick a sub-option by number | ✅ | ✅ |
 | **Cart & Booking** | | | |
 | `cart <planId>` | View cart with line items and totals | ✅ | ✅ |
 | `book <planId>` | Checkout via Stripe (`--dry-run` to preview) | ✅ | ✅ |
@@ -79,46 +80,45 @@ export VOYAGIER_API_URL=https://dev.voyagier.com  # optional
 | **AI Chat** | | | |
 | `chat` | Interactive AI trip planning REPL | — | — |
 | `chat -m "message"` | Single-turn non-interactive query | — | — |
-| **Composite** | | | |
-| `plan-trip` | One-shot: plan + travellers + search | ✅ | ✅ |
+| **Goals** | | | |
+| `plans goals <planId>` | Inspect the goal graph + readiness / what still needs a decision | ✅ | ✅ |
+| **Scaffold** | | | |
+| `plan-trip` | Create plan + travellers + default goal graph, print compose next-steps | ✅ | ✅ |
 
 ## Core Workflow
 
-The standard booking flow:
+A plan is a **goal graph**. You scaffold the plan, then compose it by searching against goals and selecting options. **Search is asynchronous** — it creates a selection, and options are fetched in the background, so you poll with `selection-options --wait`.
 
 ```bash
-# 1. Create a plan
-voyagier plans create --title "Smith Family — Tokyo" --start 2026-05-01 --end 2026-05-08 --json
+# 1. Scaffold a plan (plan + default goal graph)
+voyagier plan-trip --client "Smith Family" --title "Smith Family — Tokyo" --json
 
 # 2. Add travellers (required before search)
-voyagier travellers add --plan <PLAN_ID> --first John --last Smith --type ADULT --json
+voyagier travellers add --plan <PLAN_ID> --first John --last Smith --type Adult --json
 
-# 3. Search flights (accepts city names or IATA codes)
+# 3. Search flights (accepts city names or IATA codes) → returns a selectionId
 voyagier search flights --plan <PLAN_ID> --from "Washington DC" --to NRT --date 2026-05-01 --return 2026-05-08 --json
 
-# 4. Select a flight
-voyagier select 1 --json
+# 4. Poll the selection until options are ready, then choose one
+voyagier selection-options <SELECTION_ID> --wait --json
+voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
 
-# 5. Pick cabin class
-voyagier options <PLAN_ID> --json
-voyagier pick 1 --json
-
-# 6. Search hotels
+# 5. Search a hotel → poll → select
 voyagier search hotels --plan <PLAN_ID> --location "Tokyo" --checkin 2026-05-01 --checkout 2026-05-08 --json
+voyagier selection-options <SELECTION_ID> --wait --json
+voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
 
-# 7. Select hotel + pick room type
-voyagier select 1 --json
-voyagier options <PLAN_ID> --json
-voyagier pick 3 --json
+# 6. Inspect readiness at any time
+voyagier plans goals <PLAN_ID> --json
 
-# 8. Review cart
+# 7. Review cart
 voyagier cart <PLAN_ID> --json
 
-# 9. Book (opens Stripe checkout)
-voyagier book <PLAN_ID> --dry-run --json   # preview first
-voyagier book <PLAN_ID>                     # actual checkout
+# 8. Book (opens Stripe checkout)
+voyagier book <PLAN_ID> --validate --json   # pre-flight check first
+voyagier book <PLAN_ID>                      # actual checkout
 
-# 10. Share with client
+# 9. Share with client
 voyagier plans share <PLAN_ID> --email client@example.com --role viewer
 ```
 
@@ -149,7 +149,8 @@ Key JSON shapes:
 plans create  → { id, title, startDate, endDate, url }
 plans list    → { items: [{ id, title, startDate, endDate, url }], total, page, limit }
 plans get     → { id, title, items: [...], travellers: [...], url }
-search flights → { selectionId, options: [{ id, name, price, airline, duration }], tripPlanId }
+search flights → { selectionId, options: [...], planContext }   # options often empty initially (async)
+selection-options → { selectionId, status, optionCount, options: [{ id, name, price, ... }] }
 select        → { success, selected: { name, price }, url }
 cart          → { items: [...], total, currency, url }
 book          → { checkoutUrl } or { status, bookingRecords: [...] }
@@ -167,7 +168,8 @@ book          → { checkoutUrl } or { status, bookingRecords: [...] }
 
 - **Hotel search coverage is limited** — Sabre GDS doesn't have all properties. Luxury/boutique hotels may need direct booking.
 - **Airport codes required for search** — Flight search needs IATA codes or resolvable city names, not destination names like "Tuscany."
-- **Round-trip selection is two steps** — First `select` picks departure, CLI then shows return options, second `select` picks return.
+- **Search is asynchronous** — `search` creates a selection and returns a `selectionId`; options arrive shortly after. Poll with `voyagier selection-options <selectionId> --wait` until the status is terminal (ready or awaiting input). Don't expect priced options in the immediate `search` response.
+- **Selecting uses selection + option IDs** — `voyagier select --selection-id <id> --option-id <id>`. Index-based `select <n>` works against the last search, but direct IDs are the reliable agent path.
 - **Flight prices are per-person** — Multiply by traveller count for total.
 - **Travel fee (6%)** is added at checkout, not shown in cart subtotal.
 - **PNR is reserved at checkout** — Sabre fare is locked when `book` runs, not when `select` runs.
