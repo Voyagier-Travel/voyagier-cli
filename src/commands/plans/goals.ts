@@ -56,6 +56,7 @@ import {
   TripPlanGoalSummary,
   TripPlanGoalDeep,
   CreateGoalResult,
+  CheckoutRequirementStatus,
 } from "./types.js";
 
 // ---------- Pure helpers (exported for reuse / tests) ----------
@@ -276,14 +277,36 @@ export function computeReorderUpdates(
 
 // ---------- Output helpers ----------
 
+/**
+ * Unfulfilled REQUIRED requirements on a goal — the implicit "blockedOn".
+ * Source of truth is the server (checkoutReadiness.requirements); this just
+ * filters. Returns [] when readiness is absent (e.g. write-mutation results
+ * that don't fetch it).
+ */
+export function blockingRequirements(g: TripPlanGoalSummary): CheckoutRequirementStatus[] {
+  const reqs = g.checkoutReadiness?.requirements ?? [];
+  return reqs.filter(r => r.isRequired && !r.isFulfilled);
+}
+
+/**
+ * One-token goal state for human output: booked > ready > decided > blocked.
+ */
+function goalStateBadge(g: TripPlanGoalSummary): string {
+  if (g.isBooked) return chalk.green(" ✓ booked");
+  if (g.checkoutReadiness?.isReady) return chalk.green(" ✓ ready");
+  if (g.isDecided) return chalk.yellow(" · decided");
+  const blocked = blockingRequirements(g).length;
+  if (blocked > 0) return chalk.yellow(` · ${blocked} blocking`);
+  return "";
+}
+
 function formatGoalLine(g: TripPlanGoalSummary): string {
   const order = chalk.dim(`[${g.sortOrder}]`);
   const name = g.name ? chalk.white(g.name) : chalk.dim("(unnamed)");
   const type = chalk.cyan(g.type);
   const scope = g.scope ? chalk.dim(` · ${g.scope}`) : "";
   const day = typeof g.relativeDay === "number" ? chalk.dim(` · day ${g.relativeDay}`) : "";
-  const fulfilled = g.isFulfilled ? chalk.green(" ✓") : "";
-  return `  ${order} ${name} (${type}${scope}${day})${fulfilled}\n      ID: ${chalk.dim(g.id)}`;
+  return `  ${order} ${name} (${type}${scope}${day})${goalStateBadge(g)}\n      ID: ${chalk.dim(g.id)}`;
 }
 
 // ---------- Command registration ----------
@@ -370,7 +393,31 @@ export function registerGoalCommands(plans: Command): void {
         console.log(`  Order:     ${goal.sortOrder}`);
         if (typeof goal.relativeDay === "number") console.log(`  Day:       ${goal.relativeDay}`);
         if (goal.date) console.log(`  Date:      ${goal.date}`);
-        console.log(`  Fulfilled: ${goal.isFulfilled ? chalk.green("yes") : chalk.dim("no")}`);
+        console.log(`  Decided:   ${goal.isDecided ? chalk.green("yes") : chalk.dim("no")}`);
+        console.log(`  Booked:    ${goal.isBooked ? chalk.green("yes") : chalk.dim("no")}`);
+        console.log(`  Ready:     ${goal.checkoutReadiness?.isReady ? chalk.green("yes") : chalk.dim("no")}`);
+
+        // Readiness requirements = the implicit "blockedOn". Lead with the
+        // unfulfilled-required ones and map each to a next-step command.
+        const requirements = goal.checkoutReadiness?.requirements ?? [];
+        const blocking = blockingRequirements(goal);
+        if (blocking.length > 0) {
+          console.log(`\n  ${chalk.yellow(`Blocked on (${blocking.length}):`)}`);
+          for (const r of blocking) {
+            const label = r.label ?? "(unnamed requirement)";
+            const where = r.selectionId ? chalk.dim(` → selection ${r.selectionId}`) : "";
+            console.log(`    ✗ ${label}${where}`);
+            if (r.selectionId) {
+              console.log(chalk.dim(`        next: voyagier select ${r.selectionId} <optionId>`));
+            }
+            if (r.missingTravellerIds.length > 0) {
+              console.log(chalk.dim(`        missing for travellers: ${r.missingTravellerIds.join(", ")}`));
+            }
+          }
+        } else if (requirements.length > 0) {
+          console.log(`\n  ${chalk.green("All required steps fulfilled.")}`);
+        }
+
         const items = goal.items ?? [];
         if (items.length > 0) {
           console.log(`\n  Items (${items.length}):`);

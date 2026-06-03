@@ -26,6 +26,7 @@ let computeReorderUpdates: (
   goals: Array<{ id: string; sortOrder: number }>,
   orderIds: string[],
 ) => Array<{ id: string; sortOrder: number }>;
+let blockingRequirements: (g: any) => any[];
 
 beforeAll(async () => {
   const mod = await import("./goals.js");
@@ -38,6 +39,7 @@ beforeAll(async () => {
   parseInitialQuery = mod.parseInitialQuery;
   parseGoalDate = mod.parseGoalDate;
   computeReorderUpdates = mod.computeReorderUpdates;
+  blockingRequirements = mod.blockingRequirements;
 });
 
 beforeEach(() => {
@@ -351,7 +353,9 @@ const GOAL_FIXTURE = {
   sortOrder: 1,
   relativeDay: 0,
   date: null,
-  isFulfilled: false,
+  isDecided: false,
+  isBooked: false,
+  checkoutReadiness: { isReady: false, requirements: [] },
   includeAllTravellers: true,
   groupName: null,
   primaryItemId: null,
@@ -389,6 +393,21 @@ describe("plans goals <planId>", () => {
     const call = mockGraphql.mock.calls[0];
     expect((call[0] as string)).toContain("TripPlanGoalsDeep");
   });
+
+  // VOY-1416 drift guard: the goal query must NOT select the dead top-level
+  // `isFulfilled` field (removed from TripPlanGoal), and MUST select the real
+  // readiness fields. A top-level `isFulfilled` 400s in prod.
+  it("query selects real readiness fields, not the dead isFulfilled", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlanGoals: [] });
+    await runGoals(["goals", "plan-1", "--json"]);
+    const q = mockGraphql.mock.calls[0][0] as string;
+    expect(q).toContain("isDecided");
+    expect(q).toContain("isBooked");
+    expect(q).toContain("checkoutReadiness");
+    // `isFulfilled` is only legal nested inside requirements, never at goal top level.
+    const goalBlock = q.slice(0, q.indexOf("checkoutReadiness"));
+    expect(goalBlock).not.toContain("isFulfilled");
+  });
 });
 
 describe("plans goal <goalId>", () => {
@@ -408,6 +427,51 @@ describe("plans goal <goalId>", () => {
     await expect(runGoals(["goal", "g-x", "--json"])).rejects.toMatchObject({
       code: CliErrorCode.GOAL_NOT_FOUND,
     });
+  });
+
+  it("surfaces checkoutReadiness requirements in --json", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanGoal: {
+        ...GOAL_FIXTURE,
+        isDecided: true,
+        checkoutReadiness: {
+          isReady: false,
+          requirements: [
+            { label: "Hotel", isFulfilled: true, isRequired: true, selectionId: null, type: "ParticipantChoice", missingTravellerIds: [] },
+            { label: "Room", isFulfilled: false, isRequired: true, selectionId: "sel-room", type: "ParticipantChoice", missingTravellerIds: [] },
+          ],
+        },
+        items: [],
+      },
+    });
+    await runGoals(["goal", "g-1", "--json"]);
+    const out = lastJsonOutput();
+    expect(out.data.goal.checkoutReadiness.isReady).toBe(false);
+    expect(out.data.goal.checkoutReadiness.requirements).toHaveLength(2);
+  });
+});
+
+describe("blockingRequirements (implicit blockedOn)", () => {
+  it("returns only unfulfilled REQUIRED requirements", () => {
+    const g = {
+      checkoutReadiness: {
+        isReady: false,
+        requirements: [
+          { label: "Hotel", isFulfilled: true, isRequired: true, selectionId: null, type: "x", missingTravellerIds: [] },
+          { label: "Room", isFulfilled: false, isRequired: true, selectionId: "sel-room", type: "x", missingTravellerIds: [] },
+          { label: "Optional add-on", isFulfilled: false, isRequired: false, selectionId: "sel-opt", type: "x", missingTravellerIds: [] },
+        ],
+      },
+    };
+    const blocking = blockingRequirements(g);
+    expect(blocking).toHaveLength(1);
+    expect(blocking[0].label).toBe("Room");
+    expect(blocking[0].selectionId).toBe("sel-room");
+  });
+
+  it("returns [] when readiness is absent", () => {
+    expect(blockingRequirements({} as any)).toEqual([]);
+    expect(blockingRequirements({ checkoutReadiness: null } as any)).toEqual([]);
   });
 });
 
