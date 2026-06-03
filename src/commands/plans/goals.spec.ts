@@ -27,6 +27,7 @@ let computeReorderUpdates: (
   orderIds: string[],
 ) => Array<{ id: string; sortOrder: number }>;
 let blockingRequirements: (g: any) => any[];
+let nextStepForRequirement: (r: any) => string | null;
 
 beforeAll(async () => {
   const mod = await import("./goals.js");
@@ -40,6 +41,7 @@ beforeAll(async () => {
   parseGoalDate = mod.parseGoalDate;
   computeReorderUpdates = mod.computeReorderUpdates;
   blockingRequirements = mod.blockingRequirements;
+  nextStepForRequirement = mod.nextStepForRequirement;
 });
 
 beforeEach(() => {
@@ -472,6 +474,35 @@ describe("blockingRequirements (implicit blockedOn)", () => {
   it("returns [] when readiness is absent", () => {
     expect(blockingRequirements({} as any)).toEqual([]);
     expect(blockingRequirements({ checkoutReadiness: null } as any)).toEqual([]);
+  });
+});
+
+describe("nextStepForRequirement (Copilot #56: select uses FLAGS not positional)", () => {
+  it("PARTICIPANT_CHOICE → flag-based select direct mode", () => {
+    const step = nextStepForRequirement({
+      label: "Room", isFulfilled: false, isRequired: true,
+      selectionId: "sel-room", type: "PARTICIPANT_CHOICE", missingTravellerIds: [],
+    });
+    expect(step).toBe("voyagier select --selection-id sel-room --option-id <optionId>");
+    // guard against the original positional-arg bug
+    expect(step).not.toMatch(/select sel-room/);
+  });
+
+  it("PARTICIPANT_CHOICE without selectionId → null (no actionable command)", () => {
+    expect(nextStepForRequirement({
+      label: "Room", isFulfilled: false, isRequired: true,
+      selectionId: null, type: "PARTICIPANT_CHOICE", missingTravellerIds: [],
+    })).toBeNull();
+  });
+
+  it("TRAVELLER_FIELD → traveller-update guidance, NOT a select command", () => {
+    const step = nextStepForRequirement({
+      label: "Date of birth", isFulfilled: false, isRequired: true,
+      selectionId: null, type: "TRAVELLER_FIELD", missingTravellerIds: ["t-1"],
+    });
+    expect(step).not.toMatch(/voyagier select/);
+    expect(step).toMatch(/Date of birth/);
+    expect(step).toMatch(/t-1/);
   });
 });
 

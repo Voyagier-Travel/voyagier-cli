@@ -289,6 +289,28 @@ export function blockingRequirements(g: TripPlanGoalSummary): CheckoutRequiremen
 }
 
 /**
+ * Map a blocking requirement to the correct next-step command string.
+ *
+ * Two requirement shapes exist (CheckoutRequirementType):
+ *  - PARTICIPANT_CHOICE  → a missing selection, fixed via `select` DIRECT mode,
+ *    which takes FLAGS (`--selection-id` + `--option-id`), NOT positional args.
+ *    (Round-trip flights use `--flight-token --phase` instead of `--option-id`.)
+ *  - TRAVELLER_FIELD     → a missing traveller attribute (name / DOB); `select`
+ *    does NOT fix this — the traveller record must be updated.
+ *
+ * Returns null when no actionable command applies (e.g. no selectionId).
+ */
+export function nextStepForRequirement(r: CheckoutRequirementStatus): string | null {
+  if (r.type === "TRAVELLER_FIELD") {
+    const who = r.missingTravellerIds.length > 0 ? r.missingTravellerIds.join(", ") : "the affected traveller(s)";
+    return `set “${r.label ?? "field"}” on ${who} (update the traveller record)`;
+  }
+  // PARTICIPANT_CHOICE (and any future selection-backed type)
+  if (!r.selectionId) return null;
+  return `voyagier select --selection-id ${r.selectionId} --option-id <optionId>`;
+}
+
+/**
  * One-token goal state for human output: booked > ready > decided > blocked.
  */
 function goalStateBadge(g: TripPlanGoalSummary): string {
@@ -407,10 +429,11 @@ export function registerGoalCommands(plans: Command): void {
             const label = r.label ?? "(unnamed requirement)";
             const where = r.selectionId ? chalk.dim(` → selection ${r.selectionId}`) : "";
             console.log(`    ✗ ${label}${where}`);
-            if (r.selectionId) {
-              console.log(chalk.dim(`        next: voyagier select ${r.selectionId} <optionId>`));
+            const next = nextStepForRequirement(r);
+            if (next) {
+              console.log(chalk.dim(`        next: ${next}`));
             }
-            if (r.missingTravellerIds.length > 0) {
+            if (r.type !== "TRAVELLER_FIELD" && r.missingTravellerIds.length > 0) {
               console.log(chalk.dim(`        missing for travellers: ${r.missingTravellerIds.join(", ")}`));
             }
           }
