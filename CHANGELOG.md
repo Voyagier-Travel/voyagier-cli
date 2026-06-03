@@ -10,7 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ---
 
-## [2.1.1] — 2026-06-03
+## [2.1.2] — 2026-06-03
 
 Composable goal-graph write path. A trip plan is a goal graph; you compose a trip by searching against the plan's goals and selecting options on the resulting selections.
 
@@ -193,5 +193,6 @@ For the full per-operation breaking-changes table, see `projects/api-strategy/BR
 
 ---
 
+[2.1.2]: https://github.com/Voyagier-Travel/voyagier-cli/releases/tag/v2.1.2
 [2.0.0]: https://github.com/Voyagier-Travel/voyagier-cli/releases/tag/v2.0.0
 [1.8.1]: https://github.com/Voyagier-Travel/voyagier-cli/releases/tag/v1.8.1
