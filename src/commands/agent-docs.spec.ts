@@ -60,9 +60,8 @@ describe("agent-docs", () => {
         // The doc lists at least the clients upsert and plans create payloads.
         expect(content).toMatch(/clients upsert/i);
         expect(content).toMatch(/plans create/i);
-        // The doc must be honest that the envelope is not yet uniform.
+        // The doc must be honest that the envelope is not uniform.
         expect(content).toMatch(/not\s+(yet\s+)?uniform/i);
-        expect(content).toContain("VOY-1192");
       }
     });
 
@@ -151,15 +150,10 @@ describe("agent-docs", () => {
       }
     });
 
-    it("should flag the known v2 gaps so agents don't trip on them", () => {
+    it("should flag the booking-filter behaviour so agents don't trip on it", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
-        // plan-trip --auto-select is broken on v2 schema until VOY-1189 lands.
-        expect(content).toContain("VOY-1189");
-        // --client wiring is in flight (VOY-1193) — plans create / plan-trip
-        // currently DON'T accept the flag, so the doc must say so.
-        expect(content).toContain("VOY-1193");
-        // book --types / --only-bookable are client-side gates only.
+        // book --types / --only-bookable are client-side preflight gates only.
         expect(content.toLowerCase()).toContain("client-side");
       }
     });

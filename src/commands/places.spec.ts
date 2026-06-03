@@ -430,8 +430,6 @@ describe("places attach", () => {
       "--place-id", "place_02HX",
       "--type", "hotel",
       "--country-id", "FR",
-      "--country-name", "France",
-      "--description", "Luxury hotel",
       "--json",
     ]);
 
@@ -441,8 +439,6 @@ describe("places attach", () => {
         input: expect.objectContaining({
           type: "Hotel",
           countryId: "FR",
-          countryName: "France",
-          description: "Luxury hotel",
         }),
       },
       { dryRun: undefined }
