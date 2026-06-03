@@ -14,6 +14,7 @@ Composable goal-graph write path. A trip plan is a goal graph; you compose a tri
 - **`voyagier selection-options <selectionId>`** reads or polls a selection's options. `--wait` polls with backoff until options are ready or a terminal status (`READY` / `NO_RESULTS` / `AWAITING_INPUT` / `FETCH_ERROR`) is reached; `--timeout <seconds>` bounds the wait; `--human` forces readable output.
 - **`select` chooses by IDs.** `voyagier select --selection-id <id> --option-id <id>` is the primary path. Index-based `select <n>` works against the last cached search; `--plan <id>` asserts plan ownership of the cache.
 - **`plan-trip` is a scaffold.** It creates the plan + default goal graph (and adds travellers when `--travellers` is provided), then prints the exact compose next-steps for that plan.
+- **`options` and `pick` are removed.** The sub-selection model they were built on no longer exists. Read options with `voyagier selection-options <selectionId>` and choose with `voyagier select --selection-id <id> --option-id <id>`.
 
 ---
 

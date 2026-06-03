@@ -97,14 +97,14 @@ voyagier plan-trip --client "Smith Family" --title "Smith Family — Tokyo" --js
 voyagier travellers add --plan <PLAN_ID> --first John --last Smith --type Adult --json
 
 # 3. Search flights (accepts city names or IATA codes) → returns a selectionId
-voyagier search flights --plan <PLAN_ID> --from "Washington DC" --to NRT --date 2026-05-01 --return 2026-05-08 --json
+voyagier search flights --plan <PLAN_ID> --from "Washington DC" --to NRT --date 2026-09-01 --return 2026-09-08 --json
 
 # 4. Poll the selection until options are ready, then choose one
 voyagier selection-options <SELECTION_ID> --wait --json
 voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
 
 # 5. Search a hotel → poll → select
-voyagier search hotels --plan <PLAN_ID> --location "Tokyo" --checkin 2026-05-01 --checkout 2026-05-08 --json
+voyagier search hotels --plan <PLAN_ID> --location "Tokyo" --checkin 2026-09-01 --checkout 2026-09-08 --json
 voyagier selection-options <SELECTION_ID> --wait --json
 voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
 
@@ -146,7 +146,7 @@ Every `--json` response follows these rules:
 Key JSON shapes:
 
 ```
-plans create  → { id, title, startDate, endDate, url }
+plans create  → { ...plan, url, planSummary }   # full plan fields + url + planSummary
 plans list    → { items: [{ id, title, startDate, endDate, url }], total, page, limit }
 plans get     → { id, title, items: [...], travellers: [...], url }
 search flights → { tripPlanId, selectionId, options: [...], url }   # flat shape; options often empty initially (async)
