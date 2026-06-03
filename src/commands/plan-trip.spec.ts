@@ -81,10 +81,6 @@ jest.unstable_mockModule("../agent-output.js", () => ({
 // ── Dynamic imports after mocks ────────────────────────────────────────────
 
 let registerPlanTripCommand: (program: Command) => void;
-let rankByNavigator: (options: unknown[]) => unknown[];
-let applyStrategy: (options: unknown[], strategy: string) => unknown[];
-let generateAlternativeReason: (alt: unknown, selected: unknown) => string;
-let getRankReason: (strategy: string) => string;
 let parseDurationMinutes: (d?: string) => number;
 let parseStops: (bd?: Record<string, unknown>) => number;
 let nextDay: (d?: string) => string | undefined;
@@ -92,10 +88,6 @@ let nextDay: (d?: string) => string | undefined;
 beforeAll(async () => {
   const mod = await import("./plan-trip.js");
   registerPlanTripCommand = mod.registerPlanTripCommand;
-  rankByNavigator = mod.rankByNavigator as (options: unknown[]) => unknown[];
-  applyStrategy = mod.applyStrategy as (options: unknown[], strategy: string) => unknown[];
-  generateAlternativeReason = mod.generateAlternativeReason as (alt: unknown, selected: unknown) => string;
-  getRankReason = mod.getRankReason as (strategy: string) => string;
   parseDurationMinutes = mod.parseDurationMinutes as (d?: string) => number;
   parseStops = mod.parseStops as (bd?: Record<string, unknown>) => number;
   nextDay = mod.nextDay as (d?: string) => string | undefined;
@@ -320,152 +312,9 @@ describe("parseStops", () => {
     expect(parseStops(undefined)).toBe(Infinity);
     expect(parseStops({})).toBe(Infinity);
   });
-});
-
-// ── Unit tests: rankByNavigator ───────────────────────────────────────────
-
-describe("rankByNavigator", () => {
-  it("returns empty array for empty input", () => {
-    expect(rankByNavigator([])).toEqual([]);
-  });
-
-  it("returns single option unchanged", () => {
-    const opt = makeOpt({ id: "a", price: 100, duration: "5h0m", stops: 0 });
-    const result = rankByNavigator([opt]);
-    expect(result).toHaveLength(1);
-    expect((result[0] as typeof opt).id).toBe("a");
-  });
-
-  it("ranks cheapest+fastest option highest with composite score", () => {
-    const cheap = makeOpt({ id: "cheap", price: 200, duration: "8h0m", stops: 0 });
-    const expensive = makeOpt({ id: "expensive", price: 2000, duration: "7h0m", stops: 1 });
-    const mid = makeOpt({ id: "mid", price: 400, duration: "9h0m", stops: 1 });
-
-    const result = rankByNavigator([expensive, mid, cheap]) as typeof cheap[];
-    // cheap should rank first: lowest price (rank 1) + reasonable duration + fewer stops
-    expect(result[0].id).toBe("cheap");
-  });
-
-  it("does not mutate the original array", () => {
-    const opts = [
-      makeOpt({ id: "a", price: 300, duration: "9h", stops: 1 }),
-      makeOpt({ id: "b", price: 100, duration: "11h", stops: 0 }),
-    ];
-    const originalOrder = opts.map(o => o.id);
-    rankByNavigator(opts);
-    expect(opts.map(o => o.id)).toEqual(originalOrder);
-  });
-});
-
-// ── Unit tests: applyStrategy ─────────────────────────────────────────────
-
-describe("applyStrategy", () => {
-  const opts = [
-    makeOpt({ id: "a", price: 500, duration: "10h0m", stops: 1, sortOrder: 0 }),
-    makeOpt({ id: "b", price: 200, duration: "12h0m", stops: 0, sortOrder: 1 }),
-    makeOpt({ id: "c", price: 800, duration: "8h0m", stops: 2, sortOrder: 2 }),
-  ];
-
-  it("cheapest: sorts by price ascending", () => {
-    const result = applyStrategy(opts, "cheapest") as typeof opts;
-    expect(result[0].id).toBe("b"); // $200
-    expect(result[1].id).toBe("a"); // $500
-    expect(result[2].id).toBe("c"); // $800
-  });
-
-  it("fastest: sorts by duration ascending", () => {
-    const result = applyStrategy(opts, "fastest") as typeof opts;
-    expect(result[0].id).toBe("c"); // 8h
-    expect(result[1].id).toBe("a"); // 10h
-    expect(result[2].id).toBe("b"); // 12h
-  });
-
-  it("fewest-stops: sorts by stops then price", () => {
-    const result = applyStrategy(opts, "fewest-stops") as typeof opts;
-    expect(result[0].id).toBe("b"); // 0 stops, $200
-    expect(result[1].id).toBe("a"); // 1 stop, $500
-    expect(result[2].id).toBe("c"); // 2 stops, $800
-  });
-
-  it("fewest-stops: secondary sort by price within same stop count", () => {
-    const same1 = makeOpt({ id: "x", price: 800, stops: 1, duration: "10h", sortOrder: 0 });
-    const same2 = makeOpt({ id: "y", price: 300, stops: 1, duration: "12h", sortOrder: 1 });
-    const result = applyStrategy([same1, same2], "fewest-stops") as typeof same1[];
-    expect(result[0].id).toBe("y"); // cheaper at same stop count
-  });
-
-  it("navigator: returns results (integration with rankByNavigator)", () => {
-    const result = applyStrategy(opts, "navigator");
-    expect(result).toHaveLength(opts.length);
-  });
-});
-
-// ── Unit tests: getRankReason ─────────────────────────────────────────────
-
-describe("getRankReason", () => {
-  it("returns correct reasons for each strategy", () => {
-    expect(getRankReason("navigator")).toContain("overall value");
-    expect(getRankReason("cheapest")).toContain("price");
-    expect(getRankReason("fastest")).toContain("duration");
-    expect(getRankReason("fewest-stops")).toContain("layover");
-  });
-});
-
-// ── Unit tests: generateAlternativeReason ────────────────────────────────
-
-describe("generateAlternativeReason", () => {
-  it("describes direct flight with higher price", () => {
-    const alt = makeOpt({ id: "alt", price: 600, duration: "8h0m", stops: 0 });
-    const sel = makeOpt({ id: "sel", price: 200, duration: "10h0m", stops: 1 });
-    const reason = generateAlternativeReason(alt, sel);
-    expect(reason).toContain("Direct flight");
-    expect(reason).toContain("more");
-  });
-
-  it("describes direct flight with lower price", () => {
-    const alt = makeOpt({ id: "alt", price: 100, duration: "8h0m", stops: 0 });
-    const sel = makeOpt({ id: "sel", price: 200, duration: "10h0m", stops: 1 });
-    const reason = generateAlternativeReason(alt, sel);
-    expect(reason).toContain("Direct flight");
-    expect(reason).toContain("saves");
-  });
-
-  it("describes faster option using ratio when >1.5x price", () => {
-    const alt = makeOpt({ id: "alt", price: 2870, duration: "9h55m", stops: 1 });
-    const sel = makeOpt({ id: "sel", price: 268, duration: "10h5m", stops: 1 });
-    const reason = generateAlternativeReason(alt, sel);
-    expect(reason).toContain("faster");
-    expect(reason).toContain("x price");
-  });
-
-  it("describes faster option with $X more when <1.5x price", () => {
-    const alt = makeOpt({ id: "alt", price: 300, duration: "9h0m", stops: 1 });
-    const sel = makeOpt({ id: "sel", price: 260, duration: "10h0m", stops: 1 });
-    const reason = generateAlternativeReason(alt, sel);
-    expect(reason).toContain("faster");
-    expect(reason).toContain("more");
-  });
-
-  it("describes cheaper but slower option", () => {
-    const alt = makeOpt({ id: "alt", price: 150, duration: "14h0m", stops: 2 });
-    const sel = makeOpt({ id: "sel", price: 268, duration: "10h0m", stops: 1 });
-    const reason = generateAlternativeReason(alt, sel);
-    expect(reason).toContain("Saves");
-    expect(reason).toContain("longer");
-  });
-
-  it("falls back to airline service description", () => {
-    const alt = makeOpt({ id: "alt", price: 300, duration: "10h0m", stops: 1, airline: "Lufthansa" });
-    const sel = makeOpt({ id: "sel", price: 268, duration: "10h0m", stops: 1 });
-    const reason = generateAlternativeReason(alt, sel);
-    expect(reason).toContain("Lufthansa");
-    expect(reason).toContain("service");
-  });
-});
-
-// ── Integration tests: auto-select flow ──────────────────────────────────
-// ── plan-trip is now a scaffold (VOY-1414): create plan + travellers, then
-// hand off to the composable primitives. No auto-search / auto-select. ──────
+// ── Integration tests: scaffold flow ──
+// ── plan-trip creates plan + travellers + default goal graph, then hands off
+// to the composable primitives (search → selection-options → select). ──
 
 describe("plan-trip scaffold (VOY-1414)", () => {
   let stdout: string;
