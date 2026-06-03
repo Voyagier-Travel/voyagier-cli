@@ -685,12 +685,109 @@ export const ADD_BLUEPRINT_LISTING_AS_SELECTION_OPTION = `
   }
 `;
 
+/**
+ * All concrete members of TripPlanSelectionUnion (live schema, 2026-06-02).
+ * getTripPlanSelection returns this union and union members share no interface,
+ * so a shape-agnostic query must spread the same field set across every member.
+ * Building the query from this list (rather than hand-writing 31 fragments)
+ * keeps it DRY and means a newly-added selection type is one edit here.
+ * `doctor` (VOY-1411) validates the resulting query string against the live
+ * schema, so a stale member name surfaces immediately.
+ */
+export const TRIP_PLAN_SELECTION_UNION_MEMBERS = [
+  "TripPlanActivityListSelection",
+  "TripPlanActivityOptionListSelection",
+  "TripPlanActivityOptionSelection",
+  "TripPlanActivitySelection",
+  "TripPlanAirportSelection",
+  "TripPlanCurrencySelection",
+  "TripPlanDateSelection",
+  "TripPlanDestinationSelection",
+  "TripPlanDurationSelection",
+  "TripPlanFlightClassListSelection",
+  "TripPlanFlightClassSelection",
+  "TripPlanFlightJourneyListSelection",
+  "TripPlanFlightJourneySelection",
+  "TripPlanFlightListSelection",
+  "TripPlanFlightSelection",
+  "TripPlanHotelListSelection",
+  "TripPlanHotelRoomListSelection",
+  "TripPlanHotelRoomSelection",
+  "TripPlanHotelSelection",
+  "TripPlanLocationListSelection",
+  "TripPlanLocationSelection",
+  "TripPlanPassportSelection",
+  "TripPlanRestaurantListSelection",
+  "TripPlanRestaurantReservationSelection",
+  "TripPlanRestaurantSelection",
+  "TripPlanRideSelection",
+  "TripPlanRoomArrangementSelection",
+  "TripPlanSelection",
+  "TripPlanTimeListSelection",
+  "TripPlanTimeSelection",
+  "TripPlanTravellerListSelection",
+] as const;
+
+const SELECTION_MONITOR_FIELDS = `
+        id
+        type
+        blueprintMonitorId
+        parentOptionId
+        options {
+          id
+          name
+          price
+          time
+          airline
+          duration
+          sortOrder
+        }`;
+
+/**
+ * Shape-agnostic: works for ANY selection type via the union. Returns the
+ * selection's options + its monitor id. Combined with GET_BLUEPRINT_MONITOR
+ * (by blueprintMonitorId) this drives the `options --wait` status taxonomy.
+ * The CLI never recomputes sufficiency — it reports what the backend exposes.
+ *
+ * (Fixes VOY-1419 arg drift: getTripPlanHotelSelection(id) was hotel-only and
+ * the wrong arg name; getTripPlanSelection(tripPlanSelectionId) is generic.)
+ */
 export const GET_SELECTION_WITH_MONITOR = `
-  query TripPlanSelection($id: String!) {
-    getTripPlanHotelSelection(id: $id) {
-      id
-      blueprintMonitorId
+  query TripPlanSelectionWithMonitor($tripPlanSelectionId: String!) {
+    getTripPlanSelection(tripPlanSelectionId: $tripPlanSelectionId) {
+      __typename
+${TRIP_PLAN_SELECTION_UNION_MEMBERS.map(
+    (m) => `      ... on ${m} {${SELECTION_MONITOR_FIELDS}
+      }`,
+  ).join("\n")}
     }
+  }
+`;
+
+/**
+ * Monitor fetch-state, read by selection's blueprintMonitorId. Drives the
+ * FETCHING / NO_RESULTS / FETCH_ERROR distinction in `options --wait`.
+ */
+export const GET_BLUEPRINT_MONITOR = `
+  query BlueprintMonitor($id: String!) {
+    blueprintMonitor(id: $id) {
+      id
+      type
+      queryVersion
+      fetchedAt
+      lastFetchAttempt
+      lastFetchError
+    }
+  }
+`;
+
+/**
+ * Refresh a selection's options (enqueues a BlueprintMonitor fetch). No-op on
+ * the backend if the selection has no monitor / is not auto-fetchable.
+ */
+export const REFRESH_SELECTION_OPTIONS = `
+  mutation RefreshTripPlanSelectionOptions($selectionId: String!) {
+    refreshTripPlanSelectionOptions(selectionId: $selectionId)
   }
 `;
 
