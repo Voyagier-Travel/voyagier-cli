@@ -83,7 +83,7 @@ export VOYAGIER_API_URL=https://dev.voyagier.com  # optional
 | **Goals** | | | |
 | `plans goals <planId>` | Inspect the goal graph + readiness / what still needs a decision | ✅ | ✅ |
 | **Scaffold** | | | |
-| `plan-trip` | Create plan + travellers + default goal graph, print compose next-steps | ✅ | ✅ |
+| `plan-trip` | Create plan + default goal graph (adds travellers only with `--travellers`), print compose next-steps | ✅ | ✅ |
 
 ## Core Workflow
 
@@ -149,7 +149,7 @@ Key JSON shapes:
 plans create  → { id, title, startDate, endDate, url }
 plans list    → { items: [{ id, title, startDate, endDate, url }], total, page, limit }
 plans get     → { id, title, items: [...], travellers: [...], url }
-search flights → { selectionId, options: [...], planContext }   # options often empty initially (async)
+search flights → { tripPlanId, selectionId, options: [...], url }   # flat shape; options often empty initially (async)
 selection-options → { selectionId, status, optionCount, options: [{ id, name, price, ... }] }
 select        → { success, selected: { name, price }, url }
 cart          → { items: [...], total, currency, url }
@@ -168,7 +168,7 @@ book          → { checkoutUrl } or { status, bookingRecords: [...] }
 
 - **Hotel search coverage is limited** — Sabre GDS doesn't have all properties. Luxury/boutique hotels may need direct booking.
 - **Airport codes required for search** — Flight search needs IATA codes or resolvable city names, not destination names like "Tuscany."
-- **Search is asynchronous** — `search` creates a selection and returns a `selectionId`; options arrive shortly after. Poll with `voyagier selection-options <selectionId> --wait` until the status is terminal (ready or awaiting input). Don't expect priced options in the immediate `search` response.
+- **Search is asynchronous** — `search` creates a selection and returns a `selectionId`; options arrive shortly after. Poll with `voyagier selection-options <selectionId> --wait` until the status is **terminal** — `READY`, `NO_RESULTS`, `AWAITING_INPUT`, or `FETCH_ERROR` (only `FETCHING` keeps polling). Don't expect priced options in the immediate `search` response.
 - **Selecting uses selection + option IDs** — `voyagier select --selection-id <id> --option-id <id>`. Index-based `select <n>` works against the last search, but direct IDs are the reliable agent path.
 - **Flight prices are per-person** — Multiply by traveller count for total.
 - **Travel fee (6%)** is added at checkout, not shown in cart subtotal.

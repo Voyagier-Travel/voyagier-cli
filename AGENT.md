@@ -12,7 +12,7 @@ A trip plan is a **goal graph**. When you create a plan it ships with a default 
 
 - **Search is asynchronous.** `voyagier search ...` creates (or reuses) a selection against a goal and kicks off an inventory fetch. The immediate response carries a `selectionId` but often **no options yet**. You poll with `voyagier selection-options <selectionId> --wait` until the status is terminal.
 - **Selecting** is done by selection + option ID: `voyagier select --selection-id <id> --option-id <id>`.
-- **`plan-trip` is a scaffold.** It creates the plan + travellers + default goal graph and prints the compose next-steps. It does not search or select for you.
+- **`plan-trip` is a scaffold.** It creates the plan + default goal graph (and adds travellers only when you pass `--travellers`), then prints the compose next-steps. It does not search or select for you.
 - **`plans goals <planId>`** is your readiness view — it shows the goal graph and what still needs a decision.
 - **Multi-source bookability.** Flights are display-only (`isBookable = false`). Activities (Viator) are the primary bookable inventory. Hotels (Blueprint Listings) are searchable; checkout coverage is partial.
 - **Computed itinerary.** `voyagier itinerary <planId>` reads the platform's `tripPlanEvents` resolver.
@@ -41,7 +41,8 @@ voyagier clients upsert --email "smith@example.com" --name "Smith Family" --type
 #    accepts id, email, or name. Omit it to auto-pick when you have exactly
 #    one active client (the CLI logs `auto-resolved client: ...` to stderr).
 voyagier plan-trip --client "Smith Family" --title "Smith — Tokyo" --json
-# Returns: { ...plan, url, nextSteps: [...] }
+# Returns a scaffold summary: { ok, tripPlanId, title, travellerIds, scaffolded, note, url, nextSteps }
+# (travellerIds is empty unless you passed --travellers).
 # Read nextSteps — they are the exact compose commands for this plan.
 
 # 3) Add travellers (required before search)
@@ -106,7 +107,7 @@ v2.0.0 has two payload styles. Pick the right shape for the command you're calli
 // clients upsert:  { "client": { ... }, "ok": true, "created": false }
 // plans create:    { "id": "...", "title": "...", "url": "...", "planSummary": "..." }
 // plans list:      { "items": [...], "total": 12, "page": 1, "limit": 20 }
-// search flights:  { "selectionId": "...", "options": [...], "planContext": { ... } }   (options often empty initially)
+// search flights:  { "tripPlanId": "...", "selectionId": "...", "options": [...], "url": "..." }   (flat shape; options often empty initially)
 // selection-options: { "selectionId": "...", "status": "...", "optionCount": N, "options": [...] }
 ```
 
@@ -306,7 +307,7 @@ voyagier select --selection-id <selectionId> --option-id <optionId> --json
 voyagier select <n> --plan <id> --json
 ```
 
-`selection-options` reports a status (e.g. `READY`, `AWAITING_INPUT`); `--wait` polls with backoff and returns promptly once the status is terminal. `--goal <goalId>` targets a specific goal (default: the first Flight/Hotel/Activity goal on the plan). `--max-stops` and `--sort` are client-side presentation filters over the returned options.
+`selection-options` reports a status; `--wait` polls with backoff and returns once the status is **terminal** — `READY`, `NO_RESULTS`, `AWAITING_INPUT`, or `FETCH_ERROR` (only `FETCHING` keeps polling). `--goal <goalId>` targets a specific goal (default: the first Flight/Hotel/Activity goal on the plan). `--max-stops` and `--sort` are client-side presentation filters over the returned options.
 
 ### Cart + Book (Style A JSON)
 ```bash
@@ -417,7 +418,7 @@ Manual lookup: `voyagier search airports "tokyo" --json`.
 
 - **JSON shape is not uniform across commands** (see Output Conventions above).
 - **Search is asynchronous.** `search` returns a `selectionId`, not priced options. Poll with `voyagier selection-options <selectionId> --wait` until the status is terminal before selecting.
-- **`plan-trip` is a scaffold.** It creates the plan + travellers + default goal graph and prints compose next-steps; it does not search or select. Follow its `nextSteps`.
+- **`plan-trip` is a scaffold.** It creates the plan + default goal graph (travellers only with `--travellers`) and prints compose next-steps; it does not search or select. Follow its `nextSteps`.
 - **`plan-trip` requires a client.** Pass `--client <id|email|name>`. With exactly one active client the flag is optional and the CLI auto-picks (logs `auto-resolved client: ...` to stderr). With zero active clients you get `NO_CLIENTS`; with multiple, `MULTIPLE_CLIENTS`.
 - **`book --types` and `--only-bookable` are client-side gates only** — they don't filter the checkout mutation. Build a clean cart before calling `book`.
 - **`plans summary` reads `plan.items`**, not `tripPlanEvents`. Use `voyagier itinerary <planId>` for the canonical time-sorted view.

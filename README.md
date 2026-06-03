@@ -17,9 +17,11 @@ A trip plan is a **goal graph**: the plan ships with goals (flights, hotel, date
 voyagier clients upsert --email "smith@example.com" --name "Smith Family" \
   --type Individual --json
 
-# 2) Scaffold a plan (creates the plan + default goal graph)
+# 2) Scaffold a plan (creates the plan + default goal graph; optionally adds
+#    travellers if you pass --travellers)
 voyagier plan-trip --client "Smith Family" --title "Smith — Tokyo" --json
-# Returns the plan + next-step commands to compose the trip.
+# Returns a scaffold summary: { ok, tripPlanId, title, travellerIds, scaffolded,
+# note, url, nextSteps } — the nextSteps are the compose commands for this plan.
 
 # 3) Add a traveller
 voyagier travellers add --plan <PLAN_ID> --first John --last Smith \
@@ -63,7 +65,7 @@ Always run `voyagier book --validate <planId>` for pre-flight checks. To control
 | `voyagier doctor` | Self-check: auth, schema, reachability, state, version |
 | `voyagier clients` | Advisor CRM (`list`, `get`, `create`, `update`, `archive`, `upsert`) |
 | `voyagier plans` | `create`, `list`, `get`, `summary`, `delete`; `plans goals` for the goal graph + readiness; `plans bookable` for pre-flight |
-| `voyagier plan-trip` | Scaffold a plan (plan + travellers + default goal graph) and print compose next-steps |
+| `voyagier plan-trip` | Scaffold a plan (plan + default goal graph; adds travellers only if `--travellers` is given) and print compose next-steps |
 | `voyagier travellers` | Add, list, update, remove travellers |
 | `voyagier search` | Flights, hotels, activities, airports — creates a selection; options arrive async |
 | `voyagier selection-options <selectionId>` | Read / poll a selection's options (`--wait` to poll until ready) |

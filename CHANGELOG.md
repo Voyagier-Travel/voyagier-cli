@@ -14,15 +14,15 @@ Composable goal-graph write path. The CLI now composes a trip by searching again
 
 - **`search` is asynchronous and goal-based.** `search flights | hotels | activities` resolves the target goal (`--goal <id>`, or the first matching goal) and its mirror list, sets the provided inputs, and creates a mirroring selection. The response returns a `selectionId`; options are fetched in the background. New flags: `--goal` (all), `--max-stops` (flights), `--replace` (hotels, activities).
 - **`select` chooses by IDs.** `voyagier select --selection-id <id> --option-id <id>` is the primary path. Index-based `select <n>` still works against the last cached search; `--plan <id>` asserts plan ownership of the cache.
-- **`plan-trip` is a scaffold.** It creates the plan + travellers + default goal graph and prints the exact compose next-steps for that plan. It no longer auto-searches or auto-selects.
+- **`plan-trip` is a scaffold.** It creates the plan + default goal graph (and adds travellers only when `--travellers` is provided), then prints the exact compose next-steps for that plan. It no longer auto-searches or auto-selects.
 
 ### Added
 
 - **`voyagier selection-options <selectionId>`** — read or poll a selection's options. `--wait` polls with backoff until options are ready or a terminal status (e.g. `AWAITING_INPUT`) is reached; `--timeout <seconds>` bounds the wait; `--human` forces readable output.
 
-### Removed
+### Deprecated
 
-- **`voyagier options` / `voyagier pick`** — the sub-selection model is gone. Use `selection-options` to read/poll options and `select --selection-id --option-id` to choose.
+- **`voyagier options` / `voyagier pick`** — the sub-selection model is gone. Both commands are now **retired migration stubs**: they still exist and print a message pointing you to the replacements rather than doing anything. Use `selection-options` to read/poll options and `select --selection-id --option-id` to choose.
 
 ---
 
