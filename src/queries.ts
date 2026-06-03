@@ -164,34 +164,11 @@ export const GET_PAYMENT_CHECKOUTS = `
   }
 `;
 
-export const SET_SUB_SELECTION = `
-  mutation SetTripPlanSubSelectionOption($subSelectionId: String!, $optionId: String!) {
-    setTripPlanSubSelectionOption(subSelectionId: $subSelectionId, optionId: $optionId) {
-      id
-      selectedOptionId
-      selectedOption {
-        id
-        name
-        price
-      }
-    }
-  }
-`;
-
-export const REFRESH_SUB_SELECTION = `
-  mutation RefreshTripPlanSubSelectionOptions($subSelectionId: String!) {
-    refreshTripPlanSubSelectionOptions(subSelectionId: $subSelectionId) {
-      id
-      name
-      description
-      price
-      optionType
-      status
-      isBookable
-      sortOrder
-    }
-  }
-`;
+// NOTE: setTripPlanSubSelectionOption + refreshTripPlanSubSelectionOptions were
+// DELETED from the schema in the Goals/Blueprint architecture migration. The
+// "sub-selection" model is gone; child selections are now ordinary selections
+// reached via childSelections[] and chosen via setTripPlanSelectedOption.
+// (Removed in VOY-1414. Polling lives in `selection-options` / VOY-1415.)
 
 // --- Plans ---
 
@@ -420,31 +397,88 @@ export const CREATE_ACTIVITY_SELECTION = `
   }
 `;
 
+// Lean goals+selections read for resolving a goal and its mirror *List
+// selection in the search/create flow (VOY-1414).
+export const GET_GOALS_FOR_SEARCH = `
+  query GoalsForSearch($tripPlanId: String!) {
+    tripPlanGoals(tripPlanId: $tripPlanId) {
+      id
+      name
+      type
+      sortOrder
+      items {
+        selections { id type }
+      }
+    }
+  }
+`;
+
+// --- Search inputs (goal/mirror-list model, VOY-1414) ---
+// In the new model, create*Selection only links a selection to a goal's mirror
+// *List; the search PARAMS (origin/dest/dates) are set on the goal's Airport /
+// Date selections, which feed the list's monitor. These set those inputs.
+
+export const UPDATE_AIRPORT_SELECTION = `
+  mutation UpdateAirportSelection($selectionId: String!, $input: UpdateAirportSelectionInput!) {
+    updateTripPlanAirportSelection(selectionId: $selectionId, input: $input) {
+      id
+      type
+    }
+  }
+`;
+
+export const CREATE_AIRPORT_SELECTION = `
+  mutation CreateAirportSelection($tripPlanId: String!, $input: CreateAirportSelectionInput!) {
+    createTripPlanAirportSelection(tripPlanId: $tripPlanId, input: $input) {
+      selection { id }
+    }
+  }
+`;
+
+export const CREATE_DATE_SELECTION = `
+  mutation CreateDateSelection($tripPlanId: String!, $input: CreateDateSelectionInput!) {
+    createTripPlanDateSelection(tripPlanId: $tripPlanId, input: $input) {
+      selection { id }
+    }
+  }
+`;
+
+export const ADD_DATE_OPTION = `
+  mutation AddTripPlanDateOption($selectionId: String!, $startDate: String!) {
+    addTripPlanDateOption(selectionId: $selectionId, startDate: $startDate) {
+      id
+    }
+  }
+`;
+
+// Location/destination lives on the plan-level Destination selection (a shared
+// Destination goal), NOT per Hotel/Activity goal. setTripPlanDestinationValue
+// applies a freeform place name so the --location/--destination flag takes effect.
+export const SET_DESTINATION_VALUE = `
+  mutation SetTripPlanDestinationValue($selectionId: String!, $name: String!) {
+    setTripPlanDestinationValue(selectionId: $selectionId, name: $name) {
+      id
+      type
+    }
+  }
+`;
+
 // --- Select ---
 
-export const SELECT_DEPARTURE_FLIGHT = `
-  mutation SelectDeparture($selectionId: String!, $flightToken: String!) {
-    selectDepartureFlight(selectionId: $selectionId, flightToken: $flightToken) {
-      id
-      options { id name price time airline duration bookingData: optionData }
-    }
-  }
-`;
+// NOTE: selectDepartureFlight + selectReturnFlight were DELETED from the schema
+// in the Goals/Blueprint migration. Round-trip is no longer a two-phase
+// token dance — each leg/journey is an ordinary selection whose chosen option is
+// set via setTripPlanSelectedOption. (Removed in VOY-1414.)
 
-export const SELECT_RETURN_FLIGHT = `
-  mutation SelectReturn($selectionId: String!, $flightToken: String!) {
-    selectReturnFlight(selectionId: $selectionId, flightToken: $flightToken) {
-      id
-      options { id name price time airline duration bookingData: optionData }
-    }
-  }
-`;
-
+// The one surviving "choose an option" mutation. Return drifted:
+// `selectedOption` is gone — the chosen option is `parentOption` /
+// `parentOptionId` on TripPlanSelection (matches options[].id), per VOY-1407.
 export const SET_TRIP_PLAN_SELECTED_OPTION = `
   mutation SetSelected($selectionId: String!, $optionId: String!) {
     setTripPlanSelectedOption(selectionId: $selectionId, optionId: $optionId) {
       id
-      selectedOption { id name price }
+      parentOptionId
+      parentOption { id name price }
     }
   }
 `;

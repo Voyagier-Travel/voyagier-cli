@@ -11,6 +11,16 @@ import {
   CREATE_HOTEL_SELECTION,
   CREATE_ACTIVITY_SELECTION,
 } from "../queries.js";
+import {
+  loadGoals,
+  resolveGoal,
+  resolveMirrorList,
+  setAirport,
+  addDateOption,
+  requireAirports,
+  requireDateSelection,
+  setDestination,
+} from "./search-helpers.js";
 import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels, formatActivities } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivitySummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode } from "../utils.js";
@@ -188,6 +198,7 @@ export function registerSearchCommands(program: Command): void {
     .command("flights")
     .description("Search for flights")
     .option("--plan <id>", "Trip plan ID (or auto-resolved from last search)")
+    .option("--goal <goalId>", "Target Flight goal (defaults to the first Flight goal on the plan)")
     .option("--from <code>", "Origin airport code (e.g., LAX)")
     .requiredOption("--to <code>", "Destination airport code (e.g., NRT)")
     .requiredOption("--date <date>", "Departure date (YYYY-MM-DD)")
@@ -237,34 +248,66 @@ export function registerSearchCommands(program: Command): void {
         if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Searching flights...\n"));
         const isRoundTrip = !!opts.return;
 
-        const input: Record<string, unknown> = {
-          origin,
-          destination,
-          departureDate: opts.date,
-          travellerIds,
-          title: `Flight: ${origin} → ${destination}`,
-        };
-        if (opts.return) input.returnDate = opts.return;
-        if (opts.maxStops) {
-          const maxStops = parseInt(opts.maxStops, 10);
-          if (!Number.isFinite(maxStops) || maxStops < 0) {
-            throw new CliError(CliErrorCode.VALIDATION, "--max-stops must be a non-negative integer.");
-          }
-          input.maxStops = maxStops;
+        if (dryRun) {
+          process.stdout.write(
+            JSON.stringify(
+              {
+                dryRun: true,
+                flow: "goal/mirror-list (VOY-1414)",
+                steps: [
+                  `resolve Flight goal (--goal or first Flight goal) + its FlightList mirror`,
+                  `set origin airport -> ${origin}, destination airport -> ${destination}`,
+                  `set date -> ${opts.date}${opts.return ? `, return -> ${opts.return}` : ""}`,
+                  `createTripPlanFlightSelection({ goalId, mirrorListSelectionId, travellerIds })`,
+                  `surface options via selection-options <selectionId> --wait`,
+                ],
+              },
+              null,
+              2,
+            ) + "\n",
+          );
+          return;
         }
+
+        // New goal/mirror-list model: set the goal's inputs, then create a
+        // selection mirroring the goal's FlightList. Options are produced
+        // asynchronously by the backend monitor (surfaced via selection-options).
+        const goals = await loadGoals(tripPlanId);
+        const goal = resolveGoal(goals, "flights", opts.goal);
+        const mirrorListSelectionId = resolveMirrorList(goal, "flights");
+        // Fail fast if the goal graph can't accept the required inputs, rather
+        // than create a selection silently stuck AWAITING_INPUT downstream.
+        const aps = requireAirports(goal, 2);
+        const dateSel = requireDateSelection(goals);
+        await setAirport(aps[0], origin);
+        await setAirport(aps[1], destination);
+        await addDateOption(dateSel, opts.date);
+        if (opts.return) await addDateOption(dateSel, opts.return);
 
         const data = await graphql<{ createTripPlanFlightSelection: SelectionResult }>(
           CREATE_FLIGHT_SELECTION,
-          { tripPlanId, input },
-          { dryRun }
+          {
+            tripPlanId,
+            input: { goalId: goal.id, mirrorListSelectionId, travellerIds, title: `Flight: ${origin} → ${destination}` },
+          },
         );
 
         const result = data.createTripPlanFlightSelection;
         const sortBy = (opts.sort ?? "default") as SortField;
-        const options = sortOptions(
-          result.options.sort((a, b) => a.sortOrder - b.sortOrder),
-          sortBy
-        );
+        // --max-stops is a client-side presentation filter over the options the
+        // backend returned (same layer as --sort), not a goal-input constraint.
+        let filtered = result.options.sort((a, b) => a.sortOrder - b.sortOrder);
+        if (opts.maxStops !== undefined) {
+          const maxStops = Number(opts.maxStops);
+          if (!Number.isInteger(maxStops) || maxStops < 0) {
+            throw new CliError(
+              CliErrorCode.VALIDATION,
+              `--max-stops must be a non-negative integer (got "${opts.maxStops}").`,
+            );
+          }
+          filtered = filtered.filter((o) => parseStops(o.bookingData) <= maxStops);
+        }
+        const options = sortOptions(filtered, sortBy);
 
         const searchResults = options.map((opt, i) => ({
           index: i + 1,
@@ -335,6 +378,7 @@ export function registerSearchCommands(program: Command): void {
     .command("hotels")
     .description("Search for hotels")
     .option("--plan <id>", "Trip plan ID (or auto-resolved from last search)")
+    .option("--goal <goalId>", "Target Hotel goal (defaults to the first Hotel goal on the plan)")
     .requiredOption("--location <place>", "Destination (city name)")
     .requiredOption("--checkin <date>", "Check-in date (YYYY-MM-DD)")
     .requiredOption("--checkout <date>", "Check-out date (YYYY-MM-DD)")
@@ -413,20 +457,44 @@ export function registerSearchCommands(program: Command): void {
         if (!Number.isFinite(adults) || adults < 1) {
           throw new CliError(CliErrorCode.VALIDATION, "--guests must be an integer ≥ 1.");
         }
-        const input: Record<string, unknown> = {
-          location: opts.location,
-          checkInDate: opts.checkin,
-          checkOutDate: opts.checkout,
-          currency: opts.currency,
-          travellerIds,
-          guests: { adults },
-          title: `Hotel: ${opts.location}`,
-        };
+
+        if (dryRun) {
+          process.stdout.write(
+            JSON.stringify(
+              {
+                dryRun: true,
+                flow: "goal/mirror-list (VOY-1414)",
+                steps: [
+                  `resolve Hotel goal (--goal or first Hotel goal) + its HotelList mirror`,
+                  `set date -> ${opts.checkin} (and ${opts.checkout})`,
+                  `createTripPlanHotelSelection({ goalId, mirrorListSelectionId, travellerIds })`,
+                  `surface options via selection-options <selectionId> --wait`,
+                ],
+              },
+              null,
+              2,
+            ) + "\n",
+          );
+          return;
+        }
+
+        const goals = await loadGoals(tripPlanId);
+        const goal = resolveGoal(goals, "hotels", opts.goal);
+        const mirrorListSelectionId = resolveMirrorList(goal, "hotels");
+        const dateSel = requireDateSelection(goals);
+        // --location applies to the plan-level Destination selection (Hotel goals
+        // inherit destination via bindings; there's no per-Hotel location input).
+        // Throws if no Destination selection exists, so the flag never silently no-ops.
+        if (opts.location) await setDestination(goals, opts.location);
+        await addDateOption(dateSel, opts.checkin);
+        await addDateOption(dateSel, opts.checkout);
 
         const data = await graphql<{ createTripPlanHotelSelection: SelectionResult }>(
           CREATE_HOTEL_SELECTION,
-          { tripPlanId, input },
-          { dryRun }
+          {
+            tripPlanId,
+            input: { goalId: goal.id, mirrorListSelectionId, travellerIds, title: `Hotel: ${opts.location}` },
+          },
         );
 
         const result = data.createTripPlanHotelSelection;
@@ -507,6 +575,7 @@ export function registerSearchCommands(program: Command): void {
     .command("activities")
     .description("Search for Viator experiences and activities")
     .option("--plan <id>", "Trip plan ID (or auto-resolved from last search)")
+    .option("--goal <goalId>", "Target Activity goal (defaults to the first Activity goal on the plan)")
     .requiredOption("--destination <place>", "Destination name (city or region)")
     .requiredOption("--date <date>", "Travel date (YYYY-MM-DD)")
     .option("--query <text>", "Free text search (e.g. 'snorkeling')")
@@ -574,19 +643,41 @@ export function registerSearchCommands(program: Command): void {
         const titleParts = [`Activity: ${opts.destination}`];
         if (opts.query) titleParts.push(opts.query);
 
-        const input: Record<string, unknown> = {
-          destinationName: opts.destination,
-          travelDate: opts.date,
-          currency: opts.currency,
-          travellerIds,
-          title: titleParts.join(" — "),
-        };
-        if (opts.query) input.query = opts.query;
+        if (dryRun) {
+          process.stdout.write(
+            JSON.stringify(
+              {
+                dryRun: true,
+                flow: "goal/mirror-list (VOY-1414)",
+                steps: [
+                  `resolve Activity goal (--goal or first Activity goal) + its ActivityList mirror`,
+                  `set date -> ${opts.date}`,
+                  `createTripPlanActivitySelection({ goalId, mirrorListSelectionId, travellerIds })`,
+                  `surface options via selection-options <selectionId> --wait`,
+                ],
+              },
+              null,
+              2,
+            ) + "\n",
+          );
+          return;
+        }
+
+        const goals = await loadGoals(tripPlanId);
+        const goal = resolveGoal(goals, "activities", opts.goal);
+        const mirrorListSelectionId = resolveMirrorList(goal, "activities");
+        const dateSel = requireDateSelection(goals);
+        // --destination applies to the plan-level Destination selection (Activity
+        // goals inherit destination via bindings; no per-Activity location input).
+        if (opts.destination) await setDestination(goals, opts.destination);
+        await addDateOption(dateSel, opts.date);
 
         const data = await graphql<{ createTripPlanActivitySelection: SelectionResult }>(
           CREATE_ACTIVITY_SELECTION,
-          { tripPlanId, input },
-          { dryRun }
+          {
+            tripPlanId,
+            input: { goalId: goal.id, mirrorListSelectionId, travellerIds, title: titleParts.join(" — ") },
+          },
         );
 
         const result = data.createTripPlanActivitySelection;

@@ -157,7 +157,8 @@ const MOCK_RETURN_RESULT = {
 const MOCK_SET_SELECTED = {
   setTripPlanSelectedOption: {
     id: "sel-456",
-    selectedOption: { id: "opt-1", name: "AA Flight", price: 1200 },
+    parentOptionId: "opt-1",
+    parentOption: { id: "opt-1", name: "AA Flight", price: 1200 },
   },
 };
 
@@ -474,121 +475,6 @@ describe("select: hotel (indexed mode)", () => {
 
 // ── Tests: round-trip departure (indexed mode) ────────────────────────────
 
-describe("select: round-trip departure (indexed mode)", () => {
-  let stdoutOutput: string[];
-  let stdoutSpy: ReturnType<typeof jest.spyOn>;
-  let stderrSpy: ReturnType<typeof jest.spyOn>;
-
-  beforeEach(() => {
-    process.env.VOYAGIER_TOKEN = "test-token";
-    stdoutOutput = [];
-    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
-      stdoutOutput.push(typeof chunk === "string" ? chunk : String(chunk));
-      return true;
-    });
-    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-    mockLoadSearchState.mockReturnValue(MOCK_ROUNDTRIP_DEPARTURE_STATE);
-    mockIsSearchStateStale.mockReturnValue(false);
-    mockSaveSearchState.mockReset();
-    mockGraphql.mockResolvedValue(MOCK_DEPARTURE_RESULT);
-  });
-
-  afterEach(() => {
-    stdoutSpy.mockRestore();
-    stderrSpy.mockRestore();
-    delete process.env.VOYAGIER_TOKEN;
-  });
-
-  it("calls SELECT_DEPARTURE_FLIGHT for round-trip departure", async () => {
-    await runSelect(["1"]);
-    expect(mockGraphql).toHaveBeenCalledWith(
-      expect.stringContaining("selectDepartureFlight"),
-      expect.objectContaining({ flightToken: "tok-f1" })
-    );
-  });
-
-  it("saves new state with awaitingReturn=true", async () => {
-    await runSelect(["1"]);
-    expect(mockSaveSearchState).toHaveBeenCalledWith(
-      expect.objectContaining({ awaitingReturn: true })
-    );
-  });
-
-  it("JSON output has actionRequired.action=select_return", async () => {
-    await runSelect(["1", "--json"]);
-    const output = stdoutOutput.join("");
-    const parsed = JSON.parse(output);
-    expect(parsed.actionRequired?.action).toBe("select_return");
-  });
-
-  it("agent output contains departure confirmed and return instruction", async () => {
-    await runSelect(["1", "--agent"]);
-    const output = stdoutOutput.join("");
-    expect(output).toContain("Departure selected");
-    expect(output).toContain("return flight");
-  });
-});
-
-// ── Tests: round-trip return (indexed mode) ───────────────────────────────
-
-describe("select: round-trip return (indexed mode)", () => {
-  let stdoutOutput: string[];
-  let stdoutSpy: ReturnType<typeof jest.spyOn>;
-  let stderrSpy: ReturnType<typeof jest.spyOn>;
-
-  beforeEach(() => {
-    process.env.VOYAGIER_TOKEN = "test-token";
-    stdoutOutput = [];
-    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
-      stdoutOutput.push(typeof chunk === "string" ? chunk : String(chunk));
-      return true;
-    });
-    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-    mockLoadSearchState.mockReturnValue(MOCK_ROUNDTRIP_RETURN_STATE);
-    mockIsSearchStateStale.mockReturnValue(false);
-    mockClearSearchState.mockReset();
-    mockGraphql.mockImplementation((query: string) => {
-      if (query.includes("selectReturnFlight")) return Promise.resolve(MOCK_RETURN_RESULT);
-      if (query.includes("setTripPlanSelectedOption")) return Promise.resolve(MOCK_SET_SELECTED);
-      return Promise.reject(new Error(`Unexpected query: ${query.slice(0, 60)}`));
-    });
-  });
-
-  afterEach(() => {
-    stdoutSpy.mockRestore();
-    stderrSpy.mockRestore();
-    delete process.env.VOYAGIER_TOKEN;
-  });
-
-  it("calls SELECT_RETURN_FLIGHT then SET_TRIP_PLAN_SELECTED_OPTION", async () => {
-    await runSelect(["1"]);
-    const calls = mockGraphql.mock.calls as [string][];
-    expect(calls.some(([q]) => q.includes("selectReturnFlight"))).toBe(true);
-    expect(calls.some(([q]) => q.includes("setTripPlanSelectedOption"))).toBe(true);
-  });
-
-  it("clears search state after return selection", async () => {
-    await runSelect(["1"]);
-    expect(mockClearSearchState).toHaveBeenCalledTimes(1);
-  });
-
-  it("JSON output has type=return_selected with planContext", async () => {
-    await runSelect(["1", "--json"]);
-    const output = stdoutOutput.join("");
-    const parsed = JSON.parse(output);
-    expect(parsed.type).toBe("return_selected");
-    expect(parsed.planContext?.planId).toBe("plan-123");
-  });
-
-  it("agent output contains return flight selected message", async () => {
-    await runSelect(["1", "--agent"]);
-    const output = stdoutOutput.join("");
-    expect(output).toContain("Return flight selected");
-  });
-});
-
-// ── Tests: direct mode (--selection-id + --option-id) ────────────────────
-
 describe("select: direct mode (--selection-id + --option-id)", () => {
   let stdoutOutput: string[];
   let stdoutSpy: ReturnType<typeof jest.spyOn>;
@@ -633,7 +519,7 @@ describe("select: direct mode (--selection-id + --option-id)", () => {
     expect(output).toContain("AA Flight");
   });
 
-  it("throws VALIDATION when --selection-id provided without --option-id or --flight-token", async () => {
+  it("throws VALIDATION when --selection-id provided without --option-id", async () => {
     let err: unknown;
     try {
       await runSelect(["--selection-id", "sel-1"]);
@@ -645,91 +531,3 @@ describe("select: direct mode (--selection-id + --option-id)", () => {
   });
 });
 
-// ── Tests: direct mode (--selection-id + --flight-token) ─────────────────
-
-describe("select: direct mode (--selection-id + --flight-token)", () => {
-  let stdoutOutput: string[];
-  let stdoutSpy: ReturnType<typeof jest.spyOn>;
-  let stderrSpy: ReturnType<typeof jest.spyOn>;
-
-  beforeEach(() => {
-    process.env.VOYAGIER_TOKEN = "test-token";
-    stdoutOutput = [];
-    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
-      stdoutOutput.push(typeof chunk === "string" ? chunk : String(chunk));
-      return true;
-    });
-    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-  });
-
-  afterEach(() => {
-    stdoutSpy.mockRestore();
-    stderrSpy.mockRestore();
-    delete process.env.VOYAGIER_TOKEN;
-  });
-
-  it("calls SELECT_DEPARTURE_FLIGHT with --phase departure", async () => {
-    mockGraphql.mockResolvedValue({
-      selectDepartureFlight: {
-        id: "sel-1",
-        options: [{ id: "r1", name: "Return AA", price: 900 }],
-      },
-    });
-    await runSelect(["--selection-id", "sel-1", "--flight-token", "tok-123", "--phase", "departure"]);
-    expect(mockGraphql).toHaveBeenCalledWith(
-      expect.stringContaining("selectDepartureFlight"),
-      expect.objectContaining({ selectionId: "sel-1", flightToken: "tok-123" })
-    );
-  });
-
-  it("JSON output for departure has type=departure_selected", async () => {
-    mockGraphql.mockResolvedValue({
-      selectDepartureFlight: {
-        id: "sel-1",
-        options: [{ id: "r1", name: "Return AA", price: 900 }],
-      },
-    });
-    await runSelect(["--selection-id", "sel-1", "--flight-token", "tok-123", "--phase", "departure", "--json"]);
-    const output = stdoutOutput.join("");
-    const parsed = JSON.parse(output);
-    expect(parsed.type).toBe("departure_selected");
-  });
-
-  it("agent output for departure says departure flight selected", async () => {
-    mockGraphql.mockResolvedValue({
-      selectDepartureFlight: {
-        id: "sel-1",
-        options: [{ id: "r1", name: "Return AA", price: 900 }],
-      },
-    });
-    await runSelect(["--selection-id", "sel-1", "--flight-token", "tok-123", "--phase", "departure", "--agent"]);
-    const output = stdoutOutput.join("");
-    expect(output).toContain("Departure flight selected");
-  });
-
-  it("calls SELECT_RETURN_FLIGHT with --phase return", async () => {
-    mockGraphql.mockImplementation((query: string) => {
-      if (query.includes("selectReturnFlight")) return Promise.resolve({
-        selectReturnFlight: { id: "sel-1", options: [{ id: "final-1", name: "Combined" }] },
-      });
-      if (query.includes("setTripPlanSelectedOption")) return Promise.resolve(MOCK_SET_SELECTED);
-      return Promise.reject(new Error(`Unexpected: ${query.slice(0, 40)}`));
-    });
-    await runSelect(["--selection-id", "sel-1", "--flight-token", "tok-123", "--phase", "return"]);
-    expect(mockGraphql).toHaveBeenCalledWith(
-      expect.stringContaining("selectReturnFlight"),
-      expect.objectContaining({ selectionId: "sel-1", flightToken: "tok-123" })
-    );
-  });
-
-  it("throws VALIDATION when --phase is invalid with --flight-token", async () => {
-    let err: unknown;
-    try {
-      await runSelect(["--selection-id", "sel-1", "--flight-token", "tok-123", "--phase", "invalid"]);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(CliError);
-    expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
-  });
-});
