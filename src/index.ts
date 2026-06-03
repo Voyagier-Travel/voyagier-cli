@@ -41,7 +41,7 @@ AI Agent Quick Start (scaffold, then compose — search is async):
   voyagier search flights --plan <ID> --from DCA --to CDG --date <DATE> --return <DATE> --json
   voyagier selection-options <SELECTION_ID> --wait --json
   voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
-  voyagier book <ID> --json
+  voyagier book <PLAN_ID> --json
 
 Full reference: voyagier agent-docs`);
 

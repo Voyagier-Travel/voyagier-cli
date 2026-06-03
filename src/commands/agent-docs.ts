@@ -13,7 +13,7 @@ const FALLBACK = [
   "    --depart <YYYY-MM-DD> --return <YYYY-MM-DD> \\",
   "    --travellers \"John Doe\" --json",
   "  # then follow the printed next-steps:",
-  "  voyagier search flights --plan <PLAN_ID> --from DCA --to Paris --date <YYYY-MM-DD> --json",
+  "  voyagier search flights --plan <PLAN_ID> --from DCA --to Paris --date <YYYY-MM-DD> --return <YYYY-MM-DD> --json",
   "  voyagier selection-options <SELECTION_ID> --wait --json",
   "  voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json",
   "  voyagier book <PLAN_ID> --json",

@@ -26,33 +26,6 @@ interface Traveller {
   lastName: string;
 }
 
-interface SelectOption {
-  id: string;
-  name: string;
-  price?: number;
-  time?: string;
-  airline?: string;
-  duration?: string;
-  bookingData?: Record<string, unknown>;
-  sortOrder: number;
-}
-
-interface SelectionResult {
-  item: { id: string; title: string; tripPlanId: string };
-  selection: { id: string };
-  options: SelectOption[];
-}
-
-interface RawFlightOption {
-  id: string;
-  name: string;
-  price?: number;
-  time?: string;
-  airline?: string;
-  duration?: string;
-  bookingData?: Record<string, unknown>;
-}
-
 export function parseDurationMinutes(duration?: string): number {
   if (!duration) return Infinity;
   const match = duration.match(/(\d+)h\s*(\d+)?m?/);
@@ -97,7 +70,7 @@ function parseTravellers(names: string): Array<{ firstName: string; lastName: st
 export function registerPlanTripCommand(program: Command): void {
   program
     .command("plan-trip")
-    .description("Create or extend a trip plan (flights + hotels). Use --plan <id> to add legs. Activities: voyagier search activities")
+    .description("Scaffold a trip plan (plan + travellers + goal graph), then compose it with search / selection-options / select. Use --plan <id> to add to an existing plan.")
     .addHelpText("after", `
 Examples:
   # Scaffold a round-trip flight + hotel plan; prints the compose next-steps:
