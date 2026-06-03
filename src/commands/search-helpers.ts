@@ -221,13 +221,27 @@ export async function addDateOption(selectionId: string, startDate: string): Pro
  * so callers can skip the duration step rather than send a bad value.
  */
 export function daysBetween(startDate: string, endDate: string): number | null {
-  const re = /^\d{4}-\d{2}-\d{2}$/;
-  if (!re.test(startDate) || !re.test(endDate)) return null;
-  const a = new Date(`${startDate}T00:00:00Z`).getTime();
-  const b = new Date(`${endDate}T00:00:00Z`).getTime();
-  if (Number.isNaN(a) || Number.isNaN(b)) return null;
+  const a = parseUtcDate(startDate);
+  const b = parseUtcDate(endDate);
+  if (a == null || b == null) return null;
   const days = Math.round((b - a) / 86_400_000);
   return days > 0 ? days : null;
+}
+
+/**
+ * Parse a strict YYYY-MM-DD string to a UTC epoch (ms), rejecting impossible
+ * calendar dates (e.g. 2026-02-30). Returns null on any malformed/nonexistent
+ * date. Round-trips the components through Date.UTC so overflow normalization
+ * (Feb 30 -> Mar 2) is caught rather than silently accepted.
+ */
+function parseUtcDate(value: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
+    return null;
+  }
+  return d.getTime();
 }
 
 /**
@@ -245,15 +259,21 @@ export async function resolveDateRange(
   startDate: string,
   endDate?: string,
 ): Promise<void> {
-  await graphql(ADD_DATE_OPTION, { selectionId, startDate });
-  if (!endDate) return;
-  const days = daysBetween(startDate, endDate);
-  if (days == null) {
-    throw new CliError(
-      CliErrorCode.VALIDATION,
-      `End date "${endDate}" must be a valid date after the start date "${startDate}".`,
-    );
+  // Validate the full range BEFORE any mutation so an invalid range can't leave
+  // a stray start-date option on the selection (partial-mutation on error path).
+  let days: number | null = null;
+  if (endDate) {
+    days = daysBetween(startDate, endDate);
+    if (days == null) {
+      throw new CliError(
+        CliErrorCode.VALIDATION,
+        `End date "${endDate}" must be a valid date after the start date "${startDate}".`,
+      );
+    }
   }
+
+  await graphql(ADD_DATE_OPTION, { selectionId, startDate });
+  if (days == null) return;
   await graphql(SET_SELECTION_INPUT_VALUE, {
     selectionId,
     fieldName: "duration",

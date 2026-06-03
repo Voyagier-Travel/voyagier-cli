@@ -166,6 +166,14 @@ describe("daysBetween", () => {
     expect(SH.daysBetween("not-a-date", "2026-09-15")).toBeNull();
     expect(SH.daysBetween("2026-09-15", "")).toBeNull();
   });
+
+  it("returns null for impossible calendar dates (no overflow normalization)", () => {
+    // 2026 is not a leap year; Feb 30 / Feb 29 must be rejected, not rolled over.
+    expect(SH.daysBetween("2026-02-01", "2026-02-30")).toBeNull();
+    expect(SH.daysBetween("2026-02-29", "2026-03-05")).toBeNull();
+    expect(SH.daysBetween("2026-13-01", "2026-12-01")).toBeNull();
+    expect(SH.daysBetween("2026-04-31", "2026-05-10")).toBeNull();
+  });
 });
 
 describe("resolveDateRange (VOY-1421: populate BOTH date outputs)", () => {
@@ -187,11 +195,52 @@ describe("resolveDateRange (VOY-1421: populate BOTH date outputs)", () => {
     expect(durVars).toEqual({ selectionId: "sel-date", fieldName: "duration", value: 7 });
   });
 
-  it("throws VALIDATION when endDate is not after startDate (and does not set duration)", async () => {
+  it("throws VALIDATION for a bad range BEFORE any mutation (no partial write)", async () => {
     mockGraphql.mockResolvedValue({});
     await expect(SH.resolveDateRange("sel-date", "2026-09-15", "2026-09-10")).rejects.toBeInstanceOf(CliError);
-    // start-date option is still added before the range check fails
-    expect(mockGraphql).toHaveBeenCalledTimes(1);
+    // Range is validated first: no start-date option is left behind on the error path.
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("throws VALIDATION for an impossible end date without mutating", async () => {
+    mockGraphql.mockResolvedValue({});
+    await expect(SH.resolveDateRange("sel-date", "2026-02-01", "2026-02-30")).rejects.toBeInstanceOf(CliError);
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveReturnFlightGoal (VOY-1421: wire the return leg)", () => {
+  const flightGoal = (id: string, segmentIndex?: number) =>
+    goal({
+      id,
+      type: "Flight",
+      items: [{ selections: [{ id: `${id}-f`, type: "Flight", ...(segmentIndex != null ? { segmentIndex } : {}) }] }],
+    });
+
+  it("finds the goal whose child selection has segmentIndex === 1", () => {
+    const goals = [flightGoal("g-out", 0), flightGoal("g-ret", 1), goal({ id: "g-hotel", type: "Hotel" })];
+    expect(SH.resolveReturnFlightGoal(goals, "g-out")?.id).toBe("g-ret");
+  });
+
+  it("falls back to the single remaining Flight goal when segment indices are absent", () => {
+    const goals = [flightGoal("g-out"), flightGoal("g-ret"), goal({ id: "g-hotel", type: "Hotel" })];
+    expect(SH.resolveReturnFlightGoal(goals, "g-out")?.id).toBe("g-ret");
+  });
+
+  it("returns null for a one-way plan (no other Flight goal)", () => {
+    const goals = [flightGoal("g-out", 0), goal({ id: "g-hotel", type: "Hotel" })];
+    expect(SH.resolveReturnFlightGoal(goals, "g-out")).toBeNull();
+  });
+
+  it("returns null when multiple return candidates lack a segmentIndex === 1 marker", () => {
+    // Three flight goals, none marked seg 1, more than one remaining -> ambiguous -> null.
+    const goals = [flightGoal("g-out", 0), flightGoal("g-a"), flightGoal("g-b")];
+    expect(SH.resolveReturnFlightGoal(goals, "g-out")).toBeNull();
+  });
+
+  it("prefers the segmentIndex === 1 goal even when several Flight goals remain", () => {
+    const goals = [flightGoal("g-out", 0), flightGoal("g-a"), flightGoal("g-ret", 1)];
+    expect(SH.resolveReturnFlightGoal(goals, "g-out")?.id).toBe("g-ret");
   });
 });
 

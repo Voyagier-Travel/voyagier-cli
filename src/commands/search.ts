@@ -385,13 +385,13 @@ export function registerSearchCommands(program: Command): void {
         }
 
         if (options.length === 0) {
-          console.log(chalk.dim("No options yet — the search is still fetching inventory."));
-          console.log(chalk.dim(`  Poll: voyagier selection-options ${result.selection.id} --wait`));
+          process.stderr.write(chalk.dim("No options yet — the search is still fetching inventory.\n"));
+          process.stderr.write(chalk.dim(`  Poll: voyagier selection-options ${result.selection.id} --wait\n`));
           if (isRoundTrip) {
-            console.log(
+            process.stderr.write(
               chalk.yellow(
                 "  Note: round-trip searches may stay empty (VOY-1422) — the return leg does not\n" +
-                "  yet trigger the combined search on the backend. Inputs are set correctly.",
+                "  yet trigger the combined search on the backend. Inputs are set correctly.\n",
               ),
             );
           }
