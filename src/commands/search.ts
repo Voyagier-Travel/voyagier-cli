@@ -64,7 +64,8 @@ async function resolveTravellerIds(tripPlanId: string): Promise<string[]> {
   return data.tripPlanTravellers.map((t) => t.id);
 }
 
-function resolvePlanId(opts: { plan?: string }): string {
+// Exported for unit testing the --plan validation contract (VOY-1437).
+export function resolvePlanId(opts: { plan?: string }): string {
   // A passed-but-empty/whitespace --plan is an error, NOT a cue to silently
   // fall back to the last-search plan. Falling back here would run the search
   // against a DIFFERENT plan than the caller named — silent cross-plan
