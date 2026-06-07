@@ -179,7 +179,8 @@ There is no client-list cache file today; `voyagier clients list` always hits th
 ### Auth
 ```bash
 voyagier auth set-token <PAT>      # save Personal Access Token
-voyagier auth status --json        # verify connection
+voyagier auth status               # human-readable auth status
+voyagier doctor --json             # machine-readable verify (auth + schema + reachability)
 voyagier auth login                # browser-based flow
 voyagier auth logout
 ```
