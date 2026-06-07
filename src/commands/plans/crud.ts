@@ -23,41 +23,14 @@ export function registerCrudCommands(plans: Command): void {
     .description("Create a new trip plan")
     .requiredOption("--title <title>", "Trip plan title")
     .option("--client <ref>", "Client id, email, or name. Omit to auto-resolve when exactly one ACTIVE client exists.")
-    .option("--start <date>", "Start date (YYYY-MM-DD) [currently a no-op; CreateTripPlanInput accepts only clientId+title]")
-    .option("--end <date>", "End date (YYYY-MM-DD) [currently a no-op; CreateTripPlanInput accepts only clientId+title]")
-    .option("--description <text>", "Description [currently a no-op; CreateTripPlanInput accepts only clientId+title]")
     .option("--json", "Output raw JSON")
     .option("--dry-run", "Show the GraphQL query without executing")
     .action(async (opts) => {
       try {
-        if (opts.start) {
-          validateDate(opts.start, "--start");
-          warnPastDate(opts.start, "--start");
-        }
-        if (opts.end) {
-          validateDate(opts.end, "--end");
-          warnPastDate(opts.end, "--end");
-        }
-
-        // CreateTripPlanInput on dev now accepts ONLY { clientId, title }.
-        // startDate/endDate/description were removed; surface a clear note to
-        // the user instead of silently dropping their input. Tracked as a
-        // follow-on for a setTripPlan / itinerary-side mutation.
-        if (opts.start || opts.end || opts.description) {
-          const droppedFlags = [
-            opts.start ? "--start" : null,
-            opts.end ? "--end" : null,
-            opts.description ? "--description" : null,
-          ].filter(Boolean) as string[];
-          const verb = droppedFlags.length === 1 ? "is" : "are";
-          process.stderr.write(
-            chalk.yellow(
-              `Note: ${droppedFlags.join(", ")} ${verb} not yet wired into plans create on the current schema and will be ignored. ` +
-              `Use voyagier itinerary or trip-plan update mutations after creation to set these.\n`
-            )
-          );
-        }
-
+        // create accepts only { clientId, title }. Dates/description are set
+        // separately via `plans update` (which DOES wire them through). We do
+        // not expose no-op --start/--end/--description flags on create: a flag
+        // that silently does nothing is a trap for the agent consumer.
         const resolved = await resolveClient(opts.client);
         if (resolved.autoResolved) {
           process.stderr.write(
