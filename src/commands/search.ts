@@ -64,11 +64,27 @@ async function resolveTravellerIds(tripPlanId: string): Promise<string[]> {
   return data.tripPlanTravellers.map((t) => t.id);
 }
 
-function resolvePlanId(opts: { plan?: string }): string {
-  if (opts.plan) return opts.plan;
+// Exported for unit testing the --plan validation contract (VOY-1437).
+export function resolvePlanId(opts: { plan?: string }): string {
+  // A passed-but-empty/whitespace --plan is an error, NOT a cue to silently
+  // fall back to the last-search plan. Falling back here would run the search
+  // against a DIFFERENT plan than the caller named — silent cross-plan
+  // contamination. Only a fully OMITTED --plan uses the last-search fallback.
+  if (opts.plan !== undefined) {
+    const trimmed = opts.plan.trim();
+    if (trimmed === "") {
+      throw new CliError(
+        CliErrorCode.VALIDATION,
+        "--plan was given an empty value. Pass a real plan id, or omit --plan to reuse the last-search plan.",
+      );
+    }
+    return trimmed;
+  }
   const state = loadSearchState();
   if (state?.tripPlanId) {
-    process.stderr.write(chalk.dim(`Using plan from last search: ${state.tripPlanId}\n`));
+    process.stderr.write(
+      chalk.yellow(`No --plan given; using plan from last search: ${state.tripPlanId}\n`),
+    );
     return state.tripPlanId;
   }
   throw new CliError(CliErrorCode.VALIDATION, '--plan <id> is required. Create one first:\n  voyagier plans create --title "My Trip"');

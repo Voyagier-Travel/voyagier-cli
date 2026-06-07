@@ -178,27 +178,18 @@ describe("plans create — client wiring", () => {
     ).rejects.toMatchObject({ code: CliErrorCode.MULTIPLE_CLIENTS });
   });
 
-  it("warns to stderr when --start, --end, or --description are passed (currently no-ops)", async () => {
+  it("rejects --start/--end/--description on create (no no-op flags; use `plans update`)", async () => {
+    // create accepts only { clientId, title }. The old no-op flags were removed:
+    // a flag that silently does nothing is a trap for the agent consumer. Dates
+    // are set via `plans update`, which wires them through.
+    await expect(
+      runPlansCreate(["--client", sampleClient.id, "--title", "Test plan", "--start", "2026-09-15"]),
+    ).rejects.toThrow(/unknown option '--start'/);
+  });
+
+  it("sends only { clientId, title } in create input", async () => {
     mockGraphql.mockResolvedValueOnce({ createTripPlan: samplePlan });
-
-    await runPlansCreate([
-      "--client",
-      sampleClient.id,
-      "--title",
-      "Test plan",
-      "--start",
-      "2026-09-15",
-      "--end",
-      "2026-09-22",
-      "--description",
-      "Demo",
-      "--json",
-    ]);
-
-    const stderrJoined = stderrWrites.join("");
-    expect(stderrJoined).toContain("--start, --end, --description");
-    expect(stderrJoined).toContain("not yet wired");
-    // And critically, those values are NOT sent in input.
+    await runPlansCreate(["--client", sampleClient.id, "--title", "Test plan", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars.input).toEqual({ clientId: sampleClient.id, title: "Test plan" });
   });

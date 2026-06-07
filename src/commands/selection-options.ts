@@ -120,12 +120,21 @@ export function registerSelectionOptionsCommands(program: Command): void {
             // Refresh failure isn't fatal — polling will reflect real monitor state.
           }
 
-          const deadline = Date.now() + timeoutMs;
+          const startedAt = Date.now();
+          const deadline = startedAt + timeoutMs;
           let delay = retryAfterMs;
           while (!isTerminal(result.status) && Date.now() < deadline) {
             const remaining = deadline - Date.now();
             await sleep(Math.min(delay, Math.max(0, remaining)));
             ({ raw, result } = await loadSelectionState(selectionId, retryAfterMs));
+            // Heartbeat to stderr so the poll loop is never a silent black box.
+            // stderr keeps --json stdout clean. (VOY-1437)
+            const elapsed = Math.round((Date.now() - startedAt) / 1000);
+            process.stderr.write(
+              chalk.dim(
+                `  polling… status=${result.status} options=${result.optionCount} elapsed=${elapsed}s\n`,
+              ),
+            );
             delay = Math.min(delay * 1.5, 8000); // exponential backoff, capped
           }
 
