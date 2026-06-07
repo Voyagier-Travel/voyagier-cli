@@ -34,8 +34,22 @@ export async function printPlanFooter(planId: string): Promise<void> {
   } catch { /* best-effort */ }
 }
 
-// Returns plan summary object for --json mode. Returns null on failure.
-export async function getPlanSummary(planId: string): Promise<object | null> {
+/**
+ * Shape of the plan summary embedded in `plans create --json`. This is part of
+ * the CLI's public --json contract, so it carries a concrete type: a future key
+ * rename (e.g. the itemCount -> goalCount change) breaks the build instead of
+ * silently shipping drift to agent consumers.
+ */
+export interface PlanSummary {
+  title: string;
+  url: string;
+  dates: string;
+  travellerCount: number;
+  goalCount: number;
+}
+
+// Returns plan summary for --json mode. Returns null on failure.
+export async function getPlanSummary(planId: string): Promise<PlanSummary | null> {
   try {
     const data = await graphql<{ tripPlan: PlanFooterData | null }>(
       PLAN_FOOTER_QUERY,
