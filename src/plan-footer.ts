@@ -25,8 +25,10 @@ export async function printPlanFooter(planId: string): Promise<void> {
     const url = `${deriveBaseUrl(getApiUrl())}/plans/${planId}`;
     const dates = formatDateRange(p.startDate, p.endDate);
     const tc = p.travellers?.length ?? 0;
-    const ic = p.items?.length ?? 0;
-    const parts = [p.title, dates, `${tc} traveller${tc !== 1 ? "s" : ""}`, `${ic} item${ic !== 1 ? "s" : ""}`].filter(Boolean);
+    // `items` are goal-graph nodes (a fresh plan scaffolds ~25), NOT user-added
+    // bookings. Label honestly as goals so the agent doesn't read it as progress.
+    const gc = p.items?.length ?? 0;
+    const parts = [p.title, dates, `${tc} traveller${tc !== 1 ? "s" : ""}`, `${gc} goal${gc !== 1 ? "s" : ""}`].filter(Boolean);
     console.log(chalk.dim(`\n  Plan: ${url}`));
     console.log(chalk.dim(`  📋 ${parts.join(" · ")}`));
   } catch { /* best-effort */ }
@@ -46,7 +48,8 @@ export async function getPlanSummary(planId: string): Promise<object | null> {
       url: `${deriveBaseUrl(getApiUrl())}/plans/${planId}`,
       dates: formatDateRange(p.startDate, p.endDate),
       travellerCount: p.travellers?.length ?? 0,
-      itemCount: p.items?.length ?? 0,
+      // `items` are goal-graph nodes (fresh plan scaffolds ~25), not user items.
+      goalCount: p.items?.length ?? 0,
     };
   } catch { return null; }
 }
