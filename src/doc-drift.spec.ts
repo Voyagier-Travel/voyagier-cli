@@ -99,11 +99,14 @@ function extractInvocations(
       }
     }
 
-    // Normalize flag tokens: a flag name is --[a-z][a-z0-9-]*. Strip any value
-    // (--flag=x, --flag:x) and any trailing markdown/prose punctuation
-    // (backticks, periods, commas, parens) that bleeds in from doc text.
+    // Normalize flag tokens: a flag name is --[a-z][a-z0-9-]*. Strip LEADING
+    // doc punctuation that wraps optional flags ([--flag ...], `--flag`,
+    // (--flag)) before matching, and any trailing value (--flag=x) / prose
+    // punctuation. Without the leading-strip the guard would silently miss
+    // bracketed/backticked flag references and fail to enforce them.
     const flags: string[] = [];
-    for (const t of tokens) {
+    for (const rawTok of tokens) {
+      const t = rawTok.replace(/^[[(`'"]+/, "");
       const fm = t.match(/^(--[a-z][a-z0-9-]*)/i);
       if (fm) flags.push(fm[1]);
     }

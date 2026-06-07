@@ -205,12 +205,12 @@ voyagier clients list [--status active|archived] [--type individual|company|grou
 voyagier clients get <id> --json
 # Returns: { client }
 
-voyagier clients create --name <n> --type individual|company|group [--email] [--phone] [--avatar] [--description] --json
+voyagier clients create --name <n> --type individual|company|group [--email] [--phone] [--description] --json
 # Returns: { client, ok: true }
 
-voyagier clients update <id> [--name] [--type] [--email] [--phone] [--avatar] [--description] [--status active|archived] --json
+voyagier clients update <id> [--name] [--type] [--email] [--phone] [--description] [--status active|archived] --json
 voyagier clients archive <id> --json
-voyagier clients upsert --email <e> --name <n> --type <t> [--phone] [--avatar] [--description] --json
+voyagier clients upsert --email <e> --name <n> --type <t> [--phone] --json
 # upsert returns: { client, ok: true, created: boolean }
 ```
 
@@ -221,7 +221,7 @@ voyagier clients upsert --email <e> --name <n> --type <t> [--phone] [--avatar] [
 To create a plan with its default goal graph, prefer `voyagier plan-trip --client <ref> --title <t>` (scaffold). `plans create` makes a bare plan record.
 
 ```bash
-voyagier plans create [--client <ref>] --title <title> [--start <YYYY-MM-DD>] [--end <YYYY-MM-DD>] [--description <text>] --json
+voyagier plans create [--client <ref>] --title <title> --json
 # --client (id|email|name) is optional only when exactly one ACTIVE client exists (auto-resolved);
 # required when you have zero or multiple clients.
 # Returns: { ...plan, url, planSummary }
