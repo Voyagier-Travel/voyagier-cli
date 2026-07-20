@@ -25,13 +25,34 @@ interface RawOption {
   sortOrder?: number | null;
 }
 
+interface RawTravellerChoice {
+  traveller: { id: string; firstName?: string | null; lastName?: string | null };
+  selectedOption?: { id: string } | null;
+  scope?: string | null;
+}
+
 interface RawSelection {
   __typename: string;
   id: string;
   type?: string | null;
   blueprintMonitorId?: string | null;
   parentOptionId?: string | null;
+  travellerOptionChoices?: RawTravellerChoice[] | null;
   options?: RawOption[] | null;
+}
+
+/**
+ * The participant-choice model (VOY-1692): a selection is "chosen" per
+ * traveller. Consensus = every assigned traveller picked the same option.
+ * Falls back to the legacy parentOptionId when no choices exist.
+ */
+function deriveChosen(raw: RawSelection): { chosenOptionId: string | null; consensus: boolean } {
+  const choices = (raw.travellerOptionChoices ?? []).filter((c) => c.selectedOption?.id);
+  if (choices.length === 0) {
+    return { chosenOptionId: raw.parentOptionId ?? null, consensus: raw.parentOptionId != null };
+  }
+  const ids = [...new Set(choices.map((c) => c.selectedOption!.id))];
+  return { chosenOptionId: ids.length === 1 ? ids[0] : null, consensus: ids.length === 1 };
 }
 
 interface RawMonitor {
@@ -148,6 +169,14 @@ export function registerSelectionOptionsCommands(program: Command): void {
           (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
         );
 
+        const { chosenOptionId, consensus } = deriveChosen(raw);
+        const travellerChoices = (raw.travellerOptionChoices ?? []).map((c) => ({
+          travellerId: c.traveller.id,
+          travellerName: [c.traveller.firstName, c.traveller.lastName].filter(Boolean).join(" ") || null,
+          optionId: c.selectedOption?.id ?? null,
+          scope: c.scope ?? null,
+        }));
+
         if (asJson) {
           jsonOutput({
             selectionId: raw.id,
@@ -160,7 +189,11 @@ export function registerSelectionOptionsCommands(program: Command): void {
             ...(result.fetchError ? { fetchError: result.fetchError } : {}),
             ...(result.staleWarning ? { staleWarning: true } : {}),
             blueprintMonitorId: raw.blueprintMonitorId ?? null,
-            chosenOptionId: raw.parentOptionId ?? null,
+            chosenOptionId,
+            // Per-traveller picks (participant-choice model). consensus=false with
+            // a null chosenOptionId means travellers picked DIFFERENT options.
+            consensus,
+            ...(travellerChoices.length > 0 ? { travellerChoices } : {}),
             options: sortedOptions.map((o) => ({
               id: o.id,
               name: o.name,
@@ -190,9 +223,15 @@ export function registerSelectionOptionsCommands(program: Command): void {
           console.log();
           for (const o of sortedOptions) {
             const price = o.price != null ? chalk.green(` · $${o.price}`) : "";
-            const chosen = raw.parentOptionId === o.id ? chalk.green(" ✓") : "";
+            const chosen = chosenOptionId === o.id ? chalk.green(" ✓") : "";
             console.log(`    ${chalk.white(o.name)}${price}${chosen}`);
             console.log(chalk.dim(`      ${o.id}`));
+          }
+        }
+        if (travellerChoices.length > 0 && !consensus) {
+          console.log(chalk.yellow(`\n  Travellers have picked DIFFERENT options:`));
+          for (const c of travellerChoices) {
+            console.log(chalk.dim(`    ${c.travellerName ?? c.travellerId}: ${c.optionId ?? "—"}`));
           }
         }
         console.log();
