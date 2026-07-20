@@ -406,7 +406,7 @@ voyagier bookings get <id> --json
 
 ### Misc
 ```bash
-voyagier whoami --json                # identity + profile
+voyagier whoami --json                # identity + profile (LIVE-verifies the token; a stale/revoked PAT fails loudly — use --cached only for offline reads)
 voyagier chat                         # interactive AI assistant
 voyagier chat -m "<single prompt>"
 voyagier telemetry status|on|off
