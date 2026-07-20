@@ -50,12 +50,20 @@ const pickedSelection = (id = "s1") => ({
   id,
   type: "Flight",
   blueprintMonitorId: "m1",
-  options: [{ id: "o1", name: "BWI to MCO" }],
+  options: [{ id: "o1", name: "BWI to MCO", isBookable: true }],
   travellerOptionChoices: [choice("t1", "o1")],
 });
 
+/** Cart with one item that joins to pickedSelection()'s bookable option. */
+const bookableCart = (id = "s1", over: Record<string, unknown> = {}) => ({
+  itemCount: 1,
+  total: 339.1,
+  currency: "USD",
+  items: [{ selectionId: id, optionId: "o1", ...over }],
+});
+
 describe("buildPlanStatus — readiness precedence", () => {
-  it("BOOKED beats everything when all goals are booked", () => {
+  it("BOOKED beats everything when all goals are booked — and terminal state clears blockers/nextSteps", () => {
     const s = buildPlanStatus(
       {
         tripPlan: plan({ travellers: [traveller("t1", { gender: null })] }),
@@ -65,6 +73,11 @@ describe("buildPlanStatus — readiness precedence", () => {
     );
     expect(s.readiness).toBe("BOOKED");
     expect(s.summary.goalsBooked).toBe(1);
+    // Terminal: no contradictory advice next to a BOOKED verdict.
+    expect(s.blockers).toEqual([]);
+    expect(s.waiting).toEqual([]);
+    expect(s.nextSteps).toEqual([]);
+    expect(s.summary.blockerCount).toBe(0);
   });
 
   it("BLOCKED when any blocker exists, even with waits pending", () => {
@@ -109,10 +122,10 @@ describe("buildPlanStatus — readiness precedence", () => {
     expect(s.blockers).toEqual([]);
   });
 
-  it("READY_TO_BOOK when no blockers, no waits, cart has items", () => {
+  it("READY_TO_BOOK when no blockers, no waits, cart has ≥1 BOOKABLE item", () => {
     const s = buildPlanStatus(
       {
-        tripPlan: plan({ cart: { itemCount: 1, total: 339.1, currency: "USD" } }),
+        tripPlan: plan({ cart: bookableCart() }),
         tripPlanGoals: [
           goal({
             isDecided: true,
@@ -124,7 +137,30 @@ describe("buildPlanStatus — readiness precedence", () => {
       BASE,
     );
     expect(s.readiness).toBe("READY_TO_BOOK");
+    expect(s.cart.bookableCount).toBe(1);
     expect(s.nextSteps).toEqual(["voyagier book plan-1 --dry-run"]);
+  });
+
+  it("cart items that don't join to a bookable option gate READY_TO_BOOK (no false ready)", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan({
+          cart: { itemCount: 1, total: 100, currency: "USD", items: [{ selectionId: "s1", optionId: "o-unknown" }] },
+        }),
+        tripPlanGoals: [
+          goal({
+            isDecided: true,
+            checkoutReadiness: { isReady: true, requirements: [] },
+            items: [{ id: "i1", selections: [pickedSelection()] }],
+          }),
+        ],
+      },
+      BASE,
+    );
+    expect(s.cart.bookableCount).toBe(0);
+    expect(s.readiness).toBe("IN_PROGRESS");
+    expect(s.waiting[0].kind).toBe("CART_PENDING");
+    expect(s.waiting[0].message).toContain("none report bookable");
   });
 
   it("empty cart with nothing pending → IN_PROGRESS with a CART_PENDING wait, never a silent READY", () => {
@@ -144,6 +180,32 @@ describe("buildPlanStatus — readiness precedence", () => {
     expect(s.readiness).toBe("IN_PROGRESS");
     expect(s.waiting.map((w) => w.kind)).toEqual(["CART_PENDING"]);
     expect(s.nextSteps.some((c) => c.includes("voyagier cart plan-1"))).toBe(true);
+  });
+
+  it("passport joins traveller `missing` (and blocks) only when a cart item requires it", () => {
+    const goals = [
+      goal({
+        isDecided: true,
+        checkoutReadiness: { isReady: true, requirements: [] },
+        items: [{ id: "i1", selections: [pickedSelection()] }],
+      }),
+    ];
+    // Domestic (requiresPassport absent): no passport gap.
+    const domestic = buildPlanStatus(
+      { tripPlan: plan({ cart: bookableCart() }), tripPlanGoals: goals },
+      BASE,
+    );
+    expect(domestic.travellers[0].missing).toEqual([]);
+    expect(domestic.readiness).toBe("READY_TO_BOOK");
+    // International (server says requiresPassport): traveller without passport blocks.
+    const intl = buildPlanStatus(
+      { tripPlan: plan({ cart: bookableCart("s1", { requiresPassport: true }) }), tripPlanGoals: goals },
+      BASE,
+    );
+    expect(intl.travellers[0].missing).toEqual(["passport"]);
+    expect(intl.readiness).toBe("BLOCKED");
+    expect(intl.blockers[0].kind).toBe("TRAVELLER_DATA");
+    expect(intl.blockers[0].message).toContain("passport");
   });
 });
 
@@ -356,7 +418,15 @@ describe("buildPlanStatus — divergent picks are valid (demmersong 2026-07-20)"
       {
         tripPlan: plan({
           travellers: [traveller("t1"), traveller("t2")],
-          cart: { itemCount: 2, total: 500, currency: "USD" },
+          cart: {
+            itemCount: 2,
+            total: 500,
+            currency: "USD",
+            items: [
+              { selectionId: "s1", optionId: "o1" },
+              { selectionId: "s1", optionId: "o2" },
+            ],
+          },
         }),
         tripPlanGoals: [
           goal({
@@ -368,7 +438,10 @@ describe("buildPlanStatus — divergent picks are valid (demmersong 2026-07-20)"
                     id: "s1",
                     type: "Flight",
                     blueprintMonitorId: "m1",
-                    options: [{ id: "o1", name: "A" }, { id: "o2", name: "B" }],
+                    options: [
+                      { id: "o1", name: "A", isBookable: true },
+                      { id: "o2", name: "B", isBookable: true },
+                    ],
                     travellerOptionChoices: [choice("t1", "o1"), choice("t2", "o2")],
                   },
                 ],
@@ -422,7 +495,7 @@ describe("buildPlanStatus — misc contract", () => {
   it("consensus pick surfaces chosenOptionName", () => {
     const s = buildPlanStatus(
       {
-        tripPlan: plan({ cart: { itemCount: 1, total: 339.1, currency: "USD" } }),
+        tripPlan: plan({ cart: bookableCart() }),
         tripPlanGoals: [goal({ items: [{ id: "i1", selections: [pickedSelection()] }] })],
       },
       BASE,

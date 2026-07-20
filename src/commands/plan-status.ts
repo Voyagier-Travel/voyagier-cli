@@ -50,8 +50,14 @@ interface RawTraveller {
   lastName?: string | null;
   dateOfBirth?: string | null;
   gender?: string | null;
-  declaredTravellerType?: string | null;
   passport?: { last4?: string | null } | null;
+}
+
+interface RawCartItem {
+  selectionId?: string | null;
+  optionId?: string | null;
+  /** Flight items: itinerary is international — passports required. Fails closed (true) server-side. */
+  requiresPassport?: boolean | null;
 }
 
 interface RawStatusSelection {
@@ -94,7 +100,12 @@ export interface PlanStatusQueryResult {
     id: string;
     title?: string | null;
     travellers?: RawTraveller[] | null;
-    cart?: { itemCount?: number | null; total?: number | null; currency?: string | null } | null;
+    cart?: {
+      itemCount?: number | null;
+      total?: number | null;
+      currency?: string | null;
+      items?: RawCartItem[] | null;
+    } | null;
   } | null;
   tripPlanGoals?: RawGoal[] | null;
 }
@@ -165,7 +176,7 @@ export interface PlanStatusData {
     }[];
   }[];
   travellers: { travellerId: string; name: string; missing: string[] }[];
-  cart: { itemCount: number; total: number; currency: string };
+  cart: { itemCount: number; bookableCount: number; total: number; currency: string };
   blockers: Blocker[];
   waiting: Waiting[];
   nextSteps: string[];
@@ -183,8 +194,27 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
     (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
   );
   const travellers = plan.travellers ?? [];
+  const cartItems = plan.cart?.items ?? [];
+
+  // Bookability join: cart items reference selectionId+optionId; the goals
+  // walk below carries options[].isBookable. Same key scheme as cart-helpers'
+  // buildBookabilityIndex — unknown resolves conservatively to not-bookable.
+  const bookableOptionKeys = new Set<string>();
+  for (const g of data.tripPlanGoals ?? []) {
+    for (const item of g.items ?? []) {
+      for (const sel of item.selections ?? []) {
+        for (const opt of sel.options ?? []) {
+          if (opt.isBookable === true) bookableOptionKeys.add(`${sel.id}:${opt.id}`);
+        }
+      }
+    }
+  }
+  const bookableCount = cartItems.filter(
+    (i) => i.selectionId && i.optionId && bookableOptionKeys.has(`${i.selectionId}:${i.optionId}`),
+  ).length;
   const cart = {
     itemCount: plan.cart?.itemCount ?? 0,
+    bookableCount,
     total: plan.cart?.total ?? 0,
     currency: plan.cart?.currency ?? "USD",
   };
@@ -193,13 +223,15 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
   const waiting: Waiting[] = [];
 
   // 1. TRAVELLER_DATA — gender + DOB are required for flight checkout (TSA
-  //    Secure Flight); passport hard-gates international reserves but we can't
-  //    reliably detect international here, so it's reported per-traveller in
-  //    `missing` only when absent, without blocking.
+  //    Secure Flight). Passports are required only when the itinerary is
+  //    international — the server tells us via cart items' requiresPassport
+  //    (fails closed to true when the route can't be resolved).
+  const passportRequired = cartItems.some((i) => i.requiresPassport === true);
   const travellerOut = travellers.map((t) => {
     const missing: string[] = [];
     if (!t.gender) missing.push("gender");
     if (!t.dateOfBirth) missing.push("dateOfBirth");
+    if (passportRequired && !t.passport?.last4) missing.push("passport");
     return { travellerId: t.id, name: travellerName(t), missing };
   });
   for (const t of travellerOut) {
@@ -357,20 +389,27 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
   const allBooked = goalsOut.length > 0 && goalsBooked === goalsOut.length;
   let readiness: Readiness;
   if (allBooked) {
+    // Terminal: nothing left to do — suppress blockers/waits/next steps so an
+    // agent switching on BOOKED never sees contradictory advice.
+    blockers.length = 0;
+    waiting.length = 0;
     readiness = "BOOKED";
   } else if (blockers.length > 0) {
     readiness = "BLOCKED";
   } else if (waiting.length > 0) {
     readiness = "IN_PROGRESS";
-  } else if (cart.itemCount > 0) {
+  } else if (cart.bookableCount > 0) {
     readiness = "READY_TO_BOOK";
   } else {
     // Nothing blocks, nothing waits, but the cart hasn't materialized
-    // bookable items yet (e.g. FlightClass defaults still propagating —
+    // BOOKABLE items yet (e.g. FlightClass defaults still propagating —
     // the VOY-1701 cart finding). Self-resolving → wait.
     waiting.push({
       kind: "CART_PENDING",
-      message: "Cart is empty — bookable items not yet generated (usually resolves within seconds)",
+      message:
+        cart.itemCount > 0
+          ? `Cart has ${cart.itemCount} item(s) but none report bookable yet (usually resolves within seconds)`
+          : "Cart is empty — bookable items not yet generated (usually resolves within seconds)",
       refs: {},
     });
     readiness = "IN_PROGRESS";

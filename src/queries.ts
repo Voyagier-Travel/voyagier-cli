@@ -340,10 +340,15 @@ export const GET_PLAN_STATUS = `
       id
       title
       travellers {
-        id firstName lastName dateOfBirth gender declaredTravellerType
+        id firstName lastName dateOfBirth gender
         passport { last4 }
       }
-      cart { itemCount total currency }
+      cart {
+        itemCount
+        total
+        currency
+        items { selectionId optionId requiresPassport }
+      }
     }
     tripPlanGoals(tripPlanId: $id) {
       id

@@ -327,6 +327,9 @@ ONE call answering "what's left before this plan can book?" — replaces the pla
 - `waiting[]` — self-resolving waits (`OPTIONS_PENDING`, `CART_PENDING`), separate from blockers because acting won't help.
 - `nextSteps[]` — runnable commands mapping onto blockers, ending with the terminal command when ready.
 - `goals[].selections[]` — per-selection detail: `status`, `mode` (only `Single` selections are picked; `List` ones are mirror sources), `isComplete` (server truth), `chosenOptionId/Name`, `consensus`, `allPicked` (divergent per-traveller picks are valid), `travellersPending`, `blockedOn`.
+- `travellers[].missing` — checkout-relevant gaps: `gender`, `dateOfBirth`, and `passport` (passport only when a cart item reports `requiresPassport`, i.e. the itinerary is international — server-decided, fails closed).
+- `cart` — `{ itemCount, bookableCount, total, currency }`. `READY_TO_BOOK` requires `bookableCount ≥ 1` (cart items joined against option bookability); items in the cart that don't resolve to a bookable option keep the plan at `IN_PROGRESS`/`CART_PENDING`, never a false ready.
+- `BOOKED` is terminal: `blockers`, `waiting`, and `nextSteps` are always empty — no contradictory advice next to a done verdict.
 
 STABILITY: additive-only contract — keys are never renamed/removed; new blocker/waiting kinds may appear, so tolerate unknown kinds.
 
