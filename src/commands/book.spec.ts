@@ -87,7 +87,7 @@ function cartFixture() {
 const NO_CHECKOUTS = { tripPlanPaymentCheckouts: [] };
 const PENDING_CHECKOUT = {
   tripPlanPaymentCheckouts: [
-    { id: "co-pending", status: "Pending", checkoutUrl: "https://stripe.test/pay/co-pending", hostedInvoiceUrl: null, bookingRecords: [] },
+    { id: "co-pending", status: "Pending", checkoutUrl: "https://stripe.test/pay/co-pending", hostedInvoiceUrl: null, bookingRecords: [] } as const,
   ],
 };
 const PAID_CHECKOUT = {
@@ -148,7 +148,7 @@ describe("price hard-gate", () => {
     const vars = createVars();
     expect(vars).toBeDefined();
     expect((vars!.input as Record<string, unknown>).tripPlanId).toBe("plan-1");
-    expect((vars!.input as Record<string, unknown>).itemIds).toBeUndefined(); // no filters → server books all bookable
+    expect((vars!.input as Record<string, unknown>).itemIds).toEqual(["sel-f:opt-f"]); // always pinned to the gated set
     const out = lastJson();
     expect(out.ok).toBe(true);
     expect(out.data.checkoutUrl).toBe("https://stripe.test/pay/new");
@@ -213,19 +213,10 @@ describe("price hard-gate", () => {
 
 // ── Idempotency pre-flight ──────────────────────────────────────────────────
 
-describe("idempotency pre-flight", () => {
-  it("refuses when a Pending checkout exists, surfacing its URL (CHECKOUT_PENDING)", async () => {
+describe("paid-checkout pre-flight", () => {
+  it("a Pending checkout row does NOT block (server never returns them on this query; encoded so a backend change is caught)", async () => {
     routeGraphql({ checkouts: PENDING_CHECKOUT });
-    await expect(runBook(["plan-1", "--expect-total", "339.10", "--json"])).rejects.toMatchObject({
-      code: CliErrorCode.CHECKOUT_PENDING,
-      details: { pendingCheckouts: [{ id: "co-pending", checkoutUrl: "https://stripe.test/pay/co-pending" }] },
-    });
-    expect(createVars()).toBeUndefined();
-  });
-
-  it("--new-session supersedes a Pending checkout", async () => {
-    routeGraphql({ checkouts: PENDING_CHECKOUT });
-    await runBook(["plan-1", "--expect-total", "339.10", "--new-session", "--json"]);
+    await runBook(["plan-1", "--expect-total", "339.10", "--json"]);
     expect(createVars()).toBeDefined();
   });
 
@@ -234,7 +225,7 @@ describe("idempotency pre-flight", () => {
     await expect(runBook(["plan-1", "--expect-total", "339.10", "--json"])).rejects.toMatchObject({
       code: CliErrorCode.ALREADY_BOOKED,
       details: {
-        paidCheckouts: [{ id: "co-paid", bookingRecords: [{ type: "FlightBooking", status: "Confirmed", amount: 33910 }] }],
+        paidCheckouts: [{ id: "co-paid", bookingRecords: [{ type: "FlightBooking", status: "Confirmed", amountCents: 33910 }] }],
       },
     });
     expect(createVars()).toBeUndefined();
@@ -270,11 +261,32 @@ describe("idempotency pre-flight", () => {
       code: CliErrorCode.ALREADY_BOOKED,
     });
   });
+
+  it("preserves the original CliError code when the pre-flight fails (AUTH_FAILED not masked as API_ERROR)", async () => {
+    mockGraphql.mockImplementation(async (query: string) => {
+      if (query.includes("TripPlanPaymentCheckouts")) throw new CliError(CliErrorCode.AUTH_FAILED, "token expired");
+      if (query.includes("cart")) return cartFixture();
+      throw new Error(`unrouted query: ${query.slice(0, 120)}`);
+    });
+    await expect(runBook(["plan-1", "--expect-total", "339.10", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.AUTH_FAILED,
+      message: expect.stringContaining("refusing to create a new session"),
+    });
+    expect(createVars()).toBeUndefined();
+  });
+
 });
 
 // ── Server-side filtering (itemIds) ─────────────────────────────────────────
 
-describe("server-side filtering via itemIds", () => {
+describe("server-side itemIds pinning", () => {
+  it("ALWAYS sends itemIds for the gated bookable set, even without filters (charged set = gated set)", async () => {
+    routeGraphql();
+    await runBook(["plan-1", "--expect-total", "339.10", "--json"]);
+    const input = createVars()!.input as Record<string, unknown>;
+    expect(input.itemIds).toEqual(["sel-f:opt-f"]);
+  });
+
   it("--types Flight sends itemIds for the bookable flight only", async () => {
     routeGraphql();
     await runBook(["plan-1", "--types", "Flight", "--expect-total", "339.10", "--json"]);
@@ -316,15 +328,22 @@ describe("--dry-run", () => {
     expect(out.data.chargeableSubtotal).toBeCloseTo(339.1, 2);
     expect(out.data.subtotal).toBeCloseTo(439.1, 2);
     expect(out.data.nextStep).toBe("voyagier book plan-1 --expect-total 339.10");
-    expect(out.data.existingCheckouts).toEqual({ pending: 0, paid: 0, pendingUrl: null });
+    expect(out.data.existingCheckouts).toEqual({ paid: 0 });
     expect(createVars()).toBeUndefined();
   });
 
-  it("reports existing pending sessions", async () => {
-    routeGraphql({ checkouts: PENDING_CHECKOUT });
+  it("nextStep recipe carries active filters (copy-paste must gate the same set it priced)", async () => {
+    routeGraphql();
+    await runBook(["plan-1", "--dry-run", "--types", "Flight", "--only-bookable", "--json"]);
+    const out = lastJson();
+    expect(out.data.nextStep).toBe("voyagier book plan-1 --types Flight --only-bookable --expect-total 339.10");
+  });
+
+  it("reports existing paid sessions", async () => {
+    routeGraphql({ checkouts: PAID_CHECKOUT });
     await runBook(["plan-1", "--dry-run", "--json"]);
     const out = lastJson();
-    expect(out.data.existingCheckouts).toEqual({ pending: 1, paid: 0, pendingUrl: "https://stripe.test/pay/co-pending" });
+    expect(out.data.existingCheckouts).toEqual({ paid: 1 });
   });
 
   it("still works when the checkout query fails (existingCheckouts null, no abort)", async () => {
@@ -359,5 +378,9 @@ describe("parseMoney", () => {
 
   it.each(["abc", "-5", "339.105", "1e3", "", "339,10", "$"])("rejects %s", (raw) => {
     expect(() => parseMoney(raw, "--expect-total")).toThrow(CliError);
+  });
+
+  it("rejects absurdly long digit strings that overflow to Infinity", () => {
+    expect(() => parseMoney("9".repeat(400), "--max-total")).toThrow(/too large/);
   });
 });

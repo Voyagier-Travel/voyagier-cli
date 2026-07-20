@@ -57,7 +57,7 @@ voyagier book <PLAN_ID> --expect-total <subtotal> --json   # checkout only at th
 | Hotel | ⚠️ partial | Blueprint Listings (checkout coverage incomplete) |
 | Flight | ✅ via Fare & Cabin item | Sabre (fare-level item carted once all legs are picked; defaults to Economy) |
 
-The cart materializes only bookable, fare/room-level options — the per-item `isBookable` flag is the live truth. Always run `voyagier book --validate <planId>` for pre-flight checks. A real checkout requires a **price gate** (`--expect-total` or `--max-total`) against the chargeable subtotal, and `--types` / `--only-bookable` are **server-side filters** (passed via `itemIds`) — the Stripe session charges exactly the narrowed set.
+The cart materializes only bookable, fare/room-level options — the per-item `isBookable` flag is the live truth. Always run `voyagier book --validate <planId>` for pre-flight checks. A real checkout requires a **price gate** (`--expect-total` or `--max-total`) against the chargeable subtotal, and the checkout is always pinned to that gated set via `itemIds` — `--types` / `--only-bookable` narrow it server-side. Note: unpaid (Pending) checkout sessions are not visible to the CLI, so never retry a successful `book`.
 
 ## Commands
 
@@ -78,7 +78,7 @@ The cart materializes only bookable, fare/room-level options — the per-item `i
 | `voyagier listings` | Blueprint Listings — recent change events, add to selection |
 | `voyagier places` | Search / get / attach / list / highlight (Google Places + internal catalog) |
 | `voyagier cart` | View cart with by-goal grouping and per-item bookability |
-| `voyagier book` | Stripe checkout gated by `--expect-total` / `--max-total`; `--validate`, server-side `--only-bookable` / `--types`, `--new-session`, `--rebook` |
+| `voyagier book` | Stripe checkout gated by `--expect-total` / `--max-total`; `--validate`, server-side `--only-bookable` / `--types`, `--rebook` |
 | `voyagier bookings` | View booking records |
 | `voyagier chat` | Interactive AI trip planning |
 | `voyagier whoami` | Identity + profile (live-verifies the token; `--cached` for offline reads) |

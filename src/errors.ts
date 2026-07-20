@@ -44,8 +44,6 @@ export enum CliErrorCode {
   PRICE_CHANGED = "PRICE_CHANGED",
   /** A Paid checkout with booking records already exists for this plan. */
   ALREADY_BOOKED = "ALREADY_BOOKED",
-  /** An unpaid (Pending) checkout session already exists for this plan. */
-  CHECKOUT_PENDING = "CHECKOUT_PENDING",
 }
 
 export class CliError extends Error {

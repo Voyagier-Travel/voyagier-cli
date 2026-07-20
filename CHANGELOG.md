@@ -9,12 +9,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
-- **`book` price hard-gate (VOY-1706):** a real checkout now REQUIRES `--expect-total <amt>` (exact, cents-compared) or `--max-total <amt>` (cap; both flags → both enforced), checked against the **chargeable subtotal** (bookable items only). Mismatch aborts with `PRICE_CHANGED` (+ `details.{expectedTotal,maxTotal,actualTotal,items}`) before any mutation. `book --dry-run` now reports `chargeableSubtotal`, existing checkout sessions, and a ready-to-run `nextStep`.
-- **`book` idempotency pre-flight (VOY-1706):** before minting a Stripe session, `book` checks existing checkouts — `Paid` → `ALREADY_BOOKED` (override `--rebook`); unpaid `Pending` → `CHECKOUT_PENDING` surfacing the existing session URL (override `--new-session`). Fails closed if the check itself errors.
-- **`book --types` / `--only-bookable` are now server-side filters** via `CreateTripPlanCheckoutInput.itemIds` (`selectionId:optionId`) — the Stripe session charges exactly the narrowed bookable set (previously client-side preflight gates over a full-cart checkout).
+- **`book` price hard-gate (VOY-1706):** a real checkout now REQUIRES `--expect-total <amt>` (exact, cents-compared) or `--max-total <amt>` (cap; both flags → both enforced), checked against the **chargeable subtotal** (bookable items only) at cart-read time. Mismatch aborts with `PRICE_CHANGED` (+ `details.{expectedTotal,maxTotal,actualTotal,items}`) before any mutation. `book --dry-run` now reports `chargeableSubtotal`, existing paid checkouts, and a ready-to-run `nextStep` (carrying any active filters).
+- **`book` paid-checkout pre-flight (VOY-1706):** before minting a Stripe session, `book` checks existing checkouts — `Paid` → `ALREADY_BOOKED` with booking-record summary (`amountCents`); override `--rebook`. Fails closed (preserving the underlying error code) if the check itself errors. Note: unpaid `Pending` sessions are excluded by the server on this query and are therefore invisible to the CLI — pending-session idempotency needs a backend change (tracked separately).
+- **`book` checkouts are now item-pinned:** every checkout sends `CreateTripPlanCheckoutInput.itemIds` (`selectionId:optionId`) for the exact bookable set the gate priced, so the charged set always equals the gated set; `--types` / `--only-bookable` narrow it server-side (previously client-side preflight gates over a full-cart checkout).
+
+### Fixed
+- `book --status` rendered booking-record amounts 100× too large (amounts are cents; a $1,297.06 flight displayed as $129,706.00) and compared status enums in UPPERCASE against the API's PascalCase values, so confirmed bookings rendered as failed and the confirmation hints never fired.
 
 ### Removed
-- `book --idempotency-key` — it was a JSON-echo no-op (never sent server-side); real idempotency is the checkout pre-flight above.
+- `book --idempotency-key` — it was a JSON-echo no-op (never sent server-side); real duplicate protection is the paid-checkout pre-flight above.
 
 ## [2.3.0] — 2026-07-20
 

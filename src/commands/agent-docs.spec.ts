@@ -162,15 +162,23 @@ describe("agent-docs", () => {
         expect(content).toContain("chargeableSubtotal");
         expect(content).toContain("PRICE_CHANGED");
         expect(content).toContain("ALREADY_BOOKED");
-        expect(content).toContain("CHECKOUT_PENDING");
-        expect(content).toContain("--new-session");
         expect(content).toContain("--rebook");
-        // book --types / --only-bookable are now SERVER-side filters (itemIds
-        // on createTripPlanCheckout, introspection-verified 2026-07-20). The
-        // doc must not describe them as client-side preflight gates anymore.
+        // CHECKOUT_PENDING / --new-session must NOT be documented: the server
+        // excludes Pending rows from tripPlanPaymentCheckouts (WHERE status !=
+        // Pending in nest-api), so a pending-session pre-flight is impossible
+        // today — documenting it would promise idempotency that doesn't exist.
+        expect(content).not.toContain("CHECKOUT_PENDING");
+        expect(content).not.toContain("--new-session");
+        // The doc must be honest that unpaid sessions are invisible to the CLI.
+        expect(content.toLowerCase()).toMatch(/pending.*(invisible|excluded|not (visible|returned))/);
+        // The gate must not overclaim: point-in-time snapshot, not a guarantee.
+        expect(content.toLowerCase()).not.toMatch(/gate guarantees/);
+        // book --types / --only-bookable are SERVER-side filters and the
+        // checkout is always item-pinned (itemIds on createTripPlanCheckout,
+        // introspection-verified 2026-07-20). No stale client-side framing.
         expect(content.toLowerCase()).toContain("server-side");
         expect(content).toContain("itemIds");
-        expect(content.toLowerCase()).not.toMatch(/client-side preflight gates/);
+        expect(content.toLowerCase()).not.toMatch(/client-side (preflight )?gates/);
       }
     });
 
