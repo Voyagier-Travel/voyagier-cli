@@ -32,6 +32,7 @@ import {
 } from "graphql";
 import { graphql, AuthError } from "../api.js";
 import { credentialsExist, getApiUrl, getUserContext } from "../config.js";
+import { sanitizeExternalText } from "../utils.js";
 import { jsonOutput } from "../output.js";
 import { CliError } from "../errors.js";
 import { DOCTOR_PING } from "../queries.js";
@@ -174,7 +175,7 @@ async function checkReachability(): Promise<DoctorCheck> {
       return {
         name: "reachability",
         status: "FAIL",
-        message: `Backend ${url} responded ${res.status} ${res.statusText}`,
+        message: `Backend ${url} responded ${res.status} ${sanitizeExternalText(res.statusText)}`,
       };
     }
     return {

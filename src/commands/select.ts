@@ -10,7 +10,7 @@ import {
   SET_SELECTION_TRAVELLER_CHOICE,
 } from "../queries.js";
 import { loadSearchState, clearSearchState, isSearchStateStale } from "../state.js";
-import { deriveBaseUrl } from "../utils.js";
+import { deriveBaseUrl, shellArg } from "../utils.js";
 import { hintFlightSelected, hintHotelSelected } from "../hints.js";
 import { progress, warn, fatal, jsonOutput, jsonOutputWithPlan } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
@@ -297,10 +297,10 @@ export function registerSelectCommands(program: Command): void {
           const nextSteps = [
             ...(state.type === "flights" && state.returnSelectionId
               ? [
-                  `- Choose the RETURN leg too: \`voyagier select --selection-id ${state.returnSelectionId} --option-id <id>\` (options: \`voyagier selection-options ${state.returnSelectionId} --json\`)`,
+                  `- Choose the RETURN leg too: \`voyagier select --selection-id ${shellArg(state.returnSelectionId)} --option-id <id>\` (options: \`voyagier selection-options ${shellArg(state.returnSelectionId)} --json\`)`,
                 ]
               : []),
-            `- View cart: \`voyagier cart ${state.tripPlanId}\``,
+            `- View cart: \`voyagier cart ${shellArg(state.tripPlanId)}\``,
           ];
           process.stdout.write(
             [
@@ -316,7 +316,7 @@ export function registerSelectCommands(program: Command): void {
           const icon = state.type === "flights" ? "✈️" : state.type === "activities" ? "🎯" : "🏨";
           console.log(chalk.green(`\n✓ ${icon} Selected: ${selected.summary}`));
           if (state.type === "flights" && state.returnSelectionId) {
-            console.log(chalk.dim(`  Round trip: also choose the return leg — voyagier select --selection-id ${state.returnSelectionId} --option-id <id>`));
+            console.log(chalk.dim(`  Round trip: also choose the return leg — voyagier select --selection-id ${shellArg(state.returnSelectionId)} --option-id <id>`));
           }
           if (state.type === "flights") {
             console.log(hintFlightSelected());
@@ -326,7 +326,7 @@ export function registerSelectCommands(program: Command): void {
             console.log(hintHotelSelected());
           }
           await printPlanFooter(state.tripPlanId);
-          console.log(chalk.dim(`  Next: voyagier plans get ${state.tripPlanId}`));
+          console.log(chalk.dim(`  Next: voyagier plans get ${shellArg(state.tripPlanId)}`));
         }
 
         clearSearchState();

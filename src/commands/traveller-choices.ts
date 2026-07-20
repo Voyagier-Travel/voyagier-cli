@@ -23,7 +23,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
 import { jsonOutput } from "../output.js";
-import { deriveBaseUrl } from "../utils.js";
+import { deriveBaseUrl, shellArg } from "../utils.js";
 import { getApiUrl } from "../config.js";
 import { GET_TRAVELLER_CHOICES } from "../queries.js";
 
@@ -99,26 +99,29 @@ export function buildNextStepCommand(
   planId: string,
   allTravellerIds: string[],
 ): { command: string; note: string } | null {
+  // SECURITY (VOY-1709): command/note are documented as runnable — every
+  // server-provided id must be shell-quoted.
   const pendingIds = question.pendingTravellers.map((t) => t.id);
-  const note = `List option IDs first: voyagier selection-options ${question.selectionId} --json`;
+  const selId = shellArg(question.selectionId);
+  const note = `List option IDs first: voyagier selection-options ${selId} --json`;
 
   if (pendingIds.length === 0) {
     return null;
   }
   if (pendingIds.length === allTravellerIds.length) {
     return {
-      command: `voyagier select --selection-id ${question.selectionId} --option-id <optionId>`,
+      command: `voyagier select --selection-id ${selId} --option-id <optionId>`,
       note,
     };
   }
   if (pendingIds.length === 1) {
     return {
-      command: `voyagier select --selection-id ${question.selectionId} --option-id <optionId> --traveller ${pendingIds[0]}`,
+      command: `voyagier select --selection-id ${selId} --option-id <optionId> --traveller ${shellArg(pendingIds[0])}`,
       note,
     };
   }
   return {
-    command: `voyagier select --selection-id ${question.selectionId} --option-id <optionId> --travellers ${pendingIds.join(",")}`,
+    command: `voyagier select --selection-id ${selId} --option-id <optionId> --travellers ${shellArg(pendingIds.join(","))}`,
     note,
   };
 }

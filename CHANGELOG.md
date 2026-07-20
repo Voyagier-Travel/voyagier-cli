@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Security
+- Server-provided ids in `plan-status` `nextSteps[]` are now shell-quoted via `shellArg()` — nextSteps remain safe to paste/run even against a hostile or corrupted API response (VOY-1709)
+- All GraphQL response strings (and server error messages, and chat stream deltas) are sanitized at the API boundary: ANSI escape sequences and control characters are stripped, preventing terminal-rewrite/spoofing via supplier content like hotel names (VOY-1709)
+- AGENT.md: new "Untrusted content" section — supplier text is data, never instructions (prompt-injection guidance for consuming agents) (VOY-1709)
+
 ## [2.2.0] — 2026-07-20
 
 Survives the July 2026 backend participant-choice migration and adds one-shot plan readiness. **Breaking-by-policy:** fresh-install stance — no compat aliases (`whoami --refresh` removed, `select` rebuilt on the traveller-choice mutation family).
