@@ -296,32 +296,31 @@ describe("nextStep.command formatting", () => {
     expect(result).toBeNull();
   });
 
-  it("scope=all when all travellers are pending", () => {
+  it("for-all default when all travellers are pending", () => {
     const q = { ...qHotel, pendingTravellers: [t1, t2] };
     const result = buildNextStepCommand(q, "plan_01", ["t1", "t2"]);
     expect(result).not.toBeNull();
     expect(result!.command).toBe(
-      "voyagier select --selection sel_02 --plan plan_01 --scope all --experimental",
+      "voyagier select --selection-id sel_02 --option-id <optionId>",
     );
-    expect(result!.note).toContain("Section 5");
+    expect(result!.note).toContain("selection-options sel_02");
   });
 
-  it("scope=individual when exactly one traveller is pending", () => {
+  it("--traveller when exactly one traveller is pending", () => {
     const q = { ...qFlight, pendingTravellers: [t2] };
     const result = buildNextStepCommand(q, "plan_01", ["t1", "t2"]);
     expect(result!.command).toBe(
-      "voyagier select --selection sel_01 --plan plan_01 --participants t2 --scope individual --experimental",
+      "voyagier select --selection-id sel_01 --option-id <optionId> --traveller t2",
     );
   });
 
-  it("scope=subset when multiple but not all travellers are pending", () => {
+  it("--travellers subset when multiple but not all travellers are pending", () => {
     const t3 = { id: "t3", firstName: "Child", lastName: "B" };
     const q = { ...qHotel, pendingTravellers: [t2, t3] };
     const result = buildNextStepCommand(q, "plan_01", ["t1", "t2", "t3"]);
-    expect(result!.command).toContain("--scope subset");
-    expect(result!.command).toContain("--participants t2,t3");
-    expect(result!.command).toContain("--experimental");
-    expect(result!.command).toContain("--selection sel_02");
+    expect(result!.command).toContain("--travellers t2,t3");
+    expect(result!.command).toContain("--selection-id sel_02");
+    expect(result!.command).not.toContain("--experimental");
   });
 
   it("nextStep is included in --json output for pending questions", async () => {
@@ -334,8 +333,8 @@ describe("nextStep.command formatting", () => {
     expect(out.data.questions[0].nextStep).toBeDefined();
     expect(out.data.questions[0].nextStep).not.toBeNull();
     expect(out.data.questions[0].nextStep.command).toMatch(/voyagier select/);
-    expect(out.data.questions[0].nextStep.command).toContain("--experimental");
-    expect(out.data.questions[0].nextStep.command).toContain("--selection");
+    expect(out.data.questions[0].nextStep.command).toContain("--option-id");
+    expect(out.data.questions[0].nextStep.command).toContain("--selection-id");
   });
 
   it("nextStep is null in --json output for a completed question", async () => {
