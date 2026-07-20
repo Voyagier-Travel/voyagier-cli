@@ -10,7 +10,7 @@
  */
 
 export interface RawTravellerChoice {
-  traveller?: { id: string; firstName?: string; lastName?: string } | null;
+  traveller?: { id: string; firstName?: string | null; lastName?: string | null } | null;
   selectedOption?: { id: string } | null;
   scope?: string | null;
 }

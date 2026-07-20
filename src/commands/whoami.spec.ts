@@ -79,6 +79,27 @@ describe("whoami live verification (VOY-1703)", () => {
     expect(mockGraphql.mock.calls[0][0]).toContain("me {");
   });
 
+  it("re-throws graphql()'s normalized CliError(AUTH_FAILED) with whoami-specific context (the real-run path)", async () => {
+    // graphql() normalizes 401/UNAUTHENTICATED into CliError(AUTH_FAILED) before
+    // whoami's catch ever sees it — the rich message must survive that path.
+    mockGraphql.mockRejectedValue(
+      new CliError(CliErrorCode.AUTH_FAILED, "Authentication failed. Your token may be invalid or expired."),
+    );
+    let err: unknown;
+    try {
+      await runWhoami(["--json"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.AUTH_FAILED);
+    expect((err as CliError).message).toContain("Token rejected by https://travel.voyagier.com/api");
+    expect((err as CliError).message).toContain("auth set-token");
+    expect((err as CliError).message).toContain("NOT shown");
+    const written = stdoutSpy.mock.calls.map((c) => String(c[0])).join("");
+    expect(written).not.toContain("cached@example.com");
+  });
+
   it("fails loudly with AUTH_FAILED when the token is rejected — never shows cached identity", async () => {
     mockGraphql.mockRejectedValue(new Error("Unauthorized"));
     let err: unknown;

@@ -48,10 +48,17 @@ export function registerWhoamiCommand(program: Command): void {
           );
           me = data.me;
         } catch (err) {
-          if (err instanceof CliError) throw err;
+          // graphql() already normalizes 401/UNAUTHENTICATED into
+          // CliError(AUTH_FAILED) — re-throw those with whoami-specific context
+          // (which API URL rejected the token, and that the cached identity is
+          // deliberately withheld). The regex below is the fallback for raw
+          // errors that bypass that normalization (e.g. transport-level).
           const message = err instanceof Error ? err.message : String(err);
-          const looksLikeAuth = /unauthorized|unauthenticated|forbidden|401|403|invalid token/i.test(message);
-          if (looksLikeAuth) {
+          const isAuthFailure =
+            (err instanceof CliError && err.code === CliErrorCode.AUTH_FAILED) ||
+            (!(err instanceof CliError) &&
+              /unauthorized|unauthenticated|forbidden|401|403|invalid token/i.test(message));
+          if (isAuthFailure) {
             throw new CliError(
               CliErrorCode.AUTH_FAILED,
               `Token rejected by ${getApiUrl()} — it is stale or revoked.\n` +
@@ -59,6 +66,7 @@ export function registerWhoamiCommand(program: Command): void {
                 `(Cached identity deliberately NOT shown; use --cached only for offline reads.)`,
             );
           }
+          if (err instanceof CliError) throw err;
           throw new CliError(
             CliErrorCode.API_ERROR,
             `Could not verify identity against ${getApiUrl()}: ${message}\n` +
