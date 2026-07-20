@@ -13,6 +13,8 @@ export interface SearchState {
   type: "flights" | "hotels" | "activities";
   tripPlanId: string;
   selectionId: string;
+  /** Round trips: the Return Flights goal's decision selection (VOY-1692). */
+  returnSelectionId?: string;
   isRoundTrip?: boolean;
   awaitingReturn?: boolean;
   origin?: string;

@@ -10,11 +10,13 @@ import {
   DELETE_TRIP_PLAN_ITEM,
   CREATE_HOTEL_SELECTION,
   CREATE_ACTIVITY_SELECTION,
+  GET_DECISION_SELECTION_OPTIONS,
 } from "../queries.js";
 import {
   loadGoals,
   resolveGoal,
   resolveMirrorList,
+  resolveDecisionSelection,
   setAirport,
   addDateOption,
   resolveDateRange,
@@ -55,6 +57,57 @@ interface Traveller {
 }
 
 type SortField = "price" | "duration" | "stops" | "default";
+
+/**
+ * Reuse the goal's existing decision selection when present; create one only
+ * when the goal has none (VOY-1692).
+ *
+ * Why reuse is mandatory: the backend validates picks (and resolves options)
+ * exactly ONE mirror hop from a selection. The skeleton decision selection is
+ * wired 1 hop from the monitor-owned option rows (flights: re-mirrored onto
+ * the FlightJourney by createJourneyForLegs). A freshly-created selection
+ * mirroring the goal's *List is 2 hops away for flights: its options read
+ * empty and every pick fails "Option not found". Creating duplicates also
+ * detaches checkout readiness from the selection the agent is operating on.
+ */
+// Exported for unit testing the reuse/fail-fast contract (VOY-1692).
+export async function resolveOrCreateDecisionSelection(
+  kind: "flights" | "hotels" | "activities",
+  goal: { id: string; name: string; items: { selections: { id: string; type: string | null }[] }[] },
+  tripPlanId: string,
+  createMutation: string,
+  createResultKey: string,
+  input: Record<string, unknown>,
+  quiet: boolean,
+): Promise<{ selectionId: string; options: SelectOption[]; reused: boolean }> {
+  const existingId = resolveDecisionSelection(goal as never, kind);
+  if (existingId) {
+    if (!quiet) {
+      process.stderr.write(chalk.dim(`Using the goal's existing ${KIND_LABEL[kind]} selection.\n`));
+    }
+    const data = await graphql<{ getTripPlanSelection: { id?: string; options?: SelectOption[] } | null }>(
+      GET_DECISION_SELECTION_OPTIONS,
+      { tripPlanSelectionId: existingId },
+    );
+    if (!data.getTripPlanSelection) {
+      // Fail fast: an empty-options response would read as "still fetching"
+      // and send the caller off to poll a selection that no longer exists.
+      throw new CliError(
+        CliErrorCode.API_ERROR,
+        `The goal's ${KIND_LABEL[kind]} selection ${existingId} could not be loaded (stale goal graph or deleted selection). ` +
+          `Re-check the plan structure with: voyagier plans goals ${tripPlanId}`,
+      );
+    }
+    return { selectionId: existingId, options: data.getTripPlanSelection.options ?? [], reused: true };
+  }
+  // Goal has no decision selection (custom / non-skeleton goal) — create one
+  // linked to the goal's mirror list, the pre-VOY-1692 behaviour.
+  const data = await graphql<Record<string, SelectionResult>>(createMutation, { tripPlanId, input });
+  const result = data[createResultKey];
+  return { selectionId: result.selection.id, options: result.options, reused: false };
+}
+
+const KIND_LABEL: Record<string, string> = { flights: "Flight", hotels: "Hotel", activities: "Activity" };
 
 async function resolveTravellerIds(tripPlanId: string): Promise<string[]> {
   const data = await graphql<{ tripPlanTravellers: Traveller[] }>(
@@ -273,10 +326,10 @@ export function registerSearchCommands(program: Command): void {
                 dryRun: true,
                 flow: "goal/mirror-list (VOY-1414)",
                 steps: [
-                  `resolve Flight goal (--goal or first Flight goal) + its FlightList mirror`,
+                  `resolve Flight goal (--goal or first Flight goal)`,
                   `set origin airport -> ${origin}, destination airport -> ${destination}`,
                   `set date -> ${opts.date}${opts.return ? `, return -> ${opts.return}` : ""}`,
-                  `createTripPlanFlightSelection({ goalId, mirrorListSelectionId, travellerIds })`,
+                  `reuse the goal's existing Flight decision selection (create only if the goal has none)`,
                   `surface options via selection-options <selectionId> --wait`,
                 ],
               },
@@ -302,12 +355,16 @@ export function registerSearchCommands(program: Command): void {
         // Round-trip: also wire the RETURN-leg goal's airports (reversed:
         // destination -> origin), or its segment query stays insufficient and
         // no inventory is fetched (VOY-1421). One-way plans have no return goal.
+        let returnSelectionId: string | null = null;
         if (isRoundTrip) {
           const returnGoal = resolveReturnFlightGoal(goals, goal.id);
           if (returnGoal) {
             const returnAps = requireAirports(returnGoal, 2);
             await setAirport(returnAps[0], destination);
             await setAirport(returnAps[1], origin);
+            // Surface the return goal's decision selection too: a round trip is
+            // complete only when BOTH legs carry a choice (VOY-1692).
+            returnSelectionId = resolveDecisionSelection(returnGoal, "flights");
           }
         }
         // Resolve BOTH date outputs so the round-trip monitor query is
@@ -315,19 +372,23 @@ export function registerSearchCommands(program: Command): void {
         // when --return is given.
         await resolveDateRange(dateSel, opts.date, opts.return);
 
-        const data = await graphql<{ createTripPlanFlightSelection: SelectionResult }>(
+        // Reuse the goal's existing Flight (leg) selection — the one wired
+        // 1 mirror hop from the FlightJourney's option rows — instead of
+        // creating a duplicate 2 hops away (VOY-1692).
+        const { selectionId, options: fetchedOptions } = await resolveOrCreateDecisionSelection(
+          "flights",
+          goal,
+          tripPlanId,
           CREATE_FLIGHT_SELECTION,
-          {
-            tripPlanId,
-            input: { goalId: goal.id, mirrorListSelectionId, travellerIds, title: `Flight: ${origin} → ${destination}` },
-          },
+          "createTripPlanFlightSelection",
+          { goalId: goal.id, mirrorListSelectionId, travellerIds, title: `Flight: ${origin} → ${destination}` },
+          quiet,
         );
 
-        const result = data.createTripPlanFlightSelection;
         const sortBy = (opts.sort ?? "default") as SortField;
         // --max-stops is a client-side presentation filter over the options the
         // backend returned (same layer as --sort), not a goal-input constraint.
-        let filtered = result.options.sort((a, b) => a.sortOrder - b.sortOrder);
+        let filtered = [...fetchedOptions].sort((a, b) => a.sortOrder - b.sortOrder);
         if (opts.maxStops !== undefined) {
           const maxStops = Number(opts.maxStops);
           if (!Number.isInteger(maxStops) || maxStops < 0) {
@@ -349,8 +410,9 @@ export function registerSearchCommands(program: Command): void {
 
         saveSearchState({
           type: "flights",
-          tripPlanId: result.item.tripPlanId,
-          selectionId: result.selection.id,
+          tripPlanId,
+          selectionId,
+          ...(returnSelectionId ? { returnSelectionId } : {}),
           isRoundTrip,
           origin,
           destination,
@@ -360,17 +422,18 @@ export function registerSearchCommands(program: Command): void {
 
         if (opts.json) {
           process.stdout.write(JSON.stringify({
-            tripPlanId: result.item.tripPlanId,
-            selectionId: result.selection.id,
+            tripPlanId,
+            selectionId,
+            ...(returnSelectionId ? { returnSelectionId } : {}),
             isRoundTrip,
             options: options.map((opt, i) => ({ index: i + 1, ...opt })),
-            url: `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`,
+            url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
           }, null, 2) + "\n");
           return;
         }
 
         if (opts.agent) {
-          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`;
+          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`;
           const lines: string[] = [];
           lines.push(`### Flights (${origin} → ${destination})`);
           if (options.length === 0) {
@@ -379,20 +442,17 @@ export function registerSearchCommands(program: Command): void {
             // not "no results" — point at the async-aware poll (VOY-1421).
             lines.push("_No options yet — the search is still fetching inventory._");
             lines.push("");
-            lines.push(`**Next:** \`voyagier selection-options ${result.selection.id} --wait --json\``);
-            if (isRoundTrip) {
-              lines.push("");
-              lines.push(
-                "_Known limitation (VOY-1422): round-trip searches may stay empty because the " +
-                  "return leg does not yet trigger the combined flight search on the backend. " +
-                  "Outbound + return airports and dates are set correctly; tracked for a backend fix._",
-              );
-            }
+            lines.push(`**Next:** \`voyagier selection-options ${selectionId} --wait --json\``);
           } else {
             lines.push(agentFlightOptions(options));
             lines.push("");
-            if (isRoundTrip) lines.push("_Note: Select departure first, then return._");
             lines.push("**Next:** `voyagier select <number>`");
+          }
+          if (isRoundTrip && returnSelectionId) {
+            lines.push("");
+            lines.push(
+              `_Round trip: after choosing the outbound, also choose on the return selection — \`voyagier select --selection-id ${returnSelectionId} --option-id <id>\` (options: \`voyagier selection-options ${returnSelectionId} --wait --json\`)._`,
+            );
           }
           lines.push("");
           lines.push(`👉 **Plan:** ${planUrl}`);
@@ -402,24 +462,16 @@ export function registerSearchCommands(program: Command): void {
 
         if (options.length === 0) {
           process.stderr.write(chalk.dim("No options yet — the search is still fetching inventory.\n"));
-          process.stderr.write(chalk.dim(`  Poll: voyagier selection-options ${result.selection.id} --wait\n`));
-          if (isRoundTrip) {
-            process.stderr.write(
-              chalk.yellow(
-                "  Note: round-trip searches may stay empty (VOY-1422) — the return leg does not\n" +
-                "  yet trigger the combined search on the backend. Inputs are set correctly.\n",
-              ),
-            );
-          }
+          process.stderr.write(chalk.dim(`  Poll: voyagier selection-options ${selectionId} --wait\n`));
           return;
         }
 
         const sortLabel = sortBy !== "default" ? ` (sorted by ${sortBy})` : "";
         console.log(chalk.bold(`\n${options.length} flight option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
         console.log(formatFlights(options));
-        await printPlanFooter(result.item.tripPlanId);
+        await printPlanFooter(tripPlanId);
         if (isRoundTrip) {
-          console.log(chalk.dim(`  Note: Select departure first, then return.`));
+          console.log(chalk.dim(`  Note: Select the outbound leg first, then the return leg${returnSelectionId ? ` (selection ${returnSelectionId})` : ""}.`));
         }
         console.log(chalk.dim(`  Next: voyagier select <number>`));
       } catch (err) {
@@ -518,9 +570,9 @@ export function registerSearchCommands(program: Command): void {
                 dryRun: true,
                 flow: "goal/mirror-list (VOY-1414)",
                 steps: [
-                  `resolve Hotel goal (--goal or first Hotel goal) + its HotelList mirror`,
+                  `resolve Hotel goal (--goal or first Hotel goal)`,
                   `set date -> ${opts.checkin} (and ${opts.checkout})`,
-                  `createTripPlanHotelSelection({ goalId, mirrorListSelectionId, travellerIds })`,
+                  `reuse the goal's existing Hotel decision selection (create only if the goal has none)`,
                   `surface options via selection-options <selectionId> --wait`,
                 ],
               },
@@ -543,19 +595,20 @@ export function registerSearchCommands(program: Command): void {
         // (VOY-1421): check-out is derived as a duration from check-in.
         await resolveDateRange(dateSel, opts.checkin, opts.checkout);
 
-        const data = await graphql<{ createTripPlanHotelSelection: SelectionResult }>(
+        const { selectionId, options: fetchedOptions } = await resolveOrCreateDecisionSelection(
+          "hotels",
+          goal,
+          tripPlanId,
           CREATE_HOTEL_SELECTION,
-          {
-            tripPlanId,
-            input: { goalId: goal.id, mirrorListSelectionId, travellerIds, title: `Hotel: ${opts.location}` },
-          },
+          "createTripPlanHotelSelection",
+          { goalId: goal.id, mirrorListSelectionId, travellerIds, title: `Hotel: ${opts.location}` },
+          !!(opts.json || opts.agent),
         );
 
-        const result = data.createTripPlanHotelSelection;
         const sortBy = (opts.sort ?? "default") as SortField;
         const options = sortBy === "price"
-          ? [...result.options].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity))
-          : result.options.sort((a, b) => a.sortOrder - b.sortOrder);
+          ? [...fetchedOptions].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity))
+          : [...fetchedOptions].sort((a, b) => a.sortOrder - b.sortOrder);
 
         const searchResults = options.map((opt, i) => ({
           index: i + 1,
@@ -565,24 +618,24 @@ export function registerSearchCommands(program: Command): void {
 
         saveSearchState({
           type: "hotels",
-          tripPlanId: result.item.tripPlanId,
-          selectionId: result.selection.id,
+          tripPlanId: tripPlanId,
+          selectionId: selectionId,
           results: searchResults,
           timestamp: new Date().toISOString(),
         });
 
         if (opts.json) {
           process.stdout.write(JSON.stringify({
-            tripPlanId: result.item.tripPlanId,
-            selectionId: result.selection.id,
+            tripPlanId: tripPlanId,
+            selectionId: selectionId,
             options: options.map((opt, i) => ({ index: i + 1, ...opt })),
-            url: `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`,
+            url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
           }, null, 2) + "\n");
           return;
         }
 
         if (opts.agent) {
-          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`;
+          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`;
           const lines: string[] = [];
           lines.push(`### Hotels (${opts.location})`);
           if (options.length === 0) {
@@ -590,7 +643,7 @@ export function registerSearchCommands(program: Command): void {
             // fetching, not that there are no hotels — poll first (VOY-1421).
             lines.push("_No options yet — the search is still fetching inventory._");
             lines.push("");
-            lines.push(`**Next:** \`voyagier selection-options ${result.selection.id} --wait --json\``);
+            lines.push(`**Next:** \`voyagier selection-options ${selectionId} --wait --json\``);
           } else {
             lines.push(agentHotelOptions(options));
             lines.push("");
@@ -605,7 +658,7 @@ export function registerSearchCommands(program: Command): void {
         if (options.length === 0) {
           const loc = opts.location as string;
           process.stderr.write(chalk.dim(`No options yet — the search may still be fetching inventory.\n`));
-          process.stderr.write(chalk.dim(`  Poll: voyagier selection-options ${result.selection.id} --wait\n\n`));
+          process.stderr.write(chalk.dim(`  Poll: voyagier selection-options ${selectionId} --wait\n\n`));
           process.stderr.write(chalk.yellow(`If it stays empty, no hotels matched "${loc}" on these dates.\n\n`));
           process.stderr.write(chalk.dim("Suggestions:\n"));
           if (looksLikeAirportCode(loc)) {
@@ -617,14 +670,14 @@ export function registerSearchCommands(program: Command): void {
           process.stderr.write(chalk.dim(`  • Try a nearby major city with more hotel inventory\n`));
           process.stderr.write(chalk.dim(`  • Use --verbose to see exactly what location was sent to the API\n`));
           process.stderr.write(chalk.dim(`  • Check the web UI for expanded search options:\n`));
-          process.stderr.write(chalk.dim(`    ${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}\n`));
+          process.stderr.write(chalk.dim(`    ${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}\n`));
           return;
         }
 
         const sortLabel = sortBy !== "default" ? ` (sorted by ${sortBy})` : "";
         console.log(chalk.bold(`\n${options.length} hotel option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
         console.log(formatHotels(options));
-        await printPlanFooter(result.item.tripPlanId);
+        await printPlanFooter(tripPlanId);
         console.log(chalk.dim(`  Next: voyagier select <number>`));
       } catch (err) {
         handleSearchError(err);
@@ -710,9 +763,9 @@ export function registerSearchCommands(program: Command): void {
                 dryRun: true,
                 flow: "goal/mirror-list (VOY-1414)",
                 steps: [
-                  `resolve Activity goal (--goal or first Activity goal) + its ActivityList mirror`,
+                  `resolve Activity goal (--goal or first Activity goal)`,
                   `set date -> ${opts.date}`,
-                  `createTripPlanActivitySelection({ goalId, mirrorListSelectionId, travellerIds })`,
+                  `reuse the goal's existing Activity decision selection (create only if the goal has none)`,
                   `surface options via selection-options <selectionId> --wait`,
                 ],
               },
@@ -732,19 +785,20 @@ export function registerSearchCommands(program: Command): void {
         if (opts.destination) await setDestination(goals, opts.destination);
         await addDateOption(dateSel, opts.date);
 
-        const data = await graphql<{ createTripPlanActivitySelection: SelectionResult }>(
+        const { selectionId, options: fetchedOptions } = await resolveOrCreateDecisionSelection(
+          "activities",
+          goal,
+          tripPlanId,
           CREATE_ACTIVITY_SELECTION,
-          {
-            tripPlanId,
-            input: { goalId: goal.id, mirrorListSelectionId, travellerIds, title: titleParts.join(" — ") },
-          },
+          "createTripPlanActivitySelection",
+          { goalId: goal.id, mirrorListSelectionId, travellerIds, title: titleParts.join(" — ") },
+          !!(opts.json || opts.agent),
         );
 
-        const result = data.createTripPlanActivitySelection;
         const sortBy = (opts.sort ?? "default") as SortField;
         const options = sortBy === "price"
-          ? [...result.options].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity))
-          : result.options.sort((a, b) => a.sortOrder - b.sortOrder);
+          ? [...fetchedOptions].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity))
+          : [...fetchedOptions].sort((a, b) => a.sortOrder - b.sortOrder);
 
         const searchResults = options.map((opt, i) => ({
           index: i + 1,
@@ -754,24 +808,24 @@ export function registerSearchCommands(program: Command): void {
 
         saveSearchState({
           type: "activities",
-          tripPlanId: result.item.tripPlanId,
-          selectionId: result.selection.id,
+          tripPlanId: tripPlanId,
+          selectionId: selectionId,
           results: searchResults,
           timestamp: new Date().toISOString(),
         });
 
         if (opts.json) {
           process.stdout.write(JSON.stringify({
-            tripPlanId: result.item.tripPlanId,
-            selectionId: result.selection.id,
+            tripPlanId: tripPlanId,
+            selectionId: selectionId,
             options: options.map((opt, i) => ({ index: i + 1, ...opt })),
-            url: `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`,
+            url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
           }, null, 2) + "\n");
           return;
         }
 
         if (opts.agent) {
-          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${result.item.tripPlanId}`;
+          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`;
           const lines: string[] = [];
           lines.push(`### Activities (${opts.destination})`);
           if (options.length === 0) {
@@ -795,7 +849,7 @@ export function registerSearchCommands(program: Command): void {
         const sortLabel = sortBy !== "default" ? ` (sorted by ${sortBy})` : "";
         console.log(chalk.bold(`\n${options.length} activity option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
         console.log(formatActivities(options));
-        await printPlanFooter(result.item.tripPlanId);
+        await printPlanFooter(tripPlanId);
         console.log(chalk.dim(`  Next: voyagier select <number>`));
       } catch (err) {
         handleSearchError(err);

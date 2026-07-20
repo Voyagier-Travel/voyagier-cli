@@ -20,10 +20,12 @@ jest.unstable_mockModule("../output.js", () => ({
 // ── Dynamic imports after mocks ────────────────────────────────────────────
 
 let registerSelectionOptionsCommands: (program: Command) => void;
+let deriveChosen: typeof import("./selection-options.js").deriveChosen;
 
 beforeAll(async () => {
   const mod = await import("./selection-options.js");
   registerSelectionOptionsCommands = mod.registerSelectionOptionsCommands;
+  deriveChosen = mod.deriveChosen;
 });
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
@@ -196,5 +198,42 @@ describe("selection-options command (VOY-1415)", () => {
     expect(out.status).toBe("READY");
     expect(out.staleWarning).toBe(true);
     expect(out.fetchError).toMatch(/404/);
+  });
+});
+
+// ── deriveChosen (participant-choice consensus, VOY-1692) ──────────────────
+
+describe("deriveChosen", () => {
+  const pick = (tid: string, oid: string | null, scope = "AllTravellers") => ({
+    traveller: { id: tid, firstName: tid, lastName: "T" },
+    selectedOption: oid ? { id: oid } : null,
+    scope,
+  });
+
+  it("falls back to legacy parentOptionId when there are no choice entries", () => {
+    expect(deriveChosen({ travellerOptionChoices: [], parentOptionId: "opt-legacy" }))
+      .toEqual({ chosenOptionId: "opt-legacy", consensus: true });
+    expect(deriveChosen({ travellerOptionChoices: null, parentOptionId: null }))
+      .toEqual({ chosenOptionId: null, consensus: false });
+  });
+
+  it("consensus when every traveller picked the same option", () => {
+    expect(deriveChosen({ travellerOptionChoices: [pick("t1", "opt-a"), pick("t2", "opt-a")], parentOptionId: null }))
+      .toEqual({ chosenOptionId: "opt-a", consensus: true });
+  });
+
+  it("NO consensus when travellers picked different options", () => {
+    expect(deriveChosen({ travellerOptionChoices: [pick("t1", "opt-a"), pick("t2", "opt-b")], parentOptionId: null }))
+      .toEqual({ chosenOptionId: null, consensus: false });
+  });
+
+  it("NO consensus when some travellers have not picked yet (partial pick)", () => {
+    expect(deriveChosen({ travellerOptionChoices: [pick("t1", "opt-a"), pick("t2", null)], parentOptionId: null }))
+      .toEqual({ chosenOptionId: null, consensus: false });
+  });
+
+  it("does not fall back to parentOptionId when choice entries exist but diverge", () => {
+    expect(deriveChosen({ travellerOptionChoices: [pick("t1", "opt-a"), pick("t2", null)], parentOptionId: "opt-stale" }))
+      .toEqual({ chosenOptionId: null, consensus: false });
   });
 });
