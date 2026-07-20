@@ -3,6 +3,7 @@ import { getApiUrl, getToken } from "./config.js";
 import { getTraceId } from "./telemetry.js";
 import { verbose } from "./verbose.js";
 import { CliError, CliErrorCode, authFailedMessage } from "./errors.js";
+import { sanitizeExternalData, sanitizeExternalText } from "./utils.js";
 
 export class AuthError extends Error {
   constructor(message: string) {
@@ -74,7 +75,7 @@ export async function graphql<T = unknown>(
     try {
       const errorBody = (await res.json()) as GraphQLResponse;
       if (errorBody.errors?.length) {
-        detail = " — " + errorBody.errors.map(e => e.message).join("; ");
+        detail = " — " + errorBody.errors.map(e => sanitizeExternalText(e.message)).join("; ");
       }
     } catch {
       // Response body wasn't valid JSON; fall through to generic message
@@ -87,7 +88,9 @@ export async function graphql<T = unknown>(
 
   const json = (await res.json()) as GraphQLResponse<T>;
   if (json.errors?.length) {
-    const err = json.errors[0];
+    // Sanitize server-provided error text before it reaches a terminal — same
+    // untrusted-content rule as response data (VOY-1709).
+    const err = { ...json.errors[0], message: sanitizeExternalText(json.errors[0].message) };
     const code = (err as Record<string, unknown> & { extensions?: { code?: string } }).extensions?.code;
     if (code === "UNAUTHENTICATED" || err.message === "Unauthorized") {
       throw new CliError(CliErrorCode.AUTH_FAILED, authFailedMessage("Authentication failed. Your token may be invalid or expired."));
@@ -111,7 +114,10 @@ export async function graphql<T = unknown>(
   if (!json.data) {
     throw new CliError(CliErrorCode.API_ERROR, "No data returned from API");
   }
-  return json.data;
+  // SECURITY (VOY-1709): responses carry third-party supplier content (hotel
+  // names, option labels). Strip ANSI escapes/control chars once, here, so
+  // every command and output mode renders it as inert text.
+  return sanitizeExternalData(json.data);
 }
 
 export interface StreamCallbacks {
@@ -196,7 +202,7 @@ export async function streamChat(
         try {
           const text = JSON.parse(line.slice(2)) as unknown;
           if (typeof text === "string") {
-            callbacks.onTextDelta(text);
+            callbacks.onTextDelta(sanitizeExternalText(text));
           }
         } catch {
           // Skip
@@ -214,7 +220,7 @@ function handleStreamPart(
   switch (part.type) {
     case "text-delta":
     case "text":
-      if (part.textDelta) callbacks.onTextDelta(part.textDelta);
+      if (part.textDelta) callbacks.onTextDelta(sanitizeExternalText(part.textDelta));
       break;
     case "tool-call":
       if (part.toolCallId && part.toolName) toolCallMap.set(part.toolCallId, part.toolName);

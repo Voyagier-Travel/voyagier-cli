@@ -321,3 +321,47 @@ export function shellArg(value: string | number | null | undefined): string {
   if (s.length > 0 && /^[A-Za-z0-9_./:@%+,=-]+$/.test(s)) return s;
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
+
+// ── Untrusted-content sanitization (VOY-1709) ──
+//
+// API responses carry third-party supplier content (hotel names, option
+// labels, GDS data) that ends up in terminals and in agent-consumed markdown.
+// A hostile string could embed ANSI escape sequences (rewrite the visible
+// terminal, spoof prompts) or raw control characters. Strip both at the API
+// boundary — legitimate travel data never contains them.
+//
+// Kept: \n and \t (legitimate in multi-line descriptions).
+// Stripped: well-formed ANSI CSI/OSC/single-char escape sequences first, then
+// any remaining C0 control chars (including stray ESC) and DEL.
+
+const ANSI_SEQUENCE =
+  // CSI: ESC [ params intermediates final · OSC: ESC ] ... (BEL | ESC \) · other ESC x
+  /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\^_]/g;
+const CONTROL_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
+
+/** Strip ANSI escape sequences and control characters from one string. */
+export function sanitizeExternalText(value: string): string {
+  return value.replace(ANSI_SEQUENCE, "").replace(CONTROL_CHARS, "");
+}
+
+/**
+ * Recursively sanitize every string in an API response (objects, arrays,
+ * nested). Non-string primitives pass through untouched. Applied once at the
+ * graphql() boundary so every command and output mode is covered.
+ */
+export function sanitizeExternalData<T>(data: T): T {
+  if (typeof data === "string") {
+    return sanitizeExternalText(data) as T;
+  }
+  if (Array.isArray(data)) {
+    return data.map((item) => sanitizeExternalData(item)) as T;
+  }
+  if (data !== null && typeof data === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+      out[key] = sanitizeExternalData(value);
+    }
+    return out as T;
+  }
+  return data;
+}
