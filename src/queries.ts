@@ -1522,8 +1522,8 @@ export const REMOVE_TRAVELLERS_FROM_GROUP = `
 // --- Traveller Choices (v2.1.0 — Section 6) ---
 //
 // travellerChoices returns TravellerChoicesResult! (non-null per introspection).
-// TripPlanSelectOption uses `name` not `label` (see SECTION6-DISCOVERIES.md).
-// TripPlanSelectionInput fields: id, fieldName, fieldLabel, isRequired (see SECTION6-DISCOVERIES.md).
+// TripPlanSelectOption uses `name` not `label`.
+// TripPlanSelectionInput fields: id, fieldName, fieldLabel, isRequired.
 
 export const GET_TRAVELLER_CHOICES = `
   query TravellerChoices($tripPlanId: String!) {

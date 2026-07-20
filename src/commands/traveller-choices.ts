@@ -17,8 +17,7 @@
  * Exports:
  *   summarizeChoices(result)  — one-liner for plan-trip summary output
  *
- * Schema discovery: TripPlanSelectOption uses `name` not `label`
- * (see SECTION6-DISCOVERIES.md for full list of findings).
+ * Schema fact: TripPlanSelectOption uses `name`, not `label`.
  */
 import { Command } from "commander";
 import chalk from "chalk";

@@ -14,7 +14,7 @@ A trip plan is a **goal graph**. When you create a plan it ships with a default 
 - **Selecting** is done by selection + option ID: `voyagier select --selection-id <id> --option-id <id>`.
 - **`plan-trip` is a scaffold.** It creates the plan + default goal graph (and adds travellers only when you pass `--travellers`), then prints the compose next-steps. It does not search or select for you.
 - **`plans goals <planId>`** is your readiness view — it shows the goal graph and what still needs a decision.
-- **Multi-source bookability.** Flights are display-only (`isBookable = false`). Activities (Viator) are the primary bookable inventory. Hotels (Blueprint Listings) are searchable; checkout coverage is partial.
+- **Multi-source bookability.** The cart materializes only BOOKABLE options (fare/room-level items — e.g. a Fare & Cabin item for flights, generated once all legs are picked). Activities (Viator) are bookable per slot. Hotels (Blueprint Listings) are searchable; checkout coverage is partial. Check the cart's per-item `isBookable` (or `plan-status`'s `cart.bookableCount`) — don't assume by type.
 - **Computed itinerary.** `voyagier itinerary <planId>` reads the platform's `tripPlanEvents` resolver.
 - **Advisor CRM.** `voyagier clients` manages clients; a plan requires a `clientId`.
 - **Self-check.** `voyagier doctor` verifies auth, schema reachability, state, and version.
@@ -108,7 +108,7 @@ early via `travellers add`/`travellers update` (`--gender`, `--dob`,
 
 ### Output modes
 
-- `--json` — agent-targeted, machine-readable. **Per-command flag**, not a global default. Most data-bearing commands (`plans`, `clients`, `cart`, `book`, `itinerary`, `listings`, `places`, `bookings`, `whoami`, `doctor`, `search`, `select`, `pick`, `travellers`, ...) accept it. Some commands do not: `chat`, `telemetry`, and most `auth` subcommands have no JSON shape and will reject `--json` with an unknown-option error. When in doubt, run `voyagier <command> --help`.
+- `--json` — agent-targeted, machine-readable. **Per-command flag**, not a global default. Most data-bearing commands (`plans`, `clients`, `cart`, `book`, `itinerary`, `listings`, `places`, `bookings`, `whoami`, `doctor`, `search`, `select`, `travellers`, ...) accept it. Some commands do not: `chat`, `telemetry`, and most `auth` subcommands have no JSON shape and will reject `--json` with an unknown-option error. When in doubt, run `voyagier <command> --help`.
 - `--agent` — markdown rendered for AI → human display. Same per-command rule applies.
 - (default) — chalk-colored TTY for humans.
 
@@ -130,7 +130,7 @@ v2.0.0 has two payload styles. Pick the right shape for the command you're calli
 }
 ```
 
-**Style B — flat / domain-specific** (clients, plans, travellers, search, select, pick, whoami — the older / Section 1 surfaces):
+**Style B — flat / domain-specific** (clients, plans, travellers, search, select, whoami — the older / Section 1 surfaces):
 
 ```json
 // clients list:    { "clients": [...], "total": 12 }
@@ -440,13 +440,13 @@ voyagier agent-docs                   # prints this file
 
 | Selection | Bookable? | Source | Notes |
 |---|---|---|---|
-| Activity | ✅ per slot | Viator | Primary bookable inventory. Pre-check via cart `isBookable` flag. |
+| Activity | ✅ per slot | Viator | Pre-check via cart `isBookable` flag. |
 | Hotel | ⚠️ partial | Blueprint Listings | Search/watch works. Checkout coverage is incomplete. |
-| Flight | ❌ display only | Sabre | `is_bookable = false` per platform migration #377. Itinerary view only. |
+| Flight | ✅ via Fare & Cabin item | Sabre | The cart materializes a fare-level (FlightClass) item once ALL legs are picked — defaults to Economy. Verified bookable on prod 2026-07-20 (`isBookable: true`). The parent Flight pick itself is never carted. |
 | Ride | ❌ | TBD | Selection type exists; no booking source wired. |
 | Restaurant | ❌ | Internal | Selection type exists; booking path unclear. |
 
-Always `voyagier book --validate <planId>` before checkout. Branch on `details.blockers[]`. Build a clean cart for the `book` call rather than relying on `--types` to filter the mutation.
+Always `voyagier book --validate <planId>` before checkout. Branch on `details.blockers[]`. Build a clean cart for the `book` call rather than relying on `--types` to filter the mutation. The matrix above is a prior, not a contract — the cart's per-item `isBookable` is the live truth.
 
 ---
 
@@ -487,8 +487,9 @@ Manual lookup: `voyagier search airports "tokyo" --json`.
 2. Read the error envelope: `code` tells you the failure class; `message` and `details` give context.
 3. If `code` is `SCHEMA_DRIFT`: the CLI is older than the backend; upgrade.
 4. If `code` is `STALE_PLAN_STATE` or `EXPIRED_OFFER`: re-run the relevant `voyagier search ...`.
-5. If a selection is stuck `AWAITING_INPUT`, run `voyagier plans goals <planId> --json` to see what input the goal still needs.
-6. For everything else, fall back to the compose flow above, one command at a time.
+5. If a selection is stuck `AWAITING_INPUT`, its `selection-options --json` output names the blocking inputs in `blockedOn` (or `blockedOnUnavailable: true` when it's dependency-pending — upstream outputs will flow, just wait).
+6. `voyagier plan-status <planId> --json` is the one-call answer to "what do I do next?" — ordered `blockers[]` + runnable `nextSteps[]`.
+7. For everything else, fall back to the compose flow above, one command at a time.
 
 ---
 
