@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- `select --wait [--timeout <seconds>]` (VOY-1705): after a pick succeeds, wait until the choice is reflected server-side and plan readiness settles (post-pick `CART_PENDING` cart regeneration), then append a plan-status snapshot (`wait.{pickVisible,settled,readiness,blockers,waiting,nextSteps}`) — agents no longer hand-roll post-pick polling. Timeout reports honest partial state and exits 0 (the pick itself succeeded), matching `selection-options --wait` semantics.
+
 ### Security
 - Server-provided ids in `plan-status` `nextSteps[]` are now shell-quoted via `shellArg()` — nextSteps remain safe to paste/run even against a hostile or corrupted API response (VOY-1709)
 - All GraphQL response strings (and server error messages, and chat stream deltas) are sanitized at the API boundary: ANSI escape sequences and control characters are stripped, preventing terminal-rewrite/spoofing via supplier content like hotel names (VOY-1709)

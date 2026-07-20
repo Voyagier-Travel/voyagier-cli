@@ -896,6 +896,7 @@ export const TRIP_PLAN_SELECTION_UNION_MEMBERS = [
 
 const SELECTION_MONITOR_FIELDS = `
         id
+        tripPlanId
         type
         blueprintMonitorId
         parentOptionId
