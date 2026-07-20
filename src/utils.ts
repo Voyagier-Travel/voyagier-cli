@@ -362,9 +362,12 @@ export function sanitizeExternalData<T>(data: T): T {
   if (data !== null && typeof data === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
-      // A hostile response can carry an own "__proto__" key (JSON.parse creates
-      // it as a plain own property). Assigning it here would set the rebuilt
-      // object's prototype to attacker data — skip it outright.
+      // A hostile response can carry an own "__proto__" key (JSON.parse
+      // creates it as a plain own property). Assigning THAT key here would set
+      // the rebuilt object's prototype to attacker data — skip it outright.
+      // "constructor"/"prototype" don't have that effect on plain assignment;
+      // they're dropped as defense-in-depth against prototype-pollution
+      // gadgets in downstream deep-merge/clone patterns.
       if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
       out[key] = sanitizeExternalData(value);
     }

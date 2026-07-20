@@ -224,12 +224,17 @@ function handleStreamPart(
       break;
     case "tool-call":
       if (part.toolCallId && part.toolName) toolCallMap.set(part.toolCallId, sanitizeExternalText(part.toolName));
-      callbacks.onToolCall?.(sanitizeExternalText(part.toolName ?? "unknown"), part.args);
+      callbacks.onToolCall?.(
+        sanitizeExternalText(part.toolName ?? "unknown"),
+        part.args ? sanitizeExternalData(part.args) : part.args,
+      );
       break;
     case "tool-result":
       if (part.toolCallId) {
         const toolName = toolCallMap.get(part.toolCallId) ?? "unknown";
-        callbacks.onToolResult?.(toolName, part.result);
+        // Tool results carry API data (plan titles, traveller names) that the
+        // chat renderer prints — same untrusted-content rule as graphql() data.
+        callbacks.onToolResult?.(toolName, sanitizeExternalData(part.result));
       }
       break;
     case "error":
