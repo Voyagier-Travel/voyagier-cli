@@ -525,14 +525,18 @@ async function showBookingStatus(planId: string, baseUrl: string, json: boolean,
     return;
   }
   console.log(chalk.bold(`\n📑  Booking Status\n`));
+  // Status enums serialize in PascalCase ("Paid", "Confirmed" — live-verified on
+  // prod 2026-07-20). The old UPPERCASE comparisons here never matched, so
+  // confirmed bookings rendered as a red ✗ and the confirmed/pending hints
+  // never fired.
   for (const checkout of checkouts) {
-    const statusColor = checkout.status === "PAID" ? chalk.green
-      : checkout.status === "CANCELLED" ? chalk.red
+    const statusColor = checkout.status === "Paid" ? chalk.green
+      : checkout.status === "Cancelled" ? chalk.red
       : chalk.yellow;
     console.log(`  ${statusColor(checkout.status.padEnd(10))}  ${chalk.dim(checkout.id.slice(0, 8))}`);
     for (const record of checkout.bookingRecords) {
-      const recordStatus = record.status === "CONFIRMED" ? chalk.green("✓ confirmed")
-        : record.status === "PENDING" ? chalk.yellow("⏳ pending")
+      const recordStatus = record.status === "Confirmed" ? chalk.green("✓ confirmed")
+        : record.status === "Pending" ? chalk.yellow("⏳ pending")
         : chalk.red("✗ " + record.status.toLowerCase());
       const ref = record.pnr ? chalk.white(`PNR: ${record.pnr}`)
         : record.providerReference ? chalk.white(`Ref: ${record.providerReference}`) : "";
@@ -540,8 +544,8 @@ async function showBookingStatus(planId: string, baseUrl: string, json: boolean,
     }
     console.log();
   }
-  const hasConfirmed = checkouts.some((co) => co.bookingRecords.some((r) => r.status === "CONFIRMED"));
-  const hasPending = checkouts.some((co) => co.bookingRecords.some((r) => r.status === "PENDING"));
+  const hasConfirmed = checkouts.some((co) => co.bookingRecords.some((r) => r.status === "Confirmed"));
+  const hasPending = checkouts.some((co) => co.bookingRecords.some((r) => r.status === "Pending"));
   if (hasConfirmed) console.log(hintBookingConfirmed());
   else if (hasPending) console.log(hintBookingPending());
   console.log(chalk.dim(`\n  Plan: ${planUrl}\n`));
