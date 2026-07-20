@@ -2,8 +2,9 @@
  * Traveller Choices command surface (v2.1.0 — Section 6).
  *
  * Read-only inspection of per-traveller selection choices for a trip plan.
- * Choice application (setTripPlanTravellerChoiceFor*) ships in Section 5
- * behind --experimental once Mark's choice-mechanics rework stabilizes.
+ * Choice application (setTripPlanTravellerChoiceFor*) is live on `select`
+ * via --traveller / --travellers / --group (default = all travellers); see
+ * select.ts (VOY-1692).
  *
  * Surface:
  *   voyagier traveller-choices list --plan <id>
