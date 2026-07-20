@@ -94,7 +94,8 @@ const PAID_CHECKOUT = {
   tripPlanPaymentCheckouts: [
     {
       id: "co-paid", status: "Paid", checkoutUrl: null, hostedInvoiceUrl: null,
-      bookingRecords: [{ id: "br-1", type: "FLIGHT", status: "CONFIRMED", pnr: "ABC123", providerReference: null, amount: 339.1 }],
+      // status enums are PascalCase; record amounts are CENTS (schema reality, live-verified 2026-07-20)
+      bookingRecords: [{ id: "br-1", type: "FlightBooking", status: "Confirmed", pnr: "ABC123", providerReference: null, amount: 33910 }],
     },
   ],
 };
@@ -233,7 +234,7 @@ describe("idempotency pre-flight", () => {
     await expect(runBook(["plan-1", "--expect-total", "339.10", "--json"])).rejects.toMatchObject({
       code: CliErrorCode.ALREADY_BOOKED,
       details: {
-        paidCheckouts: [{ id: "co-paid", bookingRecords: [{ type: "FLIGHT", status: "CONFIRMED", amount: 339.1 }] }],
+        paidCheckouts: [{ id: "co-paid", bookingRecords: [{ type: "FlightBooking", status: "Confirmed", amount: 33910 }] }],
       },
     });
     expect(createVars()).toBeUndefined();
