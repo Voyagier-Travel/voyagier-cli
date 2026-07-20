@@ -516,3 +516,22 @@ describe("sanitizeExternalData", () => {
     expect(sanitizeExternalData([1, "a\u0000b"])).toEqual([1, "ab"]);
   });
 });
+
+describe("sanitizeExternalText — C1 controls and prototype safety (verifier findings)", () => {
+  it("strips C1 single-codepoint controls (CSI U+009B, OSC U+009D, DCS U+0090)", () => {
+    expect(sanitizeExternalText("\u009b2JEvil")).toBe("2JEvil");
+    expect(sanitizeExternalText("\u009b31mRed Hotel")).toBe("31mRed Hotel");
+    expect(sanitizeExternalText("a\u009db\u0090c\u009fd")).toBe("abcd");
+  });
+});
+
+describe("sanitizeExternalData — prototype pollution resistance", () => {
+  it("drops own __proto__/constructor/prototype keys instead of assigning them", () => {
+    const hostile = JSON.parse('{"name":"ok","__proto__":{"polluted":"yes"},"constructor":{"x":1}}');
+    const out = sanitizeExternalData(hostile) as Record<string, unknown>;
+    expect(out.name).toBe("ok");
+    expect(out.polluted).toBeUndefined();
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    expect(Object.prototype).not.toHaveProperty("polluted");
+  });
+});

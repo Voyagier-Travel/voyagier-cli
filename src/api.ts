@@ -83,7 +83,7 @@ export async function graphql<T = unknown>(
     const hint = detail === ""
       ? "\nHint: The API returned no data. This may be a permissions issue."
       : "";
-    throw new CliError(CliErrorCode.API_ERROR, `API error: ${res.status} ${res.statusText}${detail}${hint}`);
+    throw new CliError(CliErrorCode.API_ERROR, `API error: ${res.status} ${sanitizeExternalText(res.statusText)}${detail}${hint}`);
   }
 
   const json = (await res.json()) as GraphQLResponse<T>;
@@ -166,7 +166,7 @@ export async function streamChat(
     if (res.status === 401) {
       throw new CliError(CliErrorCode.AUTH_FAILED, authFailedMessage("Authentication failed."));
     }
-    throw new CliError(CliErrorCode.API_ERROR, `Stream error: ${res.status} ${res.statusText}`);
+    throw new CliError(CliErrorCode.API_ERROR, `Stream error: ${res.status} ${sanitizeExternalText(res.statusText)}`);
   }
 
   if (!res.body) {
@@ -223,8 +223,8 @@ function handleStreamPart(
       if (part.textDelta) callbacks.onTextDelta(sanitizeExternalText(part.textDelta));
       break;
     case "tool-call":
-      if (part.toolCallId && part.toolName) toolCallMap.set(part.toolCallId, part.toolName);
-      callbacks.onToolCall?.(part.toolName ?? "unknown", part.args);
+      if (part.toolCallId && part.toolName) toolCallMap.set(part.toolCallId, sanitizeExternalText(part.toolName));
+      callbacks.onToolCall?.(sanitizeExternalText(part.toolName ?? "unknown"), part.args);
       break;
     case "tool-result":
       if (part.toolCallId) {
@@ -233,7 +233,7 @@ function handleStreamPart(
       }
       break;
     case "error":
-      callbacks.onError?.(part.errorText ?? "Unknown error");
+      callbacks.onError?.(sanitizeExternalText(part.errorText ?? "Unknown error"));
       break;
     default:
       break;

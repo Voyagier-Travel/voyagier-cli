@@ -337,7 +337,10 @@ export function shellArg(value: string | number | null | undefined): string {
 const ANSI_SEQUENCE =
   // CSI: ESC [ params intermediates final · OSC: ESC ] ... (BEL | ESC \) · other ESC x
   /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\^_]/g;
-const CONTROL_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
+// \u007f-\u009f covers DEL plus the C1 range — U+009B is a single-codepoint
+// CSI introducer (U+009D = OSC, U+0090 = DCS) that xterm-family terminals
+// honor even in UTF-8 mode; leaving C1 intact would bypass the ANSI strip.
+const CONTROL_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
 
 /** Strip ANSI escape sequences and control characters from one string. */
 export function sanitizeExternalText(value: string): string {
@@ -359,6 +362,10 @@ export function sanitizeExternalData<T>(data: T): T {
   if (data !== null && typeof data === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+      // A hostile response can carry an own "__proto__" key (JSON.parse creates
+      // it as a plain own property). Assigning it here would set the rebuilt
+      // object's prototype to attacker data — skip it outright.
+      if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
       out[key] = sanitizeExternalData(value);
     }
     return out as T;

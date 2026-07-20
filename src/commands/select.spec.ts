@@ -61,6 +61,7 @@ jest.unstable_mockModule("../utils.js", () => ({
   buildFlightSummary: jest.fn().mockReturnValue("NRT→LAX · AA · $900.00 · 11h 00m"),
   deriveBaseUrl: jest.fn().mockReturnValue("https://app.voyagier.com"),
   formatPrice: jest.fn().mockImplementation((p: unknown) => `$${p}`),
+  shellArg: jest.fn().mockImplementation((v: unknown) => String(v ?? "")),
 }));
 
 jest.unstable_mockModule("../output.js", () => ({
