@@ -51,9 +51,14 @@ voyagier travellers add --plan <PLAN_ID> --first John --last Smith --type Adult 
 # 4) Search → poll → select  (search is async; options arrive after the call)
 voyagier search flights --plan <PLAN_ID> --from JFK --to NRT \
   --date 2026-09-15 --return 2026-09-22 --json
-# Returns a selectionId. Poll it until options are ready:
+# Returns the goal's decision selectionId (search REUSES the plan's existing
+# selection — it does not create a new one). Round trips ALSO return a
+# returnSelectionId. Poll until options are ready:
 voyagier selection-options <SELECTION_ID> --wait --json
 voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
+# Round trip: a choice is needed on BOTH legs — repeat for returnSelectionId:
+voyagier selection-options <RETURN_SELECTION_ID> --wait --json
+voyagier select --selection-id <RETURN_SELECTION_ID> --option-id <OPTION_ID> --json
 
 voyagier search activities --plan <PLAN_ID> --destination Tokyo \
   --date 2026-09-16 --query "sushi tour" --json
@@ -70,6 +75,28 @@ voyagier book <PLAN_ID> --json
 ```
 
 Pass `--plan <id>` on `select` to assert the cached search belongs to that plan — it guards against cross-plan state corruption when you run multiple workflows in parallel. (Not needed in direct `--selection-id`/`--option-id` mode.)
+
+### Picks are per-traveller (participant-choice model)
+
+The backend records every pick as per-traveller choices on the goal's single
+**decision selection** (picks on `*List` selections are rejected). `select`
+defaults to choosing **for all travellers**; scope it with:
+
+- `--traveller <id>` — one traveller
+- `--travellers <id,id>` — a subset (replaces those travellers' existing choices)
+- `--group <groupId>` — a traveller group
+
+`selection-options --json` reports `chosenOptionId` (consensus across
+travellers, `null` when they diverge), `consensus`, and per-traveller
+`travellerChoices`.
+
+### Traveller requirements for flights
+
+**Gender and date of birth are required at flight checkout** (TSA Secure
+Flight), and **passport data hard-gates international reserves**. Set them
+early via `travellers add`/`travellers update` (`--gender`, `--dob`,
+`--passport-number`, `--passport-country`, `--passport-nationality`,
+`--passport-expiry`).
 
 ---
 
