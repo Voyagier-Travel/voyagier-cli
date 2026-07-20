@@ -143,9 +143,12 @@ describe("agent-docs", () => {
     it("should document the bookability matrix honestly", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
-        // Flights are explicitly non-bookable in v2.
-        expect(content).toMatch(/Flight.*display only|display only.*Flight|Flight.*\u274c/i);
-        // Activities (Viator) are the primary bookable path.
+        // Flights book via the fare-level (Fare & Cabin / FlightClass) cart item,
+        // generated once all legs are picked — verified bookable on prod 2026-07-20.
+        // The stale "display only" claim must never come back.
+        expect(content).toMatch(/Flight.*Fare & Cabin/i);
+        expect(content).not.toMatch(/Flight.*display only|display only.*Flight/i);
+        // Activities (Viator) remain a bookable path.
         expect(content.toLowerCase()).toContain("viator");
       }
     });
