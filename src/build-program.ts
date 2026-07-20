@@ -13,6 +13,7 @@ import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerWhoamiCommand } from "./commands/whoami.js";
 import { registerBookingsCommands } from "./commands/bookings.js";
 import { registerPlanTripCommand } from "./commands/plan-trip.js";
+import { registerPlanStatusCommand } from "./commands/plan-status.js";
 import { registerAgentDocsCommand } from "./commands/agent-docs.js";
 import { registerClientsCommands } from "./commands/clients.js";
 import { registerDoctorCommand } from "./commands/doctor.js";
@@ -53,6 +54,7 @@ Full reference: voyagier agent-docs`,
   // Commands ordered by workflow: auth → plan → search → select → book
   registerAuthCommands(program);
   registerPlanTripCommand(program);
+  registerPlanStatusCommand(program);
   registerPlanCommands(program);
   registerTravellerCommands(program);
   registerSearchCommands(program);
