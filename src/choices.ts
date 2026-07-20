@@ -39,3 +39,30 @@ export function deriveChosen(raw: ChoiceBearingSelection): {
   const consensus = allPicked && ids.length === 1;
   return { chosenOptionId: consensus ? ids[0] : null, consensus };
 }
+
+export interface RawSelectionInput {
+  id: string;
+  fieldName: string;
+  fieldLabel?: string | null;
+  isRequired: boolean;
+  value?: unknown;
+  sourceOutputId?: string | null;
+}
+
+export interface InputBearingSelection {
+  inputs?: RawSelectionInput[] | null;
+}
+
+/**
+ * Name the inputs an AWAITING_INPUT selection is blocked on: required inputs
+ * with neither a direct value nor a source-output binding. Honesty rule
+ * (VOY-1703): never render a bare "blocked" without naming the reason — if
+ * the API gives us nothing, say THAT explicitly instead of null.
+ */
+export function deriveBlockedOn(
+  raw: InputBearingSelection,
+): { fieldName: string; fieldLabel: string | null }[] {
+  return (raw.inputs ?? [])
+    .filter((i) => i.isRequired && (i.value === null || i.value === undefined) && !i.sourceOutputId)
+    .map((i) => ({ fieldName: i.fieldName, fieldLabel: i.fieldLabel ?? null }));
+}

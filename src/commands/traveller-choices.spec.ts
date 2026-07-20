@@ -165,7 +165,7 @@ describe("traveller-choices list", () => {
     expect(out.planContext.travellerCount).toBe(2);
   });
 
-  it("includes option names (not labels) in output — see SECTION6-DISCOVERIES.md", async () => {
+  it("includes option names (not labels) in output", async () => {
     mockGraphql.mockResolvedValueOnce({ travellerChoices: baseResult });
 
     const p = buildProgram();
