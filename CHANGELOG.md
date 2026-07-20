@@ -8,6 +8,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+Survives the July 2026 backend participant-choice migration and adds one-shot plan readiness. **Breaking-by-policy:** fresh-install stance — no compat aliases (`whoami --refresh` removed, `select` rebuilt on the traveller-choice mutation family).
+
+### Added
+- **`voyagier plan-status <planId> [--json|--agent]`** — one-call readiness ([VOY-1704](https://linear.app/voyagier/issue/VOY-1704)): `readiness` enum (`BOOKED` / `READY_TO_BOOK` / `BLOCKED` = act / `IN_PROGRESS` = poll), ordered `blockers[]` (`TRAVELLER_DATA` → `SELECTION_INPUT` → `PICK_PENDING` → `REQUIREMENT_UNMET`), self-resolving `waiting[]`, runnable `nextSteps[]`, `cart.bookableCount`. Additive-only JSON stability promise (documented in AGENT.md). Divergent per-traveller picks are valid — informational `consensus: false`, never a blocker.
+- **`select` choice scopes** ([VOY-1692](https://linear.app/voyagier/issue/VOY-1692)): `--traveller <id>`, `--travellers <ids>`, `--group <id>` map to the backend's `setTripPlanTravellerChoice*` mutation family; default remains all-travellers.
+- **`selection-options` honesty** ([VOY-1703](https://linear.app/voyagier/issue/VOY-1703)): `AWAITING_INPUT` now names the blocking inputs in `blockedOn[]`, or emits `blockedOnUnavailable: true` when the stall is dependency-pending. Per-traveller choices + consensus in output.
+
+### Fixed
+- **Picks work again after the participant-choice migration** ([VOY-1692](https://linear.app/voyagier/issue/VOY-1692)): `search` now reuses the goal's existing decision selection (backend validates picks/options exactly one mirror hop; the old create-a-new-selection path added a second hop → empty options + rejected picks). Round-trip searches emit `returnSelectionId`. Empty-but-provided scope flag values are hard errors.
+- **Chosen-state reads are consensus-aware** ([VOY-1701](https://linear.app/voyagier/issue/VOY-1701)): `plans get/summary/items` derive chosen options from `travellerOptionChoices` (shared `deriveChosen`), with `parentOptionId` legacy fallback — picks made under the new model no longer render as ⏳ pending.
+- **`whoami` live-verifies the token by default** ([VOY-1703](https://linear.app/voyagier/issue/VOY-1703)): a dead PAT fails loudly with `AUTH_FAILED` + the fix command instead of serving cached identity. `--cached` is the explicit offline escape hatch; `--refresh` removed.
+- `travellers update` works again (`UpdateTravellerInput` → `UpdateTripPlanTravellerInput` backend rename).
+
+### Removed
+- Dead pre-#386 sub-selection code paths (`findPendingSubSelections`); stale repo-root audit artifacts (`CLI-AUDIT-2026-03-16.md`, `SECTION6-DISCOVERIES.md` — both described the pre-participant-choice model).
+
 ---
 
 ## [2.1.2] — 2026-06-03

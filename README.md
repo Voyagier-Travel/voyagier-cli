@@ -40,8 +40,8 @@ voyagier search hotels --plan <PLAN_ID> --location Tokyo \
 voyagier selection-options <SELECTION_ID> --wait --json
 voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
 
-# 6) Inspect readiness at any time
-voyagier plans goals <PLAN_ID> --json
+# 6) Inspect readiness at any time — one call: what's blocked, what's next
+voyagier plan-status <PLAN_ID> --json
 
 # 7) Pre-flight bookability check, then checkout
 voyagier book <PLAN_ID> --validate --json
@@ -54,9 +54,9 @@ voyagier book <PLAN_ID> --json
 |-----------|-----------|--------|
 | Activity | ✅ per slot | Viator |
 | Hotel | ⚠️ partial | Blueprint Listings (checkout coverage incomplete) |
-| Flight | ❌ display only | Sabre (itinerary view only — `is_bookable = false`) |
+| Flight | ✅ via Fare & Cabin item | Sabre (fare-level item carted once all legs are picked; defaults to Economy) |
 
-Always run `voyagier book --validate <planId>` for pre-flight checks. To control what gets charged, **curate the cart** (don't add display-only items) before invoking `book` — `--types` and `--only-bookable` are client-side preflight gates, not server-side filters.
+The cart materializes only bookable, fare/room-level options — the per-item `isBookable` flag is the live truth. Always run `voyagier book --validate <planId>` for pre-flight checks. To control what gets charged, **curate the cart** before invoking `book` — `--types` and `--only-bookable` are client-side preflight gates, not server-side filters.
 
 ## Commands
 
@@ -66,7 +66,10 @@ Always run `voyagier book --validate <planId>` for pre-flight checks. To control
 | `voyagier clients` | Advisor CRM (`list`, `get`, `create`, `update`, `archive`, `upsert`) |
 | `voyagier plans` | `create`, `list`, `get`, `summary`, `delete`; `plans goals` for the goal graph + readiness; `plans bookable` for pre-flight |
 | `voyagier plan-trip` | Scaffold a plan (plan + default goal graph; adds travellers only if `--travellers` is given) and print compose next-steps |
+| `voyagier plan-status <planId>` | One-shot readiness: BOOKED / READY_TO_BOOK / BLOCKED / IN_PROGRESS, ordered blockers, runnable next steps |
 | `voyagier travellers` | Add, list, update, remove travellers |
+| `voyagier traveller-groups` | Manage traveller groups (list, create, update, delete, members) |
+| `voyagier traveller-choices` | Inspect per-traveller selection choices for a plan |
 | `voyagier search` | Flights, hotels, activities, airports — creates a selection; options arrive async |
 | `voyagier selection-options <selectionId>` | Read / poll a selection's options (`--wait` to poll until ready) |
 | `voyagier select` | Choose an option (`--selection-id <id> --option-id <id>`, or by index from last search) |
@@ -77,6 +80,7 @@ Always run `voyagier book --validate <planId>` for pre-flight checks. To control
 | `voyagier book` | Stripe checkout with `--validate` / `--only-bookable` / `--types` / `--idempotency-key` |
 | `voyagier bookings` | View booking records |
 | `voyagier chat` | Interactive AI trip planning |
+| `voyagier whoami` | Identity + profile (live-verifies the token; `--cached` for offline reads) |
 | `voyagier auth` | Manage PAT / API URL |
 | `voyagier agent-docs` | Print full AI agent integration reference |
 
