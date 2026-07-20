@@ -451,8 +451,11 @@ describe("plans create — human output", () => {
 });
 
 describe("plans list", () => {
-  const planA = { ...samplePlan, id: "plan-a", title: "Alpha", startDate: "2026-01-01", endDate: "2026-01-05" };
-  const planB = { ...samplePlan, id: "plan-b", title: "Beta", startDate: "2026-12-01", endDate: "2026-12-10" };
+  // Dates are computed from the real clock (crud.ts --active uses `new Date()`);
+  // hardcoded dates were a time bomb that would flip past-tense on main.
+  const iso = (offsetDays: number) => new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10);
+  const planA = { ...samplePlan, id: "plan-a", title: "Alpha", startDate: iso(-30), endDate: iso(-25) };
+  const planB = { ...samplePlan, id: "plan-b", title: "Beta", startDate: iso(30), endDate: iso(40) };
 
   it("--json returns items enriched with url + paging metadata", async () => {
     mockGraphql.mockResolvedValueOnce({ tripPlans: { items: [planA, planB], count: 2, page: 1, limit: 20 } });
@@ -468,7 +471,7 @@ describe("plans list", () => {
   });
 
   it("--active filters out past plans and marks the result filtered", async () => {
-    // today (test clock) is 2026-07-20: planA (ends 2026-01-05) is past, planB is future.
+    // planA ended 25 days ago (past); planB starts in 30 days (future).
     mockGraphql.mockResolvedValueOnce({ tripPlans: { items: [planA, planB], count: 2, page: 1, limit: 20 } });
     await runPlans(["list", "--active", "--json"]);
     const out = JSON.parse(writes.join(""));
