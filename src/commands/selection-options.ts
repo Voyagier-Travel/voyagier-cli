@@ -14,6 +14,10 @@ import {
   type SelectionState,
   type SelectionStatusResult,
 } from "../selection-status.js";
+import { deriveChosen, type RawTravellerChoice } from "../choices.js";
+
+// Re-exported so downstream consumers (and specs) keep one import site.
+export { deriveChosen };
 
 interface RawOption {
   id: string;
@@ -24,11 +28,6 @@ interface RawOption {
   duration?: string | null;
   sortOrder?: number | null;
 }
-
-import { deriveChosen, type RawTravellerChoice } from "../choices.js";
-
-// Re-exported so downstream consumers (and specs) keep one import site.
-export { deriveChosen };
 
 interface RawInput {
   id: string;

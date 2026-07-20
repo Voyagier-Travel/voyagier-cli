@@ -17,7 +17,7 @@ export function registerWhoamiCommand(program: Command): void {
     .command("whoami")
     .description("Show your identity and profile summary (live-verifies the token)")
     .option("--json", "Output raw JSON")
-    .option("--cached", "Skip the live token check and show cached identity (offline mode)")
+    .option("--cached", "Show cached identity without the live token check (falls back to a live fetch when nothing is cached)")
     .action(async (opts) => {
       if (!credentialsExist()) {
         throw new CliError(CliErrorCode.AUTH_FAILED, authFailedMessage("Not authenticated."));
