@@ -25,6 +25,8 @@ const config: Config.InitialOptions = {
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
   },
+  globalSetup: "<rootDir>/test/global-setup.ts",
+  globalTeardown: "<rootDir>/test/global-teardown.ts",
   setupFiles: ["<rootDir>/test/setup-env.ts"],
   collectCoverage: true,
   coverageDirectory: "coverage",
