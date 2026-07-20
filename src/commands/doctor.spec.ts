@@ -29,6 +29,9 @@ jest.unstable_mockModule("../config.js", () => ({
   credentialsExist: mockCredentialsExist,
   getApiUrl: mockGetApiUrl,
   getUserContext: mockGetUserContext,
+  // doctor.ts falls back to CONFIG_DIR for its state-dir; specs set
+  // VOYAGIER_STATE_DIR explicitly, so this value is never dereferenced.
+  CONFIG_DIR: "/tmp/voyagier-doctor-spec-config",
 }));
 
 jest.unstable_mockModule("../output.js", () => ({

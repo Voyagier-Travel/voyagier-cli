@@ -4,7 +4,14 @@ import { join } from "path";
 import { homedir } from "os";
 import { CliError, CliErrorCode, authFailedMessage } from "./errors.js";
 
-export const CONFIG_DIR = join(homedir(), ".voyagier");
+/**
+ * Config dir chokepoint. `VOYAGIER_CONFIG_DIR` overrides the default
+ * `~/.voyagier` — set by the jest bootstrap for EVERY test run so specs can
+ * never read or wipe real credentials/state (a live PAT was deleted by a
+ * crashed test run before this existed), and available to users for
+ * sandboxed/multi-account setups.
+ */
+export const CONFIG_DIR = process.env.VOYAGIER_CONFIG_DIR || join(homedir(), ".voyagier");
 const CREDENTIALS_FILE = join(CONFIG_DIR, "credentials.json");
 
 export interface UserContext {

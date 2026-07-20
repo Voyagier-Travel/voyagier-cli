@@ -25,8 +25,14 @@ const config: Config.InitialOptions = {
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
   },
+  setupFiles: ["<rootDir>/test/setup-env.ts"],
   collectCoverage: true,
   coverageDirectory: "coverage",
+  // Stable denominator: measure ALL source, not just files specs happen to
+  // import. (Until 2026-06-07 the denominator silently depended on spec
+  // imports — doc-drift.spec.ts importing build-program.ts grew it by 1,450
+  // statements overnight and "dropped" coverage from 70% to 50%.)
+  collectCoverageFrom: ["src/**/*.ts", "!src/**/*.spec.ts"],
   coveragePathIgnorePatterns: ["node_modules", "dist", "test"],
   coverageReporters: ["lcov", "html", "text-summary"],
   coverageThreshold: {
