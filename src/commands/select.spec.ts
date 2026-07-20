@@ -531,3 +531,135 @@ describe("select: direct mode (--selection-id + --option-id)", () => {
   });
 });
 
+// ── Tests: participant-choice scopes (VOY-1692) ───────────────────────────
+
+describe("select: participant-choice scope flags (VOY-1692)", () => {
+  let stdoutSpy: ReturnType<typeof jest.spyOn>;
+  let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+  const CHOICE_RESULT = { id: "sel-1", parentOptionId: "opt-1", parentOption: { id: "opt-1", name: "AA Flight", price: 900 } };
+
+  beforeEach(() => {
+    process.env.VOYAGIER_TOKEN = "test-token";
+    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation(() => true);
+    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+    delete process.env.VOYAGIER_TOKEN;
+  });
+
+  it("--traveller routes to setTripPlanSelectionTravellerChoice", async () => {
+    mockGraphql.mockResolvedValue({ setTripPlanSelectionTravellerChoice: CHOICE_RESULT });
+    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--traveller", "trav-a"]);
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("setTripPlanSelectionTravellerChoice"),
+      expect.objectContaining({ selectionId: "sel-1", optionId: "opt-1", travellerId: "trav-a" })
+    );
+  });
+
+  it("--travellers routes to ForSubset with parsed IDs and replaceExisting=true", async () => {
+    mockGraphql.mockResolvedValue({ setTripPlanTravellerChoiceForSubset: CHOICE_RESULT });
+    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--travellers", "trav-a, trav-b"]);
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("setTripPlanTravellerChoiceForSubset"),
+      expect.objectContaining({ travellerIds: ["trav-a", "trav-b"], replaceExisting: true })
+    );
+  });
+
+  it("--group routes to ForGroup", async () => {
+    mockGraphql.mockResolvedValue({ setTripPlanTravellerChoiceForGroup: CHOICE_RESULT });
+    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--group", "grp-1"]);
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("setTripPlanTravellerChoiceForGroup"),
+      expect.objectContaining({ groupId: "grp-1", optionId: "opt-1" })
+    );
+  });
+
+  it("no scope flag defaults to setTripPlanSelectedOption (for-all alias)", async () => {
+    mockGraphql.mockResolvedValue(MOCK_SET_SELECTED);
+    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1"]);
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("setTripPlanSelectedOption"),
+      expect.objectContaining({ selectionId: "sel-1", optionId: "opt-1" })
+    );
+  });
+
+  it("throws VALIDATION when multiple scope flags are combined", async () => {
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--traveller", "t1", "--group", "g1"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["--traveller", ""],
+    ["--traveller", "   "],
+    ["--travellers", ""],
+    ["--group", " "],
+  ])("rejects an empty %s value instead of silently selecting for ALL travellers", async (flag, value) => {
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", flag, value]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+    expect((err as CliError).message).toContain("empty value");
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("mutual exclusion fires even when one of the combined flags is empty", async () => {
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--traveller", "", "--group", "g1"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("trims whitespace around a scope flag value before sending", async () => {
+    mockGraphql.mockResolvedValue({ setTripPlanSelectionTravellerChoice: CHOICE_RESULT });
+    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--traveller", "  trav-a  "]);
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("setTripPlanSelectionTravellerChoice"),
+      expect.objectContaining({ travellerId: "trav-a" })
+    );
+  });
+
+  it("maps the list-mode rejection to actionable guidance", async () => {
+    mockGraphql.mockRejectedValue(new Error("Cannot set traveller choices on a list-mode selection"));
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-list", "--option-id", "opt-1"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).message).toMatch(/DECISION selection/);
+  });
+
+  it("maps the option-not-found rejection to selection-options guidance", async () => {
+    mockGraphql.mockRejectedValue(new Error("Option not found or does not belong to this selection"));
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-1", "--option-id", "opt-foreign"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).message).toMatch(/selection-options sel-1/);
+  });
+});
+

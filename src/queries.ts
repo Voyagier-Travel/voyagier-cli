@@ -355,8 +355,12 @@ export const DELETE_TRAVELLER = `
   }
 `;
 
+// NOTE: input type renamed UpdateTravellerInput -> UpdateTripPlanTravellerInput
+// in the July-2026 traveller requirements work (VOY-1395 era). Load-bearing:
+// gender + dateOfBirth are REQUIRED for flight checkout (TSA Secure Flight),
+// and passport data hard-gates international reserves. (VOY-1692)
 export const UPDATE_TRAVELLER = `
-  mutation UpdateTraveller($id: String!, $input: UpdateTravellerInput!) {
+  mutation UpdateTraveller($id: String!, $input: UpdateTripPlanTravellerInput!) {
     updateTripPlanTraveller(id: $id, input: $input) {
       id firstName lastName email dateOfBirth gender declaredTravellerType
     }
@@ -484,12 +488,51 @@ export const SET_DESTINATION_VALUE = `
 // token dance — each leg/journey is an ordinary selection whose chosen option is
 // set via setTripPlanSelectedOption. (Removed in VOY-1414.)
 
-// The one surviving "choose an option" mutation. Return drifted:
-// `selectedOption` is gone — the chosen option is `parentOption` /
-// `parentOptionId` on TripPlanSelection (matches options[].id), per VOY-1407.
+// The default "choose an option" verb. Since the participant-choice migration
+// (July 2026, "passing legs"), setTripPlanSelectedOption is a server-side ALIAS
+// for setTravellerChoiceForAll: it records the same choice for every assigned
+// traveller. It REJECTS list-mode selections ("Cannot set traveller choices on
+// a list-mode selection") — picks happen on the goal's single decision
+// selection, whose options resolve from its mirrored list. The option must
+// belong to the selection itself or its DIRECT mirrorListSelectionId (the
+// backend validates exactly one mirror hop). (VOY-1692)
 export const SET_TRIP_PLAN_SELECTED_OPTION = `
   mutation SetSelected($selectionId: String!, $optionId: String!) {
     setTripPlanSelectedOption(selectionId: $selectionId, optionId: $optionId) {
+      id
+      parentOptionId
+      parentOption { id name price }
+    }
+  }
+`;
+
+// --- Participant-choice scopes (VOY-1692) ---
+// The webapp's traveller-choice mutation family. Same 1-mirror-hop option
+// validation as setTripPlanSelectedOption. All return the updated selection.
+
+export const SET_TRAVELLER_CHOICE_FOR_SUBSET = `
+  mutation SetChoiceForSubset($selectionId: String!, $travellerIds: [String!]!, $optionId: String!, $replaceExisting: Boolean!) {
+    setTripPlanTravellerChoiceForSubset(selectionId: $selectionId, travellerIds: $travellerIds, optionId: $optionId, replaceExisting: $replaceExisting) {
+      id
+      parentOptionId
+      parentOption { id name price }
+    }
+  }
+`;
+
+export const SET_TRAVELLER_CHOICE_FOR_GROUP = `
+  mutation SetChoiceForGroup($selectionId: String!, $groupId: String!, $optionId: String!) {
+    setTripPlanTravellerChoiceForGroup(selectionId: $selectionId, groupId: $groupId, optionId: $optionId) {
+      id
+      parentOptionId
+      parentOption { id name price }
+    }
+  }
+`;
+
+export const SET_SELECTION_TRAVELLER_CHOICE = `
+  mutation SetChoiceForTraveller($selectionId: String!, $travellerId: String!, $optionId: String!) {
+    setTripPlanSelectionTravellerChoice(selectionId: $selectionId, travellerId: $travellerId, optionId: $optionId) {
       id
       parentOptionId
       parentOption { id name price }
@@ -781,6 +824,11 @@ const SELECTION_MONITOR_FIELDS = `
         type
         blueprintMonitorId
         parentOptionId
+        travellerOptionChoices {
+          traveller { id firstName lastName }
+          selectedOption { id }
+          scope
+        }
         options {
           id
           name
@@ -808,6 +856,33 @@ ${TRIP_PLAN_SELECTION_UNION_MEMBERS.map(
     (m) => `      ... on ${m} {${SELECTION_MONITOR_FIELDS}
       }`,
   ).join("\n")}
+    }
+  }
+`;
+
+/**
+ * Read an EXISTING decision selection's id + options for the search reuse path
+ * (VOY-1692). The skeleton goal graph already carries the decision selection
+ * (for flights: the leg selection, re-mirrored onto the FlightJourney by the
+ * backend's createJourneyForLegs — the only wiring whose options resolve AND
+ * whose picks validate, since both are 1-mirror-hop). Search must REUSE it,
+ * never create a parallel selection mirroring the *List (that lands 2 hops
+ * from the option rows: options read empty and every pick is rejected).
+ */
+const DECISION_OPTION_FIELDS = `
+        id
+        options { id name price time airline duration bookingData: optionData sortOrder }`;
+
+export const GET_DECISION_SELECTION_OPTIONS = `
+  query DecisionSelectionOptions($tripPlanSelectionId: String!) {
+    getTripPlanSelection(tripPlanSelectionId: $tripPlanSelectionId) {
+      __typename
+      ... on TripPlanFlightSelection {${DECISION_OPTION_FIELDS}
+      }
+      ... on TripPlanHotelSelection {${DECISION_OPTION_FIELDS}
+      }
+      ... on TripPlanActivitySelection {${DECISION_OPTION_FIELDS}
+      }
     }
   }
 `;

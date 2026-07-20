@@ -110,6 +110,40 @@ describe("resolveMirrorList", () => {
   });
 });
 
+describe("resolveDecisionSelection (VOY-1692: reuse the goal's decision selection)", () => {
+  it("returns the goal's existing decision selection id for the kind", () => {
+    const g = goal({
+      items: [
+        {
+          selections: [
+            { id: "sel-list", type: "FlightList" },
+            { id: "sel-decision", type: "Flight" },
+            { id: "sel-origin", type: "Airport" },
+          ],
+        },
+      ],
+    });
+    expect(SH.resolveDecisionSelection(g, "flights")).toBe("sel-decision");
+  });
+
+  it("does NOT match the *List selection (list-mode selections reject picks)", () => {
+    // Default goal() fixture has FlightList + Airports but no Flight decision selection.
+    expect(SH.resolveDecisionSelection(goal(), "flights")).toBeNull();
+  });
+
+  it("matches Hotel decision selections for the hotels kind", () => {
+    const g = goal({
+      type: "Hotel",
+      items: [{ selections: [{ id: "h-list", type: "HotelList" }, { id: "h-decision", type: "Hotel" }] }],
+    });
+    expect(SH.resolveDecisionSelection(g, "hotels")).toBe("h-decision");
+  });
+
+  it("returns null when the goal has no items", () => {
+    expect(SH.resolveDecisionSelection(goal({ items: [] }), "flights")).toBeNull();
+  });
+});
+
 describe("airportSelections", () => {
   it("returns Airport selection ids in document order", () => {
     expect(SH.airportSelections(goal())).toEqual(["sel-origin", "sel-dest"]);

@@ -25,13 +25,41 @@ interface RawOption {
   sortOrder?: number | null;
 }
 
+interface RawTravellerChoice {
+  traveller: { id: string; firstName?: string | null; lastName?: string | null };
+  selectedOption?: { id: string } | null;
+  scope?: string | null;
+}
+
 interface RawSelection {
   __typename: string;
   id: string;
   type?: string | null;
   blueprintMonitorId?: string | null;
   parentOptionId?: string | null;
+  travellerOptionChoices?: RawTravellerChoice[] | null;
   options?: RawOption[] | null;
+}
+
+/**
+ * The participant-choice model (VOY-1692): a selection is "chosen" per
+ * traveller. Consensus requires EVERY travellerOptionChoices entry to carry a
+ * pick AND all picks to match — a partial pick (some travellers still
+ * undecided) is NOT consensus. Falls back to the legacy parentOptionId when
+ * no choice entries exist at all.
+ */
+export function deriveChosen(raw: Pick<RawSelection, "travellerOptionChoices" | "parentOptionId">): {
+  chosenOptionId: string | null;
+  consensus: boolean;
+} {
+  const entries = raw.travellerOptionChoices ?? [];
+  if (entries.length === 0) {
+    return { chosenOptionId: raw.parentOptionId ?? null, consensus: raw.parentOptionId != null };
+  }
+  const allPicked = entries.every((c) => c.selectedOption?.id);
+  const ids = [...new Set(entries.filter((c) => c.selectedOption?.id).map((c) => c.selectedOption!.id))];
+  const consensus = allPicked && ids.length === 1;
+  return { chosenOptionId: consensus ? ids[0] : null, consensus };
 }
 
 interface RawMonitor {
@@ -148,6 +176,14 @@ export function registerSelectionOptionsCommands(program: Command): void {
           (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
         );
 
+        const { chosenOptionId, consensus } = deriveChosen(raw);
+        const travellerChoices = (raw.travellerOptionChoices ?? []).map((c) => ({
+          travellerId: c.traveller.id,
+          travellerName: [c.traveller.firstName, c.traveller.lastName].filter(Boolean).join(" ") || null,
+          optionId: c.selectedOption?.id ?? null,
+          scope: c.scope ?? null,
+        }));
+
         if (asJson) {
           jsonOutput({
             selectionId: raw.id,
@@ -160,7 +196,12 @@ export function registerSelectionOptionsCommands(program: Command): void {
             ...(result.fetchError ? { fetchError: result.fetchError } : {}),
             ...(result.staleWarning ? { staleWarning: true } : {}),
             blueprintMonitorId: raw.blueprintMonitorId ?? null,
-            chosenOptionId: raw.parentOptionId ?? null,
+            chosenOptionId,
+            // Per-traveller picks (participant-choice model). consensus=false
+            // means travellers picked different options OR some have not picked
+            // yet — inspect travellerChoices to tell which.
+            consensus,
+            ...(travellerChoices.length > 0 ? { travellerChoices } : {}),
             options: sortedOptions.map((o) => ({
               id: o.id,
               name: o.name,
@@ -190,9 +231,19 @@ export function registerSelectionOptionsCommands(program: Command): void {
           console.log();
           for (const o of sortedOptions) {
             const price = o.price != null ? chalk.green(` · $${o.price}`) : "";
-            const chosen = raw.parentOptionId === o.id ? chalk.green(" ✓") : "";
+            const chosen = chosenOptionId === o.id ? chalk.green(" ✓") : "";
             console.log(`    ${chalk.white(o.name)}${price}${chosen}`);
             console.log(chalk.dim(`      ${o.id}`));
+          }
+        }
+        if (travellerChoices.length > 0 && !consensus) {
+          const distinct = new Set(travellerChoices.filter((c) => c.optionId).map((c) => c.optionId));
+          const label = distinct.size > 1
+            ? "Travellers have picked DIFFERENT options:"
+            : "Not all travellers have picked yet:";
+          console.log(chalk.yellow(`\n  ${label}`));
+          for (const c of travellerChoices) {
+            console.log(chalk.dim(`    ${c.travellerName ?? c.travellerId}: ${c.optionId ?? "— (no pick)"}`));
           }
         }
         console.log();

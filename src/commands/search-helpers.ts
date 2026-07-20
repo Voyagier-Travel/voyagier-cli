@@ -39,10 +39,10 @@ export interface SearchGoal {
 }
 
 /** Map a search kind to the goal type + the mirror list selection type it owns. */
-const KIND_MAP: Record<string, { goalType: string; listType: string; airportTypes?: string[] }> = {
-  flights: { goalType: "Flight", listType: "FlightList", airportTypes: ["Airport"] },
-  hotels: { goalType: "Hotel", listType: "HotelList" },
-  activities: { goalType: "Activity", listType: "ActivityList" },
+const KIND_MAP: Record<string, { goalType: string; listType: string; decisionType: string; airportTypes?: string[] }> = {
+  flights: { goalType: "Flight", listType: "FlightList", decisionType: "Flight", airportTypes: ["Airport"] },
+  hotels: { goalType: "Hotel", listType: "HotelList", decisionType: "Hotel" },
+  activities: { goalType: "Activity", listType: "ActivityList", decisionType: "Activity" },
 };
 
 export async function loadGoals(tripPlanId: string): Promise<SearchGoal[]> {
@@ -68,6 +68,28 @@ export function resolveGoal(goals: SearchGoal[], kind: string, explicitGoalId?: 
     );
   }
   return match;
+}
+
+/**
+ * Find the goal's EXISTING single decision selection for the search kind
+ * (Flight / Hotel / Activity — the non-List type), or null when absent.
+ *
+ * This is where picks must land (VOY-1692): the backend validates a chosen
+ * option against the selection itself or its DIRECT mirrorListSelectionId
+ * only. The skeleton decision selection is wired 1 hop from the option rows
+ * (flights: re-mirrored onto the FlightJourney by createJourneyForLegs;
+ * hotels/activities: mirroring the monitor-owning *List). A CLI-created
+ * duplicate mirroring the *List sits 2 hops away for flights — options read
+ * empty and every pick is rejected — so search must reuse this selection.
+ */
+export function resolveDecisionSelection(goal: SearchGoal, kind: string): string | null {
+  const decisionType = KIND_MAP[kind].decisionType;
+  for (const item of goal.items ?? []) {
+    for (const sel of item.selections ?? []) {
+      if (sel.type === decisionType) return sel.id;
+    }
+  }
+  return null;
 }
 
 /** Find the mirror `*List` selection id for the search kind within a goal. */

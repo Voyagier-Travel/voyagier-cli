@@ -16,6 +16,7 @@ import type { SearchState } from "../state.js";
  */
 
 const mockLoadSearchState = jest.fn<() => SearchState | null>();
+const mockGraphql = jest.fn<(query: string, vars?: Record<string, unknown>) => Promise<unknown>>();
 
 jest.unstable_mockModule("../state.js", () => ({
   loadSearchState: mockLoadSearchState,
@@ -27,10 +28,15 @@ jest.unstable_mockModule("../state.js", () => ({
   clearOptionsState: jest.fn(),
 }));
 
+jest.unstable_mockModule("../api.js", () => ({
+  graphql: mockGraphql,
+}));
+
 let resolvePlanId: (opts: { plan?: string }) => string;
+let resolveOrCreateDecisionSelection: typeof import("./search.js").resolveOrCreateDecisionSelection;
 
 beforeAll(async () => {
-  ({ resolvePlanId } = await import("./search.js"));
+  ({ resolvePlanId, resolveOrCreateDecisionSelection } = await import("./search.js"));
 });
 
 let stderrSpy: ReturnType<typeof jest.spyOn>;
@@ -91,5 +97,59 @@ describe("resolvePlanId --plan contract", () => {
     expect(() => resolvePlanId({})).toThrow(
       expect.objectContaining({ code: CliErrorCode.VALIDATION }),
     );
+  });
+});
+
+/**
+ * resolveOrCreateDecisionSelection fail-fast contract (VOY-1692 review).
+ * When the goal graph names a decision selection but getTripPlanSelection
+ * returns null (stale graph / deleted selection), the reuse path must throw
+ * — an empty options array would read as "still fetching" and send the
+ * caller off to poll a selection that does not exist.
+ */
+describe("resolveOrCreateDecisionSelection reuse path", () => {
+  const goalWithSelection = {
+    id: "goal-1",
+    name: "Flights",
+    items: [{ selections: [{ id: "sel-decision", type: "Flight" }] }],
+  };
+
+  beforeEach(() => {
+    mockGraphql.mockReset();
+  });
+
+  it("fails fast with API_ERROR when the reused selection cannot be loaded", async () => {
+    mockGraphql.mockResolvedValueOnce({ getTripPlanSelection: null });
+    let err: unknown;
+    try {
+      await resolveOrCreateDecisionSelection(
+        "flights", goalWithSelection as never, "plan-1", "mutation X", "x", {}, true,
+      );
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect((err as { code?: string }).code).toBe(CliErrorCode.API_ERROR);
+    expect((err as Error).message).toContain("sel-decision");
+    expect((err as Error).message).toContain("plans goals plan-1");
+  });
+
+  it("returns the reused selection's options when it loads", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      getTripPlanSelection: { id: "sel-decision", options: [{ id: "opt-1" }] },
+    });
+    const result = await resolveOrCreateDecisionSelection(
+      "flights", goalWithSelection as never, "plan-1", "mutation X", "x", {}, true,
+    );
+    expect(result).toEqual({ selectionId: "sel-decision", options: [{ id: "opt-1" }], reused: true });
+  });
+
+  it("still treats a loaded selection with empty options as fetching (no throw)", async () => {
+    mockGraphql.mockResolvedValueOnce({ getTripPlanSelection: { id: "sel-decision", options: [] } });
+    const result = await resolveOrCreateDecisionSelection(
+      "flights", goalWithSelection as never, "plan-1", "mutation X", "x", {}, true,
+    );
+    expect(result.options).toEqual([]);
+    expect(result.reused).toBe(true);
   });
 });

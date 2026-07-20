@@ -2,8 +2,9 @@
  * Traveller Choices command surface (v2.1.0 — Section 6).
  *
  * Read-only inspection of per-traveller selection choices for a trip plan.
- * Choice application (setTripPlanTravellerChoiceFor*) ships in Section 5
- * behind --experimental once Mark's choice-mechanics rework stabilizes.
+ * Choice application (setTripPlanTravellerChoiceFor*) is live on `select`
+ * via --traveller / --travellers / --group (default = all travellers); see
+ * select.ts (VOY-1692).
  *
  * Surface:
  *   voyagier traveller-choices list --plan <id>
@@ -100,25 +101,25 @@ export function buildNextStepCommand(
   allTravellerIds: string[],
 ): { command: string; note: string } | null {
   const pendingIds = question.pendingTravellers.map((t) => t.id);
-  const note = "Choice application requires Section 5 (--experimental in v2.1.0)";
+  const note = `List option IDs first: voyagier selection-options ${question.selectionId} --json`;
 
   if (pendingIds.length === 0) {
     return null;
   }
   if (pendingIds.length === allTravellerIds.length) {
     return {
-      command: `voyagier select --selection ${question.selectionId} --plan ${planId} --scope all --experimental`,
+      command: `voyagier select --selection-id ${question.selectionId} --option-id <optionId>`,
       note,
     };
   }
   if (pendingIds.length === 1) {
     return {
-      command: `voyagier select --selection ${question.selectionId} --plan ${planId} --participants ${pendingIds[0]} --scope individual --experimental`,
+      command: `voyagier select --selection-id ${question.selectionId} --option-id <optionId> --traveller ${pendingIds[0]}`,
       note,
     };
   }
   return {
-    command: `voyagier select --selection ${question.selectionId} --plan ${planId} --participants ${pendingIds.join(",")} --scope subset --experimental`,
+    command: `voyagier select --selection-id ${question.selectionId} --option-id <optionId> --travellers ${pendingIds.join(",")}`,
     note,
   };
 }
