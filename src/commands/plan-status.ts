@@ -5,7 +5,8 @@
  * Replaces the 5–8 call stitch (plans goals + N× selection-options +
  * travellers list + cart) that every agent loop had to hand-assemble.
  *
- * Contract (design: ~/clawd/projects/cli-strategy/VOY-1704-DESIGN.md):
+ * Contract (documented for consumers in AGENT.md § "Plan Status"; design
+ * history on VOY-1704 / PR #68):
  * - `readiness` is the ONE enum agents switch on:
  *     BOOKED         all goals booked
  *     READY_TO_BOOK  no blockers, no waits, cart has ≥1 bookable item
