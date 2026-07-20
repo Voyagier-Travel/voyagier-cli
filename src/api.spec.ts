@@ -60,6 +60,38 @@ describe("graphql", () => {
     expect(result).toEqual({ user: { id: "1", name: "Test" } });
   });
 
+  it("sanitizes ANSI escapes and control chars in response data at the API boundary (VOY-1709)", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
+          options: [
+            { id: "opt-1", name: "\u001b[2J\u001b[31mEvil Hotel\u001b[0m" },
+            { id: "opt-2", name: "Clean\u0007 Hotel" },
+          ],
+        },
+      }),
+    } as any);
+
+    const result = await graphql<{ options: Array<{ id: string; name: string }> }>(
+      "query { options { id name } }"
+    );
+
+    expect(result.options[0].name).toBe("Evil Hotel");
+    expect(result.options[1].name).toBe("Clean Hotel");
+  });
+
+  it("sanitizes server-provided GraphQL error messages before rendering (VOY-1709)", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        errors: [{ message: "\u001b[31mBad input\u0007 rejected" }],
+      }),
+    } as any);
+
+    await expect(graphql("query { x }")).rejects.toThrow("GraphQL error: Bad input rejected");
+  });
+
   it("should include variables in request body", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,

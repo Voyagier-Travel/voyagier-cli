@@ -321,3 +321,57 @@ export function shellArg(value: string | number | null | undefined): string {
   if (s.length > 0 && /^[A-Za-z0-9_./:@%+,=-]+$/.test(s)) return s;
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
+
+// ── Untrusted-content sanitization (VOY-1709) ──
+//
+// API responses carry third-party supplier content (hotel names, option
+// labels, GDS data) that ends up in terminals and in agent-consumed markdown.
+// A hostile string could embed ANSI escape sequences (rewrite the visible
+// terminal, spoof prompts) or raw control characters. Strip both at the API
+// boundary — legitimate travel data never contains them.
+//
+// Kept: \n and \t (legitimate in multi-line descriptions).
+// Stripped: well-formed ANSI CSI/OSC/single-char escape sequences first, then
+// any remaining C0 control chars (including stray ESC) and DEL.
+
+const ANSI_SEQUENCE =
+  // CSI: ESC [ params intermediates final · OSC: ESC ] ... (BEL | ESC \) · other ESC x
+  /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\^_]/g;
+// \u007f-\u009f covers DEL plus the C1 range — U+009B is a single-codepoint
+// CSI introducer (U+009D = OSC, U+0090 = DCS) that xterm-family terminals
+// honor even in UTF-8 mode; leaving C1 intact would bypass the ANSI strip.
+const CONTROL_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
+
+/** Strip ANSI escape sequences and control characters from one string. */
+export function sanitizeExternalText(value: string): string {
+  return value.replace(ANSI_SEQUENCE, "").replace(CONTROL_CHARS, "");
+}
+
+/**
+ * Recursively sanitize every string in an API response (objects, arrays,
+ * nested). Non-string primitives pass through untouched. Applied once at the
+ * graphql() boundary so every command and output mode is covered.
+ */
+export function sanitizeExternalData<T>(data: T): T {
+  if (typeof data === "string") {
+    return sanitizeExternalText(data) as T;
+  }
+  if (Array.isArray(data)) {
+    return data.map((item) => sanitizeExternalData(item)) as T;
+  }
+  if (data !== null && typeof data === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+      // A hostile response can carry an own "__proto__" key (JSON.parse
+      // creates it as a plain own property). Assigning THAT key here would set
+      // the rebuilt object's prototype to attacker data — skip it outright.
+      // "constructor"/"prototype" don't have that effect on plain assignment;
+      // they're dropped as defense-in-depth against prototype-pollution
+      // gadgets in downstream deep-merge/clone patterns.
+      if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
+      out[key] = sanitizeExternalData(value);
+    }
+    return out as T;
+  }
+  return data;
+}

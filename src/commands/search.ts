@@ -27,7 +27,7 @@ import {
 } from "./search-helpers.js";
 import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels, formatActivities } from "../formatters.js";
-import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivitySummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode } from "../utils.js";
+import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivitySummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode, shellArg } from "../utils.js";
 import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "../agent-output.js";
 import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
@@ -442,7 +442,7 @@ export function registerSearchCommands(program: Command): void {
             // not "no results" — point at the async-aware poll (VOY-1421).
             lines.push("_No options yet — the search is still fetching inventory._");
             lines.push("");
-            lines.push(`**Next:** \`voyagier selection-options ${selectionId} --wait --json\``);
+            lines.push(`**Next:** \`voyagier selection-options ${shellArg(selectionId)} --wait --json\``);
           } else {
             lines.push(agentFlightOptions(options));
             lines.push("");
@@ -451,7 +451,7 @@ export function registerSearchCommands(program: Command): void {
           if (isRoundTrip && returnSelectionId) {
             lines.push("");
             lines.push(
-              `_Round trip: after choosing the outbound, also choose on the return selection — \`voyagier select --selection-id ${returnSelectionId} --option-id <id>\` (options: \`voyagier selection-options ${returnSelectionId} --wait --json\`)._`,
+              `_Round trip: after choosing the outbound, also choose on the return selection — \`voyagier select --selection-id ${shellArg(returnSelectionId)} --option-id <id>\` (options: \`voyagier selection-options ${shellArg(returnSelectionId)} --wait --json\`)._`,
             );
           }
           lines.push("");
@@ -462,7 +462,7 @@ export function registerSearchCommands(program: Command): void {
 
         if (options.length === 0) {
           process.stderr.write(chalk.dim("No options yet — the search is still fetching inventory.\n"));
-          process.stderr.write(chalk.dim(`  Poll: voyagier selection-options ${selectionId} --wait\n`));
+          process.stderr.write(chalk.dim(`  Poll: voyagier selection-options ${shellArg(selectionId)} --wait\n`));
           return;
         }
 
@@ -643,7 +643,7 @@ export function registerSearchCommands(program: Command): void {
             // fetching, not that there are no hotels — poll first (VOY-1421).
             lines.push("_No options yet — the search is still fetching inventory._");
             lines.push("");
-            lines.push(`**Next:** \`voyagier selection-options ${selectionId} --wait --json\``);
+            lines.push(`**Next:** \`voyagier selection-options ${shellArg(selectionId)} --wait --json\``);
           } else {
             lines.push(agentHotelOptions(options));
             lines.push("");
@@ -658,7 +658,7 @@ export function registerSearchCommands(program: Command): void {
         if (options.length === 0) {
           const loc = opts.location as string;
           process.stderr.write(chalk.dim(`No options yet — the search may still be fetching inventory.\n`));
-          process.stderr.write(chalk.dim(`  Poll: voyagier selection-options ${selectionId} --wait\n\n`));
+          process.stderr.write(chalk.dim(`  Poll: voyagier selection-options ${shellArg(selectionId)} --wait\n\n`));
           process.stderr.write(chalk.yellow(`If it stays empty, no hotels matched "${loc}" on these dates.\n\n`));
           process.stderr.write(chalk.dim("Suggestions:\n"));
           if (looksLikeAirportCode(loc)) {
