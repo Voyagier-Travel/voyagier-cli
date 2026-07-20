@@ -250,8 +250,10 @@ describe("VOY-1407 — plans get/summary schema alignment", () => {
     }
     expect(GET_TRIP_PLAN).toContain("selections {");
     expect(GET_TRIP_PLAN).not.toMatch(/\bselection\s*\{/);
-    // TripPlanSelection has no selectedOption; chosen option is via parentOptionId + options[].
-    expect(GET_TRIP_PLAN).not.toContain("selectedOption");
+    // No OLD singular selectedOption node (name/price shape). The NEW model's
+    // travellerOptionChoices { selectedOption { id } } is expected (VOY-1701).
+    expect(GET_TRIP_PLAN).not.toMatch(/selectedOption\s*\{\s*id\s+name/);
+    expect(GET_TRIP_PLAN).toContain("travellerOptionChoices");
     expect(GET_TRIP_PLAN).toContain("parentOptionId");
     expect(GET_TRIP_PLAN).toContain("options {");
   });
@@ -262,7 +264,8 @@ describe("VOY-1407 — plans get/summary schema alignment", () => {
     }
     expect(GET_TRIP_PLAN_SUMMARY).toContain("selections {");
     expect(GET_TRIP_PLAN_SUMMARY).not.toMatch(/\bselection\s*\{/);
-    expect(GET_TRIP_PLAN_SUMMARY).not.toContain("selectedOption");
+    expect(GET_TRIP_PLAN_SUMMARY).not.toMatch(/selectedOption\s*\{\s*id\s+name/);
+    expect(GET_TRIP_PLAN_SUMMARY).toContain("travellerOptionChoices");
     expect(GET_TRIP_PLAN_SUMMARY).toContain("parentOptionId");
     expect(GET_TRIP_PLAN_SUMMARY).toContain("options {");
   });
@@ -333,8 +336,12 @@ describe("VOY-1412 — GET_PLAN_DEEP schema alignment", () => {
     expect(GET_PLAN_DEEP).toContain("childSelections {");
     expect(GET_PLAN_DEEP).toContain("parentOptionId");
     expect(GET_PLAN_DEEP).not.toMatch(/\bselection\s*\{/);
-    expect(GET_PLAN_DEEP).not.toContain("selectedOption");
+    // Guard against the OLD singular selectedOption node (pre-#386). The
+    // participant-choice read `travellerOptionChoices { selectedOption { id } }`
+    // is the NEW model and is expected (VOY-1701).
+    expect(GET_PLAN_DEEP).not.toMatch(/selectedOption\s*\{\s*id\s+name/);
     expect(GET_PLAN_DEEP).not.toContain("subSelections");
+    expect(GET_PLAN_DEEP).toContain("travellerOptionChoices");
   });
 
   it("GET_TRIP_PLAN_ITEM_TYPES uses selections (plural)", () => {
@@ -342,10 +349,35 @@ describe("VOY-1412 — GET_PLAN_DEEP schema alignment", () => {
     expect(GET_TRIP_PLAN_ITEM_TYPES).not.toMatch(/\bselection\s*\{/);
   });
 
-  it("deepChosenOption resolves the option matching parentOptionId", () => {
+  it("deepChosenOption resolves the option matching parentOptionId (legacy fallback)", () => {
     const sel = { id: "s", parentOptionId: "o2", options: [{ id: "o1", name: "A" }, { id: "o2", name: "B" }] };
     expect(deepChosenOption(sel)?.name).toBe("B");
     expect(deepChosenOption({ id: "s", parentOptionId: null, options: [{ id: "o1", name: "A" }] })).toBeNull();
+  });
+
+  it("deepChosenOption resolves from travellerOptionChoices consensus (new-model picks, VOY-1701)", () => {
+    const sel = {
+      id: "s",
+      parentOptionId: null, // new-model picks never write it
+      travellerOptionChoices: [
+        { traveller: { id: "t1" }, selectedOption: { id: "o2" } },
+        { traveller: { id: "t2" }, selectedOption: { id: "o2" } },
+      ],
+      options: [{ id: "o1", name: "A" }, { id: "o2", name: "B" }],
+    };
+    expect(deepChosenOption(sel)?.name).toBe("B");
+  });
+
+  it("deepChosenOption returns null without consensus (partial or divergent picks)", () => {
+    const partial = {
+      id: "s", parentOptionId: null,
+      travellerOptionChoices: [
+        { traveller: { id: "t1" }, selectedOption: { id: "o2" } },
+        { traveller: { id: "t2" }, selectedOption: null },
+      ],
+      options: [{ id: "o2", name: "B" }],
+    };
+    expect(deepChosenOption(partial)).toBeNull();
   });
 
   it("deepSubSelections finds childSelections hanging off the chosen option", () => {

@@ -15,9 +15,9 @@ const CABIN_LABELS: Record<string, string> = {
 export function registerWhoamiCommand(program: Command): void {
   program
     .command("whoami")
-    .description("Show your identity and profile summary")
+    .description("Show your identity and profile summary (live-verifies the token)")
     .option("--json", "Output raw JSON")
-    .option("--refresh", "Fetch fresh data from the API")
+    .option("--cached", "Skip the live token check and show cached identity (offline mode)")
     .action(async (opts) => {
       if (!credentialsExist()) {
         throw new CliError(CliErrorCode.AUTH_FAILED, authFailedMessage("Not authenticated."));
@@ -25,8 +25,10 @@ export function registerWhoamiCommand(program: Command): void {
 
       let ctx = getUserContext();
 
-      // --refresh or no cached context: fetch fresh data from API
-      if (opts.refresh || !ctx) {
+      // Default: LIVE-verify the token (VOY-1703). A revoked/stale PAT must
+      // never render a cached identity as if logged in — that lie costs real
+      // debugging time. --cached is the explicit offline escape hatch.
+      if (!opts.cached || !ctx) {
         interface MeData {
           id: string;
           firstName: string;
@@ -47,11 +49,21 @@ export function registerWhoamiCommand(program: Command): void {
           me = data.me;
         } catch (err) {
           if (err instanceof CliError) throw err;
-          // If refresh fails but we have cached data, use it
-          if (!ctx) {
-            const message = err instanceof Error ? err.message : String(err);
-            throw new CliError(CliErrorCode.API_ERROR, `Failed to fetch profile: ${message}`);
+          const message = err instanceof Error ? err.message : String(err);
+          const looksLikeAuth = /unauthorized|unauthenticated|forbidden|401|403|invalid token/i.test(message);
+          if (looksLikeAuth) {
+            throw new CliError(
+              CliErrorCode.AUTH_FAILED,
+              `Token rejected by ${getApiUrl()} — it is stale or revoked.\n` +
+                `Fix: voyagier auth set-token --url ${getApiUrl()} <PAT>\n` +
+                `(Cached identity deliberately NOT shown; use --cached only for offline reads.)`,
+            );
           }
+          throw new CliError(
+            CliErrorCode.API_ERROR,
+            `Could not verify identity against ${getApiUrl()}: ${message}\n` +
+              `If you are offline, re-run with --cached.`,
+          );
         }
 
         if (me) {

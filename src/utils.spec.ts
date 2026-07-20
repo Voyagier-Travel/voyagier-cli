@@ -7,7 +7,6 @@ import {
   formatPrice,
   validateDate,
   validateIata,
-  findPendingSubSelections,
   subSelectionLabel,
   deriveBaseUrl,
   openBrowser,
@@ -199,82 +198,6 @@ describe("validateIata", () => {
 
   it("should include flag name in error message", () => {
     expect(() => validateIata("X", "--to")).toThrow(/--to/);
-  });
-});
-
-describe("findPendingSubSelections", () => {
-
-  it("returns empty array when no items", () => {
-    expect(findPendingSubSelections([])).toEqual([]);
-  });
-
-  it("returns empty array when no sub-selections exist", () => {
-    const items = [{
-      id: "item1",
-      title: "Flight",
-      selection: { selectedOption: { subSelections: [] } },
-    }];
-    expect(findPendingSubSelections(items as any)).toEqual([]);
-  });
-
-  it("returns pending sub-selections (no selectedOptionId)", () => {
-    const items = [{
-      id: "item1",
-      title: "Flight JFK→NRT",
-      selection: {
-        id: "sel1",
-        isLocked: false,
-        selectedOption: {
-          id: "opt1",
-          name: "AA175",
-          price: 500,
-          status: "ACTIVE",
-          subSelections: [{
-            id: "sub1",
-            type: "FLIGHT_CLASS",
-            options: [{ id: "opt1" }],
-          }],
-        },
-      },
-    }];
-    const result = findPendingSubSelections(items as any);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({
-      itemTitle: "Flight JFK→NRT",
-      parentOptionName: "AA175",
-      subSelectionType: "FLIGHT_CLASS",
-      subSelectionId: "sub1",
-      optionCount: 1,
-    });
-  });
-
-  it("skips sub-selections that already have a selectedOptionId", () => {
-    const items = [{
-      id: "item1",
-      title: "Hotel",
-      selection: {
-        id: "sel1",
-        isLocked: false,
-        selectedOption: {
-          id: "opt1",
-          name: "Park Hyatt",
-          price: 300,
-          status: "ACTIVE",
-          subSelections: [{
-            id: "sub1",
-            type: "HOTEL_ROOM",
-            selectedOptionId: "opt1",
-            options: [{ id: "opt1" }, { id: "opt2" }],
-          }],
-        },
-      },
-    }];
-    expect(findPendingSubSelections(items as any)).toEqual([]);
-  });
-
-  it("handles items with no selection", () => {
-    const items = [{ id: "item1", title: "Tour", selection: null }];
-    expect(findPendingSubSelections(items as any)).toEqual([]);
   });
 });
 

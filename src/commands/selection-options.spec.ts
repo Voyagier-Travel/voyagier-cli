@@ -237,3 +237,46 @@ describe("deriveChosen", () => {
       .toEqual({ chosenOptionId: null, consensus: false });
   });
 });
+
+// ── deriveBlockedOn (AWAITING_INPUT honesty, VOY-1703) ─────────────────────
+
+describe("deriveBlockedOn", () => {
+  let deriveBlockedOn: typeof import("./selection-options.js").deriveBlockedOn;
+  beforeAll(async () => {
+    ({ deriveBlockedOn } = await import("./selection-options.js"));
+  });
+
+  const input = (over: Partial<{ fieldName: string; fieldLabel: string | null; isRequired: boolean; value: unknown; sourceOutputId: string | null }> = {}) => ({
+    id: "in-1",
+    fieldName: over.fieldName ?? "departureDate",
+    fieldLabel: over.fieldLabel === undefined ? "Departure date" : over.fieldLabel,
+    isRequired: over.isRequired ?? true,
+    value: over.value ?? null,
+    sourceOutputId: over.sourceOutputId ?? null,
+  });
+
+  it("names required inputs with no value and no source binding", () => {
+    expect(deriveBlockedOn({ inputs: [input()] })).toEqual([
+      { fieldName: "departureDate", fieldLabel: "Departure date" },
+    ]);
+  });
+
+  it("excludes inputs satisfied by a direct value", () => {
+    expect(deriveBlockedOn({ inputs: [input({ value: "2026-09-15" })] })).toEqual([]);
+  });
+
+  it("excludes inputs satisfied by a source-output binding", () => {
+    expect(deriveBlockedOn({ inputs: [input({ sourceOutputId: "out-9" })] })).toEqual([]);
+  });
+
+  it("excludes optional inputs and handles missing inputs array", () => {
+    expect(deriveBlockedOn({ inputs: [input({ isRequired: false })] })).toEqual([]);
+    expect(deriveBlockedOn({})).toEqual([]);
+  });
+
+  it("falls back to fieldName when there is no label", () => {
+    expect(deriveBlockedOn({ inputs: [input({ fieldLabel: null })] })).toEqual([
+      { fieldName: "departureDate", fieldLabel: null },
+    ]);
+  });
+});
