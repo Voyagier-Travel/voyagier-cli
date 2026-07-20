@@ -161,6 +161,10 @@ export function registerBookCommands(program: Command): void {
         return;
       }
 
+      // Runnable hints interpolate ids — shellArg() them all (VOY-1709
+      // convention; planId is user-supplied but must stay paste-runnable).
+      const planIdArg = shellArg(planId);
+
       // Price hard-gate: parse + require BEFORE any network call (fail fast).
       const expectTotal = opts.expectTotal !== undefined ? parseMoney(opts.expectTotal, "--expect-total") : null;
       const maxTotal = opts.maxTotal !== undefined ? parseMoney(opts.maxTotal, "--max-total") : null;
@@ -168,8 +172,8 @@ export function registerBookCommands(program: Command): void {
         throw new CliError(
           CliErrorCode.VALIDATION,
           `Booking requires a price gate: pass --expect-total <amount> (exact) or --max-total <amount> (cap).\n` +
-            `Get the current chargeable subtotal first:  voyagier book ${planId} --dry-run\n` +
-            `Then:  voyagier book ${planId} --expect-total <subtotal>`,
+            `Get the current chargeable subtotal first:  voyagier book ${planIdArg} --dry-run\n` +
+            `Then:  voyagier book ${planIdArg} --expect-total <subtotal>`,
         );
       }
 
@@ -194,7 +198,7 @@ export function registerBookCommands(program: Command): void {
       if (enriched.length === 0) {
         throw new CliError(
           CliErrorCode.VALIDATION,
-          `Cart is empty. Nothing to book.\nSelect flights, hotels, or activities first: voyagier search ... --plan ${planId}`,
+          `Cart is empty. Nothing to book.\nSelect flights, hotels, or activities first: voyagier search ... --plan ${planIdArg}`,
         );
       }
 
@@ -312,7 +316,7 @@ export function registerBookCommands(program: Command): void {
           }
           if (existingCheckouts && existingCheckouts.paid > 0) {
             lines.push("");
-            lines.push(`⚠️ Existing checkouts: ${existingCheckouts.paid} paid. Check: \`voyagier book ${plan.id} --status\``);
+            lines.push(`⚠️ Existing checkouts: ${existingCheckouts.paid} paid. Check: \`voyagier book ${shellArg(plan.id)} --status\``);
           }
           lines.push("");
           lines.push("_(Travel fee added at checkout — Stripe shows final total.)_");
@@ -338,7 +342,7 @@ export function registerBookCommands(program: Command): void {
           for (const b of blockers) console.log(chalk.yellow(`    • ${b.itemName} — ${b.reason}`));
         }
         if (existingCheckouts && existingCheckouts.paid > 0) {
-          console.log("\n  " + chalk.yellow(`⚠ Existing checkouts: ${existingCheckouts.paid} paid — voyagier book ${plan.id} --status`));
+          console.log("\n  " + chalk.yellow(`⚠ Existing checkouts: ${existingCheckouts.paid} paid — voyagier book ${shellArg(plan.id)} --status`));
         }
         console.log(hintDryRun());
         console.log(chalk.dim(`\n  [dry-run] Would create Stripe Checkout Session`));
@@ -364,7 +368,7 @@ export function registerBookCommands(program: Command): void {
         throw new CliError(
           CliErrorCode.ALREADY_BOOKED,
           `A Paid checkout already exists for this plan — refusing to book again.\n` +
-            `Review it:  voyagier book ${planId} --status\n` +
+            `Review it:  voyagier book ${planIdArg} --status\n` +
             `If you really want another checkout, re-run with --rebook.`,
           {
             paidCheckouts: summary.paid.map((c) => ({
@@ -390,7 +394,7 @@ export function registerBookCommands(program: Command): void {
         throw new CliError(
           CliErrorCode.PRICE_CHANGED,
           `Chargeable subtotal is ${formatPrice(chargeableSubtotal)} but --expect-total was ${formatPrice(expectTotal)} — not creating checkout.\n` +
-            `Review the cart (voyagier book ${planId} --dry-run), then re-run with the current total if it's acceptable.`,
+            `Review the cart (voyagier book ${planIdArg} --dry-run), then re-run with the current total if it's acceptable.`,
           gateDetails,
         );
       }
@@ -477,7 +481,7 @@ export function registerBookCommands(program: Command): void {
           "",
           `👉 **Plan:** ${planUrl}`,
           "",
-          `**After payment:** \`voyagier book ${planId} --status\``,
+          `**After payment:** \`voyagier book ${planIdArg} --status\``,
         ];
         process.stdout.write(lines.join("\n") + "\n");
         return;
@@ -492,7 +496,7 @@ export function registerBookCommands(program: Command): void {
       console.log(chalk.dim(`  ${checkoutUrl}\n`));
       openBrowser(checkoutUrl);
       console.log(hintCheckoutCreated());
-      console.log(chalk.dim(`\n  After payment, check status: voyagier book ${planId} --status`));
+      console.log(chalk.dim(`\n  After payment, check status: voyagier book ${planIdArg} --status`));
       console.log(chalk.dim(`  Plan: ${planUrl}\n`));
     });
 }
