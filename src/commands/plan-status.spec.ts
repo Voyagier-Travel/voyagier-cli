@@ -212,6 +212,10 @@ describe("buildPlanStatus — readiness precedence", () => {
     expect(intl.readiness).toBe("BLOCKED");
     expect(intl.blockers[0].kind).toBe("TRAVELLER_DATA");
     expect(intl.blockers[0].message).toContain("passport");
+    // nextSteps tailored to the actual gap — passport flags, no gender/dob noise.
+    expect(intl.nextSteps[0]).toBe(
+      "voyagier travellers update t1 --passport-number <number> --passport-country <code> --passport-expiry <YYYY-MM>",
+    );
   });
 
   it("buildPlanStatus throws a clear error on null tripPlan", () => {
@@ -273,7 +277,7 @@ describe("buildPlanStatus — blockers", () => {
     expect(s.blockers[1].message).toContain("Departure date");
     // nextSteps map 1:1, deduped, runnable
     expect(s.nextSteps).toEqual([
-      "voyagier travellers update t1 --gender <M|F|X> --dob <YYYY-MM-DD>",
+      "voyagier travellers update t1 --dob <YYYY-MM-DD>",
       "voyagier plans goal g1 --json   # inspect the blocking requirements",
       "voyagier selection-options s-pick --json   # list options",
       "voyagier select --selection-id s-pick --option-id <optionId>",

@@ -32,7 +32,7 @@ import { graphql } from "../api.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
-import { deriveBaseUrl } from "../utils.js";
+import { deriveBaseUrl, formatPrice } from "../utils.js";
 import { GET_PLAN_STATUS } from "../queries.js";
 import { classifySelection } from "../selection-status.js";
 import {
@@ -450,11 +450,21 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
   };
   for (const b of blockers) {
     switch (b.kind) {
-      case "TRAVELLER_DATA":
-        push(
-          `voyagier travellers update ${b.refs.travellerId} --gender <M|F|X> --dob <YYYY-MM-DD>`,
-        );
+      case "TRAVELLER_DATA": {
+        // Tailor the flags to what's actually missing — a passport-only gap
+        // must not suggest gender/DOB flags that won't unblock anything.
+        const missing =
+          travellerOut.find((t) => t.travellerId === b.refs.travellerId)?.missing ?? [];
+        const flags = [
+          missing.includes("gender") ? "--gender <M|F|X>" : null,
+          missing.includes("dateOfBirth") ? "--dob <YYYY-MM-DD>" : null,
+          missing.includes("passport")
+            ? "--passport-number <number> --passport-country <code> --passport-expiry <YYYY-MM>"
+            : null,
+        ].filter(Boolean);
+        push(`voyagier travellers update ${b.refs.travellerId} ${flags.join(" ")}`);
         break;
+      }
       case "SELECTION_INPUT":
         push(`voyagier plans goal ${b.refs.goalId} --json   # inspect the blocking requirements`);
         break;
@@ -513,7 +523,7 @@ function renderHuman(s: PlanStatusData): void {
   console.log(chalk.dim(s.url));
   console.log(
     chalk.dim(
-      `Goals: ${s.summary.goalsDecided}/${s.summary.goalsTotal} decided · ${s.summary.goalsBooked} booked · Cart: ${s.cart.itemCount} item(s) ${s.cart.total > 0 ? `$${s.cart.total.toFixed(2)}` : ""}`,
+      `Goals: ${s.summary.goalsDecided}/${s.summary.goalsTotal} decided · ${s.summary.goalsBooked} booked · Cart: ${s.cart.itemCount} item(s) ${s.cart.total > 0 ? formatPrice(s.cart.total) : ""}`,
     ),
   );
 
