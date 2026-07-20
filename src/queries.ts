@@ -95,6 +95,10 @@ export const GET_PLAN_DEEP = `
           type
           isLocked
           parentOptionId
+          travellerOptionChoices {
+            traveller { id }
+            selectedOption { id }
+          }
           assignedTravellers {
             id
             firstName
@@ -118,6 +122,10 @@ export const GET_PLAN_DEEP = `
               type
               isLocked
               parentOptionId
+              travellerOptionChoices {
+                traveller { id }
+                selectedOption { id }
+              }
               options {
                 id
                 name
@@ -201,13 +209,17 @@ export const GET_TRIP_PLANS = `
 // selected yet. There is no `selectedOption` field on TripPlanSelection.
 // Shape verified against the live dev schema and GET_PLAN_DEEP. VOY-1407 was a prod
 // outage caused by this drift — keep these queries aligned to the live schema.
+// Selections carry travellerOptionChoices (participant-choice model) — chosen
+// state derives from consensus; parentOptionId is a legacy fallback (VOY-1701).
+const PLAN_SELECTION_FIELDS = `selections { id type isLocked parentOptionId travellerOptionChoices { traveller { id } selectedOption { id } } options { id name price status } }`;
+
 export const GET_TRIP_PLAN = `
   query TripPlan($id: String!) {
     tripPlan(id: $id) {
       id title description startDate endDate
       items {
         id type title
-        selections { id type isLocked parentOptionId options { id name price status } }
+        ${PLAN_SELECTION_FIELDS}
       }
       travellers { id firstName lastName declaredTravellerType }
     }
@@ -220,7 +232,7 @@ export const GET_TRIP_PLAN_SUMMARY = `
       id title startDate endDate
       items {
         id type title
-        selections { id type isLocked parentOptionId options { id name price status } }
+        ${PLAN_SELECTION_FIELDS}
       }
       travellers { id firstName lastName declaredTravellerType }
     }
@@ -828,6 +840,14 @@ const SELECTION_MONITOR_FIELDS = `
           traveller { id firstName lastName }
           selectedOption { id }
           scope
+        }
+        inputs {
+          id
+          fieldName
+          fieldLabel
+          isRequired
+          value
+          sourceOutputId
         }
         options {
           id

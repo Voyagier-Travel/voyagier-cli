@@ -1,11 +1,14 @@
 import { getApiUrl } from "../../config.js";
 import { deriveBaseUrl } from "../../utils.js";
+import { deriveChosen, type RawTravellerChoice } from "../../choices.js";
 
 // --- Deep plan model (GET_PLAN_DEEP) ---
 // API model (post PR #386 / selections migration): a TripPlanItem has `selections`
-// (plural). Each TripPlanSelection has candidate `options`; the chosen one is the
-// option whose id === parentOptionId. A "sub-selection" (cabin class, room type) is a
-// `childSelections` entry hanging off a chosen option (was `selectedOption.subSelections`).
+// (plural). Each TripPlanSelection has candidate `options`; the chosen one is
+// derived from per-traveller `travellerOptionChoices` consensus (VOY-1701 —
+// new-model picks never write `parentOptionId`, which survives only as a
+// legacy fallback). A "sub-selection" (cabin class, room type) is a
+// `childSelections` entry hanging off a chosen option.
 
 export interface DeepOption {
   id: string;
@@ -26,6 +29,7 @@ export interface DeepSelection {
   type?: string;
   isLocked?: boolean;
   parentOptionId?: string | null;
+  travellerOptionChoices?: RawTravellerChoice[] | null;
   assignedTravellers?: Array<{ id: string; firstName?: string; lastName?: string; dateOfBirth?: string; gender?: string }>;
   options?: DeepOption[];
 }
@@ -37,10 +41,11 @@ export interface DeepItem {
   selections?: DeepSelection[];
 }
 
-/** The chosen option of a selection (options[].id === parentOptionId), or null. */
+/** The chosen option of a selection (traveller-choice consensus, legacy parentOptionId fallback), or null. */
 export function deepChosenOption(sel: DeepSelection): DeepOption | null {
-  if (!sel.parentOptionId) return null;
-  return (sel.options ?? []).find((o) => o.id === sel.parentOptionId) ?? null;
+  const { chosenOptionId } = deriveChosen(sel);
+  if (!chosenOptionId) return null;
+  return (sel.options ?? []).find((o) => o.id === chosenOptionId) ?? null;
 }
 
 /** All sub-selections (childSelections) hanging off an item's chosen options. */
@@ -90,16 +95,17 @@ export interface SelectionInfo {
   id: string;
   type?: string;
   isLocked?: boolean;
-  // The chosen option's id (matches one of options[].id), or null/undefined when
-  // nothing is selected yet. Replaces the old singular `selectedOption` node.
+  // Legacy chosen-option pointer — new-model picks never write it (VOY-1701).
   parentOptionId?: string | null;
+  travellerOptionChoices?: RawTravellerChoice[] | null;
   options?: SelectionOption[];
 }
 
-/** Resolve the chosen option for a selection, or null if none is selected yet. */
+/** Resolve the chosen option (traveller-choice consensus, legacy parentOptionId fallback), or null. */
 export function chosenOption(sel: SelectionInfo): SelectionOption | null {
-  if (!sel.parentOptionId) return null;
-  return (sel.options ?? []).find((o) => o.id === sel.parentOptionId) ?? null;
+  const { chosenOptionId } = deriveChosen(sel);
+  if (!chosenOptionId) return null;
+  return (sel.options ?? []).find((o) => o.id === chosenOptionId) ?? null;
 }
 
 export interface TripPlanItemDetail extends TripPlanItem {

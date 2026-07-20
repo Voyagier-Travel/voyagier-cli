@@ -14,6 +14,10 @@ import {
   type SelectionState,
   type SelectionStatusResult,
 } from "../selection-status.js";
+import { deriveChosen, type RawTravellerChoice } from "../choices.js";
+
+// Re-exported so downstream consumers (and specs) keep one import site.
+export { deriveChosen };
 
 interface RawOption {
   id: string;
@@ -25,10 +29,13 @@ interface RawOption {
   sortOrder?: number | null;
 }
 
-interface RawTravellerChoice {
-  traveller: { id: string; firstName?: string | null; lastName?: string | null };
-  selectedOption?: { id: string } | null;
-  scope?: string | null;
+interface RawInput {
+  id: string;
+  fieldName: string;
+  fieldLabel?: string | null;
+  isRequired: boolean;
+  value?: unknown;
+  sourceOutputId?: string | null;
 }
 
 interface RawSelection {
@@ -38,28 +45,20 @@ interface RawSelection {
   blueprintMonitorId?: string | null;
   parentOptionId?: string | null;
   travellerOptionChoices?: RawTravellerChoice[] | null;
+  inputs?: RawInput[] | null;
   options?: RawOption[] | null;
 }
 
 /**
- * The participant-choice model (VOY-1692): a selection is "chosen" per
- * traveller. Consensus requires EVERY travellerOptionChoices entry to carry a
- * pick AND all picks to match — a partial pick (some travellers still
- * undecided) is NOT consensus. Falls back to the legacy parentOptionId when
- * no choice entries exist at all.
+ * Name the inputs an AWAITING_INPUT selection is blocked on: required inputs
+ * with neither a direct value nor a source-output binding. Honesty rule
+ * (VOY-1703): never render a bare "blocked" without naming the reason — if
+ * the API gives us nothing, say THAT explicitly instead of null.
  */
-export function deriveChosen(raw: Pick<RawSelection, "travellerOptionChoices" | "parentOptionId">): {
-  chosenOptionId: string | null;
-  consensus: boolean;
-} {
-  const entries = raw.travellerOptionChoices ?? [];
-  if (entries.length === 0) {
-    return { chosenOptionId: raw.parentOptionId ?? null, consensus: raw.parentOptionId != null };
-  }
-  const allPicked = entries.every((c) => c.selectedOption?.id);
-  const ids = [...new Set(entries.filter((c) => c.selectedOption?.id).map((c) => c.selectedOption!.id))];
-  const consensus = allPicked && ids.length === 1;
-  return { chosenOptionId: consensus ? ids[0] : null, consensus };
+export function deriveBlockedOn(raw: Pick<RawSelection, "inputs">): { fieldName: string; fieldLabel: string | null }[] {
+  return (raw.inputs ?? [])
+    .filter((i) => i.isRequired && (i.value === null || i.value === undefined) && !i.sourceOutputId)
+    .map((i) => ({ fieldName: i.fieldName, fieldLabel: i.fieldLabel ?? null }));
 }
 
 interface RawMonitor {
@@ -178,11 +177,13 @@ export function registerSelectionOptionsCommands(program: Command): void {
 
         const { chosenOptionId, consensus } = deriveChosen(raw);
         const travellerChoices = (raw.travellerOptionChoices ?? []).map((c) => ({
-          travellerId: c.traveller.id,
-          travellerName: [c.traveller.firstName, c.traveller.lastName].filter(Boolean).join(" ") || null,
+          travellerId: c.traveller?.id ?? null,
+          travellerName: [c.traveller?.firstName, c.traveller?.lastName].filter(Boolean).join(" ") || null,
           optionId: c.selectedOption?.id ?? null,
           scope: c.scope ?? null,
         }));
+
+        const blockedOn = result.status === "AWAITING_INPUT" ? deriveBlockedOn(raw) : [];
 
         if (asJson) {
           jsonOutput({
@@ -190,6 +191,12 @@ export function registerSelectionOptionsCommands(program: Command): void {
             type: raw.type ?? null,
             status: result.status,
             optionCount: result.optionCount,
+            // Honesty rule (VOY-1703): when AWAITING_INPUT, name the missing
+            // inputs; blockedOnUnavailable=true means the API did not identify
+            // them (never a bare null).
+            ...(result.status === "AWAITING_INPUT"
+              ? { blockedOn, ...(blockedOn.length === 0 ? { blockedOnUnavailable: true } : {}) }
+              : {}),
             ...(result.retryAfterMs != null && result.status === "FETCHING"
               ? { retryAfterMs: result.retryAfterMs }
               : {}),
@@ -222,7 +229,12 @@ export function registerSelectionOptionsCommands(program: Command): void {
           console.log(chalk.yellow(`  ${result.staleWarning ? "Last refresh errored" : "Fetch error"}: ${result.fetchError}`));
         }
         if (result.status === "AWAITING_INPUT") {
-          console.log(chalk.dim(`  A required input is missing. Check the owning goal: voyagier plans goal <goalId>`));
+          if (blockedOn.length > 0) {
+            console.log(chalk.yellow(`  Blocked on: ${blockedOn.map((b) => b.fieldLabel ?? b.fieldName).join(", ")}`));
+            console.log(chalk.dim(`  Set the missing input(s), or check the owning goal: voyagier plans goal <goalId>`));
+          } else {
+            console.log(chalk.dim(`  A required input is missing (the API did not identify which). Check the owning goal: voyagier plans goal <goalId>`));
+          }
         }
         if (result.status === "FETCHING") {
           console.log(chalk.dim(`  Still fetching. Re-run with --wait, or retry in ~${Math.round((result.retryAfterMs ?? 2000) / 1000)}s.`));
