@@ -21,7 +21,6 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { readFileSync, existsSync, statSync, readdirSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
 import {
   buildClientSchema,
   getIntrospectionQuery,
@@ -31,7 +30,7 @@ import {
   type GraphQLSchema,
 } from "graphql";
 import { graphql, AuthError } from "../api.js";
-import { credentialsExist, getApiUrl, getUserContext } from "../config.js";
+import { CONFIG_DIR, credentialsExist, getApiUrl, getUserContext } from "../config.js";
 import { sanitizeExternalText } from "../utils.js";
 import { jsonOutput } from "../output.js";
 import { CliError } from "../errors.js";
@@ -98,11 +97,12 @@ export interface DoctorReport {
 }
 
 /**
- * State directory under inspection. Override via env (`VOYAGIER_STATE_DIR`) for tests.
- * In normal use, this is `~/.voyagier/`.
+ * State directory under inspection. Override via env (`VOYAGIER_STATE_DIR`) for
+ * doctor-specific tests; otherwise follows CONFIG_DIR (which itself honors
+ * `VOYAGIER_CONFIG_DIR`). In normal use, this is `~/.voyagier/`.
  */
 function stateDir(): string {
-  return process.env.VOYAGIER_STATE_DIR ?? join(homedir(), ".voyagier");
+  return process.env.VOYAGIER_STATE_DIR ?? CONFIG_DIR;
 }
 const STATE_STALE_MS = 24 * 60 * 60 * 1000; // 24h
 
