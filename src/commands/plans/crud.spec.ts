@@ -426,3 +426,302 @@ describe("VOY-1413 — option blob field uses optionData (aliased to bookingData
     expect(query.replace(/bookingData: optionData/g, "")).not.toMatch(/\bbookingData\b/);
   });
 });
+
+// ── Coverage: list ───────────────────────────────────────────────────────────
+
+const logJoined = (): string => logSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+
+describe("plans create — human output", () => {
+  it("prints a confirmation with id, url, and next-step hint", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlan: samplePlan });
+    await runPlansCreate(["--client", sampleClient.id, "--title", "Test plan"]);
+    const out = logJoined();
+    expect(out).toContain("Created trip plan: Test plan");
+    expect(out).toContain(samplePlan.id);
+    expect(out).toContain("/plans/plan-1");
+    expect(out).toContain("travellers add");
+  });
+
+  it("wraps a graphql failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("kaboom"));
+    await expect(
+      runPlansCreate(["--client", sampleClient.id, "--title", "T", "--json"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.API_ERROR });
+  });
+});
+
+describe("plans list", () => {
+  const planA = { ...samplePlan, id: "plan-a", title: "Alpha", startDate: "2026-01-01", endDate: "2026-01-05" };
+  const planB = { ...samplePlan, id: "plan-b", title: "Beta", startDate: "2026-12-01", endDate: "2026-12-10" };
+
+  it("--json returns items enriched with url + paging metadata", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlans: { items: [planA, planB], count: 2, page: 1, limit: 20 } });
+    await runPlans(["list", "--json"]);
+    const out = JSON.parse(writes.join(""));
+    expect(out.total).toBe(2);
+    expect(out.page).toBe(1);
+    expect(out.limit).toBe(20);
+    expect(out.items).toHaveLength(2);
+    expect(out.items[0].url).toContain("/plans/plan-a");
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars).toEqual({ page: 1, limit: 20 });
+  });
+
+  it("--active filters out past plans and marks the result filtered", async () => {
+    // today (test clock) is 2026-07-20: planA (ends 2026-01-05) is past, planB is future.
+    mockGraphql.mockResolvedValueOnce({ tripPlans: { items: [planA, planB], count: 2, page: 1, limit: 20 } });
+    await runPlans(["list", "--active", "--json"]);
+    const out = JSON.parse(writes.join(""));
+    expect(out.filtered).toBe(true);
+    expect(out.total).toBe(1);
+    expect(out.items).toHaveLength(1);
+    expect(out.items[0].id).toBe("plan-b");
+    // --active always fetches page 1, limit 100 regardless of paging flags.
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars).toEqual({ page: 1, limit: 100 });
+  });
+
+  it("--agent renders a markdown list with plan links", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlans: { items: [planB], count: 1, page: 1, limit: 20 } });
+    await runPlans(["list", "--agent"]);
+    const out = writes.join("");
+    expect(out).toContain("## Your Trip Plans");
+    expect(out).toContain("**Beta**");
+    expect(out).toContain("/plans/plan-b");
+  });
+
+  it("--agent shows an empty-state line when there are no plans", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlans: { items: [], count: 0, page: 1, limit: 20 } });
+    await runPlans(["list", "--agent"]);
+    expect(writes.join("")).toContain("_No trip plans found._");
+  });
+
+  it("human mode prints a heading with the plan count", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlans: { items: [planA, planB], count: 2, page: 1, limit: 20 } });
+    await runPlans(["list"]);
+    expect(logJoined()).toContain("2 trip plans");
+    expect(logJoined()).toContain("Alpha");
+  });
+
+  it("rejects --page below 1 with a VALIDATION error", async () => {
+    await expect(runPlans(["list", "--page", "0", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.VALIDATION,
+    });
+  });
+
+  it("rejects a non-numeric --limit with a VALIDATION error", async () => {
+    await expect(runPlans(["list", "--limit", "abc", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.VALIDATION,
+    });
+  });
+
+  it("wraps a graphql failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("boom"));
+    await expect(runPlans(["list", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.API_ERROR,
+    });
+  });
+});
+
+// ── Coverage: get / summary human rendering ──────────────────────────────────
+
+describe("plans get — human & error paths", () => {
+  it("prints title, travellers, and chosen selections in human mode", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlan: planWithSelections });
+    await runPlans(["get", "plan-1"]);
+    const out = logJoined();
+    expect(out).toContain("Paris Trip");
+    expect(out).toContain("John Doe");
+    expect(out).toContain("B6 DCA→CDG");
+    // hotel selection has no chosen option → awaiting selection line
+    expect(out).toContain("awaiting selection");
+  });
+
+  it("throws NOT_FOUND-free API_ERROR wrap on graphql failure", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("network down"));
+    await expect(runPlans(["get", "plan-1", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.API_ERROR,
+    });
+  });
+
+  it("--agent renders travellers section and items without selections", async () => {
+    const plan = {
+      id: "plan-3",
+      title: "Agent Plan",
+      description: "Trip desc",
+      startDate: "2026-09-15",
+      endDate: "2026-09-22",
+      items: [
+        { id: "i-empty", type: "Selection", title: "Dinner reservation", selections: [] },
+        {
+          id: "i-flight", type: "Selection", title: "Flight to Paris",
+          selections: [
+            { id: "s1", type: "Flight", isLocked: false, parentOptionId: "o1", options: [{ id: "o1", name: "B6", price: 200, status: "None" }] },
+          ],
+        },
+      ],
+      travellers: [{ id: "t1", firstName: "Jane", lastName: "Roe", declaredTravellerType: "ADULT" }],
+    };
+    mockGraphql.mockResolvedValueOnce({ tripPlan: plan });
+    await runPlans(["get", "plan-3", "--agent"]);
+    const out = writes.join("");
+    expect(out).toContain("## Agent Plan");
+    expect(out).toContain("_Trip desc_");
+    expect(out).toContain("### Travellers");
+    expect(out).toContain("Jane Roe");
+    // item with no selections rendered as a bare bullet
+    expect(out).toContain("Dinner reservation");
+    expect(out).toContain("B6");
+  });
+
+  it("human mode renders items without selections as bare rows", async () => {
+    const plan = {
+      id: "plan-4", title: "Bare", description: null, startDate: null, endDate: null,
+      items: [{ id: "i-empty", type: "Selection", title: "Museum visit", selections: [] }],
+      travellers: [],
+    };
+    mockGraphql.mockResolvedValueOnce({ tripPlan: plan });
+    await runPlans(["get", "plan-4"]);
+    expect(logJoined()).toContain("Museum visit");
+  });
+});
+
+describe("plans summary — human rendering", () => {
+  it("prints chosen options and a pending marker in human mode", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlan: planWithSelections });
+    await runPlans(["summary", "plan-1"]);
+    const out = logJoined();
+    expect(out).toContain("Paris Trip");
+    expect(out).toContain("B6 DCA→CDG");
+    // hotel item has selections but none chosen → pending
+    expect(out).toContain("pending");
+  });
+
+  it("--agent renders chosen options, a pending marker, and the edit link", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlan: planWithSelections });
+    await runPlans(["summary", "plan-1", "--agent"]);
+    const out = writes.join("");
+    expect(out).toContain("## Paris Trip");
+    expect(out).toContain("B6 DCA→CDG");
+    expect(out).toContain("⏳ pending");
+    expect(out).toContain("**View & edit:**");
+  });
+
+  it("--agent shows an empty-items line when the plan has no items", async () => {
+    const plan = { id: "plan-5", title: "Empty", description: null, startDate: null, endDate: null, items: [], travellers: [] };
+    mockGraphql.mockResolvedValueOnce({ tripPlan: plan });
+    await runPlans(["summary", "plan-5", "--agent"]);
+    expect(writes.join("")).toContain("_No items yet._");
+  });
+
+  it("human mode shows 'No items yet.' when the plan is empty", async () => {
+    const plan = { id: "plan-6", title: "Empty2", description: null, startDate: null, endDate: null, items: [], travellers: [] };
+    mockGraphql.mockResolvedValueOnce({ tripPlan: plan });
+    await runPlans(["summary", "plan-6"]);
+    expect(logJoined()).toContain("No items yet.");
+  });
+
+  it("wraps a graphql failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("bad"));
+    await expect(runPlans(["summary", "plan-1", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.API_ERROR,
+    });
+  });
+});
+
+// ── Coverage: update ─────────────────────────────────────────────────────────
+
+describe("plans update", () => {
+  const updatedPlan = { ...samplePlan, title: "Renamed", startDate: "2026-09-15", endDate: "2026-09-22", description: "New desc" };
+
+  it("sends only the changed fields then re-fetches for --json output", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ updateTripPlan: { id: "plan-1" } }) // UPDATE_TRIP_PLAN
+      .mockResolvedValueOnce({ tripPlan: updatedPlan }); // GET_TRIP_PLAN_WITH_DESC refetch
+
+    await runPlans([
+      "update", "plan-1",
+      "--title", "Renamed",
+      "--start", "2026-09-15",
+      "--end", "2026-09-22",
+      "--description", "New desc",
+      "--json",
+    ]);
+
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    const [, updateVars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(updateVars).toEqual({
+      id: "plan-1",
+      input: { title: "Renamed", startDate: "2026-09-15", endDate: "2026-09-22", description: "New desc" },
+    });
+    const out = JSON.parse(writes.join(""));
+    expect(out.title).toBe("Renamed");
+    expect(out.url).toContain("/plans/plan-1");
+  });
+
+  it("sends only the title when only --title is provided", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ updateTripPlan: { id: "plan-1" } })
+      .mockResolvedValueOnce({ tripPlan: { ...samplePlan, title: "Just Title" } });
+    await runPlans(["update", "plan-1", "--title", "Just Title", "--json"]);
+    const [, updateVars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(updateVars.input).toEqual({ title: "Just Title" });
+  });
+
+  it("fails with VALIDATION when no fields are provided", async () => {
+    await expect(runPlans(["update", "plan-1", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.VALIDATION,
+    });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed --start date with VALIDATION", async () => {
+    await expect(
+      runPlans(["update", "plan-1", "--start", "15-09-2026", "--json"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("human mode prints the updated title, dates, and description", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ updateTripPlan: { id: "plan-1" } })
+      .mockResolvedValueOnce({ tripPlan: updatedPlan });
+    await runPlans(["update", "plan-1", "--title", "Renamed", "--start", "2026-09-15", "--end", "2026-09-22", "--description", "New desc"]);
+    const out = logJoined();
+    expect(out).toContain("Updated trip plan: Renamed");
+    expect(out).toContain("New desc");
+  });
+
+  it("wraps a graphql failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("upstream 500"));
+    await expect(
+      runPlans(["update", "plan-1", "--title", "X", "--json"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.API_ERROR });
+  });
+});
+
+// ── Coverage: delete ─────────────────────────────────────────────────────────
+
+describe("plans delete", () => {
+  it("--json emits { success, id }", async () => {
+    mockGraphql.mockResolvedValueOnce({ deleteTripPlan: true });
+    await runPlans(["delete", "plan-1", "--json"]);
+    expect(mockGraphql).toHaveBeenCalledTimes(1);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars).toEqual({ id: "plan-1" });
+    expect(JSON.parse(writes.join(""))).toEqual({ success: true, id: "plan-1" });
+  });
+
+  it("human mode prints a confirmation", async () => {
+    mockGraphql.mockResolvedValueOnce({ deleteTripPlan: true });
+    await runPlans(["delete", "plan-1"]);
+    expect(logJoined()).toContain("Deleted trip plan plan-1");
+  });
+
+  it("wraps a graphql failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("nope"));
+    await expect(runPlans(["delete", "plan-1", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.API_ERROR,
+    });
+  });
+});
