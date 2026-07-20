@@ -14,6 +14,7 @@ import { deriveBaseUrl, shellArg } from "../utils.js";
 import { hintFlightSelected, hintHotelSelected } from "../hints.js";
 import { progress, warn, fatal, jsonOutput, jsonOutputWithPlan } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
+import { waitForPickSettle, type PickWaitOutcome, type PickScope } from "./select-wait.js";
 
 /**
  * `select` — choose an option on a selection.
@@ -152,6 +153,85 @@ function mapChoiceError(err: unknown, selectionId: string): unknown {
   return err;
 }
 
+/** Run the --wait phase after a successful pick. Never throws: a wait
+ * failure must not mask the fact that the pick itself SUCCEEDED. */
+async function runPickWait(
+  selectionId: string,
+  optionId: string,
+  opts: { traveller?: string; travellers?: string; group?: string; timeout?: string; json?: boolean },
+): Promise<PickWaitOutcome | null> {
+  const timeoutSec = parseInt(opts.timeout ?? "30", 10);
+  const timeoutMs = (isNaN(timeoutSec) || timeoutSec <= 0 ? 30 : timeoutSec) * 1000;
+  const scope: PickScope = { traveller: opts.traveller, travellers: opts.travellers, group: opts.group };
+  try {
+    if (!opts.json) progress("Waiting for readiness to settle...");
+    return await waitForPickSettle(selectionId, optionId, scope, timeoutMs, deriveBaseUrl(getApiUrl()));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`  wait aborted (${message}) — the pick itself succeeded. Check: voyagier plan-status <planId>\n`);
+    return null;
+  }
+}
+
+/** Wait outcome as a JSON-payload fragment (additive to the pick payload). */
+function waitJsonFragment(outcome: PickWaitOutcome | null): Record<string, unknown> {
+  if (!outcome) return { wait: { aborted: true } };
+  return {
+    wait: {
+      pickVisible: outcome.pickVisible,
+      settled: outcome.settled,
+      ...(outcome.timedOut ? { timedOut: true } : {}),
+      elapsedSeconds: Math.round(outcome.elapsedMs / 1000),
+      ...(outcome.planStatus
+        ? {
+            readiness: outcome.planStatus.readiness,
+            blockers: outcome.planStatus.blockers,
+            waiting: outcome.planStatus.waiting,
+            nextSteps: outcome.planStatus.nextSteps,
+          }
+        : {}),
+      ...(outcome.tripPlanId ? { tripPlanId: outcome.tripPlanId } : {}),
+    },
+  };
+}
+
+/** Wait outcome rendered for --agent (markdown) or human (chalk) output. */
+function renderWaitOutcome(outcome: PickWaitOutcome | null, agent: boolean): void {
+  const out = (line: string) => process.stdout.write(line + "\n");
+  if (!outcome) {
+    out(agent ? "\n⚠️ **Wait aborted** — the pick succeeded; check `voyagier plan-status <planId>`." : chalk.yellow("  ⚠ Wait aborted — the pick succeeded; check plan-status."));
+    return;
+  }
+  const s = outcome.planStatus;
+  if (outcome.timedOut) {
+    const what = outcome.pickVisible ? "readiness is still settling" : "the pick is not yet visible server-side";
+    const check = outcome.tripPlanId ? `voyagier plan-status ${shellArg(outcome.tripPlanId)}` : "voyagier plan-status <planId>";
+    out(
+      agent
+        ? `\n⏳ **Wait timed out after ${Math.round(outcome.elapsedMs / 1000)}s** — ${what}. The pick itself succeeded. Check: \`${check}\``
+        : chalk.yellow(`  ⏳ Wait timed out after ${Math.round(outcome.elapsedMs / 1000)}s — ${what}. The pick succeeded; check: ${check}`),
+    );
+  }
+  if (!s) return;
+  if (agent) {
+    out(`\n**Readiness:** ${s.readiness}`);
+    for (const b of s.blockers) out(`- 🔴 ${b.kind}: ${b.message}`);
+    for (const w of s.waiting) out(`- ⏳ ${w.kind}: ${w.message}`);
+    if (s.nextSteps.length > 0) {
+      out("\n**Next steps:**");
+      for (const step of s.nextSteps) out(`- \`${step}\``);
+    }
+  } else {
+    out(chalk.bold(`\n  Readiness: ${s.readiness}`));
+    for (const b of s.blockers) out(chalk.red(`    ✗ ${b.kind}: ${b.message}`));
+    for (const w of s.waiting) out(chalk.yellow(`    ⏳ ${w.kind}: ${w.message}`));
+    if (s.nextSteps.length > 0) {
+      out(chalk.dim("  Next steps:"));
+      for (const step of s.nextSteps) out(chalk.dim(`    ${step}`));
+    }
+  }
+}
+
 export function registerSelectCommands(program: Command): void {
   program
     .command("select [number]")
@@ -164,6 +244,8 @@ export function registerSelectCommands(program: Command): void {
     .option("--travellers <ids>", "Choose for a subset of travellers (comma-separated IDs; replaces their existing choices)")
     .option("--group <groupId>", "Choose for a traveller group")
     .option("--plan <id>", "Assert that cached results belong to this trip plan (safety check for agent mode)")
+    .option("--wait", "After the pick succeeds, wait until it is reflected server-side and plan readiness settles, then report a plan-status snapshot")
+    .option("--timeout <seconds>", "Max seconds to wait when --wait is set (default 30)", "30")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
     .action(async (number: string | undefined, opts) => {
@@ -187,6 +269,7 @@ export function registerSelectCommands(program: Command): void {
           const result = await setSelectedOption(opts.selectionId, opts.optionId, opts);
           const name = result.parentOption?.name ?? opts.optionId;
           const forScope = scopeLabel(opts);
+          const waitOutcome = opts.wait ? await runPickWait(opts.selectionId, opts.optionId, opts) : undefined;
           if (opts.json) {
             jsonOutput({
               success: true,
@@ -195,11 +278,14 @@ export function registerSelectCommands(program: Command): void {
               scope: forScope,
               selected: result.parentOption ?? null,
               parentOptionId: result.parentOptionId ?? null,
+              ...(waitOutcome !== undefined ? waitJsonFragment(waitOutcome) : {}),
             });
           } else if (opts.agent) {
             process.stdout.write(`✅ **Selected (${forScope}):** ${name}\n`);
+            if (waitOutcome !== undefined) renderWaitOutcome(waitOutcome, true);
           } else {
             console.log(chalk.green(`✓ Selected ${forScope}: ${name}`));
+            if (waitOutcome !== undefined) renderWaitOutcome(waitOutcome, false);
           }
         } catch (err) {
           if (err instanceof CliError) throw err;
@@ -270,6 +356,7 @@ export function registerSelectCommands(program: Command): void {
       try {
         if (!opts.json) progress("Selecting option...");
         const result = await setSelectedOption(state.selectionId, selected.optionId, opts);
+        const waitOutcome = opts.wait ? await runPickWait(state.selectionId, selected.optionId, opts) : undefined;
 
         if (opts.json) {
           jsonOutputWithPlan(
@@ -288,6 +375,7 @@ export function registerSelectCommands(program: Command): void {
                 : {}),
               parentOptionId: result.parentOptionId ?? null,
               url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
+              ...(waitOutcome !== undefined ? waitJsonFragment(waitOutcome) : {}),
             },
             state.tripPlanId,
           );
@@ -312,6 +400,7 @@ export function registerSelectCommands(program: Command): void {
               ...nextSteps,
             ].join("\n") + "\n",
           );
+          if (waitOutcome !== undefined) renderWaitOutcome(waitOutcome, true);
         } else {
           const icon = state.type === "flights" ? "✈️" : state.type === "activities" ? "🎯" : "🏨";
           console.log(chalk.green(`\n✓ ${icon} Selected: ${selected.summary}`));
@@ -327,6 +416,7 @@ export function registerSelectCommands(program: Command): void {
           }
           await printPlanFooter(state.tripPlanId);
           console.log(chalk.dim(`  Next: voyagier plans get ${shellArg(state.tripPlanId)}`));
+          if (waitOutcome !== undefined) renderWaitOutcome(waitOutcome, false);
         }
 
         clearSearchState();

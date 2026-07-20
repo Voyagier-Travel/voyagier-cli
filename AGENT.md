@@ -94,6 +94,28 @@ defaults to choosing **for all travellers**; scope it with:
 travellers, `null` when they diverge), `consensus`, and per-traveller
 `travellerChoices`.
 
+### `select --wait` — don't hand-roll post-pick polling
+
+After a pick, checkout readiness updates **asynchronously** (the cart
+regenerates). Reading plan state immediately after `select` can mis-conclude.
+Pass `--wait [--timeout <seconds>]` (default 30) and `select` will, after the
+mutation succeeds:
+
+1. poll until the pick is **reflected server-side** for your scope
+   (travellerOptionChoices), then
+2. poll until readiness **settles** — i.e. the transient post-pick
+   `CART_PENDING` wait clears (other selections' `OPTIONS_PENDING` fetches
+   never hold up a settle — they're not this pick's business),
+
+then appends a plan-status snapshot to the output: in `--json`, a `wait`
+object `{ pickVisible, settled, elapsedSeconds, readiness, blockers, waiting,
+nextSteps, tripPlanId }` (+ `timedOut: true` when the deadline passed).
+
+Timeout semantics match `selection-options --wait`: the CLI reports the
+honest partial state and exits 0 — **a timed-out wait never means the pick
+failed**; the mutation already succeeded. On `timedOut`, follow up with
+`voyagier plan-status <tripPlanId>`.
+
 ### Traveller requirements for flights
 
 **Gender and date of birth are required at flight checkout** (TSA Secure
