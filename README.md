@@ -32,7 +32,7 @@ voyagier search flights --plan <PLAN_ID> --from JFK --to NRT \
   --date 2026-09-15 --return 2026-09-22 --json
 # Returns a selectionId. Options are fetched asynchronously:
 voyagier selection-options <SELECTION_ID> --wait --json
-voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
+voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --wait --json
 
 # 5) Search a hotel → poll → select
 voyagier search hotels --plan <PLAN_ID> --location Tokyo \
@@ -72,7 +72,7 @@ The cart materializes only bookable, fare/room-level options — the per-item `i
 | `voyagier traveller-choices` | Inspect per-traveller selection choices for a plan |
 | `voyagier search` | Flights, hotels, activities, airports — creates a selection; options arrive async |
 | `voyagier selection-options <selectionId>` | Read / poll a selection's options (`--wait` to poll until ready) |
-| `voyagier select` | Choose an option (`--selection-id <id> --option-id <id>`, or by index from last search) |
+| `voyagier select` | Choose an option (`--selection-id <id> --option-id <id>`, or by index; `--wait` to settle readiness after the pick) |
 | `voyagier itinerary` | Computed itinerary (sourced from `tripPlanEvents`) |
 | `voyagier listings` | Blueprint Listings — recent change events, add to selection |
 | `voyagier places` | Search / get / attach / list / highlight (Google Places + internal catalog) |
