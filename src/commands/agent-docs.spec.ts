@@ -153,11 +153,24 @@ describe("agent-docs", () => {
       }
     });
 
-    it("should flag the booking-filter behaviour so agents don't trip on it", () => {
+    it("should document the book price hard-gate and idempotency pre-flight (VOY-1706)", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
-        // book --types / --only-bookable are client-side preflight gates only.
-        expect(content.toLowerCase()).toContain("client-side");
+        // A real checkout requires a price gate; the doc must teach the flow.
+        expect(content).toContain("--expect-total");
+        expect(content).toContain("--max-total");
+        expect(content).toContain("chargeableSubtotal");
+        expect(content).toContain("PRICE_CHANGED");
+        expect(content).toContain("ALREADY_BOOKED");
+        expect(content).toContain("CHECKOUT_PENDING");
+        expect(content).toContain("--new-session");
+        expect(content).toContain("--rebook");
+        // book --types / --only-bookable are now SERVER-side filters (itemIds
+        // on createTripPlanCheckout, introspection-verified 2026-07-20). The
+        // doc must not describe them as client-side preflight gates anymore.
+        expect(content.toLowerCase()).toContain("server-side");
+        expect(content).toContain("itemIds");
+        expect(content.toLowerCase()).not.toMatch(/client-side preflight gates/);
       }
     });
 
@@ -179,12 +192,12 @@ describe("agent-docs", () => {
     it("should document --idempotency-key as a per-command flag, not universal", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
-        // --idempotency-key only exists on book, listings add-to-selection,
-        // and a few places mutations. The doc must list those rather than
-        // promising it on every mutating command.
+        // --idempotency-key exists on listings add-to-selection and a few
+        // places mutations. It was REMOVED from `book` in VOY-1706 (it was a
+        // JSON-echo no-op there; real idempotency is the checkout pre-flight).
         expect(content).toContain("--idempotency-key");
-        expect(content).toContain("voyagier book");
         expect(content).toContain("listings add-to-selection");
+        expect(content).not.toMatch(/voyagier book <planId> --idempotency-key/);
         // Doc should NOT say it's accepted by every mutation.
         expect(content.toLowerCase()).not.toMatch(/every mutating command accepts/);
       }

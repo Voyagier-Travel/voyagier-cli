@@ -1,33 +1,46 @@
 /**
  * voyagier book <planId>
  *
- * v2 (Section 3 — PHASE2-DESIGN-FREEZE.md). Clean replacement.
+ * v2.4 (VOY-1706 — price hard-gate + checkout idempotency).
  *
  * Modes:
- *   --dry-run             — preview cart + total + blockers, no checkout
- *   --validate            — fail with BOOKING_BLOCKED if anything is non-bookable
- *   --only-bookable       — CLI-side bookability gate (see note below)
- *   --types flight,hotel  — CLI-side type filter (see note below)
- *   --idempotency-key <k> — surfaced on JSON output only; the current schema's
- *                            CreateTripPlanCheckoutInput doesn't accept it. Phase 4
- *                            will pass it as an HTTP header once the API supports it.
- *   --status              — alias for tripPlanPaymentCheckouts query (post-checkout)
+ *   --dry-run              — preview cart + chargeable total + blockers + existing
+ *                             checkout sessions; no checkout created, no gate needed
+ *   --expect-total <amt>   — REQUIRED (or --max-total): abort with PRICE_CHANGED
+ *                             unless the chargeable subtotal equals <amt> exactly
+ *                             (compared in cents)
+ *   --max-total <amt>      — alternative gate: abort unless chargeable ≤ <amt>;
+ *                             when both flags are given, BOTH are enforced
+ *   --validate             — fail with BOOKING_BLOCKED if anything is non-bookable
+ *   --only-bookable        — restrict checkout to bookable items (server-side)
+ *   --types flight,hotel   — restrict checkout to matching item types (server-side)
+ *   --new-session          — supersede an existing unpaid (Pending) checkout session
+ *   --rebook               — proceed even though a Paid checkout already exists
+ *   --status               — alias for tripPlanPaymentCheckouts query (post-checkout)
  *
- * IMPORTANT — server-side filtering caveat (Copilot #3178828493):
- *   The current `createTripPlanCheckout` mutation only accepts `{ tripPlanId,
- *   successUrl, cancelUrl }`. It books **the entire cart**, not a filtered subset.
- *   `--types` and `--only-bookable` therefore act as **pre-flight gates**:
- *     - `--validate` blocks checkout when blockers are present.
- *     - `--only-bookable` skips the gate and creates a checkout for the full cart
- *       (the Stripe session price will reflect Voyagier's own bookable filtering
- *       on the server). Skipped blockers are surfaced on JSON output for the
- *       caller's awareness.
- *     - `--types Flight,Hotel,...` requires the corresponding cart lines to be
- *       present; if no items match the filter we abort with VALIDATION rather
- *       than create a checkout for an unfiltered cart.
- *   Once the API exposes a `cartItemIds: [String!]` (or selection-id) input on
- *   `CreateTripPlanCheckoutInput`, this command will pass the filtered set
- *   through and the gates become true server-side filters.
+ * PRICE HARD-GATE (VOY-1706):
+ *   `book` mints a Stripe Checkout URL that a human will pay. The gate guarantees
+ *   the URL the caller hands over matches the price the caller claims: a real
+ *   checkout REQUIRES --expect-total or --max-total, checked against the
+ *   *chargeable* subtotal (bookable items actually sent to checkout — NOT the
+ *   display subtotal, which may include non-bookable lines). Mismatch aborts
+ *   with PRICE_CHANGED before any mutation. Note: Voyagier adds a travel fee at
+ *   checkout — the gate covers the cart subtotal; Stripe shows the final total.
+ *
+ * IDEMPOTENCY PRE-FLIGHT (VOY-1706):
+ *   The schema has no idempotency key, so retries would mint duplicate Stripe
+ *   sessions. Before creating a checkout we query tripPlanPaymentCheckouts:
+ *   a Paid checkout → ALREADY_BOOKED (override: --rebook); a Pending checkout →
+ *   CHECKOUT_PENDING surfacing the existing session URL (override: --new-session).
+ *   The pre-flight failing is a hard failure (fail closed), not a skip.
+ *
+ * SERVER-SIDE FILTERING (schema change, verified via dev introspection 2026-07-20):
+ *   CreateTripPlanCheckoutInput.itemIds ("selectionId:optionId") now exists —
+ *   "When omitted, all bookable items are included." When --types /
+ *   --only-bookable narrow the set, we pass itemIds so the Stripe session
+ *   charges exactly the narrowed set. A bookable item whose optionId is unknown
+ *   cannot be expressed in itemIds — with filters active we abort (fail closed)
+ *   rather than silently drop it.
  */
 import { Command } from "commander";
 import chalk from "chalk";
@@ -61,6 +74,41 @@ interface PaymentCheckout {
   }>;
 }
 
+/**
+ * Parse a money amount from a CLI flag. Accepts "339.10", "$339.10", "339".
+ * Rejects NaN, negatives, and trailing garbage — a mis-parsed price gate is
+ * worse than no gate.
+ */
+export function parseMoney(raw: string, flagName: string): number {
+  const cleaned = raw.trim().replace(/^\$/, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `${flagName} must be a plain dollar amount (e.g. 339.10) — got ${JSON.stringify(raw)}.`,
+    );
+  }
+  return Number(cleaned);
+}
+
+interface CheckoutSummary {
+  pending: PaymentCheckout[];
+  paid: PaymentCheckout[];
+}
+
+/** Load existing checkout sessions for the plan, bucketed by status (idempotency pre-flight). */
+async function loadCheckoutSummary(planId: string): Promise<CheckoutSummary> {
+  const data = await graphql<{ tripPlanPaymentCheckouts: PaymentCheckout[] }>(
+    GET_PAYMENT_CHECKOUTS,
+    { tripPlanId: planId },
+  );
+  const checkouts = data.tripPlanPaymentCheckouts ?? [];
+  return {
+    // Statuses (introspection-verified 2026-07-20): Pending | Paid | Cancelled.
+    pending: checkouts.filter((c) => c.status === "Pending"),
+    paid: checkouts.filter((c) => c.status === "Paid"),
+  };
+}
+
 export function registerBookCommands(program: Command): void {
   program
     .command("book <planId>")
@@ -68,19 +116,25 @@ export function registerBookCommands(program: Command): void {
     .option("--json", "Output structured JSON envelope")
     .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show what would be charged without creating checkout")
+    .option("--expect-total <amount>", "Create checkout only if the chargeable subtotal equals this amount exactly (PRICE_CHANGED otherwise)")
+    .option("--max-total <amount>", "Create checkout only if the chargeable subtotal is at most this amount (PRICE_CHANGED otherwise)")
     .option("--validate", "Fail if any item in the cart is not bookable (BOOKING_BLOCKED)")
-    .option("--only-bookable", "Skip non-bookable items rather than failing")
-    .option("--types <list>", "Comma-separated CartItemType filter (Flight,Hotel,Activity,Restaurant,Other)")
-    .option("--idempotency-key <key>", "Idempotency key (currently surfaced on --json output; HTTP-header pass-through deferred to Phase 4)")
+    .option("--only-bookable", "Restrict checkout to bookable items (passed server-side via itemIds)")
+    .option("--types <list>", "Comma-separated CartItemType filter (Flight,Hotel,Activity,Restaurant,Other); passed server-side via itemIds")
+    .option("--new-session", "Create a new checkout even if an unpaid (Pending) session already exists")
+    .option("--rebook", "Create a checkout even though a Paid checkout already exists for this plan")
     .option("--status", "Show payment + booking status for past checkouts on this plan")
     .action(async (planId: string, opts: {
       json?: boolean;
       agent?: boolean;
       dryRun?: boolean;
+      expectTotal?: string;
+      maxTotal?: string;
       validate?: boolean;
       onlyBookable?: boolean;
       types?: string;
-      idempotencyKey?: string;
+      newSession?: boolean;
+      rebook?: boolean;
       status?: boolean;
     }) => {
       const baseUrl = deriveBaseUrl(getApiUrl());
@@ -90,6 +144,18 @@ export function registerBookCommands(program: Command): void {
       if (opts.status) {
         await showBookingStatus(planId, baseUrl, Boolean(opts.json), Boolean(opts.agent));
         return;
+      }
+
+      // Price hard-gate: parse + require BEFORE any network call (fail fast).
+      const expectTotal = opts.expectTotal !== undefined ? parseMoney(opts.expectTotal, "--expect-total") : null;
+      const maxTotal = opts.maxTotal !== undefined ? parseMoney(opts.maxTotal, "--max-total") : null;
+      if (!opts.dryRun && expectTotal === null && maxTotal === null) {
+        throw new CliError(
+          CliErrorCode.VALIDATION,
+          `Booking requires a price gate: pass --expect-total <amount> (exact) or --max-total <amount> (cap).\n` +
+            `Get the current chargeable subtotal first:  voyagier book ${planId} --dry-run\n` +
+            `Then:  voyagier book ${planId} --expect-total <subtotal>`,
+        );
       }
 
       // Load cart with bookability map
@@ -156,6 +222,9 @@ export function registerBookCommands(program: Command): void {
       }
 
       const subtotal = workingSet.reduce((acc, i) => acc + i.price, 0);
+      // What the server will actually charge (modulo travel fee): bookable items
+      // in the working set. Non-bookable lines are never charged by checkout.
+      const chargeableSubtotal = bookableInSet.reduce((acc, i) => acc + i.price, 0);
       const planContext = {
         planId: plan.id,
         title: plan.title,
@@ -165,6 +234,14 @@ export function registerBookCommands(program: Command): void {
 
       // --dry-run
       if (opts.dryRun) {
+        // Best-effort existing-session report (never blocks a dry run).
+        let existingCheckouts: { pending: number; paid: number; pendingUrl: string | null } | null = null;
+        try {
+          const summary = await loadCheckoutSummary(planId);
+          existingCheckouts = { pending: summary.pending.length, paid: summary.paid.length, pendingUrl: summary.pending[0]?.checkoutUrl ?? null };
+        } catch {
+          existingCheckouts = null; // surfaced as unknown below
+        }
         if (opts.json) {
           process.stdout.write(JSON.stringify({
             ok: true,
@@ -174,11 +251,14 @@ export function registerBookCommands(program: Command): void {
                 name: i.name, type: i.type, price: i.price, isBookable: i.isBookable, source: i.source,
               })),
               subtotal,
+              chargeableSubtotal,
               currency: cart.currency,
               blockers,
+              existingCheckouts,
               filters: { types: typeFilter, onlyBookable: Boolean(opts.onlyBookable) },
               note: "Travel fee added at checkout",
               message: "Would create Stripe Checkout Session",
+              nextStep: `voyagier book ${plan.id} --expect-total ${chargeableSubtotal.toFixed(2)}`,
             },
             planContext,
           }, null, 2) + "\n");
@@ -193,14 +273,22 @@ export function registerBookCommands(program: Command): void {
             lines.push(`- ${mark} ${item.name} (${item.type}) — ${formatPrice(item.price)}`);
           }
           lines.push("");
-          lines.push(`**Subtotal:** ${formatPrice(subtotal)}`);
+          lines.push(`**Chargeable subtotal:** ${formatPrice(chargeableSubtotal)}`);
+          if (chargeableSubtotal !== subtotal) {
+            lines.push(`**Display subtotal (incl. non-bookable):** ${formatPrice(subtotal)}`);
+          }
           if (blockers.length > 0) {
             lines.push("");
             lines.push(`⚠️ ${blockers.length} blocker${blockers.length === 1 ? "" : "s"} — won't be charged:`);
             for (const b of blockers) lines.push(`- ${b.itemName} — ${b.reason}`);
           }
+          if (existingCheckouts && (existingCheckouts.pending > 0 || existingCheckouts.paid > 0)) {
+            lines.push("");
+            lines.push(`⚠️ Existing checkouts: ${existingCheckouts.paid} paid, ${existingCheckouts.pending} pending. Check: \`voyagier book ${plan.id} --status\``);
+          }
           lines.push("");
           lines.push("_(Travel fee added at checkout — Stripe shows final total.)_");
+          lines.push(`**Book at this price:** \`voyagier book ${plan.id} --expect-total ${chargeableSubtotal.toFixed(2)}\``);
           lines.push(`👉 **Plan:** ${planUrl}`);
           process.stdout.write(lines.join("\n") + "\n");
           return;
@@ -212,15 +300,83 @@ export function registerBookCommands(program: Command): void {
         }
         console.log();
         console.log(chalk.dim("  ─────────────────────────────────"));
-        console.log(`  Subtotal:      ${formatPrice(subtotal)}`);
+        console.log(`  Chargeable:    ${chalk.bold(formatPrice(chargeableSubtotal))}`);
+        if (chargeableSubtotal !== subtotal) {
+          console.log(`  Subtotal:      ${formatPrice(subtotal)} ${chalk.dim("(incl. non-bookable lines)")}`);
+        }
         console.log(`  Travel fee:    ${chalk.dim("added at checkout")}`);
         if (blockers.length > 0) {
           console.log("\n  " + chalk.yellow(`${blockers.length} non-bookable item${blockers.length === 1 ? "" : "s"} (won't be charged):`));
           for (const b of blockers) console.log(chalk.yellow(`    • ${b.itemName} — ${b.reason}`));
         }
+        if (existingCheckouts && (existingCheckouts.pending > 0 || existingCheckouts.paid > 0)) {
+          console.log("\n  " + chalk.yellow(`⚠ Existing checkouts: ${existingCheckouts.paid} paid, ${existingCheckouts.pending} pending — voyagier book ${plan.id} --status`));
+        }
         console.log(hintDryRun());
-        console.log(chalk.dim("\n  [dry-run] Would create Stripe Checkout Session\n"));
+        console.log(chalk.dim(`\n  [dry-run] Would create Stripe Checkout Session`));
+        console.log(chalk.dim(`  Book at this price: voyagier book ${plan.id} --expect-total ${chargeableSubtotal.toFixed(2)}\n`));
         return;
+      }
+
+      // --- Idempotency pre-flight (fail closed: query error aborts) ---
+      let summary: CheckoutSummary;
+      try {
+        summary = await loadCheckoutSummary(planId);
+      } catch (err) {
+        const message = err instanceof CliError ? err.message : err instanceof Error ? err.message : String(err);
+        throw new CliError(
+          CliErrorCode.API_ERROR,
+          `Could not verify existing checkouts for this plan — refusing to create a new session (double-booking risk).\n${message}`,
+        );
+      }
+      if (summary.paid.length > 0 && !opts.rebook) {
+        throw new CliError(
+          CliErrorCode.ALREADY_BOOKED,
+          `A Paid checkout already exists for this plan — refusing to book again.\n` +
+            `Review it:  voyagier book ${planId} --status\n` +
+            `If you really want another checkout, re-run with --rebook.`,
+          {
+            paidCheckouts: summary.paid.map((c) => ({
+              id: c.id,
+              bookingRecords: c.bookingRecords.map((r) => ({ type: r.type, status: r.status, amount: r.amount })),
+            })),
+          },
+        );
+      }
+      if (summary.pending.length > 0 && !opts.newSession) {
+        const existing = summary.pending[0];
+        throw new CliError(
+          CliErrorCode.CHECKOUT_PENDING,
+          `An unpaid checkout session already exists for this plan — reuse it instead of minting another.\n` +
+            (existing.checkoutUrl ? `Pay here:  ${existing.checkoutUrl}\n` : "") +
+            `⚠️ Its price was fixed when it was created — if the cart changed since, supersede it with --new-session.`,
+          { pendingCheckouts: summary.pending.map((c) => ({ id: c.id, checkoutUrl: c.checkoutUrl ?? null })) },
+        );
+      }
+
+      // --- Price hard-gate against the chargeable subtotal ---
+      const cents = (n: number): number => Math.round(n * 100);
+      const gateDetails = {
+        expectedTotal: expectTotal,
+        maxTotal,
+        actualTotal: chargeableSubtotal,
+        currency: cart.currency,
+        items: bookableInSet.map((i) => ({ name: i.name, type: i.type, price: i.price })),
+      };
+      if (expectTotal !== null && cents(chargeableSubtotal) !== cents(expectTotal)) {
+        throw new CliError(
+          CliErrorCode.PRICE_CHANGED,
+          `Chargeable subtotal is ${formatPrice(chargeableSubtotal)} but --expect-total was ${formatPrice(expectTotal)} — not creating checkout.\n` +
+            `Review the cart (voyagier book ${planId} --dry-run), then re-run with the current total if it's acceptable.`,
+          gateDetails,
+        );
+      }
+      if (maxTotal !== null && cents(chargeableSubtotal) > cents(maxTotal)) {
+        throw new CliError(
+          CliErrorCode.PRICE_CHANGED,
+          `Chargeable subtotal ${formatPrice(chargeableSubtotal)} exceeds --max-total ${formatPrice(maxTotal)} — not creating checkout.`,
+          gateDetails,
+        );
       }
 
       // --- Create real checkout session ---
@@ -233,11 +389,26 @@ export function registerBookCommands(program: Command): void {
         successUrl: `${baseUrl}/me/plans/${planId}?payment_status=success`,
         cancelUrl: `${baseUrl}/me/plans/${planId}?payment_status=cancel`,
       };
-      // CreateTripPlanCheckoutInput currently only accepts the three fields above
-      // (verified against live introspection 2026-05-03). The idempotency key is
-      // surfaced on JSON output for caller awareness; Phase 4 will pass it as an
-      // HTTP header once the API supports it. See command header for details on
-      // server-side filtering caveats with --types / --only-bookable.
+      // Server-side filtering: when --types / --only-bookable narrowed the set,
+      // pass the narrowed bookable items explicitly (itemIds = "selectionId:optionId",
+      // introspection-verified 2026-07-20). Omitted → server includes all bookable
+      // items. Fail closed if a bookable item can't be expressed (missing optionId).
+      const filtersActive = typeFilter.length > 0 || Boolean(opts.onlyBookable);
+      if (filtersActive) {
+        // Defensive: today bookable ⇒ optionId present (bookability is keyed on
+        // `${selectionId}:${optionId}`), so this can only fire if enrichment
+        // semantics change. Money path — fail closed rather than silently drop.
+        const inexpressible = bookableInSet.filter((i) => !i.optionId);
+        if (inexpressible.length > 0) {
+          throw new CliError(
+            CliErrorCode.VALIDATION,
+            `Cannot create a filtered checkout: ${inexpressible.length} bookable item(s) have no optionId and can't be referenced server-side.\n` +
+              `Re-run without --types/--only-bookable to book the full bookable cart.`,
+            { items: inexpressible.map((i) => ({ name: i.name, selectionId: i.selectionId })) },
+          );
+        }
+        input.itemIds = bookableInSet.map((i) => `${i.selectionId}:${i.optionId}`);
+      }
 
       let checkoutUrl: string;
       try {
@@ -258,11 +429,13 @@ export function registerBookCommands(program: Command): void {
           data: {
             checkoutUrl,
             subtotal,
+            chargeableSubtotal,
             currency: cart.currency,
             itemCount: workingSet.length,
             bookableCount: bookableInSet.length,
+            gate: { expectedTotal: expectTotal, maxTotal },
+            serverSideFilter: filtersActive,
             skippedBlockers: opts.onlyBookable ? blockers : [],
-            idempotencyKey: opts.idempotencyKey ?? null,
             note: "Final total (with travel fee) shown on Stripe checkout page",
           },
           planContext,
@@ -275,7 +448,7 @@ export function registerBookCommands(program: Command): void {
           "",
           `💳 **Pay here:** ${checkoutUrl}`,
           "",
-          `**Subtotal:** ${formatPrice(subtotal)}`,
+          `**Chargeable subtotal:** ${formatPrice(chargeableSubtotal)}`,
           "_(Travel fee shown on checkout page)_",
           "",
           `👉 **Plan:** ${planUrl}`,
@@ -287,8 +460,8 @@ export function registerBookCommands(program: Command): void {
       }
 
       console.log(chalk.green.bold("\n  ✓ Checkout session created!\n"));
-      console.log(`  Items:         ${workingSet.length}`);
-      console.log(`  Subtotal:      ${chalk.bold(formatPrice(subtotal))}`);
+      console.log(`  Items:         ${bookableInSet.length}`);
+      console.log(`  Chargeable:    ${chalk.bold(formatPrice(chargeableSubtotal))}`);
       console.log(`  Travel fee:    ${chalk.dim("included on checkout page")}`);
       console.log();
       console.log(chalk.bold("  Opening Stripe checkout in your browser..."));

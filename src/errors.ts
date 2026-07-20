@@ -38,6 +38,14 @@ export enum CliErrorCode {
   TRAVELLER_NOT_IN_PLAN = "TRAVELLER_NOT_IN_PLAN",
   MEMBERS_REQUIRED = "MEMBERS_REQUIRED",
   PLAN_NOT_FOUND = "PLAN_NOT_FOUND",
+
+  // v2.4.0 — VOY-1706 (book price hard-gate + checkout idempotency)
+  /** Chargeable cart total does not satisfy --expect-total / --max-total. */
+  PRICE_CHANGED = "PRICE_CHANGED",
+  /** A Paid checkout with booking records already exists for this plan. */
+  ALREADY_BOOKED = "ALREADY_BOOKED",
+  /** An unpaid (Pending) checkout session already exists for this plan. */
+  CHECKOUT_PENDING = "CHECKOUT_PENDING",
 }
 
 export class CliError extends Error {

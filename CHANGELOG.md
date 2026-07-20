@@ -9,7 +9,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- **`book` price hard-gate (VOY-1706):** a real checkout now REQUIRES `--expect-total <amt>` (exact, cents-compared) or `--max-total <amt>` (cap; both flags → both enforced), checked against the **chargeable subtotal** (bookable items only). Mismatch aborts with `PRICE_CHANGED` (+ `details.{expectedTotal,maxTotal,actualTotal,items}`) before any mutation. `book --dry-run` now reports `chargeableSubtotal`, existing checkout sessions, and a ready-to-run `nextStep`.
+- **`book` idempotency pre-flight (VOY-1706):** before minting a Stripe session, `book` checks existing checkouts — `Paid` → `ALREADY_BOOKED` (override `--rebook`); unpaid `Pending` → `CHECKOUT_PENDING` surfacing the existing session URL (override `--new-session`). Fails closed if the check itself errors.
+- **`book --types` / `--only-bookable` are now server-side filters** via `CreateTripPlanCheckoutInput.itemIds` (`selectionId:optionId`) — the Stripe session charges exactly the narrowed bookable set (previously client-side preflight gates over a full-cart checkout).
+
+### Removed
+- `book --idempotency-key` — it was a JSON-echo no-op (never sent server-side); real idempotency is the checkout pre-flight above.
+
+## [2.3.0] — 2026-07-20
+
+### Added
 - `select --wait [--timeout <seconds>]` (VOY-1705): after a pick succeeds, wait until the choice is reflected server-side and plan readiness settles (post-pick `CART_PENDING` cart regeneration), then append a plan-status snapshot (`wait.{pickVisible,settled,readiness,blockers,waiting,nextSteps}`) — agents no longer hand-roll post-pick polling. Timeout reports honest partial state and exits 0 (the pick itself succeeded), matching `selection-options --wait` semantics.
+
+## [2.2.1] — 2026-07-20
 
 ### Security
 - Server-provided ids in `plan-status` `nextSteps[]` are now shell-quoted via `shellArg()` — nextSteps remain safe to paste/run even against a hostile or corrupted API response (VOY-1709)

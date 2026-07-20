@@ -43,9 +43,10 @@ voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
 # 6) Inspect readiness at any time — one call: what's blocked, what's next
 voyagier plan-status <PLAN_ID> --json
 
-# 7) Pre-flight bookability check, then checkout
+# 7) Pre-flight bookability check, then checkout (price gate required)
 voyagier book <PLAN_ID> --validate --json
-voyagier book <PLAN_ID> --json
+voyagier book <PLAN_ID> --dry-run --json                   # get the chargeable subtotal
+voyagier book <PLAN_ID> --expect-total <subtotal> --json   # checkout only at that exact price
 ```
 
 ## What's Bookable
@@ -56,7 +57,7 @@ voyagier book <PLAN_ID> --json
 | Hotel | ⚠️ partial | Blueprint Listings (checkout coverage incomplete) |
 | Flight | ✅ via Fare & Cabin item | Sabre (fare-level item carted once all legs are picked; defaults to Economy) |
 
-The cart materializes only bookable, fare/room-level options — the per-item `isBookable` flag is the live truth. Always run `voyagier book --validate <planId>` for pre-flight checks. To control what gets charged, **curate the cart** before invoking `book` — `--types` and `--only-bookable` are client-side preflight gates, not server-side filters.
+The cart materializes only bookable, fare/room-level options — the per-item `isBookable` flag is the live truth. Always run `voyagier book --validate <planId>` for pre-flight checks. A real checkout requires a **price gate** (`--expect-total` or `--max-total`) against the chargeable subtotal, and `--types` / `--only-bookable` are **server-side filters** (passed via `itemIds`) — the Stripe session charges exactly the narrowed set.
 
 ## Commands
 
@@ -77,7 +78,7 @@ The cart materializes only bookable, fare/room-level options — the per-item `i
 | `voyagier listings` | Blueprint Listings — recent change events, add to selection |
 | `voyagier places` | Search / get / attach / list / highlight (Google Places + internal catalog) |
 | `voyagier cart` | View cart with by-goal grouping and per-item bookability |
-| `voyagier book` | Stripe checkout with `--validate` / `--only-bookable` / `--types` / `--idempotency-key` |
+| `voyagier book` | Stripe checkout gated by `--expect-total` / `--max-total`; `--validate`, server-side `--only-bookable` / `--types`, `--new-session`, `--rebook` |
 | `voyagier bookings` | View booking records |
 | `voyagier chat` | Interactive AI trip planning |
 | `voyagier whoami` | Identity + profile (live-verifies the token; `--cached` for offline reads) |

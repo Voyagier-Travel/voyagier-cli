@@ -1,9 +1,14 @@
-import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals";
+/**
+ * Behavioral specs for `voyagier book` — VOY-1706 price hard-gate + checkout
+ * idempotency. House pattern: mock only the network boundary (../api.js) +
+ * config; drive the real command through commander.parseAsync; assert on the
+ * GraphQL variables sent, JSON output shapes, and CliError codes.
+ */
+import { jest } from "@jest/globals";
 import { Command } from "commander";
 import { CliError, CliErrorCode } from "../errors.js";
 
-const mockGraphql = jest.fn();
-const mockOpenBrowser = jest.fn();
+const mockGraphql = jest.fn<(query: string, vars?: Record<string, unknown>) => Promise<unknown>>();
 
 jest.unstable_mockModule("../api.js", () => ({
   graphql: mockGraphql,
@@ -11,63 +16,110 @@ jest.unstable_mockModule("../api.js", () => ({
 }));
 
 jest.unstable_mockModule("../config.js", () => ({
-  getApiUrl: jest.fn().mockReturnValue("https://dev.voyagier.com/api"),
-  CONFIG_DIR: "/tmp/test-config",
+  getApiUrl: () => "https://travel.voyagier.com/api",
 }));
 
+const mockOpenBrowser = jest.fn();
 jest.unstable_mockModule("../utils.js", () => ({
   formatPrice: (n: number) => `$${n.toFixed(2)}`,
   openBrowser: mockOpenBrowser,
-  deriveBaseUrl: (api: string) => {
-    try { const u = new URL(api); u.pathname = ""; return u.origin; } catch { return "https://travel.voyagier.com"; }
-  },
-}));
-
-jest.unstable_mockModule("../hints.js", () => ({
-  hintCheckoutCreated: jest.fn().mockReturnValue(""),
-  hintBookingConfirmed: jest.fn().mockReturnValue(""),
-  hintBookingPending: jest.fn().mockReturnValue(""),
-  hintDryRun: jest.fn().mockReturnValue(""),
+  deriveBaseUrl: () => "https://travel.voyagier.com",
 }));
 
 let registerBookCommands: (program: Command) => void;
+
 beforeAll(async () => {
-  registerBookCommands = (await import("./book.js")).registerBookCommands;
+  const mod = await import("./book.js");
+  registerBookCommands = mod.registerBookCommands;
 });
 
-const CART_FIXTURE = {
-  tripPlan: {
-    id: "plan-1", title: "Test Trip",
-    cart: {
-      itemCount: 2, total: 1840, currency: "USD",
-      items: [
-        { id: "ci-1", name: "King Suite", description: null, price: 1840, currency: "USD", type: "Hotel", selectionId: "sel-h", optionId: "opt-h", metadata: {} },
-        { id: "ci-2", name: "AF023", description: null, price: 0, currency: "USD", type: "Flight", selectionId: "sel-f", optionId: "opt-f", metadata: {} },
+let writes: string[];
+let stdoutSpy: ReturnType<typeof jest.spyOn>;
+let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+beforeEach(() => {
+  mockGraphql.mockReset();
+  mockOpenBrowser.mockReset();
+  writes = [];
+  stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation(((chunk: unknown) => {
+    writes.push(String(chunk));
+    return true;
+  }) as never);
+  stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation((() => true) as never);
+});
+
+afterEach(() => {
+  stdoutSpy.mockRestore();
+  stderrSpy.mockRestore();
+});
+
+// ── Fixtures ────────────────────────────────────────────────────────────────
+
+/** Cart with one bookable flight ($339.10) + one non-bookable hotel ($100). */
+function cartFixture() {
+  return {
+    tripPlan: {
+      id: "plan-1",
+      title: "BWI Getaway",
+      cart: {
+        items: [
+          { id: "ci-1", name: "BWI→MCO / Economy", type: "Flight", price: 339.1, currency: "USD", selectionId: "sel-f", optionId: "opt-f" },
+          { id: "ci-2", name: "Hotel Radiance", type: "Hotel", price: 100, currency: "USD", selectionId: "sel-h", optionId: "opt-h" },
+        ],
+        itemCount: 2,
+        total: 439.1,
+        currency: "USD",
+      },
+      goals: [
+        {
+          id: "g1", name: "Flights", sortOrder: 1,
+          items: [{ selections: [{ id: "sel-f", options: [{ id: "opt-f", isBookable: true, status: "Available", blueprintListingId: null, externalId: "sabre-1" }] }] }],
+        },
+        {
+          id: "g2", name: "Hotel", sortOrder: 2,
+          items: [{ selections: [{ id: "sel-h", options: [{ id: "opt-h", isBookable: false, status: "Unavailable", blueprintListingId: null, externalId: null }] }] }],
+        },
       ],
     },
-    goals: [
-      {
-        id: "g-h", name: "Hotel", sortOrder: 1,
-        items: [{ id: "i-h", title: "Hotel", goalId: "g-h", selections: [{ id: "sel-h", type: "Hotel", isLocked: false, options: [{ id: "opt-h", name: "King", isBookable: true, status: "ACTIVE", blueprintListingId: "bl-1", externalId: "blueprint:1" }] }] }],
-      },
-      {
-        id: "g-f", name: "Flight", sortOrder: 2,
-        items: [{ id: "i-f", title: "Flight", goalId: "g-f", selections: [{ id: "sel-f", type: "Flight", isLocked: false, options: [{ id: "opt-f", name: "AF023", isBookable: false, status: "ACTIVE", blueprintListingId: null, externalId: "sabre:af023" }] }] }],
-      },
-    ],
-  },
+  };
+}
+
+const NO_CHECKOUTS = { tripPlanPaymentCheckouts: [] };
+const PENDING_CHECKOUT = {
+  tripPlanPaymentCheckouts: [
+    { id: "co-pending", status: "Pending", checkoutUrl: "https://stripe.test/pay/co-pending", hostedInvoiceUrl: null, bookingRecords: [] },
+  ],
+};
+const PAID_CHECKOUT = {
+  tripPlanPaymentCheckouts: [
+    {
+      id: "co-paid", status: "Paid", checkoutUrl: null, hostedInvoiceUrl: null,
+      bookingRecords: [{ id: "br-1", type: "FLIGHT", status: "CONFIRMED", pnr: "ABC123", providerReference: null, amount: 339.1 }],
+    },
+  ],
+};
+const CANCELLED_CHECKOUT = {
+  tripPlanPaymentCheckouts: [
+    { id: "co-x", status: "Cancelled", checkoutUrl: null, hostedInvoiceUrl: null, bookingRecords: [] },
+  ],
 };
 
-const ALL_BOOKABLE = JSON.parse(JSON.stringify(CART_FIXTURE));
-ALL_BOOKABLE.tripPlan.goals[1].items[0].selections[0].options[0].isBookable = true;
+/** Route queries by operation content: cart, checkouts, create. */
+function routeGraphql(overrides: { checkouts?: unknown; cart?: unknown; createUrl?: string } = {}) {
+  mockGraphql.mockImplementation(async (query: string) => {
+    if (query.includes("TripPlanPaymentCheckouts")) return overrides.checkouts ?? NO_CHECKOUTS;
+    if (query.includes("CreateTripPlanCheckout")) {
+      return { createTripPlanCheckout: { url: overrides.createUrl ?? "https://stripe.test/pay/new" } };
+    }
+    if (query.includes("cart")) return overrides.cart ?? cartFixture();
+    throw new Error(`unrouted query: ${query.slice(0, 120)}`);
+  });
+}
 
-const EMPTY_CART = {
-  tripPlan: {
-    id: "plan-1", title: "Empty",
-    cart: { itemCount: 0, total: 0, currency: "USD", items: [] },
-    goals: [],
-  },
-};
+function createVars(): Record<string, unknown> | undefined {
+  const call = mockGraphql.mock.calls.find(([q]) => (q as string).includes("CreateTripPlanCheckout"));
+  return call?.[1] as Record<string, unknown> | undefined;
+}
 
 async function runBook(args: string[]): Promise<void> {
   const program = new Command();
@@ -76,179 +128,235 @@ async function runBook(args: string[]): Promise<void> {
   await program.parseAsync(["node", "voyagier", "book", ...args]);
 }
 
-describe("voyagier book", () => {
-  let stdoutSpy: ReturnType<typeof jest.spyOn>;
-  let stderrSpy: ReturnType<typeof jest.spyOn>;
-  let stdoutOutput: string[] = [];
+function lastJson(): any {
+  return JSON.parse(writes.join(""));
+}
 
-  beforeEach(() => {
-    stdoutOutput = [];
-    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((c: unknown) => {
-      stdoutOutput.push(typeof c === "string" ? c : String(c));
-      return true;
-    });
-    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-    mockGraphql.mockReset();
-    mockOpenBrowser.mockReset();
-  });
-  afterEach(() => {
-    stdoutSpy.mockRestore();
-    stderrSpy.mockRestore();
+// ── Price hard-gate ─────────────────────────────────────────────────────────
+
+describe("price hard-gate", () => {
+  it("refuses a real checkout without --expect-total/--max-total (VALIDATION, no network)", async () => {
+    routeGraphql();
+    await expect(runBook(["plan-1", "--json"])).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    expect(mockGraphql).not.toHaveBeenCalled();
   });
 
-  describe("--dry-run", () => {
-    it("returns subtotal + items + blockers as JSON; never calls checkout", async () => {
-      mockGraphql.mockResolvedValueOnce(CART_FIXTURE);
-      await runBook(["plan-1", "--dry-run", "--json"]);
-      const out = JSON.parse(stdoutOutput.join(""));
-      expect(out.ok).toBe(true);
-      expect(out.data.dryRun).toBe(true);
-      expect(out.data.subtotal).toBe(1840);
-      expect(out.data.blockers).toHaveLength(1);
-      expect(out.data.blockers[0].itemName).toBe("AF023");
-      expect(mockGraphql).toHaveBeenCalledTimes(1); // cart only, no createTripPlanCheckout
-    });
+  it("creates checkout when --expect-total matches the chargeable subtotal exactly", async () => {
+    routeGraphql();
+    await runBook(["plan-1", "--expect-total", "339.10", "--json"]);
+    const vars = createVars();
+    expect(vars).toBeDefined();
+    expect((vars!.input as Record<string, unknown>).tripPlanId).toBe("plan-1");
+    expect((vars!.input as Record<string, unknown>).itemIds).toBeUndefined(); // no filters → server books all bookable
+    const out = lastJson();
+    expect(out.ok).toBe(true);
+    expect(out.data.checkoutUrl).toBe("https://stripe.test/pay/new");
+    expect(out.data.chargeableSubtotal).toBeCloseTo(339.1, 2);
+    expect(out.data.gate).toEqual({ expectedTotal: 339.1, maxTotal: null });
   });
 
-  describe("--validate", () => {
-    it("throws BOOKING_BLOCKED with details.blockers when any item is non-bookable", async () => {
-      mockGraphql.mockResolvedValueOnce(CART_FIXTURE);
-      let err: unknown;
-      try {
-        await runBook(["plan-1", "--validate", "--json"]);
-      } catch (e) {
-        err = e;
-      }
-      expect(err).toBeInstanceOf(CliError);
-      expect((err as CliError).code).toBe(CliErrorCode.BOOKING_BLOCKED);
-      expect((err as CliError).details?.blockers).toHaveLength(1);
+  it("gates on the CHARGEABLE subtotal (excludes non-bookable lines), not the display subtotal", async () => {
+    routeGraphql();
+    // Display subtotal is 439.10 — expecting that must FAIL: the hotel is not chargeable.
+    await expect(runBook(["plan-1", "--expect-total", "439.10", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.PRICE_CHANGED,
+      details: expect.objectContaining({ actualTotal: expect.closeTo(339.1, 2), expectedTotal: expect.closeTo(439.1, 2) }),
     });
-
-    it("passes through and creates checkout when everything is bookable", async () => {
-      mockGraphql
-        .mockResolvedValueOnce(ALL_BOOKABLE)
-        .mockResolvedValueOnce({ createTripPlanCheckout: { url: "https://checkout.stripe.com/abc" } });
-      await runBook(["plan-1", "--validate", "--json"]);
-      const out = JSON.parse(stdoutOutput.join(""));
-      expect(out.ok).toBe(true);
-      expect(out.data.checkoutUrl).toContain("checkout.stripe.com");
-    });
+    expect(createVars()).toBeUndefined();
   });
 
-  describe("--only-bookable", () => {
-    it(
-      "is a CLI-side gate: surfaces skippedBlockers but currently still calls " +
-      "createTripPlanCheckout with only { tripPlanId, successUrl, cancelUrl } " +
-      "(Copilot #3178828499 — server-side filtering not yet supported by API)",
-      async () => {
-        mockGraphql
-          .mockResolvedValueOnce(CART_FIXTURE)
-          .mockResolvedValueOnce({ createTripPlanCheckout: { url: "https://checkout.stripe.com/x" } });
-        await runBook(["plan-1", "--only-bookable", "--json"]);
-        const out = JSON.parse(stdoutOutput.join(""));
-        expect(out.ok).toBe(true);
-        expect(out.data.bookableCount).toBe(1);
-        expect(out.data.skippedBlockers).toHaveLength(1);
+  it("aborts with PRICE_CHANGED on mismatch and fires no mutation", async () => {
+    routeGraphql();
+    await expect(runBook(["plan-1", "--expect-total", "300.00", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.PRICE_CHANGED,
+    });
+    expect(createVars()).toBeUndefined();
+  });
 
-        // Pin the actual mutation contract: no cartItemIds / selectionIds yet.
-        const mutationCall = mockGraphql.mock.calls[1] as unknown as [string, { input: Record<string, unknown> }];
-        expect(mutationCall[1].input).toEqual({
-          tripPlanId: "plan-1",
-          successUrl: expect.stringContaining("plans/plan-1"),
-          cancelUrl: expect.stringContaining("plans/plan-1"),
-        });
-        // When/if the API adds cartItemIds, this test should be updated to assert
-        // the filtered set is sent through.
+  it("--max-total passes when chargeable equals the cap exactly", async () => {
+    routeGraphql();
+    await runBook(["plan-1", "--max-total", "339.10", "--json"]);
+    expect(createVars()).toBeDefined();
+  });
+
+  it("--max-total aborts when chargeable exceeds the cap", async () => {
+    routeGraphql();
+    await expect(runBook(["plan-1", "--max-total", "339.09", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.PRICE_CHANGED,
+    });
+    expect(createVars()).toBeUndefined();
+  });
+
+  it("enforces BOTH flags when both are given", async () => {
+    routeGraphql();
+    // expect matches, but max is below actual → still aborts
+    await expect(runBook(["plan-1", "--expect-total", "339.10", "--max-total", "200", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.PRICE_CHANGED,
+    });
+    expect(createVars()).toBeUndefined();
+  });
+
+  it("accepts $-prefixed amounts and treats 339.1 as 339.10 (cents comparison)", async () => {
+    routeGraphql();
+    await runBook(["plan-1", "--expect-total", "$339.1", "--json"]);
+    expect(createVars()).toBeDefined();
+  });
+
+  it("rejects garbage amounts with VALIDATION before any network call", async () => {
+    routeGraphql();
+    await expect(runBook(["plan-1", "--expect-total", "abc", "--json"])).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    await expect(runBook(["plan-1", "--expect-total", "-5", "--json"])).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+});
+
+// ── Idempotency pre-flight ──────────────────────────────────────────────────
+
+describe("idempotency pre-flight", () => {
+  it("refuses when a Pending checkout exists, surfacing its URL (CHECKOUT_PENDING)", async () => {
+    routeGraphql({ checkouts: PENDING_CHECKOUT });
+    await expect(runBook(["plan-1", "--expect-total", "339.10", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.CHECKOUT_PENDING,
+      details: { pendingCheckouts: [{ id: "co-pending", checkoutUrl: "https://stripe.test/pay/co-pending" }] },
+    });
+    expect(createVars()).toBeUndefined();
+  });
+
+  it("--new-session supersedes a Pending checkout", async () => {
+    routeGraphql({ checkouts: PENDING_CHECKOUT });
+    await runBook(["plan-1", "--expect-total", "339.10", "--new-session", "--json"]);
+    expect(createVars()).toBeDefined();
+  });
+
+  it("refuses when a Paid checkout exists (ALREADY_BOOKED) with booking-record summary", async () => {
+    routeGraphql({ checkouts: PAID_CHECKOUT });
+    await expect(runBook(["plan-1", "--expect-total", "339.10", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.ALREADY_BOOKED,
+      details: {
+        paidCheckouts: [{ id: "co-paid", bookingRecords: [{ type: "FLIGHT", status: "CONFIRMED", amount: 339.1 }] }],
       },
-    );
+    });
+    expect(createVars()).toBeUndefined();
   });
 
-  describe("--types", () => {
-    it("filters cart by type before bookability gate", async () => {
-      mockGraphql
-        .mockResolvedValueOnce(CART_FIXTURE)
-        .mockResolvedValueOnce({ createTripPlanCheckout: { url: "https://checkout.stripe.com/h" } });
-      await runBook(["plan-1", "--types", "Hotel", "--json"]);
-      const out = JSON.parse(stdoutOutput.join(""));
-      expect(out.ok).toBe(true);
-      expect(out.data.itemCount).toBe(1);
-    });
-
-    it("throws VALIDATION when no items match", async () => {
-      mockGraphql.mockResolvedValueOnce(CART_FIXTURE);
-      let err: unknown;
-      try {
-        await runBook(["plan-1", "--types", "Restaurant", "--json"]);
-      } catch (e) {
-        err = e;
-      }
-      expect(err).toBeInstanceOf(CliError);
-      expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
-      expect((err as CliError).details?.availableTypes).toBeDefined();
-    });
+  it("--rebook proceeds past a Paid checkout", async () => {
+    routeGraphql({ checkouts: PAID_CHECKOUT });
+    await runBook(["plan-1", "--expect-total", "339.10", "--rebook", "--json"]);
+    expect(createVars()).toBeDefined();
   });
 
-  describe("--idempotency-key", () => {
-    it("surfaces the key on the JSON envelope", async () => {
-      mockGraphql
-        .mockResolvedValueOnce(ALL_BOOKABLE)
-        .mockResolvedValueOnce({ createTripPlanCheckout: { url: "https://checkout.stripe.com/k" } });
-      await runBook(["plan-1", "--idempotency-key", "01H...", "--json"]);
-      const out = JSON.parse(stdoutOutput.join(""));
-      expect(out.data.idempotencyKey).toBe("01H...");
-    });
+  it("Cancelled checkouts do not block", async () => {
+    routeGraphql({ checkouts: CANCELLED_CHECKOUT });
+    await runBook(["plan-1", "--expect-total", "339.10", "--json"]);
+    expect(createVars()).toBeDefined();
   });
 
-  describe("empty + bookability edges", () => {
-    it("empty cart → VALIDATION error", async () => {
-      mockGraphql.mockResolvedValueOnce(EMPTY_CART);
-      let err: unknown;
-      try {
-        await runBook(["plan-1", "--json"]);
-      } catch (e) {
-        err = e;
-      }
-      expect(err).toBeInstanceOf(CliError);
-      expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+  it("fails CLOSED when the pre-flight query errors (API_ERROR, no checkout minted)", async () => {
+    mockGraphql.mockImplementation(async (query: string) => {
+      if (query.includes("TripPlanPaymentCheckouts")) throw new Error("upstream 502");
+      if (query.includes("cart")) return cartFixture();
+      throw new Error(`unrouted query: ${query.slice(0, 120)}`);
     });
-
-    it("nothing bookable in working set → NOT_BOOKABLE", async () => {
-      const allFlights = JSON.parse(JSON.stringify(CART_FIXTURE));
-      allFlights.tripPlan.goals[0].items[0].selections[0].options[0].isBookable = false;
-      mockGraphql.mockResolvedValueOnce(allFlights);
-      let err: unknown;
-      try {
-        await runBook(["plan-1", "--json"]);
-      } catch (e) {
-        err = e;
-      }
-      expect(err).toBeInstanceOf(CliError);
-      expect((err as CliError).code).toBe(CliErrorCode.NOT_BOOKABLE);
+    await expect(runBook(["plan-1", "--expect-total", "339.10", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.API_ERROR,
     });
+    expect(createVars()).toBeUndefined();
   });
 
-  describe("--status", () => {
-    it("returns checkouts as JSON envelope", async () => {
-      mockGraphql.mockResolvedValueOnce({
-        tripPlanPaymentCheckouts: [
-          {
-            id: "co-1", status: "PAID", checkoutUrl: null, hostedInvoiceUrl: null,
-            bookingRecords: [{ id: "br-1", type: "FLIGHT", status: "CONFIRMED", pnr: "ABC123", providerReference: null, amount: 800 }],
-          },
-        ],
-      });
-      await runBook(["plan-1", "--status", "--json"]);
-      const out = JSON.parse(stdoutOutput.join(""));
-      expect(out.ok).toBe(true);
-      expect(out.data.checkouts).toHaveLength(1);
-      expect(out.data.checkouts[0].bookingRecords[0].pnr).toBe("ABC123");
+  it("runs the pre-flight BEFORE the price gate (ALREADY_BOOKED wins over PRICE_CHANGED)", async () => {
+    routeGraphql({ checkouts: PAID_CHECKOUT });
+    await expect(runBook(["plan-1", "--expect-total", "1.00", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.ALREADY_BOOKED,
     });
+  });
+});
 
-    it("renders 'no payment history' when empty", async () => {
-      mockGraphql.mockResolvedValueOnce({ tripPlanPaymentCheckouts: [] });
-      await runBook(["plan-1", "--status", "--agent"]);
-      const out = stdoutOutput.join("");
-      expect(out).toContain("No payment history");
+// ── Server-side filtering (itemIds) ─────────────────────────────────────────
+
+describe("server-side filtering via itemIds", () => {
+  it("--types Flight sends itemIds for the bookable flight only", async () => {
+    routeGraphql();
+    await runBook(["plan-1", "--types", "Flight", "--expect-total", "339.10", "--json"]);
+    const input = createVars()!.input as Record<string, unknown>;
+    expect(input.itemIds).toEqual(["sel-f:opt-f"]);
+  });
+
+  it("--only-bookable sends itemIds for bookable items", async () => {
+    routeGraphql();
+    await runBook(["plan-1", "--only-bookable", "--expect-total", "339.10", "--json"]);
+    const input = createVars()!.input as Record<string, unknown>;
+    expect(input.itemIds).toEqual(["sel-f:opt-f"]);
+  });
+
+  it("a cart line without optionId is not bookable and cannot be checked out via filters", async () => {
+    const cart = cartFixture();
+    (cart.tripPlan.cart.items[0] as { optionId?: string }).optionId = undefined;
+    routeGraphql({ cart });
+    // Bookability is keyed on `${selectionId}:${optionId}` — with optionId
+    // stripped the flight enriches as UNKNOWN/non-bookable, the filtered set
+    // has zero bookable items → NOT_BOOKABLE, and no checkout fires. (The
+    // in-command inexpressible-item guard is defensive-only today for the
+    // same reason: bookable ⇒ optionId present.)
+    await expect(runBook(["plan-1", "--types", "Flight", "--expect-total", "339.10", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.NOT_BOOKABLE,
     });
+    expect(createVars()).toBeUndefined();
+  });
+});
+
+// ── Dry run ─────────────────────────────────────────────────────────────────
+
+describe("--dry-run", () => {
+  it("needs no gate, reports chargeableSubtotal + nextStep recipe, creates nothing", async () => {
+    routeGraphql();
+    await runBook(["plan-1", "--dry-run", "--json"]);
+    const out = lastJson();
+    expect(out.data.dryRun).toBe(true);
+    expect(out.data.chargeableSubtotal).toBeCloseTo(339.1, 2);
+    expect(out.data.subtotal).toBeCloseTo(439.1, 2);
+    expect(out.data.nextStep).toBe("voyagier book plan-1 --expect-total 339.10");
+    expect(out.data.existingCheckouts).toEqual({ pending: 0, paid: 0, pendingUrl: null });
+    expect(createVars()).toBeUndefined();
+  });
+
+  it("reports existing pending sessions", async () => {
+    routeGraphql({ checkouts: PENDING_CHECKOUT });
+    await runBook(["plan-1", "--dry-run", "--json"]);
+    const out = lastJson();
+    expect(out.data.existingCheckouts).toEqual({ pending: 1, paid: 0, pendingUrl: "https://stripe.test/pay/co-pending" });
+  });
+
+  it("still works when the checkout query fails (existingCheckouts null, no abort)", async () => {
+    mockGraphql.mockImplementation(async (query: string) => {
+      if (query.includes("TripPlanPaymentCheckouts")) throw new Error("upstream 502");
+      if (query.includes("cart")) return cartFixture();
+      throw new Error("unrouted");
+    });
+    await runBook(["plan-1", "--dry-run", "--json"]);
+    const out = lastJson();
+    expect(out.ok).toBe(true);
+    expect(out.data.existingCheckouts).toBeNull();
+  });
+});
+
+// ── parseMoney unit coverage ────────────────────────────────────────────────
+
+describe("parseMoney", () => {
+  let parseMoney: (raw: string, flag: string) => number;
+  beforeAll(async () => {
+    ({ parseMoney } = await import("./book.js"));
+  });
+
+  it.each([
+    ["339.10", 339.1],
+    ["$339.10", 339.1],
+    ["339", 339],
+    ["0", 0],
+  ])("parses %s", (raw, expected) => {
+    expect(parseMoney(raw, "--expect-total")).toBe(expected);
+  });
+
+  it.each(["abc", "-5", "339.105", "1e3", "", "339,10", "$"])("rejects %s", (raw) => {
+    expect(() => parseMoney(raw, "--expect-total")).toThrow(CliError);
   });
 });
