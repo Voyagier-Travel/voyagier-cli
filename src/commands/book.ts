@@ -70,7 +70,7 @@ interface PaymentCheckout {
     status: string;
     pnr?: string | null;
     providerReference?: string | null;
-    amount: number; // dollars (Float on schema; not cents)
+    amount: number; // CENTS (live-verified 2026-07-20: prod record 129706 = $1,297.06; bookings.ts renders amount/100)
   }>;
 }
 
@@ -510,7 +510,7 @@ async function showBookingStatus(planId: string, baseUrl: string, json: boolean,
           const ref = record.pnr
             ? `PNR: ${record.pnr}`
             : record.providerReference ? `Ref: ${record.providerReference}` : "";
-          lines.push(`- ${record.type.replace(/_/g, " ").toLowerCase()} — ${record.status.toLowerCase()}${ref ? ` — ${ref}` : ""} — ${formatPrice(record.amount)}`);
+          lines.push(`- ${record.type.replace(/_/g, " ").toLowerCase()} — ${record.status.toLowerCase()}${ref ? ` — ${ref}` : ""} — ${formatPrice(record.amount / 100)}`);
         }
         lines.push("");
       }
@@ -540,7 +540,7 @@ async function showBookingStatus(planId: string, baseUrl: string, json: boolean,
         : chalk.red("✗ " + record.status.toLowerCase());
       const ref = record.pnr ? chalk.white(`PNR: ${record.pnr}`)
         : record.providerReference ? chalk.white(`Ref: ${record.providerReference}`) : "";
-      console.log(`    ${record.type.replace(/_/g, " ").toLowerCase()}  ${recordStatus}  ${ref}  ${formatPrice(record.amount)}`);
+      console.log(`    ${record.type.replace(/_/g, " ").toLowerCase()}  ${recordStatus}  ${ref}  ${formatPrice(record.amount / 100)}`);
     }
     console.log();
   }
