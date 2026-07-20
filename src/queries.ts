@@ -380,7 +380,7 @@ export const GET_PLAN_STATUS = `
           blueprintMonitorId
           parentOptionId
           travellerOptionChoices {
-            traveller { id firstName lastName }
+            traveller { id }
             selectedOption { id }
           }
           inputs { id fieldName fieldLabel isRequired value sourceOutputId }

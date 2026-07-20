@@ -86,6 +86,12 @@ describe("buildPlanStatus — readiness precedence", () => {
         tripPlan: plan({ travellers: [traveller("t1", { gender: null })] }),
         tripPlanGoals: [
           goal({
+            checkoutReadiness: {
+              isReady: false,
+              requirements: [
+                { label: "Gender", isFulfilled: false, isRequired: true, type: "TravellerField", missingTravellerIds: ["t1"] },
+              ],
+            },
             items: [
               {
                 id: "i1",
@@ -207,6 +213,12 @@ describe("buildPlanStatus — readiness precedence", () => {
     expect(intl.blockers[0].kind).toBe("TRAVELLER_DATA");
     expect(intl.blockers[0].message).toContain("passport");
   });
+
+  it("buildPlanStatus throws a clear error on null tripPlan", () => {
+    expect(() => buildPlanStatus({ tripPlan: null, tripPlanGoals: [] }, BASE)).toThrow(
+      /tripPlan is null/,
+    );
+  });
 });
 
 describe("buildPlanStatus — blockers", () => {
@@ -219,7 +231,8 @@ describe("buildPlanStatus — blockers", () => {
             checkoutReadiness: {
               isReady: false,
               requirements: [
-                { label: "Passport required", isFulfilled: false, isRequired: true, selectionId: "s-other" },
+                { label: "Passport required", isFulfilled: false, isRequired: true, selectionId: "s-other", type: "ParticipantChoice" },
+                { label: "Date of birth", isFulfilled: false, isRequired: true, type: "TravellerField", missingTravellerIds: ["t1"] },
               ],
             },
             items: [
@@ -254,6 +267,8 @@ describe("buildPlanStatus — blockers", () => {
       "PICK_PENDING",
       "REQUIREMENT_UNMET",
     ]);
+    // The TravellerField requirement dedupes onto the TRAVELLER_DATA root cause.
+    expect(s.blockers.filter((b) => b.message.includes("Date of birth"))).toEqual([]);
     // SELECTION_INPUT names the field (honesty rule)
     expect(s.blockers[1].message).toContain("Departure date");
     // nextSteps map 1:1, deduped, runnable
@@ -263,6 +278,48 @@ describe("buildPlanStatus — blockers", () => {
       "voyagier selection-options s-pick --json   # list options",
       "voyagier select --selection-id s-pick --option-id <optionId>",
     ]);
+  });
+
+  it("kind ordering holds across goals (PICK_PENDING in an earlier goal sorts after SELECTION_INPUT in a later one)", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan(),
+        tripPlanGoals: [
+          goal({
+            id: "g1",
+            sortOrder: 0,
+            items: [
+              {
+                id: "i1",
+                selections: [
+                  { id: "s-pick", type: "Flight", blueprintMonitorId: "m1", options: [{ id: "o1", name: "A" }], travellerOptionChoices: [choice("t1", null)] },
+                ],
+              },
+            ],
+          }),
+          goal({
+            id: "g2",
+            sortOrder: 1,
+            items: [
+              {
+                id: "i2",
+                selections: [
+                  {
+                    id: "s-input",
+                    type: "Date",
+                    blueprintMonitorId: null,
+                    options: [],
+                    inputs: [{ id: "in1", fieldName: "checkin", fieldLabel: "Check-in", isRequired: true, value: null, sourceOutputId: null }],
+                  },
+                ],
+              },
+            ],
+          }),
+        ],
+      },
+      BASE,
+    );
+    expect(s.blockers.map((b) => b.kind)).toEqual(["SELECTION_INPUT", "PICK_PENDING"]);
   });
 
   it("AWAITING_INPUT with no named inputs is dependency-pending — detail only, NO blocker", () => {
@@ -295,8 +352,8 @@ describe("buildPlanStatus — blockers", () => {
             checkoutReadiness: {
               isReady: false,
               requirements: [
-                { label: "Gender", isFulfilled: false, isRequired: true, missingTravellerIds: ["t1"] },
-                { label: "Cabin class", isFulfilled: false, isRequired: true, missingTravellerIds: [] },
+                { label: "Gender", isFulfilled: false, isRequired: true, type: "TravellerField", missingTravellerIds: ["t1"] },
+                { label: "Cabin class", isFulfilled: false, isRequired: true, type: "ParticipantChoice", missingTravellerIds: [] },
               ],
             },
           }),
@@ -307,7 +364,7 @@ describe("buildPlanStatus — blockers", () => {
             checkoutReadiness: {
               isReady: false,
               requirements: [
-                { label: "Gender", isFulfilled: false, isRequired: true, missingTravellerIds: ["t1"] },
+                { label: "Gender", isFulfilled: false, isRequired: true, type: "TravellerField", missingTravellerIds: ["t1"] },
               ],
             },
           }),
@@ -317,9 +374,34 @@ describe("buildPlanStatus — blockers", () => {
     );
     // One TRAVELLER_DATA root cause, not three; Cabin class survives (not traveller-rooted).
     expect(s.blockers.map((b) => `${b.kind}:${b.message}`)).toEqual([
-      "TRAVELLER_DATA:T T1 is missing gender (required for flight checkout)",
+      "TRAVELLER_DATA:T T1 is missing gender (required for checkout)",
       "REQUIREMENT_UNMET:Outbound: Cabin class",
     ]);
+  });
+
+  it("traveller gaps do NOT block when no server requirement demands the field (hotel-only plan)", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan({
+          travellers: [traveller("t1", { gender: null, dateOfBirth: null })],
+          cart: bookableCart(),
+        }),
+        tripPlanGoals: [
+          goal({
+            name: "Hotel",
+            type: "Hotel",
+            isDecided: true,
+            checkoutReadiness: { isReady: true, requirements: [] },
+            items: [{ id: "i1", selections: [pickedSelection()] }],
+          }),
+        ],
+      },
+      BASE,
+    );
+    // Informational gap stays visible; no blocker, plan can proceed.
+    expect(s.travellers[0].missing).toEqual(["gender", "dateOfBirth"]);
+    expect(s.blockers).toEqual([]);
+    expect(s.readiness).toBe("READY_TO_BOOK");
   });
 
   it("requirement already covered by a selection blocker is deduped", () => {

@@ -189,7 +189,10 @@ function travellerName(t: { firstName?: string | null; lastName?: string | null 
 }
 
 export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string): PlanStatusData {
-  const plan = data.tripPlan!;
+  if (!data.tripPlan) {
+    throw new Error("buildPlanStatus: tripPlan is null — caller must verify the plan exists first");
+  }
+  const plan = data.tripPlan;
   const goals = [...(data.tripPlanGoals ?? [])].sort(
     (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
   );
@@ -222,11 +225,22 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
   const blockers: Blocker[] = [];
   const waiting: Waiting[] = [];
 
-  // 1. TRAVELLER_DATA — gender + DOB are required for flight checkout (TSA
-  //    Secure Flight). Passports are required only when the itinerary is
-  //    international — the server tells us via cart items' requiresPassport
-  //    (fails closed to true when the route can't be resolved).
+  // 1. TRAVELLER_DATA — blockers fire only on SERVER-DRIVEN demand: either
+  //    an unmet required TravellerField checkout requirement references the
+  //    traveller, or the itinerary is international (cart requiresPassport,
+  //    fails closed) and the traveller has no passport. `travellers[].missing`
+  //    stays informational for every traveller regardless, but a hotel-only
+  //    plan with a DOB-less traveller is NOT blocked when the server doesn't
+  //    require the field.
   const passportRequired = cartItems.some((i) => i.requiresPassport === true);
+  const travellerFieldDemand = new Set<string>();
+  for (const g of goals) {
+    for (const r of g.checkoutReadiness?.requirements ?? []) {
+      if (r.isRequired && !r.isFulfilled && r.type === "TravellerField") {
+        for (const id of r.missingTravellerIds ?? []) travellerFieldDemand.add(id);
+      }
+    }
+  }
   const travellerOut = travellers.map((t) => {
     const missing: string[] = [];
     if (!t.gender) missing.push("gender");
@@ -235,10 +249,13 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
     return { travellerId: t.id, name: travellerName(t), missing };
   });
   for (const t of travellerOut) {
-    if (t.missing.length > 0) {
+    const demanded =
+      travellerFieldDemand.has(t.travellerId) ||
+      (passportRequired && t.missing.includes("passport"));
+    if (t.missing.length > 0 && demanded) {
       blockers.push({
         kind: "TRAVELLER_DATA",
-        message: `${t.name} is missing ${t.missing.join(" and ")} (required for flight checkout)`,
+        message: `${t.name} is missing ${t.missing.join(" and ")} (required for checkout)`,
         refs: { travellerId: t.travellerId },
       });
     }
@@ -383,6 +400,17 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
       });
     }
   }
+
+  // Contract: blockers[] is ordered by kind (traveller data → inputs → picks
+  // → requirements). Selection walks interleave kinds across goals, so enforce
+  // the order explicitly — stable sort keeps goal order within a kind.
+  const KIND_RANK: Record<BlockerKind, number> = {
+    TRAVELLER_DATA: 0,
+    SELECTION_INPUT: 1,
+    PICK_PENDING: 2,
+    REQUIREMENT_UNMET: 3,
+  };
+  blockers.sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind]);
 
   // Readiness precedence: BOOKED > BLOCKED > IN_PROGRESS > READY_TO_BOOK.
   const goalsBooked = goalsOut.filter((g) => g.isBooked).length;
