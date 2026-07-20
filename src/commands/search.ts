@@ -70,7 +70,8 @@ type SortField = "price" | "duration" | "stops" | "default";
  * empty and every pick fails "Option not found". Creating duplicates also
  * detaches checkout readiness from the selection the agent is operating on.
  */
-async function resolveOrCreateDecisionSelection(
+// Exported for unit testing the reuse/fail-fast contract (VOY-1692).
+export async function resolveOrCreateDecisionSelection(
   kind: "flights" | "hotels" | "activities",
   goal: { id: string; name: string; items: { selections: { id: string; type: string | null }[] }[] },
   tripPlanId: string,
@@ -88,7 +89,16 @@ async function resolveOrCreateDecisionSelection(
       GET_DECISION_SELECTION_OPTIONS,
       { tripPlanSelectionId: existingId },
     );
-    return { selectionId: existingId, options: data.getTripPlanSelection?.options ?? [], reused: true };
+    if (!data.getTripPlanSelection) {
+      // Fail fast: an empty-options response would read as "still fetching"
+      // and send the caller off to poll a selection that no longer exists.
+      throw new CliError(
+        CliErrorCode.API_ERROR,
+        `The goal's ${KIND_LABEL[kind]} selection ${existingId} could not be loaded (stale goal graph or deleted selection). ` +
+          `Re-check the plan structure with: voyagier plans goals ${tripPlanId}`,
+      );
+    }
+    return { selectionId: existingId, options: data.getTripPlanSelection.options ?? [], reused: true };
   }
   // Goal has no decision selection (custom / non-skeleton goal) — create one
   // linked to the goal's mirror list, the pre-VOY-1692 behaviour.

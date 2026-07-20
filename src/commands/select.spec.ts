@@ -599,6 +599,45 @@ describe("select: participant-choice scope flags (VOY-1692)", () => {
     expect(mockGraphql).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["--traveller", ""],
+    ["--traveller", "   "],
+    ["--travellers", ""],
+    ["--group", " "],
+  ])("rejects an empty %s value instead of silently selecting for ALL travellers", async (flag, value) => {
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", flag, value]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+    expect((err as CliError).message).toContain("empty value");
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("mutual exclusion fires even when one of the combined flags is empty", async () => {
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--traveller", "", "--group", "g1"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("trims whitespace around a scope flag value before sending", async () => {
+    mockGraphql.mockResolvedValue({ setTripPlanSelectionTravellerChoice: CHOICE_RESULT });
+    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--traveller", "  trav-a  "]);
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("setTripPlanSelectionTravellerChoice"),
+      expect.objectContaining({ travellerId: "trav-a" })
+    );
+  });
+
   it("maps the list-mode rejection to actionable guidance", async () => {
     mockGraphql.mockRejectedValue(new Error("Cannot set traveller choices on a list-mode selection"));
     let err: unknown;

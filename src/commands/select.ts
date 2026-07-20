@@ -43,6 +43,38 @@ interface ChoiceScopeOpts {
   group?: string;
 }
 
+/**
+ * Normalize scope flags: a flag that was PASSED but empty/whitespace is a
+ * hard error, never a silent fall-through to the for-all default — that
+ * would overwrite every traveller's choice when the caller named one
+ * traveller with a bad value. Same contract as resolvePlanId's --plan
+ * handling (empty ≠ omitted). Mutual exclusion is computed on "was the flag
+ * provided" (!== undefined), not truthiness, for the same reason.
+ */
+function normalizeChoiceScope(scope: ChoiceScopeOpts): ChoiceScopeOpts {
+  const out: ChoiceScopeOpts = {};
+  for (const key of ["traveller", "travellers", "group"] as const) {
+    const raw = scope[key];
+    if (raw === undefined) continue;
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      throw new CliError(
+        CliErrorCode.VALIDATION,
+        `--${key} was given an empty value. Pass a real ${key === "group" ? "group id" : "traveller id"}, or omit --${key} to select for all travellers.`,
+      );
+    }
+    out[key] = trimmed;
+  }
+  const provided = (["traveller", "travellers", "group"] as const).filter((k) => scope[k] !== undefined);
+  if (provided.length > 1) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      "Use at most ONE of --traveller, --travellers, --group (they are mutually exclusive scopes).",
+    );
+  }
+  return out;
+}
+
 /** Human label for the scope a pick applies to (used in success output). */
 function scopeLabel(scope: ChoiceScopeOpts): string {
   if (scope.traveller) return `for traveller ${scope.traveller}`;
@@ -54,15 +86,9 @@ function scopeLabel(scope: ChoiceScopeOpts): string {
 async function setSelectedOption(
   selectionId: string,
   optionId: string,
-  scope: ChoiceScopeOpts = {},
+  rawScope: ChoiceScopeOpts = {},
 ): Promise<SelectionResponse> {
-  const set = [scope.traveller, scope.travellers, scope.group].filter(Boolean);
-  if (set.length > 1) {
-    throw new CliError(
-      CliErrorCode.VALIDATION,
-      "Use at most ONE of --traveller, --travellers, --group (they are mutually exclusive scopes).",
-    );
-  }
+  const scope = normalizeChoiceScope(rawScope);
   try {
     if (scope.traveller) {
       const data = await graphql<{ setTripPlanSelectionTravellerChoice: SelectionResponse }>(
