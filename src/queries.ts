@@ -328,6 +328,64 @@ export const UPDATE_VOTE = `
   }
 `;
 
+/**
+ * VOY-1704 `plan-status`: ONE round trip answering "what's left before this
+ * plan can book?". Two root fields share $id: tripPlan (title, travellers'
+ * checkout fields, cart) + tripPlanGoals (readiness, deep selections with
+ * travellerOptionChoices/inputs/options for consensus + blockedOn derivation).
+ */
+export const GET_PLAN_STATUS = `
+  query PlanStatus($id: String!) {
+    tripPlan(id: $id) {
+      id
+      title
+      travellers {
+        id firstName lastName dateOfBirth gender declaredTravellerType
+        passport { last4 }
+      }
+      cart { itemCount total currency }
+    }
+    tripPlanGoals(tripPlanId: $id) {
+      id
+      name
+      type
+      sortOrder
+      isDecided
+      isBooked
+      checkoutReadiness {
+        isReady
+        requirements {
+          label
+          isFulfilled
+          isRequired
+          selectionId
+          type
+          missingTravellerIds
+        }
+      }
+      items {
+        id
+        title
+        selections {
+          id
+          type
+          mode
+          isComplete
+          isLocked
+          blueprintMonitorId
+          parentOptionId
+          travellerOptionChoices {
+            traveller { id firstName lastName }
+            selectedOption { id }
+          }
+          inputs { id fieldName fieldLabel isRequired value sourceOutputId }
+          options { id name isBookable }
+        }
+      }
+    }
+  }
+`;
+
 // --- Travellers ---
 
 export const CREATE_TRAVELLER = `

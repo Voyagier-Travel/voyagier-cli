@@ -14,10 +14,10 @@ import {
   type SelectionState,
   type SelectionStatusResult,
 } from "../selection-status.js";
-import { deriveChosen, type RawTravellerChoice } from "../choices.js";
+import { deriveChosen, deriveBlockedOn, type RawTravellerChoice, type RawSelectionInput } from "../choices.js";
 
 // Re-exported so downstream consumers (and specs) keep one import site.
-export { deriveChosen };
+export { deriveChosen, deriveBlockedOn };
 
 interface RawOption {
   id: string;
@@ -29,15 +29,6 @@ interface RawOption {
   sortOrder?: number | null;
 }
 
-interface RawInput {
-  id: string;
-  fieldName: string;
-  fieldLabel?: string | null;
-  isRequired: boolean;
-  value?: unknown;
-  sourceOutputId?: string | null;
-}
-
 interface RawSelection {
   __typename: string;
   id: string;
@@ -45,20 +36,8 @@ interface RawSelection {
   blueprintMonitorId?: string | null;
   parentOptionId?: string | null;
   travellerOptionChoices?: RawTravellerChoice[] | null;
-  inputs?: RawInput[] | null;
+  inputs?: RawSelectionInput[] | null;
   options?: RawOption[] | null;
-}
-
-/**
- * Name the inputs an AWAITING_INPUT selection is blocked on: required inputs
- * with neither a direct value nor a source-output binding. Honesty rule
- * (VOY-1703): never render a bare "blocked" without naming the reason — if
- * the API gives us nothing, say THAT explicitly instead of null.
- */
-export function deriveBlockedOn(raw: Pick<RawSelection, "inputs">): { fieldName: string; fieldLabel: string | null }[] {
-  return (raw.inputs ?? [])
-    .filter((i) => i.isRequired && (i.value === null || i.value === undefined) && !i.sourceOutputId)
-    .map((i) => ({ fieldName: i.fieldName, fieldLabel: i.fieldLabel ?? null }));
 }
 
 interface RawMonitor {

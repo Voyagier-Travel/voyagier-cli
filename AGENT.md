@@ -65,8 +65,12 @@ voyagier search activities --plan <PLAN_ID> --destination Tokyo \
 voyagier selection-options <SELECTION_ID> --wait --json
 voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
 
-# 5) Check readiness any time
-voyagier plans goals <PLAN_ID> --json
+# 5) Check readiness any time — ONE call, the whole picture
+voyagier plan-status <PLAN_ID> --json
+# Switch on data.readiness: BLOCKED → act on data.blockers[] (data.nextSteps[]
+# are the exact commands, in order); IN_PROGRESS → poll (system is working);
+# READY_TO_BOOK → book --dry-run; BOOKED → done.
+# (plans goals <PLAN_ID> --json remains the per-goal deep view.)
 
 # 6) Pre-flight + book
 voyagier book <PLAN_ID> --validate --json    # see what's actually bookable
@@ -311,6 +315,20 @@ voyagier travellers list --plan <id> --json
 voyagier travellers update <travellerId> [...] --json
 voyagier travellers remove <travellerId> --json
 ```
+
+### Plan Status (one-shot readiness, Style A JSON)
+```bash
+voyagier plan-status <planId> [--json|--agent]
+```
+ONE call answering "what's left before this plan can book?" — replaces the plans-goals + N× selection-options + travellers + cart stitch. The JSON contract:
+
+- `readiness` — switch on it: `BOOKED` | `READY_TO_BOOK` | `BLOCKED` (system is waiting on YOU — act) | `IN_PROGRESS` (system is waiting on ITSELF — poll, don't act)
+- `blockers[]` — your to-do list, ordered. Kinds: `TRAVELLER_DATA`, `SELECTION_INPUT`, `PICK_PENDING`, `REQUIREMENT_UNMET`. Each has `message` + `refs` (travellerId/selectionId/goalId).
+- `waiting[]` — self-resolving waits (`OPTIONS_PENDING`, `CART_PENDING`), separate from blockers because acting won't help.
+- `nextSteps[]` — runnable commands mapping onto blockers, ending with the terminal command when ready.
+- `goals[].selections[]` — per-selection detail: `status`, `mode` (only `Single` selections are picked; `List` ones are mirror sources), `isComplete` (server truth), `chosenOptionId/Name`, `consensus`, `allPicked` (divergent per-traveller picks are valid), `travellersPending`, `blockedOn`.
+
+STABILITY: additive-only contract — keys are never renamed/removed; new blocker/waiting kinds may appear, so tolerate unknown kinds.
 
 ### Goals (readiness view, Style B JSON)
 ```bash
