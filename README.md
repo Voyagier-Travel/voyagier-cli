@@ -43,10 +43,10 @@ voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
 # 6) Inspect readiness at any time — one call: what's blocked, what's next
 voyagier plan-status <PLAN_ID> --json
 
-# 7) Pre-flight bookability check, then checkout (price gate required)
-voyagier book <PLAN_ID> --validate --json
-voyagier book <PLAN_ID> --dry-run --json                   # get the chargeable subtotal
+# 7) Pre-flight (dry-run: blockers + chargeable subtotal), then checkout (price gate required)
+voyagier book <PLAN_ID> --dry-run --json                   # preview: blockers + chargeable subtotal; no gate needed
 voyagier book <PLAN_ID> --expect-total <subtotal> --json   # checkout only at that exact price
+voyagier book <PLAN_ID> --validate --expect-total <subtotal> --json  # strict: also abort if ANY item is non-bookable
 ```
 
 ## What's Bookable
@@ -57,7 +57,7 @@ voyagier book <PLAN_ID> --expect-total <subtotal> --json   # checkout only at th
 | Hotel | ⚠️ partial | Blueprint Listings (checkout coverage incomplete) |
 | Flight | ✅ via Fare & Cabin item | Sabre (fare-level item carted once all legs are picked; defaults to Economy) |
 
-The cart materializes only bookable, fare/room-level options — the per-item `isBookable` flag is the live truth. Always run `voyagier book --validate <planId>` for pre-flight checks. A real checkout requires a **price gate** (`--expect-total` or `--max-total`) against the chargeable subtotal, and the checkout is always pinned to that gated set via `itemIds` — `--types` / `--only-bookable` narrow it server-side. Note: unpaid (Pending) checkout sessions are not visible to the CLI, so never retry a successful `book`.
+The cart materializes only bookable, fare/room-level options — the per-item `isBookable` flag is the live truth. Always run `voyagier book <planId> --dry-run` first for pre-flight checks (blockers + chargeable subtotal, no gate needed); `--validate` is a strictness modifier on the real booking that aborts if any item is non-bookable. A real checkout requires a **price gate** (`--expect-total` or `--max-total`) against the chargeable subtotal, and the checkout is always pinned to that gated set via `itemIds` — `--types` / `--only-bookable` narrow it server-side. Note: unpaid (Pending) checkout sessions are not visible to the CLI, so never retry a successful `book`.
 
 ## Commands
 

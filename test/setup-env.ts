@@ -28,8 +28,12 @@ import { join } from "path";
 const sandboxPrefix = join(tmpdir(), "voyagier-test-");
 if (!process.env.VOYAGIER_CONFIG_DIR?.startsWith(sandboxPrefix)) {
   process.env.VOYAGIER_CONFIG_DIR = mkdtempSync(sandboxPrefix);
+  process.env.VOYAGIER_TEST_SANDBOX_ROOT = process.env.VOYAGIER_CONFIG_DIR;
 }
-const workerDir = join(process.env.VOYAGIER_CONFIG_DIR, `worker-${process.env.JEST_WORKER_ID ?? "0"}`);
+// Derive the worker dir from the run ROOT (not the current value) so re-entry
+// in the same process (--runInBand) can't nest worker-0/worker-0/...
+const sandboxRoot = process.env.VOYAGIER_TEST_SANDBOX_ROOT ?? process.env.VOYAGIER_CONFIG_DIR;
+const workerDir = join(sandboxRoot, `worker-${process.env.JEST_WORKER_ID ?? "0"}`);
 mkdirSync(workerDir, { recursive: true });
 process.env.VOYAGIER_CONFIG_DIR = workerDir;
 // Belt and braces: no spec should ever hit real telemetry or inherit ambient auth.

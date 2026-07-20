@@ -24,6 +24,13 @@ jest.unstable_mockModule("../utils.js", () => ({
   formatPrice: (n: number) => `$${n.toFixed(2)}`,
   openBrowser: mockOpenBrowser,
   deriveBaseUrl: () => "https://travel.voyagier.com",
+  // Real implementation semantics matter here: nextStep assertions verify the
+  // recipe stays paste-runnable (simple tokens unquoted, unsafe ones quoted).
+  shellArg: (v: string | number | null | undefined) => {
+    if (v === null || v === undefined) return "";
+    const s = String(v);
+    return /^[A-Za-z0-9_.,:@/-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
+  },
 }));
 
 let registerBookCommands: (program: Command) => void;
@@ -214,7 +221,7 @@ describe("price hard-gate", () => {
 // ── Idempotency pre-flight ──────────────────────────────────────────────────
 
 describe("paid-checkout pre-flight", () => {
-  it("a Pending checkout row does NOT block (server never returns them on this query; encoded so a backend change is caught)", async () => {
+  it("ignores Pending checkout rows — only Paid blocks (server excludes Pending today; if that changes, Pending stays non-blocking by design)", async () => {
     routeGraphql({ checkouts: PENDING_CHECKOUT });
     await runBook(["plan-1", "--expect-total", "339.10", "--json"]);
     expect(createVars()).toBeDefined();

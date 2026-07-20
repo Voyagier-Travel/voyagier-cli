@@ -54,7 +54,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
-import { formatPrice, openBrowser, deriveBaseUrl } from "../utils.js";
+import { formatPrice, openBrowser, deriveBaseUrl, shellArg } from "../utils.js";
 import { hintCheckoutCreated, hintBookingConfirmed, hintBookingPending, hintDryRun } from "../hints.js";
 import { GET_CART_V2, CREATE_CHECKOUT, GET_PAYMENT_CHECKOUTS } from "../queries.js";
 import {
@@ -250,10 +250,13 @@ export function registerBookCommands(program: Command): void {
       // Recipe an agent can follow verbatim — must carry the active filters,
       // or the copy-pasted command gates the FULL cart against the filtered
       // subtotal and trips PRICE_CHANGED.
+      // nextStep is documented as copy/paste runnable — shellArg() every
+      // interpolated value (VOY-1709 convention, see plan-status.ts) and
+      // rebuild --types from the normalized typeFilter, not the raw user input.
       const filterFlags =
-        (typeFilter.length > 0 ? ` --types ${opts.types}` : "") +
+        (typeFilter.length > 0 ? ` --types ${shellArg(typeFilter.join(","))}` : "") +
         (opts.onlyBookable ? " --only-bookable" : "");
-      const nextStepCmd = `voyagier book ${plan.id}${filterFlags} --expect-total ${chargeableSubtotal.toFixed(2)}`;
+      const nextStepCmd = `voyagier book ${shellArg(plan.id)}${filterFlags} --expect-total ${chargeableSubtotal.toFixed(2)}`;
 
       // --dry-run
       if (opts.dryRun) {

@@ -10,5 +10,10 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 export default function globalSetup(): void {
-  process.env.VOYAGIER_CONFIG_DIR = mkdtempSync(join(tmpdir(), "voyagier-test-"));
+  const root = mkdtempSync(join(tmpdir(), "voyagier-test-"));
+  process.env.VOYAGIER_CONFIG_DIR = root;
+  // Teardown deletes THIS, not VOYAGIER_CONFIG_DIR: in --runInBand the tests
+  // share our process and setup-env.ts repoints VOYAGIER_CONFIG_DIR at a
+  // worker-<id> subdir — deleting that would leave the parent behind.
+  process.env.VOYAGIER_TEST_SANDBOX_ROOT = root;
 }

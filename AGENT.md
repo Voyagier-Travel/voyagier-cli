@@ -73,8 +73,7 @@ voyagier plan-status <PLAN_ID> --json
 # (plans goals <PLAN_ID> --json remains the per-goal deep view.)
 
 # 6) Pre-flight + book (price gate is REQUIRED)
-voyagier book <PLAN_ID> --validate --json                  # see what's actually bookable
-voyagier book <PLAN_ID> --dry-run --json                   # get data.chargeableSubtotal + data.nextStep
+voyagier book <PLAN_ID> --dry-run --json                   # pre-flight: blockers + data.chargeableSubtotal + data.nextStep (no gate needed)
 voyagier book <PLAN_ID> --expect-total <subtotal> --json   # creates the Stripe session only at that exact price
 ```
 
@@ -426,7 +425,7 @@ voyagier book <planId> --status --json                        # post-payment con
 >
 > **The checkout is always item-pinned:** `book` sends `itemIds` (the exact bookable set the gate priced) on `createTripPlanCheckout`, so the charged set always equals the gated set; `--types` / `--only-bookable` narrow that same set server-side.
 
-`--validate` returns blockers without attempting checkout. Sample shape (matches the standard error envelope above — there is no top-level `ok`, `data`, or `planContext` on `CliError` output):
+`--validate` is a strictness modifier on a real (gated) booking: when blockers exist it fails with `BOOKING_BLOCKED` before attempting checkout. For a gate-free blocker check use `--dry-run`. Sample shape (matches the standard error envelope above — there is no top-level `ok`, `data`, or `planContext` on `CliError` output):
 
 ```json
 {
@@ -495,7 +494,7 @@ voyagier agent-docs                   # prints this file
 | Ride | ❌ | TBD | Selection type exists; no booking source wired. |
 | Restaurant | ❌ | Internal | Selection type exists; booking path unclear. |
 
-Always `voyagier book --validate <planId>` before checkout. Branch on `details.blockers[]`. Build a clean cart for the `book` call rather than relying on `--types` to filter the mutation. The matrix above is a prior, not a contract — the cart's per-item `isBookable` is the live truth.
+Always `voyagier book <planId> --dry-run` before checkout — it reports blockers and the chargeable subtotal without a gate. Branch on `data.blockers[]`; add `--validate` to the real booking to abort on any non-bookable line. Build a clean cart for the `book` call rather than relying on `--types` to filter the mutation. The matrix above is a prior, not a contract — the cart's per-item `isBookable` is the live truth.
 
 ---
 
