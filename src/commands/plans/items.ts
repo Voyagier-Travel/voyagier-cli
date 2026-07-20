@@ -6,6 +6,7 @@ import { formatPrice } from "../../utils.js";
 import { fatal, jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
 import { typeIcon, inferItemType, itemStatus, deepChosenOption, deepSubSelections, DeepItem } from "./types.js";
+import { deriveChosen } from "../../choices.js";
 
 export function registerItemCommands(plans: Command): void {
   plans
@@ -46,7 +47,8 @@ export function registerItemCommands(plans: Command): void {
                 subSelections: deepSubSelections(item).map(({ selection }) => ({
                   id: selection.id,
                   type: selection.type ?? null,
-                  selectedOptionId: selection.parentOptionId ?? null,
+                  // Consensus-derived (VOY-1701): new-model picks never write parentOptionId.
+                  selectedOptionId: deriveChosen(selection).chosenOptionId,
                   optionCount: (selection.options ?? []).length,
                 })),
               };
