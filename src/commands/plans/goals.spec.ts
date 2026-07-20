@@ -47,12 +47,18 @@ beforeEach(() => {
 });
 
 // Stub stdout so log spam doesn't pollute test output but jsonOutput can be inspected.
+// `logs` captures console.log lines so the human (non-JSON) output paths can be
+// asserted on; `writes` captures process.stdout.write for jsonOutput inspection.
 let logSpy: jest.SpiedFunction<typeof console.log>;
 let writeSpy: jest.SpiedFunction<typeof process.stdout.write>;
 let writes: string[];
+let logs: string[];
 beforeEach(() => {
   writes = [];
-  logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+  logs = [];
+  logSpy = jest.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+    logs.push(args.map(String).join(" "));
+  });
   writeSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: any) => {
     writes.push(typeof chunk === "string" ? chunk : String(chunk));
     return true;
@@ -1011,5 +1017,355 @@ describe("plans goal-reorder <planId>", () => {
     expect(out.ok).toBe(true);
     expect(out.data.succeededGoalIds).toEqual([]);
     expect(out.data.noopCount).toBe(2);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Human (non-JSON) output paths + error wrapping.
+// These exercise the console.log rendering and the catch-blocks that wrap
+// non-CliError failures into API_ERROR — the bulk of the previously-uncovered
+// lines. `logs` captures console.log; graphql is still fully mocked.
+// --------------------------------------------------------------------------
+
+function logText(): string {
+  return logs.join("\n");
+}
+
+describe("human output — goals list", () => {
+  it("renders the tree with items, selection counts, travellers, and state badges", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanGoals: [
+        {
+          ...GOAL_FIXTURE,
+          id: "g-1",
+          name: "Paris hotel",
+          isBooked: true,
+          items: [{ id: "i-1", title: "Bristol", selections: [{ id: "s", type: "Hotel" }] }],
+          travellers: [{ id: "t-1", firstName: "Ada", lastName: "Lovelace" }],
+        },
+      ],
+    });
+    await runGoals(["goals", "plan-1", "--tree"]);
+    const text = logText();
+    expect(text).toMatch(/Paris hotel/);
+    expect(text).toMatch(/booked/);
+    expect(text).toMatch(/Bristol/);
+    expect(text).toMatch(/1 selection/);
+    expect(text).toMatch(/Ada Lovelace/);
+  });
+
+  it("shows a 'blocking' badge when required requirements are unfulfilled", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanGoals: [
+        {
+          ...GOAL_FIXTURE,
+          isDecided: false, // else the "decided" badge would win over "blocking"
+          checkoutReadiness: {
+            isReady: false,
+            requirements: [{ label: "Room", isFulfilled: false, isRequired: true, selectionId: "s", type: "x", missingTravellerIds: [] }],
+          },
+        },
+      ],
+    });
+    await runGoals(["goals", "plan-1"]);
+    expect(logText()).toMatch(/1 blocking/);
+  });
+
+  it("prints 'No goals yet' for an empty plan", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlanGoals: [] });
+    await runGoals(["goals", "plan-x"]);
+    expect(logText()).toMatch(/No goals yet/);
+  });
+
+  it("wraps a non-CliError list failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("list boom"));
+    await expect(runGoals(["goals", "plan-1"])).rejects.toMatchObject({ code: CliErrorCode.API_ERROR });
+  });
+});
+
+describe("human output — goal get", () => {
+  it("renders blocking requirements with next-steps and missing travellers", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanGoal: {
+        ...GOAL_FIXTURE,
+        checkoutReadiness: {
+          isReady: false,
+          requirements: [
+            { label: "Room", isFulfilled: false, isRequired: true, selectionId: "sel-room", type: "PARTICIPANT_CHOICE", missingTravellerIds: ["t-1"] },
+          ],
+        },
+        items: [{ id: "i-1", title: "Bristol", selections: [{ id: "s", type: "Hotel" }] }],
+        travellers: [{ id: "t-1", firstName: "Ada", lastName: "Lovelace" }],
+      },
+    });
+    await runGoals(["goal", "g-1"]);
+    const text = logText();
+    expect(text).toMatch(/Blocked on \(1\)/);
+    expect(text).toMatch(/selection sel-room/);
+    expect(text).toMatch(/voyagier select --selection-id sel-room/);
+    expect(text).toMatch(/missing for travellers: t-1/);
+    expect(text).toMatch(/Bristol/);
+    expect(text).toMatch(/Travellers: Ada Lovelace/);
+  });
+
+  it("prints 'All required steps fulfilled' when nothing is blocking", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanGoal: {
+        ...GOAL_FIXTURE,
+        checkoutReadiness: {
+          isReady: true,
+          requirements: [{ label: "Room", isFulfilled: true, isRequired: true, selectionId: "s", type: "x", missingTravellerIds: [] }],
+        },
+        items: [],
+      },
+    });
+    await runGoals(["goal", "g-1"]);
+    expect(logText()).toMatch(/All required steps fulfilled/);
+  });
+
+  it("wraps a non-CliError get failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("get boom"));
+    await expect(runGoals(["goal", "g-1"])).rejects.toMatchObject({ code: CliErrorCode.API_ERROR });
+  });
+});
+
+describe("human output — goal-add", () => {
+  it("prints the created goal + assigned-traveller count", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlanGoal: { ...GOAL_FIXTURE } })
+      .mockResolvedValueOnce({ assignTravellersToGoal: true })
+      .mockResolvedValueOnce({ tripPlanGoal: { ...GOAL_FIXTURE, travellers: [{ id: "t-1" }, { id: "t-2" }] } });
+    await runGoals(["goal-add", "plan-1", "--type", "Hotel", "--travellers", "t-1,t-2"]);
+    const text = logText();
+    expect(text).toMatch(/Goal created/);
+    expect(text).toMatch(/2 assigned/);
+  });
+
+  it("prints a warning line when traveller assignment fails", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlanGoal: { ...GOAL_FIXTURE } })
+      .mockRejectedValueOnce(new Error("traveller t-99 not on plan"));
+    await runGoals(["goal-add", "plan-1", "--type", "Hotel", "--travellers", "t-99"]);
+    expect(logText()).toMatch(/traveller t-99 not on plan/);
+  });
+
+  it("rejects a non-integer --relative-day", async () => {
+    await expect(
+      runGoals(["goal-add", "plan-1", "--type", "Hotel", "--relative-day", "1.5"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("wraps a non-CliError create failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("create boom"));
+    await expect(
+      runGoals(["goal-add", "plan-1", "--type", "Hotel"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.API_ERROR });
+  });
+});
+
+describe("human output — goal-add-with-selection", () => {
+  it("passes scope/includeAllTravellers/questionTemplate/placeAfter and prints item+selection", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      createTripPlanGoalWithSelection: {
+        goal: { ...GOAL_FIXTURE, id: "g-9" },
+        item: { id: "i-9", goalId: "g-9" },
+        selection: { id: "sel-9", type: "Hotel" },
+      },
+    });
+    await runGoals([
+      "goal-add-with-selection", "plan-1",
+      "--type", "Hotel",
+      "--scope", "group",
+      "--include-all-travellers",
+      "--question-template", "Which hotel?",
+      "--place-after", "g-anchor",
+    ]);
+    const [, vars] = mockGraphql.mock.calls[0];
+    expect((vars as any).input).toMatchObject({
+      scope: "Group",
+      includeAllTravellers: true,
+      questionTemplate: "Which hotel?",
+      placeAfterGoalId: "g-anchor",
+    });
+    const text = logText();
+    expect(text).toMatch(/Goal \+ selection created/);
+    expect(text).toMatch(/item:.*i-9/);
+    expect(text).toMatch(/selection:.*sel-9 \(Hotel\)/);
+  });
+
+  it("rejects a non-integer --sort-order", async () => {
+    await expect(
+      runGoals(["goal-add-with-selection", "plan-1", "--type", "Hotel", "--sort-order", "2.5"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("wraps a non-CliError failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("ws boom"));
+    await expect(
+      runGoals(["goal-add-with-selection", "plan-1", "--type", "Hotel"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.API_ERROR });
+  });
+});
+
+describe("human output — goal-update", () => {
+  it("updates sort-order/relative-day/date and prints the updated fields", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      updateTripPlanGoal: { ...GOAL_FIXTURE, sortOrder: 4, relativeDay: 2 },
+    });
+    await runGoals([
+      "goal-update", "g-1",
+      "--sort-order", "4",
+      "--relative-day", "2",
+      "--date", "2026-05-04",
+    ]);
+    const [, vars] = mockGraphql.mock.calls[0];
+    expect((vars as any).input).toEqual({ sortOrder: 4, relativeDay: 2, date: "2026-05-04" });
+    expect(logText()).toMatch(/Goal updated/);
+    expect(logText()).toMatch(/updated: sortOrder, relativeDay, date/);
+  });
+
+  it("rejects a non-integer --sort-order", async () => {
+    await expect(
+      runGoals(["goal-update", "g-1", "--sort-order", "1.5"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-integer --relative-day", async () => {
+    await expect(
+      runGoals(["goal-update", "g-1", "--relative-day", "2.5"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("wraps a non-CliError update failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("update boom"));
+    await expect(
+      runGoals(["goal-update", "g-1", "--name", "x"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.API_ERROR });
+  });
+});
+
+describe("human output — goal-remove", () => {
+  it("prints a success line on delete", async () => {
+    mockGraphql.mockResolvedValueOnce({ deleteTripPlanGoal: true });
+    await runGoals(["goal-remove", "g-1", "--force"]);
+    expect(logText()).toMatch(/Goal g-1 deleted/);
+  });
+
+  it("prints a warning line when the server returns false", async () => {
+    mockGraphql.mockResolvedValueOnce({ deleteTripPlanGoal: false });
+    await runGoals(["goal-remove", "g-1", "--force"]);
+    expect(logText()).toMatch(/Server returned false for delete/);
+  });
+
+  it("wraps a non-CliError delete failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("del boom"));
+    await expect(
+      runGoals(["goal-remove", "g-1", "--force"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.API_ERROR });
+  });
+});
+
+describe("human output — goal-assign-travellers", () => {
+  it("prints an assigned-count line on success", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ assignTravellersToGoal: true })
+      .mockResolvedValueOnce({ tripPlanGoal: { ...GOAL_FIXTURE, name: "Paris hotel", travellers: [{ id: "t-1" }, { id: "t-2" }] } });
+    await runGoals(["goal-assign-travellers", "g-1", "--travellers", "t-1,t-2"]);
+    const text = logText();
+    expect(text).toMatch(/Assigned 2 traveller\(s\) to goal: Paris hotel/);
+  });
+
+  it("prints a warning line when the server returns false", async () => {
+    mockGraphql.mockResolvedValueOnce({ assignTravellersToGoal: false });
+    await runGoals(["goal-assign-travellers", "g-1", "--travellers", "t-1"]);
+    expect(logText()).toMatch(/Server returned false for assignTravellersToGoal/);
+  });
+
+  it("wraps a non-CliError failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("assign boom"));
+    await expect(
+      runGoals(["goal-assign-travellers", "g-1", "--travellers", "t-1"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.API_ERROR });
+  });
+});
+
+describe("human output — goal-add-item", () => {
+  it("prints an attached line on success", async () => {
+    mockGraphql.mockResolvedValueOnce({ addItemToGoal: true });
+    await runGoals(["goal-add-item", "g-1", "--item", "i-99"]);
+    expect(logText()).toMatch(/Item i-99 attached to goal g-1/);
+  });
+
+  it("prints a warning line when the server returns false", async () => {
+    mockGraphql.mockResolvedValueOnce({ addItemToGoal: false });
+    await runGoals(["goal-add-item", "g-1", "--item", "i-99"]);
+    expect(logText()).toMatch(/Server returned false for addItemToGoal/);
+  });
+
+  it("wraps a non-CliError failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("item boom"));
+    await expect(
+      runGoals(["goal-add-item", "g-1", "--item", "i-99"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.API_ERROR });
+  });
+});
+
+describe("human output — goal-add-item-with-selection", () => {
+  it("prints the created item + selection", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      addItemWithSelectionToGoal: { item: { id: "i-1" }, selection: { id: "sel-1", type: "Activity" } },
+    });
+    await runGoals(["goal-add-item-with-selection", "g-1", "--plan", "plan-1", "--type", "Activity"]);
+    const text = logText();
+    expect(text).toMatch(/Item \+ selection created on goal g-1/);
+    expect(text).toMatch(/selection:.*sel-1 \(Activity\)/);
+  });
+
+  it("wraps a non-CliError failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("iws boom"));
+    await expect(
+      runGoals(["goal-add-item-with-selection", "g-1", "--plan", "plan-1", "--type", "Activity"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.API_ERROR });
+  });
+});
+
+describe("human output — goal-reorder", () => {
+  it("prints a success summary when all updates apply", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({
+        tripPlanGoals: [
+          { ...GOAL_FIXTURE, id: "g-1", sortOrder: 1 },
+          { ...GOAL_FIXTURE, id: "g-2", sortOrder: 2 },
+        ],
+      })
+      .mockResolvedValueOnce({ updateTripPlanGoal: { ...GOAL_FIXTURE, id: "g-2", sortOrder: 1 } })
+      .mockResolvedValueOnce({ updateTripPlanGoal: { ...GOAL_FIXTURE, id: "g-1", sortOrder: 2 } });
+    await runGoals(["goal-reorder", "plan-1", "--order", "g-2,g-1"]);
+    expect(logText()).toMatch(/Reordered 2 goal\(s\)/);
+  });
+
+  it("prints a partial-failure summary when an update throws", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({
+        tripPlanGoals: [
+          { ...GOAL_FIXTURE, id: "g-1", sortOrder: 1 },
+          { ...GOAL_FIXTURE, id: "g-2", sortOrder: 2 },
+        ],
+      })
+      .mockResolvedValueOnce({ updateTripPlanGoal: { ...GOAL_FIXTURE, id: "g-2", sortOrder: 1 } })
+      .mockRejectedValueOnce(new Error("server boom"));
+    await runGoals(["goal-reorder", "plan-1", "--order", "g-2,g-1"]);
+    const text = logText();
+    expect(text).toMatch(/Partial reorder/);
+    expect(text).toMatch(/g-1: server boom/);
+  });
+
+  it("wraps a non-CliError list failure as API_ERROR", async () => {
+    mockGraphql.mockRejectedValueOnce(new Error("reorder boom"));
+    await expect(
+      runGoals(["goal-reorder", "plan-1", "--order", "g-1,g-2"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.API_ERROR });
   });
 });
