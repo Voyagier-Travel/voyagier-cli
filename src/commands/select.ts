@@ -171,7 +171,7 @@ export function registerSelectCommands(program: Command): void {
               parentOptionId: result.parentOptionId ?? null,
             });
           } else if (opts.agent) {
-            process.stdout.write(`✅ **Selected** (${forScope})**:** ${name}\n`);
+            process.stdout.write(`✅ **Selected (${forScope}):** ${name}\n`);
           } else {
             console.log(chalk.green(`✓ Selected ${forScope}: ${name}`));
           }

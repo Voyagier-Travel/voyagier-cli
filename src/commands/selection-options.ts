@@ -43,16 +43,23 @@ interface RawSelection {
 
 /**
  * The participant-choice model (VOY-1692): a selection is "chosen" per
- * traveller. Consensus = every assigned traveller picked the same option.
- * Falls back to the legacy parentOptionId when no choices exist.
+ * traveller. Consensus requires EVERY travellerOptionChoices entry to carry a
+ * pick AND all picks to match — a partial pick (some travellers still
+ * undecided) is NOT consensus. Falls back to the legacy parentOptionId when
+ * no choice entries exist at all.
  */
-function deriveChosen(raw: RawSelection): { chosenOptionId: string | null; consensus: boolean } {
-  const choices = (raw.travellerOptionChoices ?? []).filter((c) => c.selectedOption?.id);
-  if (choices.length === 0) {
+export function deriveChosen(raw: Pick<RawSelection, "travellerOptionChoices" | "parentOptionId">): {
+  chosenOptionId: string | null;
+  consensus: boolean;
+} {
+  const entries = raw.travellerOptionChoices ?? [];
+  if (entries.length === 0) {
     return { chosenOptionId: raw.parentOptionId ?? null, consensus: raw.parentOptionId != null };
   }
-  const ids = [...new Set(choices.map((c) => c.selectedOption!.id))];
-  return { chosenOptionId: ids.length === 1 ? ids[0] : null, consensus: ids.length === 1 };
+  const allPicked = entries.every((c) => c.selectedOption?.id);
+  const ids = [...new Set(entries.filter((c) => c.selectedOption?.id).map((c) => c.selectedOption!.id))];
+  const consensus = allPicked && ids.length === 1;
+  return { chosenOptionId: consensus ? ids[0] : null, consensus };
 }
 
 interface RawMonitor {
@@ -190,8 +197,9 @@ export function registerSelectionOptionsCommands(program: Command): void {
             ...(result.staleWarning ? { staleWarning: true } : {}),
             blueprintMonitorId: raw.blueprintMonitorId ?? null,
             chosenOptionId,
-            // Per-traveller picks (participant-choice model). consensus=false with
-            // a null chosenOptionId means travellers picked DIFFERENT options.
+            // Per-traveller picks (participant-choice model). consensus=false
+            // means travellers picked different options OR some have not picked
+            // yet — inspect travellerChoices to tell which.
             consensus,
             ...(travellerChoices.length > 0 ? { travellerChoices } : {}),
             options: sortedOptions.map((o) => ({
@@ -229,9 +237,13 @@ export function registerSelectionOptionsCommands(program: Command): void {
           }
         }
         if (travellerChoices.length > 0 && !consensus) {
-          console.log(chalk.yellow(`\n  Travellers have picked DIFFERENT options:`));
+          const distinct = new Set(travellerChoices.filter((c) => c.optionId).map((c) => c.optionId));
+          const label = distinct.size > 1
+            ? "Travellers have picked DIFFERENT options:"
+            : "Not all travellers have picked yet:";
+          console.log(chalk.yellow(`\n  ${label}`));
           for (const c of travellerChoices) {
-            console.log(chalk.dim(`    ${c.travellerName ?? c.travellerId}: ${c.optionId ?? "—"}`));
+            console.log(chalk.dim(`    ${c.travellerName ?? c.travellerId}: ${c.optionId ?? "— (no pick)"}`));
           }
         }
         console.log();
