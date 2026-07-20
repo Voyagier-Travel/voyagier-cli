@@ -199,7 +199,7 @@ Examples:
         if (opts.to && opts.depart) {
           const fromPart = opts.from ? `--from ${shellArg(opts.from)} ` : "";
           nextSteps.push(
-            `voyagier search flights --plan ${plan.id} ${fromPart}--to ${shellArg(opts.to)} --date ${shellArg(opts.depart)}${opts.return ? ` --return ${shellArg(opts.return)}` : ""} --json`,
+            `voyagier search flights --plan ${shellArg(plan.id)} ${fromPart}--to ${shellArg(opts.to)} --date ${shellArg(opts.depart)}${opts.return ? ` --return ${shellArg(opts.return)}` : ""} --json`,
           );
         }
         if (opts.hotel) {
@@ -212,10 +212,10 @@ Examples:
           const ci = checkin || "<checkin YYYY-MM-DD>";
           const co = checkout || "<checkout YYYY-MM-DD>";
           nextSteps.push(
-            `voyagier search hotels --plan ${plan.id} --location ${shellArg(opts.hotel)} --checkin ${shellArg(ci)} --checkout ${shellArg(co)} --json`,
+            `voyagier search hotels --plan ${shellArg(plan.id)} --location ${shellArg(opts.hotel)} --checkin ${shellArg(ci)} --checkout ${shellArg(co)} --json`,
           );
         }
-        nextSteps.push(`voyagier plans goals ${plan.id} --json   # inspect the goal graph + readiness`);
+        nextSteps.push(`voyagier plans goals ${shellArg(plan.id)} --json   # inspect the goal graph + readiness`);
         nextSteps.push(`voyagier selection-options <selectionId> --wait --json   # poll options for a selection`);
         nextSteps.push(`voyagier select --selection-id <id> --option-id <id>   # choose an option`);
 

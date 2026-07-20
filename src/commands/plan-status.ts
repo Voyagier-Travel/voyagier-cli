@@ -33,7 +33,7 @@ import { graphql } from "../api.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
-import { deriveBaseUrl, formatPrice } from "../utils.js";
+import { deriveBaseUrl, formatPrice, shellArg } from "../utils.js";
 import { GET_PLAN_STATUS } from "../queries.js";
 import { classifySelection } from "../selection-status.js";
 import {
@@ -445,6 +445,9 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
   }
 
   // nextSteps: one runnable command per blocker/wait (deduped), then terminal.
+  // SECURITY (VOY-1709): every server-provided id interpolated here goes
+  // through shellArg() — nextSteps are documented as directly runnable, so a
+  // hostile/corrupted id must never smuggle shell metacharacters into them.
   const nextSteps: string[] = [];
   const push = (cmd: string) => {
     if (!nextSteps.includes(cmd)) nextSteps.push(cmd);
@@ -463,30 +466,30 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
             ? "--passport-number <number> --passport-country <code> --passport-expiry <YYYY-MM>"
             : null,
         ].filter(Boolean);
-        push(`voyagier travellers update ${b.refs.travellerId} ${flags.join(" ")}`);
+        push(`voyagier travellers update ${shellArg(b.refs.travellerId)} ${flags.join(" ")}`);
         break;
       }
       case "SELECTION_INPUT":
-        push(`voyagier plans goal ${b.refs.goalId} --json   # inspect the blocking requirements`);
+        push(`voyagier plans goal ${shellArg(b.refs.goalId)} --json   # inspect the blocking requirements`);
         break;
       case "PICK_PENDING":
-        push(`voyagier selection-options ${b.refs.selectionId} --json   # list options`);
-        push(`voyagier select --selection-id ${b.refs.selectionId} --option-id <optionId>`);
+        push(`voyagier selection-options ${shellArg(b.refs.selectionId)} --json   # list options`);
+        push(`voyagier select --selection-id ${shellArg(b.refs.selectionId)} --option-id <optionId>`);
         break;
       case "REQUIREMENT_UNMET":
-        push(`voyagier plans goal ${b.refs.goalId} --json   # inspect the blocking requirements`);
+        push(`voyagier plans goal ${shellArg(b.refs.goalId)} --json   # inspect the blocking requirements`);
         break;
     }
   }
   for (const w of waiting) {
     if (w.kind === "OPTIONS_PENDING" && w.refs.selectionId) {
-      push(`voyagier selection-options ${w.refs.selectionId} --wait --json`);
+      push(`voyagier selection-options ${shellArg(w.refs.selectionId)} --wait --json`);
     } else if (w.kind === "CART_PENDING") {
-      push(`voyagier cart ${plan.id} --json   # re-check the cart`);
+      push(`voyagier cart ${shellArg(plan.id)} --json   # re-check the cart`);
     }
   }
   if (readiness === "READY_TO_BOOK") {
-    push(`voyagier book ${plan.id} --dry-run`);
+    push(`voyagier book ${shellArg(plan.id)} --dry-run`);
   }
 
   return {
