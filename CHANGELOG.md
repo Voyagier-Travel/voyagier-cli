@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Fixed
+- **`plan-status` suppresses alternate-branch picks (VOY-1718):** the goal graph pre-creates a decision chain for every candidate parent option, so after a hotel/flight pick the sibling chains (rooms/rates under hotels you didn't choose, extra mirrors of the one you did) were each emitting a phantom `PICK_PENDING`. `plan-status` now groups Single-mode selections by type within a goal; once one is complete (or a bookable cart item joins to it), the incomplete siblings are classified `branch: "alternate" | "deadBranch"` and their picks are suppressed. A group with no settled member and ≥2 pending siblings collapses into ONE aggregated `PICK_PENDING` carrying `candidateSelectionIds[]` (pick the parent first). A `REQUIREMENT_UNMET` pointing at a suppressed branch is kept but downgraded to `unverified`. On a real fully-composed plan this cut blockers from 17 to a handful of genuine ones.
+
+### Added
+- **`plan-status` additive contract fields (VOY-1718):** selection rows gain `branch` (`"active" | "alternate" | "deadBranch"`); each goal and `summary` gain `alternateBranchCount`; aggregated `PICK_PENDING` blockers gain `candidateSelectionIds[]`. `GET_PLAN_STATUS` now selects `mirrorListSelectionId` per selection (used to tell a same-list alternate from a dead branch).
+
+### Changed
+- **Decision-chain docs (VOY-1718):** AGENT.md adds a "Decision chains" section (decision → list → decision → bookable leaf; alternates are suppressed; baselines auto-fill; pick the parent first) and documents the new plan-status fields; README's "What's Bookable" table now shows hotels as bookable via the auto-carted room-rate. Both note that live-rate cart items may report `source: "OTHER"` (normal, not an error).
+- **Post-pick chain guidance (VOY-1718):** `select`'s flight/hotel hints and `--agent`/`--json` output now point at the next link in the chain — after a hotel pick the room decision (baseline rate auto-carts); after the flight leg(s) the Fare & Cabin (FlightClass) pick, chosen in the CLI (defaults to Economy) — seat selection and cabin upgrades remain with the airline after booking. `--json` gains an additive `chainNote`.
+
 ## [2.6.0] — 2026-07-21
 
 ### Changed

@@ -60,10 +60,10 @@ voyagier book <PLAN_ID> --validate --expect-total <subtotal> --json  # strict: a
 | Selection | Bookable? | Source |
 |-----------|-----------|--------|
 | Activity | ✅ per slot | Activity supplier |
-| Hotel | ⚠️ partial | Accommodation supplier / advisor inventory (checkout coverage incomplete) |
+| Hotel | ✅ via room-rate item | Accommodation supplier / advisor inventory (pick hotel → pick room; baseline rate auto-carted; rate-less listings stay display-only) |
 | Flight | ✅ via Fare & Cabin item | Air supplier / GDS (fare-level item carted once all legs are picked; defaults to Economy) |
 
-The cart materializes only bookable, fare/room-level options — the per-item `isBookable` flag is the live truth. Always run `voyagier book <planId> --dry-run` first for pre-flight checks (blockers + chargeable subtotal, no gate needed); `--validate` is a strictness modifier on the real booking that aborts if any item is non-bookable. A real checkout requires a **price gate** (`--expect-total` or `--max-total`) against the chargeable subtotal, and the checkout is always pinned to that gated set via `itemIds` — `--types` / `--only-bookable` narrow it server-side. Note: unpaid (Pending) checkout sessions are not visible to the CLI, so never retry a successful `book`.
+The cart materializes only bookable, fare/room-level options — the per-item `isBookable` flag is the live truth. Always run `voyagier book <planId> --dry-run` first for pre-flight checks (blockers + chargeable subtotal, no gate needed); `--validate` is a strictness modifier on the real booking that aborts if any item is non-bookable. A real checkout requires a **price gate** (`--expect-total` or `--max-total`) against the chargeable subtotal, and the checkout is always pinned to that gated set via `itemIds` — `--types` / `--only-bookable` narrow it server-side. Note: unpaid (Pending) checkout sessions are not visible to the CLI, so never retry a successful `book`. Cart items sourced from live-rate suppliers may report `source: "OTHER"` — that's normal, not an error.
 
 ## Commands
 

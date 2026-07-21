@@ -14,7 +14,7 @@ A trip plan is a **goal graph**. When you create a plan it ships with a default 
 - **Selecting** is done by selection + option ID: `voyagier select --selection-id <id> --option-id <id>`.
 - **`plan-trip` is a scaffold.** It creates the plan + default goal graph (and adds travellers only when you pass `--travellers`), then prints the compose next-steps. It does not search or select for you.
 - **`plans goals <planId>`** is your readiness view — it shows the goal graph and what still needs a decision.
-- **Multi-source bookability.** The cart materializes only BOOKABLE options (fare/room-level items — e.g. a Fare & Cabin item for flights, generated once all legs are picked). Activities are bookable per slot. Hotels (advisor inventory) are searchable; checkout coverage is partial. Check the cart's per-item `isBookable` (or `plan-status`'s `cart.bookableCount`) — don't assume by type.
+- **Multi-source bookability.** The cart materializes only BOOKABLE options (fare/room-level items — e.g. a Fare & Cabin item for flights, generated once all legs are picked; a baseline room-rate for hotels, generated once a room is picked). Activities are bookable per slot. Every vertical is a [decision chain](#decision-chains): the bookable item is the leaf, never the parent. Check the cart's per-item `isBookable` (or `plan-status`'s `cart.bookableCount`) — don't assume by type. Cart items from live-rate suppliers may report `source: "OTHER"` — that's normal, not an error.
 - **Computed itinerary.** `voyagier itinerary <planId>` reads the platform's `tripPlanEvents` resolver.
 - **Advisor CRM.** `voyagier clients` manages clients; a plan requires a `clientId`.
 - **Self-check.** `voyagier doctor` verifies auth, schema reachability, state, and version.
@@ -22,6 +22,19 @@ A trip plan is a **goal graph**. When you create a plan it ships with a default 
 > **Note on `--json` shapes:** the envelope is not uniform across every command. Newer surfaces (cart, book, bookable, itinerary, listings, places) emit `{ ok: true, data, planContext? }`; older surfaces (clients, plans, search, select) emit domain-specific shapes documented per-command below. When in doubt, pipe `--json` through `jq keys`.
 >
 > **Note on `book`:** a real checkout REQUIRES a price gate — `--expect-total <amt>` (exact) or `--max-total <amt>` (cap) — checked against the **chargeable subtotal** (bookable items only). Run `book --dry-run` first to get it. The checkout is always pinned to the gated set via `itemIds`; `--types` and `--only-bookable` narrow it server-side.
+
+---
+
+## Decision chains
+
+Every vertical is a **chain**, not a single pick: `decision → child list(s) → child decision(s) → bookable leaf`. For flights: `Flight → FlightJourney → FlightClass`. For hotels: `Hotel → HotelRoomList → HotelRoom → HotelRoomRate`. Only the **leaf** (FlightClass, HotelRoomRate) carries `isBookable: true`; parents are `isBookable: false` **by design**. Never conclude "not bookable" from a parent selection — walk to the leaf (or just read the cart).
+
+- **Chains are pre-created for EVERY candidate parent option.** Pick one hotel and the graph still holds room/rate chains for the *other* hotels — those are dead branches. After a pick, sibling chains are **alternates**. `plan-status` suppresses their pending picks: suppressed selections carry `branch: "alternate"` (same list as your pick — a legit extra mirror) or `branch: "deadBranch"` (under a parent you didn't choose), and the count rolls up as `alternateBranchCount` (per goal and in `summary`). **Do not chase picks on selections under a parent you didn't choose** — they will never be blockers.
+- **Baselines auto-fill downward.** Picking a room auto-selects the baseline HotelRoomRate; the flight cabin defaults to Economy. So a completed vertical is usually **one pick per level**, and the truth of "is it carted?" is the **cart** (`cart.bookableCount`, per-item `isBookable`) — not a hunt through sibling selections.
+- **Aggregated PICK_PENDING.** When a parent hasn't been picked yet and ≥2 sibling candidates are pending, `plan-status` emits ONE aggregated `PICK_PENDING` carrying `candidateSelectionIds[]` instead of N noisy ones. **Pick the PARENT decision first** (e.g. the Hotel), then re-run `plan-status` — the chain below it resolves and the aggregate collapses.
+- **A REQUIREMENT_UNMET that points at a suppressed branch** is kept but marked `unverified: true` (a sibling chain is already complete). Treat it like any unverified blocker: `voyagier book <planId> --dry-run --json` is the checkout truth and wins on contradiction.
+- **`select --wait`** returns the next link — the pick's plan-status snapshot (blockers + nextSteps with real ids). It's the preferred compose loop: pick → read the returned nextSteps → pick the next link.
+- **`book --dry-run` remains the checkout truth** on any contradiction between suppression, requirements, and what's actually chargeable.
 
 ---
 
@@ -388,10 +401,10 @@ voyagier plan-status <planId> [--json|--agent]
 ONE call answering "what's left before this plan can book?" — replaces the plans-goals + N× selection-options + travellers + cart stitch. The JSON contract:
 
 - `readiness` — switch on it: `BOOKED` | `READY_TO_BOOK` | `BLOCKED` (system is waiting on YOU — act) | `IN_PROGRESS` (system is waiting on ITSELF — poll, don't act)
-- `blockers[]` — your to-do list, ordered. Kinds: `TRAVELLER_DATA`, `SELECTION_INPUT`, `PICK_PENDING`, `REQUIREMENT_UNMET`. Each has `message` + `refs` (travellerId/selectionId/goalId). A `REQUIREMENT_UNMET` blocker may carry `unverified: true` — the server reported the requirement without referencing any selection, so the CLI cannot confirm it (e.g. "Cabin class" can stay reported-unmet even after the fare is picked/defaulted). **Tie-breaker rule: `plan-status` measures plan completeness; `voyagier book <planId> --dry-run --json` is the checkout truth. When they disagree — e.g. readiness `BLOCKED` on only-unverified blockers but dry-run reports `blockers: []` — trust the dry-run and proceed.**
+- `blockers[]` — your to-do list, ordered. Kinds: `TRAVELLER_DATA`, `SELECTION_INPUT`, `PICK_PENDING`, `REQUIREMENT_UNMET`. Each has `message` + `refs` (travellerId/selectionId/goalId). A `PICK_PENDING` may be **aggregated** — one blocker standing in for a whole group of sibling candidate selections whose parent hasn't been picked yet — in which case it carries `candidateSelectionIds[]` (pick the parent decision first, then re-run). A `REQUIREMENT_UNMET` blocker may carry `unverified: true` — either the server referenced no selection (e.g. "Cabin class" can stay reported-unmet even after the fare is picked/defaulted), OR it points at a suppressed alternate branch whose sibling chain is already complete (message: "references an alternate branch"). **Tie-breaker rule: `plan-status` measures plan completeness; `voyagier book <planId> --dry-run --json` is the checkout truth. When they disagree — e.g. readiness `BLOCKED` on only-unverified blockers but dry-run reports `blockers: []` — trust the dry-run and proceed.**
 - `waiting[]` — self-resolving waits (`OPTIONS_PENDING`, `CART_PENDING`), separate from blockers because acting won't help.
 - `nextSteps[]` — runnable commands mapping onto blockers, ending with the terminal command when ready.
-- `goals[].selections[]` — per-selection detail: `status`, `mode` (only `Single` selections are picked; `List` ones are mirror sources), `isComplete` (server truth), `chosenOptionId/Name`, `consensus`, `allPicked` (divergent per-traveller picks are valid), `travellersPending`, `blockedOn`.
+- `goals[].selections[]` — per-selection detail: `status`, `mode` (only `Single` selections are picked; `List` ones are mirror sources), `isComplete` (server truth), `chosenOptionId/Name`, `consensus`, `allPicked` (divergent per-traveller picks are valid), `travellersPending`, `blockedOn`, and `branch` (`"active"` | `"alternate"` | `"deadBranch"` — see [Decision chains](#decision-chains); alternates/dead branches never produce a pick blocker). Each goal and the top-level `summary` also carry `alternateBranchCount` (suppressed sibling picks).
 - `travellers[].missing` — checkout-relevant gaps: `gender`, `dateOfBirth`, and `passport` (passport only when a cart item reports `requiresPassport`, i.e. the itinerary is international — server-decided, fails closed).
 - `cart` — `{ itemCount, bookableCount, total, currency }`. `READY_TO_BOOK` requires `bookableCount ≥ 1` (cart items joined against option bookability); items in the cart that don't resolve to a bookable option keep the plan at `IN_PROGRESS`/`CART_PENDING`, never a false ready.
 - `BOOKED` is terminal: `blockers`, `waiting`, and `nextSteps` are always empty — no contradictory advice next to a done verdict.
@@ -431,6 +444,7 @@ voyagier select <n> --plan <id> --json
 voyagier cart <planId> --json
 # Returns: { ok, data: { items, blockers, summary }, planContext }
 ```
+Per-item `source` may read `"OTHER"` for live-rate suppliers (common for hotel room-rates) — that's a normal source tag, not an error; branch on `isBookable`, not `source`.
 
 ### Two ways to close (quote / send / book)
 
@@ -536,7 +550,7 @@ voyagier agent-docs                   # prints this file
 | Selection | Bookable? | Source | Notes |
 |---|---|---|---|
 | Activity | ✅ per slot | Activity supplier | Pre-check via cart `isBookable` flag. |
-| Hotel | ⚠️ partial | Accommodation supplier (advisor inventory) | Search/watch works. Checkout coverage is incomplete. |
+| Hotel | ✅ via room-rate item | Accommodation supplier (advisor inventory) | Pick hotel → pick room; the baseline HotelRoomRate is auto-carted (`isBookable: true`). The parent Hotel/room picks are never carted. Rate-less listings stay display-only. |
 | Flight | ✅ via Fare & Cabin item | Air supplier (GDS) | The cart materializes a fare-level (FlightClass) item once ALL legs are picked — defaults to Economy (`isBookable: true`). The parent Flight pick itself is never carted. |
 | Ride | ❌ | — | Selection type exists; no booking source wired. |
 | Restaurant | ❌ | — | Selection type exists; booking path unclear. |
