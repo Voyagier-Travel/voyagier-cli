@@ -410,13 +410,14 @@ voyagier cart <planId> --json
 
 ```bash
 voyagier book <planId> --dry-run --json                       # preview: chargeableSubtotal, blockers, existing checkouts, nextStep; no gate needed
+voyagier book <planId> --dry-run --expect-total 339.10 --json # + gate verdict: data.gate.{wouldPass,failReason} — pre-verify without risking PRICE_CHANGED
 voyagier book <planId> --expect-total 339.10 --json           # REQUIRED gate: create checkout only at exactly this chargeable subtotal (cents-compared)
 voyagier book <planId> --max-total 400 --json                 # alternative gate: create checkout only if chargeable ≤ cap (both flags → both enforced)
 voyagier book <planId> --validate --expect-total 339.10 --json  # additionally fail on any non-bookable line (BOOKING_BLOCKED)
 voyagier book <planId> --types Activity,Hotel --expect-total <amt> --json  # server-side filter via itemIds; charges exactly the narrowed set
 voyagier book <planId> --only-bookable --expect-total <amt> --json         # server-side filter to bookable items
 voyagier book <planId> --expect-total <amt> --rebook --json       # proceed even though a Paid checkout already exists
-voyagier book <planId> --status --json                        # post-payment confirmation lookup
+voyagier book <planId> --status --json                        # post-payment confirmation lookup; bookingRecords[].amountCents is raw CENTS
 ```
 
 > 🔒 **Price hard-gate.** `book` mints a Stripe URL a human will pay; the gate checks that URL's contents against a **point-in-time snapshot** of the cart. Without `--expect-total`/`--max-total` the command refuses (`VALIDATION`). The gate compares against `chargeableSubtotal` (bookable items only — NOT the display `subtotal`, which can include non-bookable lines). On mismatch you get `PRICE_CHANGED` with `details.{expectedTotal,maxTotal,actualTotal,items}` and **no checkout is created**. Known limits: the checkout pins *items* (`itemIds`), not prices — a server-side price change in the moment between the cart read and checkout creation is not caught; and Voyagier adds a travel fee at checkout, so Stripe shows a higher final total than the gated subtotal.

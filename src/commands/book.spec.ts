@@ -364,6 +364,76 @@ describe("--dry-run", () => {
     expect(out.ok).toBe(true);
     expect(out.data.existingCheckouts).toBeNull();
   });
+
+  it("agent mode says could-not-verify (not zero) when the checkout query fails", async () => {
+    mockGraphql.mockImplementation(async (query: string) => {
+      if (query.includes("TripPlanPaymentCheckouts")) throw new Error("upstream 502");
+      if (query.includes("cart")) return cartFixture();
+      throw new Error("unrouted");
+    });
+    await runBook(["plan-1", "--dry-run", "--agent"]);
+    expect(writes.join("")).toContain("Could not verify existing checkouts");
+  });
+
+  it("reports no gate verdict when no gate flags are supplied (data.gate null)", async () => {
+    routeGraphql();
+    await runBook(["plan-1", "--dry-run", "--json"]);
+    expect(lastJson().data.gate).toBeNull();
+  });
+
+  it("gate verdict: --expect-total matching → wouldPass true, no failReason", async () => {
+    routeGraphql();
+    await runBook(["plan-1", "--dry-run", "--expect-total", "339.10", "--json"]);
+    const gate = lastJson().data.gate;
+    expect(gate.wouldPass).toBe(true);
+    expect(gate.failReason).toBeNull();
+    expect(createVars()).toBeUndefined(); // verdict only — dry-run never mints
+  });
+
+  it("gate verdict: --expect-total mismatch → wouldPass false with failReason; still ok:true, no PRICE_CHANGED", async () => {
+    routeGraphql();
+    await runBook(["plan-1", "--dry-run", "--expect-total", "1.00", "--json"]);
+    const out = lastJson();
+    expect(out.ok).toBe(true);
+    expect(out.data.gate.wouldPass).toBe(false);
+    expect(out.data.gate.failReason).toContain("--expect-total");
+    expect(createVars()).toBeUndefined();
+  });
+
+  it("gate verdict: --max-total below chargeable → wouldPass false with exceeds reason", async () => {
+    routeGraphql();
+    await runBook(["plan-1", "--dry-run", "--max-total", "100", "--json"]);
+    const gate = lastJson().data.gate;
+    expect(gate.wouldPass).toBe(false);
+    expect(gate.failReason).toContain("exceeds");
+  });
+
+  it("nextStep recipe is self-consistent: the emitted command passes its own gate (half-cent subtotal)", async () => {
+    // 100.005 has no exact float representation — the class of value where a
+    // raw toFixed(2) recipe and the rounded-cents gate can disagree.
+    const cart = cartFixture();
+    (cart.tripPlan.cart.items[0] as { price: number }).price = 100.005;
+    routeGraphql({ cart });
+    await runBook(["plan-1", "--dry-run", "--json"]);
+    const nextStep: string = lastJson().data.nextStep;
+    const expectTotal = /--expect-total (\S+)/.exec(nextStep)![1];
+    writes.length = 0;
+    routeGraphql({ cart });
+    await runBook(["plan-1", "--expect-total", expectTotal, "--json"]); // must NOT throw PRICE_CHANGED
+    expect(createVars()).toBeDefined();
+  });
+});
+
+// ── book --status ──────────────────────────────────────────────────────────────────────
+
+describe("book --status", () => {
+  it("--json renames bookingRecords[].amount → amountCents (one name per unit on machine surfaces)", async () => {
+    routeGraphql({ checkouts: PAID_CHECKOUT });
+    await runBook(["plan-1", "--status", "--json"]);
+    const records = lastJson().data.checkouts[0].bookingRecords;
+    expect(records[0].amountCents).toBe(33910);
+    expect(records[0]).not.toHaveProperty("amount");
+  });
 });
 
 // ── parseMoney unit coverage ────────────────────────────────────────────────

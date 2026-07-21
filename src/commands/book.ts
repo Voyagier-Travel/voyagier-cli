@@ -260,7 +260,18 @@ export function registerBookCommands(program: Command): void {
       const filterFlags =
         (typeFilter.length > 0 ? ` --types ${shellArg(typeFilter.join(","))}` : "") +
         (opts.onlyBookable ? " --only-bookable" : "");
-      const nextStepCmd = `voyagier book ${shellArg(plan.id)}${filterFlags} --expect-total ${chargeableSubtotal.toFixed(2)}`;
+      // The recipe amount MUST come from the same rounded-cents value the gate
+      // compares (not toFixed on the raw float): on a genuine half-cent
+      // subtotal, toFixed can round the other way and emit a recipe that fails
+      // its own gate.
+      const cents = (n: number): number => Math.round(n * 100);
+      const gateAmount = (cents(chargeableSubtotal) / 100).toFixed(2);
+      const nextStepCmd = `voyagier book ${shellArg(plan.id)}${filterFlags} --expect-total ${gateAmount}`;
+
+      // Gate verdict, evaluated once for BOTH dry-run reporting and the real
+      // gate below (single source of truth — dry-run can never disagree).
+      const expectFails = expectTotal !== null && cents(chargeableSubtotal) !== cents(expectTotal);
+      const maxFails = maxTotal !== null && cents(chargeableSubtotal) > cents(maxTotal);
 
       // --dry-run
       if (opts.dryRun) {
@@ -274,6 +285,15 @@ export function registerBookCommands(program: Command): void {
         } catch {
           existingCheckouts = null; // surfaced as unknown below
         }
+        // Verdict on any supplied gate flags — dry-run doesn't REQUIRE a gate,
+        // but when one is given the caller deserves to know if it would pass.
+        const gateSupplied = expectTotal !== null || maxTotal !== null;
+        const gateWouldPass = gateSupplied ? !expectFails && !maxFails : null;
+        const gateFailReason = expectFails
+          ? `--expect-total ${expectTotal!.toFixed(2)} ≠ chargeable ${gateAmount}`
+          : maxFails
+            ? `chargeable ${gateAmount} exceeds --max-total ${maxTotal!.toFixed(2)}`
+            : null;
         if (opts.json) {
           process.stdout.write(JSON.stringify({
             ok: true,
@@ -287,6 +307,9 @@ export function registerBookCommands(program: Command): void {
               currency: cart.currency,
               blockers,
               existingCheckouts,
+              gate: gateSupplied
+                ? { expectedTotal: expectTotal, maxTotal, wouldPass: gateWouldPass, failReason: gateFailReason }
+                : null,
               filters: { types: typeFilter, onlyBookable: Boolean(opts.onlyBookable) },
               note: "Travel fee added at checkout",
               message: "Would create Stripe Checkout Session",
@@ -314,9 +337,16 @@ export function registerBookCommands(program: Command): void {
             lines.push(`⚠️ ${blockers.length} blocker${blockers.length === 1 ? "" : "s"} — won't be charged:`);
             for (const b of blockers) lines.push(`- ${b.itemName} — ${b.reason}`);
           }
-          if (existingCheckouts && existingCheckouts.paid > 0) {
+          if (existingCheckouts === null) {
+            lines.push("");
+            lines.push(`⚠️ Could not verify existing checkouts (query failed) — check \`voyagier book ${shellArg(plan.id)} --status\` before booking.`);
+          } else if (existingCheckouts.paid > 0) {
             lines.push("");
             lines.push(`⚠️ Existing checkouts: ${existingCheckouts.paid} paid. Check: \`voyagier book ${shellArg(plan.id)} --status\``);
+          }
+          if (gateWouldPass !== null) {
+            lines.push("");
+            lines.push(gateWouldPass ? "✅ **Gate check:** supplied gate would PASS at the current price." : `❌ **Gate check:** would FAIL — ${gateFailReason}.`);
           }
           lines.push("");
           lines.push("_(Travel fee added at checkout — Stripe shows final total.)_");
@@ -341,8 +371,13 @@ export function registerBookCommands(program: Command): void {
           console.log("\n  " + chalk.yellow(`${blockers.length} non-bookable item${blockers.length === 1 ? "" : "s"} (won't be charged):`));
           for (const b of blockers) console.log(chalk.yellow(`    • ${b.itemName} — ${b.reason}`));
         }
-        if (existingCheckouts && existingCheckouts.paid > 0) {
+        if (existingCheckouts === null) {
+          console.log("\n  " + chalk.yellow(`⚠ Could not verify existing checkouts (query failed) — run: voyagier book ${shellArg(plan.id)} --status`));
+        } else if (existingCheckouts.paid > 0) {
           console.log("\n  " + chalk.yellow(`⚠ Existing checkouts: ${existingCheckouts.paid} paid — voyagier book ${shellArg(plan.id)} --status`));
+        }
+        if (gateWouldPass !== null) {
+          console.log("\n  " + (gateWouldPass ? chalk.green("✓ Gate check: supplied gate would pass at the current price") : chalk.red(`✗ Gate check: would fail — ${gateFailReason}`)));
         }
         console.log(hintDryRun());
         console.log(chalk.dim(`\n  [dry-run] Would create Stripe Checkout Session`));
@@ -382,7 +417,7 @@ export function registerBookCommands(program: Command): void {
       }
 
       // --- Price hard-gate against the chargeable subtotal ---
-      const cents = (n: number): number => Math.round(n * 100);
+      // expectFails/maxFails computed above (shared with the dry-run verdict).
       const gateDetails = {
         expectedTotal: expectTotal,
         maxTotal,
@@ -390,18 +425,18 @@ export function registerBookCommands(program: Command): void {
         currency: cart.currency,
         items: bookableInSet.map((i) => ({ name: i.name, type: i.type, price: i.price })),
       };
-      if (expectTotal !== null && cents(chargeableSubtotal) !== cents(expectTotal)) {
+      if (expectFails) {
         throw new CliError(
           CliErrorCode.PRICE_CHANGED,
-          `Chargeable subtotal is ${formatPrice(chargeableSubtotal)} but --expect-total was ${formatPrice(expectTotal)} — not creating checkout.\n` +
+          `Chargeable subtotal is ${formatPrice(chargeableSubtotal)} but --expect-total was ${formatPrice(expectTotal!)} — not creating checkout.\n` +
             `Review the cart (voyagier book ${planIdArg} --dry-run), then re-run with the current total if it's acceptable.`,
           gateDetails,
         );
       }
-      if (maxTotal !== null && cents(chargeableSubtotal) > cents(maxTotal)) {
+      if (maxFails) {
         throw new CliError(
           CliErrorCode.PRICE_CHANGED,
-          `Chargeable subtotal ${formatPrice(chargeableSubtotal)} exceeds --max-total ${formatPrice(maxTotal)} — not creating checkout.`,
+          `Chargeable subtotal ${formatPrice(chargeableSubtotal)} exceeds --max-total ${formatPrice(maxTotal!)} — not creating checkout.`,
           gateDetails,
         );
       }
@@ -517,9 +552,18 @@ async function showBookingStatus(planId: string, baseUrl: string, json: boolean,
   const planUrl = `${baseUrl}/plans/${planId}`;
 
   if (json) {
+    // Machine surface: rename bookingRecords[].amount → amountCents. The API
+    // stores integer cents (nest-api booking-record.entity.ts) but exposes an
+    // undocumented Float named `amount` — the dollar-looking name caused a
+    // 100× display bug (VOY-1706) and ALREADY_BOOKED.details already says
+    // amountCents. One name per unit across every CLI machine surface.
+    const renamed = checkouts.map((c) => ({
+      ...c,
+      bookingRecords: c.bookingRecords.map(({ amount, ...rest }) => ({ ...rest, amountCents: amount })),
+    }));
     process.stdout.write(JSON.stringify({
       ok: true,
-      data: { checkouts },
+      data: { checkouts: renamed },
       planContext: { planId, url: planUrl, urlForCli: `voyagier plans get ${planId}` },
     }, null, 2) + "\n");
     return;
