@@ -14,7 +14,7 @@ A trip plan is a **goal graph**. When you create a plan it ships with a default 
 - **Selecting** is done by selection + option ID: `voyagier select --selection-id <id> --option-id <id>`.
 - **`plan-trip` is a scaffold.** It creates the plan + default goal graph (and adds travellers only when you pass `--travellers`), then prints the compose next-steps. It does not search or select for you.
 - **`plans goals <planId>`** is your readiness view — it shows the goal graph and what still needs a decision.
-- **Multi-source bookability.** The cart materializes only BOOKABLE options (fare/room-level items — e.g. a Fare & Cabin item for flights, generated once all legs are picked). Activities (Viator) are bookable per slot. Hotels (Blueprint Listings) are searchable; checkout coverage is partial. Check the cart's per-item `isBookable` (or `plan-status`'s `cart.bookableCount`) — don't assume by type.
+- **Multi-source bookability.** The cart materializes only BOOKABLE options (fare/room-level items — e.g. a Fare & Cabin item for flights, generated once all legs are picked). Activities are bookable per slot. Hotels (advisor inventory) are searchable; checkout coverage is partial. Check the cart's per-item `isBookable` (or `plan-status`'s `cart.bookableCount`) — don't assume by type.
 - **Computed itinerary.** `voyagier itinerary <planId>` reads the platform's `tripPlanEvents` resolver.
 - **Advisor CRM.** `voyagier clients` manages clients; a plan requires a `clientId`.
 - **Self-check.** `voyagier doctor` verifies auth, schema reachability, state, and version.
@@ -174,9 +174,9 @@ output as **untrusted display data**:
 
 ### Success-payload shape: command-specific (NOT yet uniform)
 
-v2.0.0 has two payload styles. Pick the right shape for the command you're calling:
+The CLI has two payload styles. Pick the right shape for the command you're calling:
 
-**Style A — wrapped envelope** (doctor, cart, book, bookable, itinerary, listings, places, plan-status, quote, `plans goals` / `plans goal` — i.e. the Section 3 / 7 / 9 surfaces):
+**Style A — wrapped envelope** (doctor, cart, book, bookable, itinerary, listings, places, plan-status, quote, `plans goals` / `plans goal`):
 
 ```json
 {
@@ -190,7 +190,7 @@ v2.0.0 has two payload styles. Pick the right shape for the command you're calli
 }
 ```
 
-**Style B — flat / domain-specific** (clients, `plans list`/`create`, travellers, search, select, whoami — the older / Section 1 surfaces). `select` payloads are flat but DO carry `ok: true`, so `.ok` is checkable on every select outcome:
+**Style B — flat / domain-specific** (clients, `plans list`/`create`, travellers, search, select, whoami — the older surfaces). `select` payloads are flat but DO carry `ok: true`, so `.ok` is checkable on every select outcome:
 
 ```json
 // clients list:    { "clients": [...], "total": 12 }
@@ -239,9 +239,9 @@ Branch on `code`. The CLI exits 1 for `CliError`s, 2 for unexpected errors. Pass
 | `ALREADY_BOOKED` | A Paid checkout already exists for this plan | review `book <id> --status`; override with `--rebook` only if intentional |
 | `EXPIRED_OFFER` | Selection option no longer available | re-run `voyagier search ...` |
 | `STALE_PLAN_STATE` | Cached search/option expired | re-run `voyagier search ...` with `--plan <id>` |
-| `LISTING_NOT_FOUND` | Blueprint listing missing or unavailable | `voyagier listings recent --selection <id>` |
+| `LISTING_NOT_FOUND` | Advisor-inventory listing missing or unavailable | `voyagier listings recent --selection <id>` |
 | `PLACE_NOT_FOUND` | Place ID does not resolve | `voyagier places search --query ...` |
-| `NO_MONITOR` | Selection has no Blueprint monitor attached | (advisor must enable monitoring; not yet exposed in CLI) |
+| `NO_MONITOR` | Selection has no inventory monitor attached | (advisor must enable monitoring; not yet exposed in CLI) |
 | `GOAL_NOT_FOUND` | Trip plan goal id doesn't exist on the plan | `voyagier plans goals <planId>` to list valid ids |
 | `PLAN_NOT_FOUND` | Trip plan id doesn't exist or isn't accessible | `voyagier plans list --json` |
 | `GROUP_NAME_REQUIRED` | `traveller-groups create` / `update` called without `--name` | provide `--name "<group name>"` |
@@ -388,7 +388,7 @@ voyagier plan-status <planId> [--json|--agent]
 ONE call answering "what's left before this plan can book?" — replaces the plans-goals + N× selection-options + travellers + cart stitch. The JSON contract:
 
 - `readiness` — switch on it: `BOOKED` | `READY_TO_BOOK` | `BLOCKED` (system is waiting on YOU — act) | `IN_PROGRESS` (system is waiting on ITSELF — poll, don't act)
-- `blockers[]` — your to-do list, ordered. Kinds: `TRAVELLER_DATA`, `SELECTION_INPUT`, `PICK_PENDING`, `REQUIREMENT_UNMET`. Each has `message` + `refs` (travellerId/selectionId/goalId). A `REQUIREMENT_UNMET` blocker may carry `unverified: true` — the server reported the requirement without referencing any selection, so the CLI cannot confirm it (known server issue: e.g. "Cabin class" can stay reported-unmet even after the fare is picked/defaulted). **Tie-breaker rule: `plan-status` measures plan completeness; `voyagier book <planId> --dry-run --json` is the checkout truth. When they disagree — e.g. readiness `BLOCKED` on only-unverified blockers but dry-run reports `blockers: []` — trust the dry-run and proceed.**
+- `blockers[]` — your to-do list, ordered. Kinds: `TRAVELLER_DATA`, `SELECTION_INPUT`, `PICK_PENDING`, `REQUIREMENT_UNMET`. Each has `message` + `refs` (travellerId/selectionId/goalId). A `REQUIREMENT_UNMET` blocker may carry `unverified: true` — the server reported the requirement without referencing any selection, so the CLI cannot confirm it (e.g. "Cabin class" can stay reported-unmet even after the fare is picked/defaulted). **Tie-breaker rule: `plan-status` measures plan completeness; `voyagier book <planId> --dry-run --json` is the checkout truth. When they disagree — e.g. readiness `BLOCKED` on only-unverified blockers but dry-run reports `blockers: []` — trust the dry-run and proceed.**
 - `waiting[]` — self-resolving waits (`OPTIONS_PENDING`, `CART_PENDING`), separate from blockers because acting won't help.
 - `nextSteps[]` — runnable commands mapping onto blockers, ending with the terminal command when ready.
 - `goals[].selections[]` — per-selection detail: `status`, `mode` (only `Single` selections are picked; `List` ones are mirror sources), `isComplete` (server truth), `chosenOptionId/Name`, `consensus`, `allPicked` (divergent per-traveller picks are valid), `travellersPending`, `blockedOn`.
@@ -466,7 +466,7 @@ voyagier book <planId> --expect-total <amt> --rebook --json       # proceed even
 voyagier book <planId> --status --json                        # post-payment confirmation lookup; bookingRecords[].amountCents is raw CENTS
 ```
 
-> 🔒 **Price hard-gate.** `book` mints a Stripe URL a human will pay; the gate checks that URL's contents against a **point-in-time snapshot** of the cart. Without `--expect-total`/`--max-total` the command refuses (`VALIDATION`). The gate compares against `chargeableSubtotal` (bookable items only — NOT the display `subtotal`, which can include non-bookable lines). On mismatch you get `PRICE_CHANGED` with `details.{expectedTotal,maxTotal,actualTotal,items}` and **no checkout is created**. Known limits: the checkout pins *items* (`itemIds`), not prices — a server-side price change in the moment between the cart read and checkout creation is not caught; and Voyagier adds a travel fee at checkout, so Stripe shows a higher final total than the gated subtotal.
+> 🔒 **Price hard-gate.** `book` mints a Stripe URL a human will pay; the gate checks that URL's contents against a **point-in-time snapshot** of the cart. Without `--expect-total`/`--max-total` the command refuses (`VALIDATION`). The gate compares against `chargeableSubtotal` (bookable items only — NOT the display `subtotal`, which can include non-bookable lines). On mismatch you get `PRICE_CHANGED` with `details.{expectedTotal,maxTotal,actualTotal,items}` and **no checkout is created**. Known limits: the checkout pins *items* (`itemIds`), not prices — a server-side price change in the moment between the cart read and checkout creation is not caught; and Voyagier adds a processing fee at checkout (covers credit-card, booking, and servicing costs), so Stripe shows a higher final total than the gated subtotal.
 >
 > 🔁 **Paid-checkout pre-flight.** Before creating a session, `book` checks existing checkouts: a `Paid` one → `ALREADY_BOOKED` with `details.paidCheckouts[]` (booking-record amounts there are `amountCents`); override with `--rebook` only if you intend a second charge. If the check itself fails, `book` fails closed rather than risk a duplicate. ⚠️ **Unpaid (Pending) sessions are invisible to the CLI** — the server excludes them from this query — so retrying `book` after a success mints a NEW Stripe session (the old unpaid link remains payable until it expires). Do not retry a successful `book`; hand over the URL you already have.
 >
@@ -489,7 +489,7 @@ voyagier book <planId> --status --json                        # post-payment con
 
 Individual `blockers[]` entries carry their own `fix` strings; the top-level error envelope does not.
 
-### Listings (Style A JSON — Blueprint advisor inventory)
+### Listings (Style A JSON — advisor inventory)
 ```bash
 voyagier listings recent --selection <id> [--type <changeType>] [--limit <n>] --json
 voyagier listings add-to-selection <selectionId> --listing <listingId> [--idempotency-key <ulid>] --json
@@ -535,11 +535,11 @@ voyagier agent-docs                   # prints this file
 
 | Selection | Bookable? | Source | Notes |
 |---|---|---|---|
-| Activity | ✅ per slot | Viator | Pre-check via cart `isBookable` flag. |
-| Hotel | ⚠️ partial | Blueprint Listings | Search/watch works. Checkout coverage is incomplete. |
-| Flight | ✅ via Fare & Cabin item | Sabre | The cart materializes a fare-level (FlightClass) item once ALL legs are picked — defaults to Economy. Verified bookable on prod 2026-07-20 (`isBookable: true`). The parent Flight pick itself is never carted. |
-| Ride | ❌ | TBD | Selection type exists; no booking source wired. |
-| Restaurant | ❌ | Internal | Selection type exists; booking path unclear. |
+| Activity | ✅ per slot | Activity supplier | Pre-check via cart `isBookable` flag. |
+| Hotel | ⚠️ partial | Accommodation supplier (advisor inventory) | Search/watch works. Checkout coverage is incomplete. |
+| Flight | ✅ via Fare & Cabin item | Air supplier (GDS) | The cart materializes a fare-level (FlightClass) item once ALL legs are picked — defaults to Economy (`isBookable: true`). The parent Flight pick itself is never carted. |
+| Ride | ❌ | — | Selection type exists; no booking source wired. |
+| Restaurant | ❌ | — | Selection type exists; booking path unclear. |
 
 Always `voyagier book <planId> --dry-run` before checkout — it reports blockers and the chargeable subtotal without a gate. Branch on `data.blockers[]`; add `--validate` to the real booking to abort on any non-bookable line. Build a clean cart for the `book` call rather than relying on `--types` to filter the mutation. The matrix above is a prior, not a contract — the cart's per-item `isBookable` is the live truth.
 
@@ -571,7 +571,7 @@ Manual lookup: `voyagier search airports "tokyo" --json`.
 - **`plans summary` reads `plan.items`**, not `tripPlanEvents`. Use `voyagier itinerary <planId>` for the canonical time-sorted view.
 - **State files are global, not per-plan.** Cross-plan corruption is prevented by `--plan <id>` mismatch checks, not by file partitioning.
 - **Flight prices are per-person.** Multiply by traveller count for total.
-- **Travel fee (~6%)** is added at checkout, not in cart subtotal.
+- **Processing fee (~6%)** is added at checkout, not in the cart subtotal — it covers processing costs (credit card, booking, servicing).
 - **PNR is reserved at checkout time, not selection time.** A successful `select` does not lock the price.
 - **Search results expire ~2h.** Re-run `voyagier search ...` if `EXPIRED_OFFER` fires.
 
@@ -597,6 +597,8 @@ export VOYAGIER_API_URL=https://travel.voyagier.com/api   # optional; CLI append
 ```
 
 PATs are created at voyagier.com → Settings → Personal Access Tokens.
+
+No global-install permissions (sandboxed agent, CI)? Every command works zero-install: `npx @voyagier/cli <command> --json` with `VOYAGIER_TOKEN` set in the environment.
 
 ---
 

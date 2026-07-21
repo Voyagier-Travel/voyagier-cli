@@ -26,7 +26,7 @@
  *   any mutation. Residual risks the gate cannot close: (1) itemIds pins the
  *   ITEMS, not their prices — the server re-prices line items at mutation time,
  *   so a price change in the window between the cart read and the mutation
- *   sails through; (2) Voyagier adds a travel fee at checkout — the gate covers
+ *   sails through; (2) Voyagier adds a processing fee at checkout — the gate covers
  *   the cart subtotal; Stripe shows the final total.
  *
  * PAID-CHECKOUT PRE-FLIGHT (VOY-1706):
@@ -241,7 +241,7 @@ export function registerBookCommands(program: Command): void {
       }
 
       const subtotal = workingSet.reduce((acc, i) => acc + i.price, 0);
-      // What the server will actually charge (modulo travel fee): bookable items
+      // What the server will actually charge (modulo processing fee): bookable items
       // in the working set. Non-bookable lines are never charged by checkout.
       const chargeableSubtotal = bookableInSet.reduce((acc, i) => acc + i.price, 0);
       const planContext = {
@@ -313,7 +313,7 @@ export function registerBookCommands(program: Command): void {
                 ? { expectedTotal: expectTotal, maxTotal, wouldPass: gateWouldPass, failReason: gateFailReason }
                 : null,
               filters: { types: typeFilter, onlyBookable: Boolean(opts.onlyBookable) },
-              note: "Travel fee added at checkout",
+              note: "Processing fee added at checkout",
               message: "Would create Stripe Checkout Session",
               nextStep: nextStepCmd,
             },
@@ -351,7 +351,7 @@ export function registerBookCommands(program: Command): void {
             lines.push(gateWouldPass ? "✅ **Gate check:** supplied gate would PASS at the current price." : `❌ **Gate check:** would FAIL — ${gateFailReason}.`);
           }
           lines.push("");
-          lines.push("_(Travel fee added at checkout — Stripe shows final total.)_");
+          lines.push("_(Processing fee added at checkout — Stripe shows final total.)_");
           lines.push(`**Book at this price:** \`${nextStepCmd}\``);
           lines.push(`👉 **Plan:** ${planUrl}`);
           process.stdout.write(lines.join("\n") + "\n");
@@ -364,11 +364,11 @@ export function registerBookCommands(program: Command): void {
         }
         console.log();
         console.log(chalk.dim("  ─────────────────────────────────"));
-        console.log(`  Chargeable:    ${chalk.bold(formatPrice(chargeableSubtotal))}`);
+        console.log(`  Chargeable:     ${chalk.bold(formatPrice(chargeableSubtotal))}`);
         if (chargeableSubtotal !== subtotal) {
-          console.log(`  Subtotal:      ${formatPrice(subtotal)} ${chalk.dim("(incl. non-bookable lines)")}`);
+          console.log(`  Subtotal:       ${formatPrice(subtotal)} ${chalk.dim("(incl. non-bookable lines)")}`);
         }
-        console.log(`  Travel fee:    ${chalk.dim("added at checkout")}`);
+        console.log(`  Processing fee: ${chalk.dim("added at checkout")}`);
         if (blockers.length > 0) {
           console.log("\n  " + chalk.yellow(`${blockers.length} non-bookable item${blockers.length === 1 ? "" : "s"} (won't be charged):`));
           for (const b of blockers) console.log(chalk.yellow(`    • ${b.itemName} — ${b.reason}`));
@@ -501,7 +501,7 @@ export function registerBookCommands(program: Command): void {
             itemIdsPinned: true,
             serverSideFilter: filtersActive,
             skippedBlockers: opts.onlyBookable ? blockers : [],
-            note: "Final total (with travel fee) shown on Stripe checkout page",
+            note: "Final total (with processing fee) shown on Stripe checkout page",
           },
           planContext,
         }, null, 2) + "\n");
@@ -514,7 +514,7 @@ export function registerBookCommands(program: Command): void {
           `💳 **Pay here:** ${checkoutUrl}`,
           "",
           `**Chargeable subtotal:** ${formatPrice(chargeableSubtotal)}`,
-          "_(Travel fee shown on checkout page)_",
+          "_(Processing fee shown on checkout page)_",
           "",
           `👉 **Plan:** ${planUrl}`,
           "",
@@ -525,9 +525,9 @@ export function registerBookCommands(program: Command): void {
       }
 
       console.log(chalk.green.bold("\n  ✓ Checkout session created!\n"));
-      console.log(`  Items:         ${bookableInSet.length}`);
-      console.log(`  Chargeable:    ${chalk.bold(formatPrice(chargeableSubtotal))}`);
-      console.log(`  Travel fee:    ${chalk.dim("included on checkout page")}`);
+      console.log(`  Items:          ${bookableInSet.length}`);
+      console.log(`  Chargeable:     ${chalk.bold(formatPrice(chargeableSubtotal))}`);
+      console.log(`  Processing fee: ${chalk.dim("included on checkout page")}`);
       console.log();
       console.log(chalk.bold("  Opening Stripe checkout in your browser..."));
       console.log(chalk.dim(`  ${checkoutUrl}\n`));

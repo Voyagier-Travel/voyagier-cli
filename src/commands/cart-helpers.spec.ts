@@ -83,12 +83,12 @@ const sampleGoals: RawGoal[] = [
 const enrichedFixture: EnrichedCartItem[] = [
   {
     id: "ci-1", name: "King Suite", type: "Hotel", price: 1840, currency: "USD",
-    selectionId: "sel-h1", optionId: "opt-h1", isBookable: true, source: "BLUEPRINT", bookableReason: null,
+    selectionId: "sel-h1", optionId: "opt-h1", isBookable: true, source: "ACCOMMODATION_SUPPLIER", bookableReason: null,
   },
   {
     id: "ci-2", name: "AF023", type: "Flight", price: 0, currency: "USD",
-    selectionId: "sel-f1", optionId: "opt-f1", isBookable: false, source: "SABRE",
-    bookableReason: "Flights are itinerary display only; book directly with the airline.",
+    selectionId: "sel-f1", optionId: "opt-f1", isBookable: false, source: "AIR_SUPPLIER",
+    bookableReason: "This flight line is display-only; the bookable fare-level (Fare & Cabin) item is carted once all legs are picked.",
   },
 ];
 
@@ -202,7 +202,7 @@ describe("collectBlockers", () => {
 
   it("includes a fix string tailored to the source", () => {
     const blockers = collectBlockers(enrichedFixture);
-    expect(blockers[0].fix).toContain("airline");
+    expect(blockers[0].fix).toContain("Fare & Cabin");
   });
 
   it("returns empty when everything is bookable", () => {
@@ -217,20 +217,20 @@ describe("inferSource", () => {
     expect(out.source).toBe("UNKNOWN");
     expect(out.reason).toContain("refresh");
   });
-  it("returns BLUEPRINT for items with blueprintListingId", () => {
+  it("returns ACCOMMODATION_SUPPLIER for items with blueprintListingId", () => {
     expect(inferSource({
       isBookable: true, blueprintListingId: "bl-1", externalId: null, selectionId: "s", optionId: "o",
-    } as never).source).toBe("BLUEPRINT");
+    } as never).source).toBe("ACCOMMODATION_SUPPLIER");
   });
-  it("returns SABRE for externalId starting with sabre:", () => {
+  it("returns AIR_SUPPLIER for air-supplier externalId prefixes", () => {
     expect(inferSource({
       isBookable: false, blueprintListingId: null, externalId: "sabre:foo", selectionId: "s", optionId: "o",
-    } as never).source).toBe("SABRE");
+    } as never).source).toBe("AIR_SUPPLIER");
   });
-  it("returns VIATOR for externalId starting with viator:", () => {
+  it("returns ACTIVITY_SUPPLIER for activity-supplier externalId prefixes", () => {
     expect(inferSource({
       isBookable: true, blueprintListingId: null, externalId: "viator:abc", selectionId: "s", optionId: "o",
-    } as never).source).toBe("VIATOR");
+    } as never).source).toBe("ACTIVITY_SUPPLIER");
   });
   it("returns OTHER otherwise", () => {
     expect(inferSource({
@@ -249,7 +249,7 @@ describe("enrichCartItem", () => {
     };
     const out = enrichCartItem(item, idx);
     expect(out.isBookable).toBe(true);
-    expect(out.source).toBe("BLUEPRINT");
+    expect(out.source).toBe("ACCOMMODATION_SUPPLIER");
   });
 
   it("treats missing optionId as UNKNOWN with explicit reason (Copilot #3178828521)", () => {
