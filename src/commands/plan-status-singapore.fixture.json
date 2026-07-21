@@ -1,0 +1,1638 @@
+{
+  "tripPlan": {
+    "id": "22dbcc12-a8ce-47c0-8fe9-cf67df9fd537",
+    "title": "Singapore",
+    "travellers": [
+      {
+        "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565",
+        "firstName": "Alex",
+        "lastName": "Tester",
+        "dateOfBirth": "1990-01-01",
+        "gender": "Male",
+        "passport": null
+      }
+    ],
+    "cart": {
+      "itemCount": 2,
+      "total": 2254.49,
+      "currency": "USD",
+      "items": [
+        {
+          "selectionId": "3e21cba7-ceab-4a9a-93cc-fb9858bec23d",
+          "optionId": "fac40af0-a3a9-468e-8e1f-65681afc968c",
+          "requiresPassport": true
+        },
+        {
+          "selectionId": "728496c5-f946-4a81-9711-3cbb323cd6c9",
+          "optionId": "3d772f19-8449-4193-aa1a-ff99e9d6b0be",
+          "requiresPassport": null
+        }
+      ]
+    }
+  },
+  "tripPlanGoals": [
+    {
+      "id": "7991d9cd-37a5-4df8-866b-870fc58fa95b",
+      "name": "Travelers",
+      "type": "TravellerList",
+      "sortOrder": 0,
+      "isDecided": true,
+      "isBooked": false,
+      "checkoutReadiness": {
+        "isReady": true,
+        "requirements": []
+      },
+      "items": [
+        {
+          "id": "c5cdbd09-ead0-4646-a96f-08454aeaf5f9",
+          "title": "Travelers",
+          "selections": [
+            {
+              "id": "f0cabd03-f73c-4e77-974f-06716041472d",
+              "type": "TravellerList",
+              "mode": "List",
+              "isComplete": false,
+              "isLocked": true,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "871ae129-33e4-47ae-a198-29b29e84b41e",
+                  "name": "Alex Tester",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "d598ea6c-a2b1-48a1-b9f6-ba08f50b7b46",
+      "name": "Choose Currency",
+      "type": "Currency",
+      "sortOrder": 1,
+      "isDecided": true,
+      "isBooked": false,
+      "checkoutReadiness": {
+        "isReady": true,
+        "requirements": []
+      },
+      "items": [
+        {
+          "id": "a7649161-982e-443d-b219-91ee4d0a83e6",
+          "title": "Choose Currency",
+          "selections": [
+            {
+              "id": "082fed2d-60b6-449f-a7bf-441b72aeb745",
+              "type": "Currency",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "5aa65f4d-84f7-48a4-aff7-2384f6017c03"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "5aa65f4d-84f7-48a4-aff7-2384f6017c03",
+                  "name": "USD",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "3a12d9e0-4c5a-48c7-83e3-9183bea5e3b3",
+      "name": "Choose Duration",
+      "type": "Duration",
+      "sortOrder": 2,
+      "isDecided": true,
+      "isBooked": false,
+      "checkoutReadiness": {
+        "isReady": true,
+        "requirements": []
+      },
+      "items": [
+        {
+          "id": "3d2f37af-d875-4a66-bd4a-d46880429c08",
+          "title": "Choose Duration",
+          "selections": [
+            {
+              "id": "a4d818b7-ccd0-413e-8adc-965632909937",
+              "type": "Duration",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "ba80f027-e807-469e-a0fb-b6238baccd35"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "ba80f027-e807-469e-a0fb-b6238baccd35",
+                  "name": "7 days",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "62b4afb0-a3cf-4d22-8a2f-837b802f7db2",
+      "name": "Choose Date",
+      "type": "Date",
+      "sortOrder": 3,
+      "isDecided": true,
+      "isBooked": false,
+      "checkoutReadiness": {
+        "isReady": true,
+        "requirements": []
+      },
+      "items": [
+        {
+          "id": "6dff0d08-694a-498b-8b89-2cf26a7076a5",
+          "title": "Choose Date",
+          "selections": [
+            {
+              "id": "56e8d093-b70d-4a1b-a86d-fbe070e0c587",
+              "type": "Date",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "9c4f4110-6711-473f-9594-b3341a01b2dd"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "9c4f4110-6711-473f-9594-b3341a01b2dd",
+                  "name": "September 1, 2026 \u2013 September 7, 2026",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "38954cc3-fe9c-43c5-a2f7-512e2622f17d",
+      "name": "Choose Destination",
+      "type": "Destination",
+      "sortOrder": 4,
+      "isDecided": true,
+      "isBooked": false,
+      "checkoutReadiness": {
+        "isReady": true,
+        "requirements": []
+      },
+      "items": [
+        {
+          "id": "166b6f06-628a-4eeb-8931-4489c6983545",
+          "title": "Choose Destination",
+          "selections": [
+            {
+              "id": "c9a7b2aa-3490-46ed-9d97-8a413de79627",
+              "type": "Destination",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "03bb5a04-8986-4743-867d-7419bda9ea05"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "03bb5a04-8986-4743-867d-7419bda9ea05",
+                  "name": "Singapore",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "c6fd8bfc-13de-4828-af49-115aadda5fb3",
+      "name": "Outbound Flights",
+      "type": "Flight",
+      "sortOrder": 5,
+      "isDecided": true,
+      "isBooked": false,
+      "checkoutReadiness": {
+        "isReady": false,
+        "requirements": [
+          {
+            "label": "Flight",
+            "isFulfilled": true,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "ParticipantChoice",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "Cabin class",
+            "isFulfilled": false,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "ParticipantChoice",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "First name",
+            "isFulfilled": true,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "TravellerField",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "Last name",
+            "isFulfilled": true,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "TravellerField",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "Date of birth",
+            "isFulfilled": true,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "TravellerField",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "Gender",
+            "isFulfilled": true,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "TravellerField",
+            "missingTravellerIds": []
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "587be648-e880-49b3-a65d-e4b03904364b",
+          "title": "Outbound Flights - Origin",
+          "selections": [
+            {
+              "id": "b9b89e6a-1b35-4ae7-9750-7b297bad42dc",
+              "type": "Airport",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "57a318c1-5383-4872-b447-aa4e438917f9"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "57a318c1-5383-4872-b447-aa4e438917f9",
+                  "name": "Washington DC (WAS)",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "1d5d7440-df28-4cc6-bcef-29052673e2f1",
+          "title": "Outbound Flights - Destination",
+          "selections": [
+            {
+              "id": "f837431d-e224-48b9-8826-0c27373963d5",
+              "type": "Airport",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": "6ee19a4f-a640-4e8a-b743-18d1fabfdb9b",
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "f045ba40-218d-4738-a290-95ce2126b5a9"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "f045ba40-218d-4738-a290-95ce2126b5a9",
+                  "name": "Singapore Changi Airport (SIN)",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "2856046b-e5f0-4652-9a22-b7462a3f1475",
+          "title": "Outbound Flights - Flight List",
+          "selections": [
+            {
+              "id": "dfef275f-0d57-4628-a707-cb9208dfd261",
+              "type": "FlightList",
+              "mode": "List",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "dc2a69aa-9a3e-4507-bb03-147d4cf5abbc",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "48abea18-4cc5-4d79-88a8-0d1e3e01a9d3",
+                  "name": "IAD \u2192 SIN \u2192 IAD",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "b5de8e25-7929-4de9-90ff-2fcd79743466",
+          "title": "Outbound Flights - Flight",
+          "selections": [
+            {
+              "id": "390d424a-57ee-4488-9103-badb57596128",
+              "type": "Flight",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "dc2a69aa-9a3e-4507-bb03-147d4cf5abbc",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "48abea18-4cc5-4d79-88a8-0d1e3e01a9d3"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "48abea18-4cc5-4d79-88a8-0d1e3e01a9d3",
+                  "name": "IAD \u2192 SIN \u2192 IAD",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "99b766b3-956f-451a-9dc5-ca585d52527d",
+          "title": "Outbound Flights - Departure Events",
+          "selections": [
+            {
+              "id": "e0840f66-e0a4-4026-af73-e09ca38e9275",
+              "type": "TransportEvent",
+              "mode": "List",
+              "isComplete": true,
+              "isLocked": true,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "35147ca9-3c81-44eb-9883-8b7363d4ec90"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "35147ca9-3c81-44eb-9883-8b7363d4ec90",
+                  "name": "Departs from Washington Dulles International Airport",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "cf292034-12ff-484b-a973-d4ebee20492b",
+          "title": "Outbound Flights - Arrival Events",
+          "selections": [
+            {
+              "id": "7f6b0ac1-e99f-4671-b7e2-02ff409ad2af",
+              "type": "TransportEvent",
+              "mode": "List",
+              "isComplete": true,
+              "isLocked": true,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "4e769b5b-ac89-44ce-8207-0a1b057ff5b2"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "4e769b5b-ac89-44ce-8207-0a1b057ff5b2",
+                  "name": "Arrives at Singapore Changi Airport",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "a9930682-aece-403e-aea2-112f771a9ee6",
+      "name": "Secure Lodging",
+      "type": "Hotel",
+      "sortOrder": 6,
+      "isDecided": false,
+      "isBooked": false,
+      "checkoutReadiness": {
+        "isReady": false,
+        "requirements": [
+          {
+            "label": "Hotel",
+            "isFulfilled": true,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "ParticipantChoice",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "Room",
+            "isFulfilled": false,
+            "isRequired": true,
+            "selectionId": "2b848f72-8eed-4a1f-a733-41c2ce76f227",
+            "type": "ParticipantChoice",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "Room arrangement",
+            "isFulfilled": false,
+            "isRequired": true,
+            "selectionId": "5a060e34-9019-4f1c-9ab9-816d9dbd08d8",
+            "type": "ParticipantChoice",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "First name",
+            "isFulfilled": true,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "TravellerField",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "Last name",
+            "isFulfilled": true,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "TravellerField",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "Date of birth",
+            "isFulfilled": true,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "TravellerField",
+            "missingTravellerIds": []
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "967f8275-99d3-418c-ab97-3de21ccbdb2e",
+          "title": "Number of Rooms",
+          "selections": [
+            {
+              "id": "5a060e34-9019-4f1c-9ab9-816d9dbd08d8",
+              "type": "RoomArrangement",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "3124e3ea-48e6-45cc-a914-0b75fc177a70",
+                  "name": "Room 1",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "a1662708-9626-4240-9042-60bbf6515992",
+          "title": "Hotel List",
+          "selections": [
+            {
+              "id": "885d86fa-f944-48ff-9923-858c1e3a92af",
+              "type": "HotelList",
+              "mode": "List",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": "29b7490f-b49e-4f0f-b469-093b81fb2f1b",
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "c2a1a74d-f819-4002-ae08-e008d1138d80",
+                  "name": "The Vagabond Club Singapore A Tribute Portfolio Hotel",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "90fe503a-92ed-44b2-8192-bbb972ae2e9b",
+          "title": "Select Property",
+          "selections": [
+            {
+              "id": "ae4d7eb1-1584-40d7-a5a0-122735a2d3d4",
+              "type": "Hotel",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "885d86fa-f944-48ff-9923-858c1e3a92af",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "4a49bf90-2bdd-4f63-b11c-906dffa36c19"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "4a49bf90-2bdd-4f63-b11c-906dffa36c19",
+                  "name": "Orchard Hotel Singapore",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "0ec0a318-21b1-4f38-aaa0-67d3897cc1a4",
+          "title": "Curate Room Options",
+          "selections": [
+            {
+              "id": "88663d96-89f7-462e-98d2-990381997fdd",
+              "type": "HotelRoomList",
+              "mode": "List",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": "9c11e72c-c0de-45fc-a845-16af6336ce9d",
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "7428ccbe-3bba-4169-b928-c962863ad6b3",
+                  "name": "Deluxe Room",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "3e0f86c4-cb2b-4ccc-8956-39163ffe8359",
+              "type": "HotelRoomList",
+              "mode": "List",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": "649805cf-943a-4bc9-a78a-68e295871ce9",
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "f7d86605-cf3a-46c4-900d-5b99cea2776f",
+                  "name": "Classic Room",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "9d0e794d-b1bc-4a14-8e11-bb73b785b0eb",
+              "type": "HotelRoomList",
+              "mode": "List",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": "bd00d575-fd1c-4c6a-ac89-d00468a147c2",
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "5f5c084a-7382-4a34-a7bd-9de7ca9b3eba",
+                  "name": "Signature Deluxe Queen",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "5a2b634e-c2d4-4150-9cc0-9bb8b18d0b7c",
+              "type": "HotelRoomList",
+              "mode": "List",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": "43b82e3a-c4d6-4cb7-b44b-6231db6f8205",
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "f5a5e369-ef0e-422e-b085-f79c7ffd4dd9",
+                  "name": "Classic King Room",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "6189ba10-96cd-4a08-8a66-2773f2c10022",
+              "type": "HotelRoomList",
+              "mode": "List",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": "a04093aa-9932-4259-9cf8-efd3c4f56db4",
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "a774dc28-39eb-4ede-b861-71a366dc4f8c",
+                  "name": "Urban Deluxe Twin",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "17e3e67c-1677-4762-aaad-653b6bb4b798",
+              "type": "HotelRoomList",
+              "mode": "List",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": "bd00d575-fd1c-4c6a-ac89-d00468a147c2",
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "fd20d22e-59bd-49c8-88bc-73a90af7556a",
+                  "name": "Signature Deluxe Queen",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "7c316104-c7e4-4907-acbf-2e52e4cda341",
+              "type": "HotelRoomList",
+              "mode": "List",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": "724e4ec8-3fe8-4a3b-8950-9f7780f73fb4",
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "8557b842-d912-4ba7-95de-ed0ea8ea1066",
+                  "name": "Deluxe King Guest Room",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "44001b29-e47f-4459-adb8-270d3e74d476",
+          "title": "Room Selection",
+          "selections": [
+            {
+              "id": "f3d5d736-8a89-4fc2-824e-8f412323cc37",
+              "type": "HotelRoom",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "7c316104-c7e4-4907-acbf-2e52e4cda341",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "8557b842-d912-4ba7-95de-ed0ea8ea1066",
+                  "name": "Deluxe King Guest Room",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "2b848f72-8eed-4a1f-a733-41c2ce76f227",
+              "type": "HotelRoom",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "7c316104-c7e4-4907-acbf-2e52e4cda341",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "8557b842-d912-4ba7-95de-ed0ea8ea1066",
+                  "name": "Deluxe King Guest Room",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "e195e0cd-7135-499e-9cb8-720475b8819d",
+              "type": "HotelRoom",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "88663d96-89f7-462e-98d2-990381997fdd",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "7428ccbe-3bba-4169-b928-c962863ad6b3",
+                  "name": "Deluxe Room",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "936416da-12ca-4be6-94e8-0ab3aa71abf8",
+              "type": "HotelRoom",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "88663d96-89f7-462e-98d2-990381997fdd",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "7428ccbe-3bba-4169-b928-c962863ad6b3",
+                  "name": "Deluxe Room",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "8de92f17-8989-4319-9ad2-39729125a3f7",
+              "type": "HotelRoom",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "3e0f86c4-cb2b-4ccc-8956-39163ffe8359",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "f7d86605-cf3a-46c4-900d-5b99cea2776f",
+                  "name": "Classic Room",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "00bda972-fe23-4889-b4bb-34c6ec17a4c8",
+              "type": "HotelRoom",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "3e0f86c4-cb2b-4ccc-8956-39163ffe8359",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "f7d86605-cf3a-46c4-900d-5b99cea2776f",
+                  "name": "Classic Room",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "e9acd7ac-c997-48ac-a114-6a8656ba8737",
+              "type": "HotelRoom",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "17e3e67c-1677-4762-aaad-653b6bb4b798",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "fd20d22e-59bd-49c8-88bc-73a90af7556a",
+                  "name": "Signature Deluxe Queen",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "f9bc276a-52c3-42b7-90aa-ea233e9842cf",
+              "type": "HotelRoom",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "5a2b634e-c2d4-4150-9cc0-9bb8b18d0b7c",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "f5a5e369-ef0e-422e-b085-f79c7ffd4dd9",
+                  "name": "Classic King Room",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "9f35a93e-47f3-408f-bfd0-f6ca724ae73e",
+              "type": "HotelRoom",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "5a2b634e-c2d4-4150-9cc0-9bb8b18d0b7c",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "f5a5e369-ef0e-422e-b085-f79c7ffd4dd9",
+                  "name": "Classic King Room",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "0ca94907-dafc-41a1-a2f2-d33206836fa6",
+              "type": "HotelRoom",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "6189ba10-96cd-4a08-8a66-2773f2c10022",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "a774dc28-39eb-4ede-b861-71a366dc4f8c",
+                  "name": "Urban Deluxe Twin",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "5ae55313-3b04-437f-ab3e-cfd76dd41ba0",
+              "type": "HotelRoom",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "17e3e67c-1677-4762-aaad-653b6bb4b798",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "fd20d22e-59bd-49c8-88bc-73a90af7556a"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "fd20d22e-59bd-49c8-88bc-73a90af7556a",
+                  "name": "Signature Deluxe Queen",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "8439c3fd-9dfb-4c06-bffd-bfa8ce912ac6",
+              "type": "HotelRoom",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "6189ba10-96cd-4a08-8a66-2773f2c10022",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "a774dc28-39eb-4ede-b861-71a366dc4f8c",
+                  "name": "Urban Deluxe Twin",
+                  "isBookable": false
+                }
+              ]
+            },
+            {
+              "id": "f1814b93-f8ff-4b8a-bf44-04ea7d03bfdd",
+              "type": "HotelRoom",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "17e3e67c-1677-4762-aaad-653b6bb4b798",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "fd20d22e-59bd-49c8-88bc-73a90af7556a",
+                  "name": "Signature Deluxe Queen",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "6715c792-6f61-4c44-a73e-1907974e2097",
+          "title": "Select Rate",
+          "selections": [
+            {
+              "id": "728496c5-f946-4a81-9711-3cbb323cd6c9",
+              "type": "HotelRoomRate",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "3d772f19-8449-4193-aa1a-ff99e9d6b0be"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "3d772f19-8449-4193-aa1a-ff99e9d6b0be",
+                  "name": "Stay Beyond",
+                  "isBookable": true
+                }
+              ]
+            },
+            {
+              "id": "2b27cd21-4be0-4a0b-ad85-ff333d533c3c",
+              "type": "HotelRoomRate",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "6f58c87f-b6c3-4ff0-8390-3f9b8c0d5bb1",
+                  "name": "Flexible Rate - Room Only",
+                  "isBookable": true
+                }
+              ]
+            },
+            {
+              "id": "46c1a5f2-8424-46b4-8ef7-6882ec816d30",
+              "type": "HotelRoomRate",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "3d2de7c5-8a5b-4a60-9548-05fdbb864db3",
+      "name": "Return Flights",
+      "type": "Flight",
+      "sortOrder": 7,
+      "isDecided": true,
+      "isBooked": false,
+      "checkoutReadiness": {
+        "isReady": false,
+        "requirements": [
+          {
+            "label": "Flight",
+            "isFulfilled": true,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "ParticipantChoice",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "Cabin class",
+            "isFulfilled": false,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "ParticipantChoice",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "First name",
+            "isFulfilled": true,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "TravellerField",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "Last name",
+            "isFulfilled": true,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "TravellerField",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "Date of birth",
+            "isFulfilled": true,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "TravellerField",
+            "missingTravellerIds": []
+          },
+          {
+            "label": "Gender",
+            "isFulfilled": true,
+            "isRequired": true,
+            "selectionId": null,
+            "type": "TravellerField",
+            "missingTravellerIds": []
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "db8e274f-88d7-412b-8244-d7f283aa4e6d",
+          "title": "Return Flights - Origin",
+          "selections": [
+            {
+              "id": "4845ea5a-cc26-408e-b358-1419a5826931",
+              "type": "Airport",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": "6ee19a4f-a640-4e8a-b743-18d1fabfdb9b",
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "32d2265d-e782-4db0-acaf-3b3d602b282d"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "32d2265d-e782-4db0-acaf-3b3d602b282d",
+                  "name": "Singapore Changi Airport (SIN)",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "0ea893e3-b8f9-47de-974a-05a13c9a25e4",
+          "title": "Return Flights - Destination",
+          "selections": [
+            {
+              "id": "315a27ca-4d3c-4ec9-baef-dcdb4465fc92",
+              "type": "Airport",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "92b8c64b-c927-4ae1-baa8-502ab1cba1c9"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "92b8c64b-c927-4ae1-baa8-502ab1cba1c9",
+                  "name": "Washington DC (WAS)",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "f7cae070-d15f-477e-a4cb-542640f9c0f4",
+          "title": "Return Flights - Flight List",
+          "selections": [
+            {
+              "id": "41cdd62a-f7cd-42dc-9aac-d7731e1354c5",
+              "type": "FlightList",
+              "mode": "List",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "dc2a69aa-9a3e-4507-bb03-147d4cf5abbc",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "48abea18-4cc5-4d79-88a8-0d1e3e01a9d3",
+                  "name": "IAD \u2192 SIN \u2192 IAD",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "52a1a26b-b81e-4483-9cbc-5e39227ef94d",
+          "title": "Return Flights - Flight",
+          "selections": [
+            {
+              "id": "40ed64e2-9a84-4b03-babb-c28de8d8c25e",
+              "type": "Flight",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": "dc2a69aa-9a3e-4507-bb03-147d4cf5abbc",
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "48abea18-4cc5-4d79-88a8-0d1e3e01a9d3"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "48abea18-4cc5-4d79-88a8-0d1e3e01a9d3",
+                  "name": "IAD \u2192 SIN \u2192 IAD",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "2e1f68b8-4c75-48b3-be83-0bf94644a892",
+          "title": "Return Flights - Departure Events",
+          "selections": [
+            {
+              "id": "5458f22a-148f-474b-aa96-78d68aa21b41",
+              "type": "TransportEvent",
+              "mode": "List",
+              "isComplete": true,
+              "isLocked": true,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "d16a4fe2-c09d-4267-bad9-b34514b30c57"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "d16a4fe2-c09d-4267-bad9-b34514b30c57",
+                  "name": "Departs from Singapore Changi Airport",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "c3e3f2f9-aa1d-468a-91ee-282f4beb9aeb",
+          "title": "Return Flights - Arrival Events",
+          "selections": [
+            {
+              "id": "90614b8e-aa79-49a3-a625-1c17a12fe779",
+              "type": "TransportEvent",
+              "mode": "List",
+              "isComplete": true,
+              "isLocked": true,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "69453bff-c986-446a-91e2-2110b26b852b"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "69453bff-c986-446a-91e2-2110b26b852b",
+                  "name": "Arrives at Washington Dulles International Airport",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "7ff827e2-be1a-4747-987d-be7141e12380",
+      "name": "Traveler Manifest",
+      "type": "TravellerList",
+      "sortOrder": 8,
+      "isDecided": false,
+      "isBooked": false,
+      "checkoutReadiness": {
+        "isReady": true,
+        "requirements": []
+      },
+      "items": [
+        {
+          "id": "8e572230-3f49-4867-bff0-45ba85cc791c",
+          "title": "Date of Birth",
+          "selections": [
+            {
+              "id": "a0c3a250-fcee-4f0b-9503-d838d2aa26e3",
+              "type": "Date",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "37a25ee4-c03f-4411-b60c-d780c477ba04"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "37a25ee4-c03f-4411-b60c-d780c477ba04",
+                  "name": "1990-01-01",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "0d068364-5592-497c-84a4-7257b1bfcd8b",
+          "title": "Passport",
+          "selections": [
+            {
+              "id": "094a3822-095a-4f99-b08d-f03a73539921",
+              "type": "Passport",
+              "mode": "Single",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "c7e8a9fd-17d6-40b9-a0f1-8dc00a1a1a81",
+      "name": "Flight Booking Details",
+      "type": "FlightJourney",
+      "sortOrder": 9,
+      "isDecided": true,
+      "isBooked": false,
+      "checkoutReadiness": {
+        "isReady": true,
+        "requirements": []
+      },
+      "items": [
+        {
+          "id": "4d2ca859-4515-43c9-873b-6f391119ecc0",
+          "title": "Flight Booking Details",
+          "selections": [
+            {
+              "id": "dc2a69aa-9a3e-4507-bb03-147d4cf5abbc",
+              "type": "FlightJourney",
+              "mode": "List",
+              "isComplete": false,
+              "isLocked": false,
+              "blueprintMonitorId": "53c126e5-90a1-452a-a010-7250189cd130",
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": null
+                }
+              ],
+              "options": [
+                {
+                  "id": "48abea18-4cc5-4d79-88a8-0d1e3e01a9d3",
+                  "name": "IAD \u2192 SIN \u2192 IAD",
+                  "isBookable": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "98fcb67d-25b2-4329-99d7-bc79086b936f",
+          "title": "Fare & Cabin",
+          "selections": [
+            {
+              "id": "3e21cba7-ceab-4a9a-93cc-fb9858bec23d",
+              "type": "FlightClass",
+              "mode": "Single",
+              "isComplete": true,
+              "isLocked": false,
+              "blueprintMonitorId": null,
+              "mirrorListSelectionId": null,
+              "travellerOptionChoices": [
+                {
+                  "traveller": {
+                    "id": "4d08c0b8-df0e-4e43-ab78-260d21bad565"
+                  },
+                  "selectedOption": {
+                    "id": "fac40af0-a3a9-468e-8e1f-65681afc968c"
+                  }
+                }
+              ],
+              "options": [
+                {
+                  "id": "fac40af0-a3a9-468e-8e1f-65681afc968c",
+                  "name": "Economy",
+                  "isBookable": true
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

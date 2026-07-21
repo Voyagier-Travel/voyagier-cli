@@ -1,4 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
+import { readFileSync } from "node:fs";
 import { buildPlanStatus, type PlanStatusQueryResult } from "./plan-status.js";
 
 /**
@@ -633,7 +634,7 @@ describe("buildPlanStatus — misc contract", () => {
     const s = buildPlanStatus({ tripPlan: plan({ travellers: [] }), tripPlanGoals: [] }, BASE);
     expect(s.readiness).toBe("IN_PROGRESS");
     expect(s.url).toBe("https://travel.voyagier.com/plans/plan-1");
-    expect(s.summary).toEqual({ goalsTotal: 0, goalsDecided: 0, goalsBooked: 0, blockerCount: 0 });
+    expect(s.summary).toEqual({ goalsTotal: 0, goalsDecided: 0, goalsBooked: 0, blockerCount: 0, alternateBranchCount: 0 });
   });
 
   it("goals sort by sortOrder", () => {
@@ -685,5 +686,249 @@ describe("buildPlanStatus — nextSteps shell safety", () => {
       BASE,
     );
     expect(s.nextSteps).toEqual(["voyagier book plan-1 --dry-run"]);
+  });
+});
+
+// ── VOY-1718: dead-branch suppression + aggregation + downgrade ──────────────
+
+/** Load the anonymized Singapore-shaped fixture (real prod goal graph shape:
+ *  6-hotel list, 7 room lists, 13 room mirrors, one complete chain, two
+ *  incomplete rates, a RoomArrangement, a dead-branch "Room" requirement). */
+const SINGAPORE = JSON.parse(
+  readFileSync(new URL("./plan-status-singapore.fixture.json", import.meta.url), "utf-8"),
+) as PlanStatusQueryResult;
+
+const findGoal = (s: ReturnType<typeof buildPlanStatus>, name: string) =>
+  s.goals.find((g) => g.name === name)!;
+const findSel = (g: { selections: { selectionId: string }[] }, prefix: string) =>
+  g.selections.find((sel) => sel.selectionId.startsWith(prefix))!;
+
+describe("buildPlanStatus — VOY-1718 dead-branch suppression (Singapore fixture)", () => {
+  const s = buildPlanStatus(SINGAPORE, BASE);
+
+  it("stays BLOCKED but collapses phantom room/rate picks (17 raw → 5 real blockers)", () => {
+    expect(s.readiness).toBe("BLOCKED");
+    // 1 passport + 1 RoomArrangement pick + 2 null-ref Cabin class + 1 dead-branch Room.
+    // (Raw, un-suppressed, this plan emits 17: +12 HotelRoom +1 HotelRoomRate PICK_PENDING.)
+    expect(s.summary.blockerCount).toBe(5);
+    expect(s.blockers.map((b) => b.kind)).toEqual([
+      "TRAVELLER_DATA",
+      "PICK_PENDING",
+      "REQUIREMENT_UNMET",
+      "REQUIREMENT_UNMET",
+      "REQUIREMENT_UNMET",
+    ]);
+  });
+
+  it("the ONE surviving PICK_PENDING is the RoomArrangement (a distinct type with no complete sibling)", () => {
+    const picks = s.blockers.filter((b) => b.kind === "PICK_PENDING");
+    expect(picks).toHaveLength(1);
+    expect(picks[0].refs.selectionId).toMatch(/^5a060e34/);
+    const lodging = findGoal(s, "Secure Lodging");
+    expect(findSel(lodging, "5a060e34").branch).toBe("active");
+  });
+
+  it("passport is the sole real TRAVELLER_DATA blocker (international cart item)", () => {
+    const td = s.blockers.filter((b) => b.kind === "TRAVELLER_DATA");
+    expect(td).toHaveLength(1);
+    expect(td[0].message).toContain("passport");
+    expect(s.cart.bookableCount).toBe(2);
+  });
+
+  it("suppresses every incomplete HotelRoom / HotelRoomRate under the chosen and unchosen hotels", () => {
+    expect(s.summary.alternateBranchCount).toBe(14); // 12 rooms + 2 rates
+    const lodging = findGoal(s, "Secure Lodging");
+    expect(lodging.alternateBranchCount).toBe(14);
+    const tally = lodging.selections.reduce<Record<string, number>>((acc, sel) => {
+      acc[sel.branch] = (acc[sel.branch] ?? 0) + 1;
+      return acc;
+    }, {});
+    expect(tally).toEqual({ active: 12, alternate: 4, deadBranch: 10 });
+  });
+
+  it("classifies same-list siblings 'alternate' and different-list siblings 'deadBranch'", () => {
+    const lodging = findGoal(s, "Secure Lodging");
+    // e9acd7ac & f1814b93 mirror the chosen hotel's list (17e3e67c) → alternate.
+    expect(findSel(lodging, "e9acd7ac").branch).toBe("alternate");
+    expect(findSel(lodging, "f1814b93").branch).toBe("alternate");
+    // 2b848f72 & f3d5d736 mirror a DIFFERENT hotel's list (7c316104) → deadBranch.
+    expect(findSel(lodging, "2b848f72").branch).toBe("deadBranch");
+    expect(findSel(lodging, "f3d5d736").branch).toBe("deadBranch");
+    // Rates carry no mirror id; their completed sibling also has none → alternate.
+    expect(findSel(lodging, "2b27cd21").branch).toBe("alternate");
+    expect(findSel(lodging, "46c1a5f2").branch).toBe("alternate");
+  });
+
+  it("the completed chain (room 5ae55313, rate 728496c5, hotel ae4d7eb1) stays 'active'", () => {
+    const lodging = findGoal(s, "Secure Lodging");
+    expect(findSel(lodging, "5ae55313").branch).toBe("active");
+    expect(findSel(lodging, "728496c5").branch).toBe("active");
+    expect(findSel(lodging, "ae4d7eb1").branch).toBe("active");
+  });
+
+  it("downgrades the 'Room' requirement that points at a dead branch — visible, unverified, book --dry-run", () => {
+    const room = s.blockers.find((b) => b.message.startsWith("Secure Lodging: Room"));
+    expect(room).toMatchObject({ kind: "REQUIREMENT_UNMET", unverified: true });
+    expect(room!.refs.selectionId).toMatch(/^2b848f72/);
+    expect(room!.message).toContain("references an alternate branch");
+    // Its fix routes to the checkout truth, not a plans-goal dead-loop.
+    expect(s.nextSteps).toContain(
+      "voyagier book 22dbcc12-a8ce-47c0-8fe9-cf67df9fd537 --dry-run --json   # checkout truth — if blockers are [], this requirement is a stale server ref",
+    );
+  });
+
+  it("the two null-ref 'Cabin class' requirements stay unverified (unchanged VOY-1715 behavior)", () => {
+    const cabins = s.blockers.filter((b) => b.message.includes("Cabin class"));
+    expect(cabins).toHaveLength(2);
+    for (const c of cabins) {
+      expect(c.unverified).toBe(true);
+      expect(c.refs.selectionId).toBeUndefined();
+    }
+  });
+
+  it("leaves other goals' selections untouched (multi-goal isolation)", () => {
+    // The flight goals carry their own Single selections; none are suppressed —
+    // suppression groups strictly WITHIN a goal.
+    for (const name of ["Outbound Flights", "Return Flights", "Flight Booking Details"]) {
+      const g = findGoal(s, name);
+      expect(g.alternateBranchCount).toBe(0);
+      expect(g.selections.every((sel) => sel.branch === "active")).toBe(true);
+    }
+  });
+
+  it("exposes the additive contract keys (branch / alternateBranchCount) without dropping existing keys", () => {
+    const lodging = findGoal(s, "Secure Lodging");
+    const sel = lodging.selections[0];
+    expect(sel).toHaveProperty("branch");
+    expect(sel).toHaveProperty("selectionId");
+    expect(sel).toHaveProperty("chosenOptionId");
+    expect(lodging).toHaveProperty("alternateBranchCount");
+    expect(s.summary).toHaveProperty("alternateBranchCount");
+  });
+});
+
+describe("buildPlanStatus — VOY-1718 aggregation (no completion evidence yet)", () => {
+  // A hotel goal where NOTHING is settled: the parent Hotel is unpicked and
+  // every room mirror is pending. The room picks collapse into ONE aggregated
+  // blocker; the parent Hotel decision keeps its own PICK_PENDING (pick it first).
+  const roomMirror = (id: string, mirror: string) => ({
+    id,
+    type: "HotelRoom",
+    mode: "Single",
+    isComplete: false,
+    blueprintMonitorId: "m",
+    mirrorListSelectionId: mirror,
+    options: [{ id: `${id}-o`, name: "Room", isBookable: false }],
+    travellerOptionChoices: [choice("t1", null)],
+  });
+  const s = buildPlanStatus(
+    {
+      tripPlan: plan({ cart: { itemCount: 0, total: 0, currency: "USD", items: [] } }),
+      tripPlanGoals: [
+        goal({
+          id: "gh",
+          name: "Secure Lodging",
+          type: "Hotel",
+          items: [
+            {
+              id: "i1",
+              selections: [
+                {
+                  id: "hotel-dec",
+                  type: "Hotel",
+                  mode: "Single",
+                  isComplete: false,
+                  blueprintMonitorId: "m",
+                  mirrorListSelectionId: "hotel-list",
+                  options: [{ id: "h1", name: "Hotel A", isBookable: false }],
+                  travellerOptionChoices: [choice("t1", null)],
+                },
+                { id: "hotel-list", type: "HotelList", mode: "List", blueprintMonitorId: "m", options: [{ id: "h1", name: "Hotel A" }] },
+                roomMirror("room-a", "list-a"),
+                roomMirror("room-b", "list-b"),
+                roomMirror("room-c", "list-c"),
+              ],
+            },
+          ],
+        }),
+      ],
+    },
+    BASE,
+  );
+
+  it("collapses the ≥2 pending room mirrors into ONE aggregated PICK_PENDING", () => {
+    const picks = s.blockers.filter((b) => b.kind === "PICK_PENDING");
+    // One aggregate (rooms) + one for the parent Hotel decision.
+    expect(picks).toHaveLength(2);
+    const agg = picks.find((b) => b.candidateSelectionIds);
+    expect(agg).toBeTruthy();
+    expect(agg!.candidateSelectionIds!.sort()).toEqual(["room-a", "room-b", "room-c"]);
+    expect(agg!.refs.selectionId).toBeUndefined();
+    expect(agg!.refs.goalId).toBe("gh");
+    expect(agg!.message).toContain("pick pending");
+    expect(agg!.message).toContain("3 candidate selection(s)");
+  });
+
+  it("keeps the parent Hotel decision's own PICK_PENDING (pick the parent first)", () => {
+    const hotelPick = s.blockers.find((b) => b.refs.selectionId === "hotel-dec");
+    expect(hotelPick).toMatchObject({ kind: "PICK_PENDING" });
+  });
+
+  it("does NOT count aggregated candidates as alternate branches (they're live picks)", () => {
+    expect(s.summary.alternateBranchCount).toBe(0);
+  });
+
+  it("routes the aggregate to `plans goal ... inspect candidate selections`", () => {
+    expect(s.nextSteps).toContain("voyagier plans goal gh --json   # inspect candidate selections");
+  });
+});
+
+describe("buildPlanStatus — VOY-1718 grouping is per-goal, not global", () => {
+  it("a complete sibling in goal A does not suppress the same type in goal B", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan({ cart: { itemCount: 0, total: 0, currency: "USD", items: [] } }),
+        tripPlanGoals: [
+          goal({
+            id: "gA",
+            name: "Hotel A",
+            type: "Hotel",
+            items: [
+              {
+                id: "iA",
+                selections: [
+                  { id: "roomA-done", type: "HotelRoom", mode: "Single", isComplete: true, blueprintMonitorId: "m", mirrorListSelectionId: "lstA", options: [{ id: "oA", name: "R" }], travellerOptionChoices: [choice("t1", "oA")] },
+                  { id: "roomA-alt", type: "HotelRoom", mode: "Single", isComplete: false, blueprintMonitorId: "m", mirrorListSelectionId: "lstX", options: [{ id: "oX", name: "R" }], travellerOptionChoices: [choice("t1", null)] },
+                ],
+              },
+            ],
+          }),
+          goal({
+            id: "gB",
+            name: "Hotel B",
+            type: "Hotel",
+            sortOrder: 1,
+            items: [
+              {
+                id: "iB",
+                selections: [
+                  { id: "roomB", type: "HotelRoom", mode: "Single", isComplete: false, blueprintMonitorId: "m", mirrorListSelectionId: "lstB", options: [{ id: "oB", name: "R" }], travellerOptionChoices: [choice("t1", null)] },
+                ],
+              },
+            ],
+          }),
+        ],
+      },
+      BASE,
+    );
+    // Goal A: the incomplete sibling is suppressed (its type has a complete member).
+    const gA = s.goals.find((g) => g.goalId === "gA")!;
+    expect(gA.alternateBranchCount).toBe(1);
+    expect(gA.selections.find((x) => x.selectionId === "roomA-alt")!.branch).toBe("deadBranch");
+    // Goal B: no complete sibling in ITS group, single member → ordinary PICK_PENDING.
+    const gB = s.goals.find((g) => g.goalId === "gB")!;
+    expect(gB.alternateBranchCount).toBe(0);
+    expect(gB.selections[0].branch).toBe("active");
+    expect(s.blockers.some((b) => b.refs.selectionId === "roomB" && b.kind === "PICK_PENDING")).toBe(true);
   });
 });

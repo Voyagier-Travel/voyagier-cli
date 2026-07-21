@@ -472,6 +472,68 @@ describe("select: hotel (indexed mode)", () => {
     const output = stdoutOutput.join("");
     expect(output).toContain("🏨");
   });
+
+  it("VOY-1718: JSON carries a chainNote about the room decision coming next", async () => {
+    await runSelect(["1", "--json"]);
+    const parsed = JSON.parse(stdoutOutput.join(""));
+    expect(parsed.chainNote).toContain("room decision");
+    expect(parsed.chainNote).toContain("baseline rate");
+  });
+
+  it("VOY-1718: agent nextSteps tell the agent the room decision comes next", async () => {
+    await runSelect(["1", "--agent"]);
+    const output = stdoutOutput.join("");
+    expect(output).toContain("Room decision comes next");
+    expect(output).toContain("plan-status");
+  });
+});
+
+// ── Tests: VOY-1718 flight chain guidance (round trip) ─────────────────────
+
+describe("select: flight round-trip chain guidance (VOY-1718)", () => {
+  let stdoutOutput: string[];
+  let stdoutSpy: ReturnType<typeof jest.spyOn>;
+  let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+  beforeEach(() => {
+    process.env.VOYAGIER_TOKEN = "test-token";
+    stdoutOutput = [];
+    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      stdoutOutput.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    mockLoadSearchState.mockReturnValue({
+      type: "flights" as const,
+      tripPlanId: "plan-123",
+      selectionId: "sel-out",
+      returnSelectionId: "sel-ret",
+      results: [{ index: 1, optionId: "opt-1", summary: "LAX→NRT · AA · $1,200" }],
+      timestamp: new Date().toISOString(),
+    });
+    mockIsSearchStateStale.mockReturnValue(false);
+    mockGraphql.mockResolvedValue(MOCK_SET_SELECTED);
+  });
+
+  afterEach(() => {
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+    delete process.env.VOYAGIER_TOKEN;
+  });
+
+  it("agent output keeps the return-leg guidance AND adds the Fare & Cabin note", async () => {
+    await runSelect(["1", "--agent"]);
+    const output = stdoutOutput.join("");
+    expect(output).toContain("RETURN leg");
+    expect(output).toContain("Fare & Cabin");
+    expect(output).toContain("Economy");
+  });
+
+  it("JSON carries a chainNote about picking Fare & Cabin in the CLI", async () => {
+    await runSelect(["1", "--json"]);
+    const parsed = JSON.parse(stdoutOutput.join(""));
+    expect(parsed.chainNote).toContain("Fare & Cabin");
+  });
 });
 
 // ── Tests: round-trip departure (indexed mode) ────────────────────────────
