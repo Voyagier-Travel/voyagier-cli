@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- **`book --status --json` and `bookings list/get --json` rename `amount` → `amountCents` (VOY-1713, breaking):** the API stores integer cents but exposes them as an undocumented `Float` named `amount` — the dollar-looking name caused the v2.3.0 100× display bug and `ALREADY_BOOKED.details` already says `amountCents`. One name per unit across every CLI machine surface.
+- **`book --dry-run` reports a gate verdict (VOY-1713):** when `--expect-total`/`--max-total` accompany `--dry-run`, output includes `data.gate.{wouldPass,failReason}` (and a ✓/✗ line in human/agent modes) so agents can pre-verify a gate without risking `PRICE_CHANGED`. Dry-run still requires no gate.
+- **`book --dry-run` distinguishes "no paid checkouts" from "could not verify" (VOY-1713):** human/agent output now warns when the existing-checkout query fails instead of silently looking like zero.
+
+### Fixed
+- **`nextStep` recipe is now self-consistent (VOY-1713):** the amount is derived from the same rounded-cents value the gate compares, so the emitted command can never fail its own gate on a half-cent subtotal.
+
+## [2.4.0] — 2026-07-20
+
 ### Added
 - **`book` price hard-gate (VOY-1706):** a real checkout now REQUIRES `--expect-total <amt>` (exact, cents-compared) or `--max-total <amt>` (cap; both flags → both enforced), checked against the **chargeable subtotal** (bookable items only) at cart-read time. Mismatch aborts with `PRICE_CHANGED` (+ `details.{expectedTotal,maxTotal,actualTotal,items}`) before any mutation. `book --dry-run` now reports `chargeableSubtotal`, existing paid checkouts, and a ready-to-run `nextStep` (carrying any active filters).
 - **`book` paid-checkout pre-flight (VOY-1706):** before minting a Stripe session, `book` checks existing checkouts — `Paid` → `ALREADY_BOOKED` with booking-record summary (`amountCents`); override `--rebook`. Fails closed (preserving the underlying error code) if the check itself errors. Note: unpaid `Pending` sessions are excluded by the server on this query and are therefore invisible to the CLI — pending-session idempotency needs a backend change (tracked separately).

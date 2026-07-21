@@ -18,6 +18,7 @@ interface BookingRecord {
   pnr?: string;
   providerName?: string;
   providerReference?: string;
+  /** Raw integer CENTS from the API (undocumented GraphQL Float; Stripe minor units). */
   amount: number;
   currency?: string;
   issueDate?: string;
@@ -91,8 +92,11 @@ export function registerBookingsCommands(program: Command): void {
 
         if (opts.json) {
           const baseUrl = deriveBaseUrl(getApiUrl());
-          const enriched = records.map((r) => ({
+          // Machine surface: amount → amountCents (VOY-1713 — one name per unit;
+          // the API's `amount` is integer cents under a dollar-looking name).
+          const enriched = records.map(({ amount, ...r }) => ({
             ...r,
+            amountCents: amount,
             ...(r.tripPlanId ? { url: `${baseUrl}/plans/${r.tripPlanId}` } : {}),
           }));
           process.stdout.write(JSON.stringify({ bookings: enriched }, null, 2) + "\n");
@@ -153,8 +157,11 @@ export function registerBookingsCommands(program: Command): void {
         const baseUrl = deriveBaseUrl(getApiUrl());
 
         if (opts.json) {
+          // Machine surface: amount → amountCents (VOY-1713, matches list mode).
+          const { amount, ...rest } = r;
           const enriched = {
-            ...r,
+            ...rest,
+            amountCents: amount,
             ...(r.tripPlanId ? { url: `${baseUrl}/plans/${r.tripPlanId}` } : {}),
           };
           process.stdout.write(JSON.stringify(enriched, null, 2) + "\n");
