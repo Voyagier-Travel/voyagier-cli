@@ -30,6 +30,8 @@ export VOYAGIER_TOKEN=***
 export VOYAGIER_API_URL=https://travel.voyagier.com/api  # optional (default); CLI appends /graphql
 ```
 
+No install permissions? Zero-install works for every command: `npx @voyagier/cli doctor --json`.
+
 ## 📖 The canonical agent reference
 
 **This skill is a quick orientation. The full, always-current integration contract ships with the CLI itself:**

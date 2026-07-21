@@ -598,6 +598,8 @@ export VOYAGIER_API_URL=https://travel.voyagier.com/api   # optional; CLI append
 
 PATs are created at voyagier.com → Settings → Personal Access Tokens.
 
+No global-install permissions (sandboxed agent, CI)? Every command works zero-install: `npx @voyagier/cli <command> --json` with `VOYAGIER_TOKEN` set in the environment.
+
 ---
 
 *Print this in your shell at any time:* `voyagier agent-docs`

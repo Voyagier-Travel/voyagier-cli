@@ -8,6 +8,12 @@ voyagier auth set-token <your-token>
 voyagier doctor   # confirm auth + schema reachability
 ```
 
+No install permissions (sandboxed agent, CI)? Every command works zero-install via `npx`:
+
+```bash
+VOYAGIER_TOKEN=<your-token> npx @voyagier/cli doctor --json
+```
+
 ## Quick Start
 
 A trip plan is a **goal graph**: the plan ships with goals (flights, hotel, dates, destination, travellers) and you compose the trip by searching against those goals and selecting options. Searches are **asynchronous** — a search creates a selection, and options arrive shortly after, so you poll for them.
@@ -93,6 +99,7 @@ Most data-bearing commands accept `--json` for structured output (notable except
 
 ```bash
 voyagier agent-docs    # full reference (AGENT.md)
+npx @voyagier/cli agent-docs   # zero-install variant
 ```
 
 Or read [AGENT.md](./AGENT.md) directly. It covers the goal-graph compose model, async option fetch, per-command JSON shapes, the error code table, and the bookability matrix.
