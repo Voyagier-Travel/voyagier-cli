@@ -219,14 +219,25 @@ describe("resolveDateRange (VOY-1421: populate BOTH date outputs)", () => {
     expect(vars).toEqual({ selectionId: "sel-date", startDate: "2026-09-15" });
   });
 
-  it("round-trip: adds start option, then sets duration = days between", async () => {
+  it("round-trip: adds start option, then sets duration = INCLUSIVE trip days (daysBetween + 1)", async () => {
+    // Server computes endDate = startDate + duration − 1, so 09-15 → 09-22 (7 days
+    // apart) must send duration 8 for the endDate output to land on 09-22 exactly.
+    // Sending the exclusive difference shifted every return flight / hotel checkout
+    // one day early (VOY-1723).
     mockGraphql.mockResolvedValue({});
     await SH.resolveDateRange("sel-date", "2026-09-15", "2026-09-22");
     expect(mockGraphql).toHaveBeenCalledTimes(2);
     const [, addVars] = mockGraphql.mock.calls[0] as [string, any];
     const [, durVars] = mockGraphql.mock.calls[1] as [string, any];
     expect(addVars).toEqual({ selectionId: "sel-date", startDate: "2026-09-15" });
-    expect(durVars).toEqual({ selectionId: "sel-date", fieldName: "duration", value: 7 });
+    expect(durVars).toEqual({ selectionId: "sel-date", fieldName: "duration", value: 8 });
+  });
+
+  it("adjacent dates (one night): sends duration 2 so endDate lands on checkout day", async () => {
+    mockGraphql.mockResolvedValue({});
+    await SH.resolveDateRange("sel-date", "2026-09-10", "2026-09-11");
+    const [, durVars] = mockGraphql.mock.calls[1] as [string, any];
+    expect(durVars).toEqual({ selectionId: "sel-date", fieldName: "duration", value: 2 });
   });
 
   it("throws VALIDATION for a bad range BEFORE any mutation (no partial write)", async () => {

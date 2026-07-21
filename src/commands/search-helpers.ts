@@ -273,8 +273,13 @@ function parseUtcDate(value: string): number | null {
  *
  * `addTripPlanDateOption` only sets the startDate output. For a range (round-trip
  * return leg, or hotel check-out) we additionally set the Date selection's
- * `duration` input, which the backend uses to compute endDate = startDate + N days.
- * One-way / single-date searches pass no endDate and only the startDate resolves.
+ * `duration` input. The backend treats `duration` as the INCLUSIVE number of
+ * trip days and computes endDate = startDate + duration − 1 (see the server's
+ * selection-output compute expression, operandOffset: -1). So a 09-10 → 09-15
+ * range must send duration 6, not the 5-day exclusive difference — sending the
+ * difference made every return flight and hotel checkout land one day early
+ * (VOY-1723). One-way / single-date searches pass no endDate and only the
+ * startDate resolves.
  */
 export async function resolveDateRange(
   selectionId: string,
@@ -299,6 +304,7 @@ export async function resolveDateRange(
   await graphql(SET_SELECTION_INPUT_VALUE, {
     selectionId,
     fieldName: "duration",
-    value: days,
+    // Server semantics: duration = inclusive trip days, endDate = start + duration − 1.
+    value: days + 1,
   });
 }
