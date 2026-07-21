@@ -202,6 +202,37 @@ describe("agent-docs", () => {
       }
     });
 
+    it("should document the cold-agent UX contract (VOY-1714: compact search, third pick, unverified blockers, drift classes)", () => {
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        // Search: compact envelope is the default; the full dump is opt-in.
+        expect(content).toContain("topOptions");
+        expect(content).toContain("--full");
+        expect(content).toContain("optionCount");
+        // The stale pre-VOY-1692 async narrative must NOT come back: options
+        // are inline when the reused selection already has inventory. The
+        // original stale phrasings were "often **no options yet**" (markdown
+        // bold between the words), "options often empty initially", and the
+        // Known Quirks "Search is asynchronous." — pin all three shapes.
+        expect(content).not.toMatch(/often\s+(\*\*)?no options yet/);
+        expect(content).not.toMatch(/options often empty/);
+        expect(content).not.toMatch(/Search is asynchronous/);
+        // The fare/cabin third pick is a first-class Quick Start step.
+        expect(content).toContain("Flight Booking Details");
+        expect(content).toMatch(/defaults to Economy/i);
+        // Leg-mirrored option ids are documented as intended behavior.
+        expect(content).toMatch(/leg-mirrored/i);
+        // Unverified blockers + the dry-run tie-breaker rule.
+        expect(content).toContain("unverified");
+        expect(content).toMatch(/checkout truth/i);
+        // plans goals is documented as Style A (was wrongly Style B).
+        expect(content).not.toMatch(/Goals \(readiness view, Style B/);
+        // doctor drift classes: peripheral drift must carry a go-ahead.
+        expect(content).toMatch(/safe to proceed/i);
+        expect(content).toContain("coreDrifted");
+      }
+    });
+
     it("should describe the actual state-file layout (global, not per-plan)", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
