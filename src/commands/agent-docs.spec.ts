@@ -153,11 +153,32 @@ describe("agent-docs", () => {
       }
     });
 
-    it("should flag the booking-filter behaviour so agents don't trip on it", () => {
+    it("should document the book price hard-gate and idempotency pre-flight (VOY-1706)", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
-        // book --types / --only-bookable are client-side preflight gates only.
-        expect(content.toLowerCase()).toContain("client-side");
+        // A real checkout requires a price gate; the doc must teach the flow.
+        expect(content).toContain("--expect-total");
+        expect(content).toContain("--max-total");
+        expect(content).toContain("chargeableSubtotal");
+        expect(content).toContain("PRICE_CHANGED");
+        expect(content).toContain("ALREADY_BOOKED");
+        expect(content).toContain("--rebook");
+        // CHECKOUT_PENDING / --new-session must NOT be documented: the server
+        // excludes Pending rows from tripPlanPaymentCheckouts (WHERE status !=
+        // Pending in nest-api), so a pending-session pre-flight is impossible
+        // today — documenting it would promise idempotency that doesn't exist.
+        expect(content).not.toContain("CHECKOUT_PENDING");
+        expect(content).not.toContain("--new-session");
+        // The doc must be honest that unpaid sessions are invisible to the CLI.
+        expect(content.toLowerCase()).toMatch(/pending.*(invisible|excluded|not (visible|returned))/);
+        // The gate must not overclaim: point-in-time snapshot, not a guarantee.
+        expect(content.toLowerCase()).not.toMatch(/gate guarantees/);
+        // book --types / --only-bookable are SERVER-side filters and the
+        // checkout is always item-pinned (itemIds on createTripPlanCheckout,
+        // introspection-verified 2026-07-20). No stale client-side framing.
+        expect(content.toLowerCase()).toContain("server-side");
+        expect(content).toContain("itemIds");
+        expect(content.toLowerCase()).not.toMatch(/client-side (preflight )?gates/);
       }
     });
 
@@ -179,12 +200,12 @@ describe("agent-docs", () => {
     it("should document --idempotency-key as a per-command flag, not universal", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
-        // --idempotency-key only exists on book, listings add-to-selection,
-        // and a few places mutations. The doc must list those rather than
-        // promising it on every mutating command.
+        // --idempotency-key exists on listings add-to-selection and a few
+        // places mutations. It was REMOVED from `book` in VOY-1706 (it was a
+        // JSON-echo no-op there; real idempotency is the checkout pre-flight).
         expect(content).toContain("--idempotency-key");
-        expect(content).toContain("voyagier book");
         expect(content).toContain("listings add-to-selection");
+        expect(content).not.toMatch(/voyagier book <planId> --idempotency-key/);
         // Doc should NOT say it's accepted by every mutation.
         expect(content.toLowerCase()).not.toMatch(/every mutating command accepts/);
       }
