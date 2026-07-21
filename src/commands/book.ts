@@ -364,11 +364,11 @@ export function registerBookCommands(program: Command): void {
         }
         console.log();
         console.log(chalk.dim("  ─────────────────────────────────"));
-        console.log(`  Chargeable:    ${chalk.bold(formatPrice(chargeableSubtotal))}`);
+        console.log(`  Chargeable:     ${chalk.bold(formatPrice(chargeableSubtotal))}`);
         if (chargeableSubtotal !== subtotal) {
-          console.log(`  Subtotal:      ${formatPrice(subtotal)} ${chalk.dim("(incl. non-bookable lines)")}`);
+          console.log(`  Subtotal:       ${formatPrice(subtotal)} ${chalk.dim("(incl. non-bookable lines)")}`);
         }
-        console.log(`  Processing fee:${chalk.dim("added at checkout")}`);
+        console.log(`  Processing fee: ${chalk.dim("added at checkout")}`);
         if (blockers.length > 0) {
           console.log("\n  " + chalk.yellow(`${blockers.length} non-bookable item${blockers.length === 1 ? "" : "s"} (won't be charged):`));
           for (const b of blockers) console.log(chalk.yellow(`    • ${b.itemName} — ${b.reason}`));
@@ -525,9 +525,9 @@ export function registerBookCommands(program: Command): void {
       }
 
       console.log(chalk.green.bold("\n  ✓ Checkout session created!\n"));
-      console.log(`  Items:         ${bookableInSet.length}`);
-      console.log(`  Chargeable:    ${chalk.bold(formatPrice(chargeableSubtotal))}`);
-      console.log(`  Processing fee:${chalk.dim("included on checkout page")}`);
+      console.log(`  Items:          ${bookableInSet.length}`);
+      console.log(`  Chargeable:     ${chalk.bold(formatPrice(chargeableSubtotal))}`);
+      console.log(`  Processing fee: ${chalk.dim("included on checkout page")}`);
       console.log();
       console.log(chalk.bold("  Opening Stripe checkout in your browser..."));
       console.log(chalk.dim(`  ${checkoutUrl}\n`));
