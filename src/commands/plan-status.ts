@@ -448,7 +448,12 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
       const branch = branchOf.get(sel.id) ?? "active";
       const suppressed = branch !== "active";
 
-      if (status === "AWAITING_INPUT" && !sel.isLocked && blockedOn.length > 0) {
+      // VOY-1718: a suppressed alternate/dead branch emits NO blocker and NO
+      // wait — not just no PICK_PENDING. A dead-branch selection awaiting an
+      // input, or still fetching options, is as irrelevant as its pending pick
+      // (its whole chain lost). Its state stays visible in the selection
+      // detail (status/blockedOnUnavailable) for anyone inspecting goals.
+      if (!suppressed && status === "AWAITING_INPUT" && !sel.isLocked && blockedOn.length > 0) {
         // Only NAMED inputs become blockers — an AWAITING_INPUT selection with
         // no unbound required inputs is dependency-pending (its inputs flow
         // from upstream outputs); the actionable root cause surfaces via
@@ -476,7 +481,7 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
         // Covered by the group's aggregated PICK_PENDING — a requirement that
         // points here dedupes onto the aggregate rather than firing twice.
         coveredSelectionIds.add(sel.id);
-      } else if (status === "FETCHING") {
+      } else if (!suppressed && status === "FETCHING") {
         coveredSelectionIds.add(sel.id);
         waiting.push({
           kind: "OPTIONS_PENDING",

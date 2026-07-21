@@ -932,3 +932,87 @@ describe("buildPlanStatus — VOY-1718 grouping is per-goal, not global", () => 
     expect(s.blockers.some((b) => b.refs.selectionId === "roomB" && b.kind === "PICK_PENDING")).toBe(true);
   });
 });
+
+describe("buildPlanStatus — VOY-1718 suppression covers ALL emissions, not just PICK_PENDING", () => {
+  const goalWithSettledRoom = (extraSelections: Record<string, unknown>[]) =>
+    goal({
+      id: "gS",
+      name: "Secure Lodging",
+      type: "Hotel",
+      items: [
+        {
+          id: "iS",
+          selections: [
+            {
+              id: "room-done",
+              type: "HotelRoom",
+              mode: "Single",
+              isComplete: true,
+              blueprintMonitorId: "m",
+              mirrorListSelectionId: "lst-chosen",
+              options: [{ id: "oD", name: "Deluxe" }],
+              travellerOptionChoices: [choice("t1", "oD")],
+            },
+            ...extraSelections,
+          ],
+        },
+      ],
+    });
+
+  it("a dead-branch selection AWAITING a named input emits NO SELECTION_INPUT blocker", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan(),
+        tripPlanGoals: [
+          goalWithSettledRoom([
+            {
+              id: "room-dead-input",
+              type: "HotelRoom",
+              mode: "Single",
+              isComplete: false,
+              blueprintMonitorId: null, // AWAITING_INPUT
+              mirrorListSelectionId: "lst-unchosen",
+              options: [],
+              inputs: [{ id: "in1", fieldName: "bedType", fieldLabel: "Bed type", isRequired: true, value: null, sourceOutputId: null }],
+            },
+          ]),
+        ],
+      },
+      BASE,
+    );
+    expect(s.blockers.filter((b) => b.kind === "SELECTION_INPUT")).toEqual([]);
+    const sel = s.goals[0].selections.find((x) => x.selectionId === "room-dead-input")!;
+    expect(sel.branch).toBe("deadBranch");
+    // State stays inspectable in the detail — suppression hides the blocker, not the selection.
+    expect(sel.status).toBe("AWAITING_INPUT");
+    expect(s.goals[0].alternateBranchCount).toBe(1);
+  });
+
+  it("a dead-branch selection still FETCHING emits NO OPTIONS_PENDING wait (readiness not held IN_PROGRESS by a lost branch)", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan(),
+        tripPlanGoals: [
+          goalWithSettledRoom([
+            {
+              id: "room-dead-fetch",
+              type: "HotelRoom",
+              mode: "Single",
+              isComplete: false,
+              blueprintMonitorId: "m9", // monitor set, no options → FETCHING
+              mirrorListSelectionId: "lst-unchosen",
+              options: [],
+            },
+          ]),
+        ],
+      },
+      BASE,
+    );
+    // No OPTIONS_PENDING for the lost branch (the empty test cart's own
+    // CART_PENDING wait is unrelated, pre-existing behavior).
+    expect(s.waiting.filter((w) => w.kind === "OPTIONS_PENDING")).toEqual([]);
+    const sel = s.goals[0].selections.find((x) => x.selectionId === "room-dead-fetch")!;
+    expect(sel.branch).toBe("deadBranch");
+    expect(sel.status).toBe("FETCHING");
+  });
+});
