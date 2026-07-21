@@ -399,8 +399,14 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
 
     const singleByType = new Map<string, typeof enriched>();
     for (const e of enriched) {
-      if (e.sel.mode === "List") continue;
-      const t = e.sel.type ?? "";
+      // Skip List-mode mirror sources, and skip selections with no `type` —
+      // grouping is BY type, so untyped selections can't be meaningfully
+      // bucketed together (they'd suppress/aggregate unrelated decisions).
+      // They fall through to the ordinary per-selection arms unchanged.
+      // (Mode stays `!== "List"`, matching the PICK_PENDING predicate: real
+      // decision surfaces may carry a null mode.)
+      if (e.sel.mode === "List" || !e.sel.type) continue;
+      const t = e.sel.type;
       const bucket = singleByType.get(t);
       if (bucket) bucket.push(e);
       else singleByType.set(t, [e]);

@@ -1016,3 +1016,39 @@ describe("buildPlanStatus — VOY-1718 suppression covers ALL emissions, not jus
     expect(sel.status).toBe("FETCHING");
   });
 });
+
+describe("buildPlanStatus — VOY-1718 untyped selections are never grouped (PR #79 review)", () => {
+  it("null-type selections don't suppress or aggregate each other — each keeps its ordinary blocker", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan(),
+        tripPlanGoals: [
+          goal({
+            id: "gU",
+            name: "Untyped",
+            type: null,
+            items: [
+              {
+                id: "iU",
+                selections: [
+                  // A complete untyped selection...
+                  { id: "u-done", type: null, mode: "Single", isComplete: true, blueprintMonitorId: "m", options: [{ id: "o1", name: "A" }], travellerOptionChoices: [choice("t1", "o1")] },
+                  // ...must NOT suppress these unrelated untyped pending picks
+                  { id: "u-pend-1", type: null, mode: "Single", isComplete: false, blueprintMonitorId: "m", options: [{ id: "o2", name: "B" }], travellerOptionChoices: [choice("t1", null)] },
+                  { id: "u-pend-2", type: null, mode: "Single", isComplete: false, blueprintMonitorId: "m", options: [{ id: "o3", name: "C" }], travellerOptionChoices: [choice("t1", null)] },
+                ],
+              },
+            ],
+          }),
+        ],
+      },
+      BASE,
+    );
+    // No suppression, no aggregation: two ordinary PICK_PENDING blockers survive.
+    const picks = s.blockers.filter((b) => b.kind === "PICK_PENDING");
+    expect(picks.map((b) => b.refs.selectionId).sort()).toEqual(["u-pend-1", "u-pend-2"]);
+    expect(picks.every((b) => !b.candidateSelectionIds)).toBe(true);
+    expect(s.goals[0].alternateBranchCount).toBe(0);
+    expect(s.goals[0].selections.every((x) => x.branch === "active")).toBe(true);
+  });
+});
