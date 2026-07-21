@@ -54,7 +54,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
-import { formatPrice, openBrowser, deriveBaseUrl, shellArg } from "../utils.js";
+import { formatPrice, openBrowser, deriveBaseUrl, shellArg, cents } from "../utils.js";
 import { hintCheckoutCreated, hintBookingConfirmed, hintBookingPending, hintDryRun } from "../hints.js";
 import { GET_CART_V2, CREATE_CHECKOUT, GET_PAYMENT_CHECKOUTS } from "../queries.js";
 import {
@@ -263,8 +263,8 @@ export function registerBookCommands(program: Command): void {
       // The recipe amount MUST come from the same rounded-cents value the gate
       // compares (not toFixed on the raw float): on a genuine half-cent
       // subtotal, toFixed can round the other way and emit a recipe that fails
-      // its own gate.
-      const cents = (n: number): number => Math.round(n * 100);
+      // its own gate. cents() is shared via utils — quote's offer total uses
+      // the same function, so quoted ≡ gated by construction (VOY-1212).
       const gateAmount = (cents(chargeableSubtotal) / 100).toFixed(2);
       const nextStepCmd = `voyagier book ${shellArg(plan.id)}${filterFlags} --expect-total ${gateAmount}`;
 

@@ -78,6 +78,8 @@ The cart materializes only bookable, fare/room-level options — the per-item `i
 | `voyagier listings` | Blueprint Listings — recent change events, add to selection |
 | `voyagier places` | Search / get / attach / list / highlight (Google Places + internal catalog) |
 | `voyagier cart` | View cart with by-goal grouping and per-item bookability |
+| `voyagier quote` | Offer snapshot: itemized bookables + the exact total a gated `book` will enforce (`--json` includes the acceptance command) |
+| `voyagier send` | Email the client an invite link to the live trip (self-serve close; requires confirmation / `--yes`) |
 | `voyagier book` | Stripe checkout gated by `--expect-total` / `--max-total`; `--validate`, server-side `--only-bookable` / `--types`, `--rebook` |
 | `voyagier bookings` | View booking records |
 | `voyagier chat` | Interactive AI trip planning |
