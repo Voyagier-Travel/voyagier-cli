@@ -351,9 +351,13 @@ describe("registerSearchCommands", () => {
       expect(out.tripPlanId).toBe("plan-1");
       expect(out.selectionId).toBe("sel-fdec");
       expect(out.isRoundTrip).toBe(false);
-      expect(out.options).toHaveLength(2);
+      // Compact envelope (VOY-1714): summaries only — never raw bookingData.
+      expect(out.optionCount).toBe(2);
+      expect(out.topOptions).toHaveLength(2);
       // Default sort is by sortOrder: opt-b (1) before opt-a (2).
-      expect(out.options.map((o: { id: string }) => o.id)).toEqual(["opt-b", "opt-a"]);
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["opt-b", "opt-a"]);
+      expect(JSON.stringify(out)).not.toContain("bookingData");
+      expect(out.options).toBeUndefined();
       expect(out.url).toBe("https://dev.voyagier.com/plans/plan-1");
       // Airports were pushed to the goal graph (origin + destination).
       const airportCalls = mockGraphql.mock.calls.filter(c => String(c[0]).includes("updateTripPlanAirportSelection"));
@@ -408,7 +412,7 @@ describe("registerSearchCommands", () => {
         "--max-stops", "0", "--json",
       ]);
       const out = JSON.parse(stdout());
-      expect(out.options.map((o: { id: string }) => o.id)).toEqual(["opt-b"]); // only the 0-stop option
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["opt-b"]); // only the 0-stop option
     });
 
     it("rejects a negative --max-stops", async () => {
@@ -430,7 +434,11 @@ describe("registerSearchCommands", () => {
         "--sort", "price", "--json",
       ]);
       const out = JSON.parse(stdout());
-      expect(out.options.map((o: { price: number }) => o.price)).toEqual([300, 500]);
+      // Prices live in the one-line summaries in the compact envelope.
+      expect(out.topOptions.map((o: { summary: string }) => o.summary)).toEqual([
+        expect.stringContaining("$300.00"),
+        expect.stringContaining("$500.00"),
+      ]);
     });
 
     it("emits agent markdown with the options and a select hint", async () => {
@@ -575,7 +583,8 @@ describe("registerSearchCommands", () => {
       ]);
       const out = JSON.parse(stdout());
       expect(out.selectionId).toBe("sel-hdec");
-      expect(out.options).toHaveLength(2);
+      expect(out.optionCount).toBe(2);
+      expect(out.topOptions).toHaveLength(2);
       expect(mockGraphql.mock.calls.some(c => String(c[0]).includes("setTripPlanDestinationValue"))).toBe(true);
       // Check-out derived via a duration input.
       expect(mockGraphql.mock.calls.some(c => String(c[0]).includes("setTripPlanSelectionInputValue"))).toBe(true);
@@ -647,8 +656,9 @@ describe("registerSearchCommands", () => {
       ]);
       const out = JSON.parse(stdout());
       expect(out.selectionId).toBe("sel-adec");
-      expect(out.options).toHaveLength(1);
-      expect(out.options[0].name).toBe("Snorkel tour");
+      expect(out.optionCount).toBe(1);
+      expect(out.topOptions).toHaveLength(1);
+      expect(out.topOptions[0].summary).toContain("Snorkel tour");
       expect(mockGraphql.mock.calls.some(c => String(c[0]).includes("addTripPlanDateOption"))).toBe(true);
     });
 
@@ -706,6 +716,72 @@ describe("registerSearchCommands", () => {
     });
   });
 
+  describe("compact envelope vs --full (VOY-1714)", () => {
+    /** 12 options — enough to cross the TOP_OPTIONS=10 display cap. */
+    function manyFlightOptions(): unknown[] {
+      return Array.from({ length: 12 }, (_, i) => ({
+        id: `opt-${String(i).padStart(2, "0")}`,
+        name: `XX ${100 + i}`,
+        price: 100 + i,
+        duration: "5h 00m",
+        sortOrder: i + 1,
+        bookingData: { stops: 0, flightToken: `TK${i}`, segments: [{ giant: "raw provider payload" }] },
+      }));
+    }
+
+    it("caps default --json at 10 topOptions with a note, keeps full optionCount, and never leaks bookingData", async () => {
+      installRouter({ options: manyFlightOptions() });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.optionCount).toBe(12);
+      expect(out.topOptions).toHaveLength(10);
+      expect(out.note).toMatch(/top 10 of 12/);
+      expect(out.note).toMatch(/--full/);
+      // The whole point: raw provider payloads stay OUT of the default stream.
+      expect(JSON.stringify(out)).not.toContain("raw provider payload");
+      expect(out.topOptions.every((o: Record<string, unknown>) => !("bookingData" in o))).toBe(true);
+    });
+
+    it("--full restores the complete option dump (bookingData included), indexed", async () => {
+      installRouter({ options: manyFlightOptions() });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--json", "--full",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.optionCount).toBe(12);
+      expect(out.options).toHaveLength(12);
+      expect(out.topOptions).toBeUndefined();
+      expect(out.options[0].index).toBe(1);
+      expect(out.options[0].bookingData).toBeDefined();
+    });
+
+    it("small result sets emit all options as topOptions with no note", async () => {
+      installRouter();
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.topOptions).toHaveLength(2);
+      expect(out.note).toBeUndefined();
+    });
+
+    it("agent mode caps the listing at 10 with an '…and N more' tail (—full lists all)", async () => {
+      installRouter({ options: manyFlightOptions() });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--agent",
+      ]);
+      const md = stdout();
+      expect(md).toContain("…and 2 more");
+      expect(md).not.toContain("11.");
+    });
+  });
+
   describe("flight sort + stops parsing", () => {
     it("sorts by duration (parses '5h 30m' vs '8h 00m')", async () => {
       installRouter();
@@ -714,7 +790,7 @@ describe("registerSearchCommands", () => {
         "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--sort", "duration", "--json",
       ]);
       const out = JSON.parse(stdout());
-      expect(out.options.map((o: { id: string }) => o.id)).toEqual(["opt-b", "opt-a"]); // 5h30 before 8h
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["opt-b", "opt-a"]); // 5h30 before 8h
     });
 
     it("sorts by stops, deriving stop count from segments[] when no explicit stops", async () => {
@@ -729,7 +805,7 @@ describe("registerSearchCommands", () => {
         "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--sort", "stops", "--json",
       ]);
       const out = JSON.parse(stdout());
-      expect(out.options.map((o: { id: string }) => o.id)).toEqual(["nonstop", "two-seg"]);
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["nonstop", "two-seg"]);
     });
   });
 
@@ -844,7 +920,7 @@ describe("registerSearchCommands", () => {
         "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-08-01", "--checkout", "2026-08-05", "--sort", "price", "--json",
       ]);
       const out = JSON.parse(stdout());
-      expect(out.options.map((o: { id: string }) => o.id)).toEqual(["h-lo", "h-hi"]);
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["h-lo", "h-hi"]);
     });
 
     it("agent mode lists hotels with a select hint", async () => {
@@ -920,7 +996,7 @@ describe("registerSearchCommands", () => {
         "--plan", "plan-1", "--destination", "Bali", "--date", "2026-08-01", "--sort", "price", "--json",
       ]);
       const out = JSON.parse(stdout());
-      expect(out.options.map((o: { id: string }) => o.id)).toEqual(["act-lo", "act-hi"]);
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["act-lo", "act-hi"]);
     });
 
     it("agent mode lists activities", async () => {
