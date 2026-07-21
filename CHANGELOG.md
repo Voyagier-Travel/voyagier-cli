@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Changed
-- **`book --status --json` renames `bookingRecords[].amount` → `amountCents` (VOY-1713, breaking):** the API stores integer cents but exposes them as an undocumented `Float` named `amount` — the dollar-looking name caused the v2.3.0 100× display bug and `ALREADY_BOOKED.details` already says `amountCents`. One name per unit across every CLI machine surface.
+- **`book --status --json` and `bookings list/get --json` rename `amount` → `amountCents` (VOY-1713, breaking):** the API stores integer cents but exposes them as an undocumented `Float` named `amount` — the dollar-looking name caused the v2.3.0 100× display bug and `ALREADY_BOOKED.details` already says `amountCents`. One name per unit across every CLI machine surface.
 - **`book --dry-run` reports a gate verdict (VOY-1713):** when `--expect-total`/`--max-total` accompany `--dry-run`, output includes `data.gate.{wouldPass,failReason}` (and a ✓/✗ line in human/agent modes) so agents can pre-verify a gate without risking `PRICE_CHANGED`. Dry-run still requires no gate.
 - **`book --dry-run` distinguishes "no paid checkouts" from "could not verify" (VOY-1713):** human/agent output now warns when the existing-checkout query fails instead of silently looking like zero.
 

@@ -408,6 +408,15 @@ describe("--dry-run", () => {
     expect(gate.failReason).toContain("exceeds");
   });
 
+  it("gate verdict: BOTH gates failing → failReason reports both (agent must not fix one and trip the other)", async () => {
+    routeGraphql();
+    await runBook(["plan-1", "--dry-run", "--expect-total", "1.00", "--max-total", "2.00", "--json"]);
+    const gate = lastJson().data.gate;
+    expect(gate.wouldPass).toBe(false);
+    expect(gate.failReason).toContain("--expect-total");
+    expect(gate.failReason).toContain("--max-total");
+  });
+
   it("nextStep recipe is self-consistent: the emitted command passes its own gate (half-cent subtotal)", async () => {
     // 100.005 has no exact float representation — the class of value where a
     // raw toFixed(2) recipe and the rounded-cents gate can disagree.

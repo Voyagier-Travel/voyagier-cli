@@ -470,7 +470,7 @@ voyagier places remove --id <tripPlanPlaceId> [--idempotency-key <ulid>] --json
 
 ### Bookings
 ```bash
-voyagier bookings list --json
+voyagier bookings list --json                    # bookingRecords: amountCents is raw CENTS
 voyagier bookings get <id> --json
 ```
 

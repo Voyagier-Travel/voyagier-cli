@@ -289,11 +289,13 @@ export function registerBookCommands(program: Command): void {
         // but when one is given the caller deserves to know if it would pass.
         const gateSupplied = expectTotal !== null || maxTotal !== null;
         const gateWouldPass = gateSupplied ? !expectFails && !maxFails : null;
-        const gateFailReason = expectFails
-          ? `--expect-total ${expectTotal!.toFixed(2)} ≠ chargeable ${gateAmount}`
-          : maxFails
-            ? `chargeable ${gateAmount} exceeds --max-total ${maxTotal!.toFixed(2)}`
-            : null;
+        // Report ALL failing gates (not first-match): an agent that fixes only
+        // the expect mismatch shouldn't then trip an unreported max cap.
+        const gateFailReasons = [
+          ...(expectFails ? [`--expect-total ${expectTotal!.toFixed(2)} ≠ chargeable ${gateAmount}`] : []),
+          ...(maxFails ? [`chargeable ${gateAmount} exceeds --max-total ${maxTotal!.toFixed(2)}`] : []),
+        ];
+        const gateFailReason = gateFailReasons.length > 0 ? gateFailReasons.join("; ") : null;
         if (opts.json) {
           process.stdout.write(JSON.stringify({
             ok: true,
@@ -559,7 +561,9 @@ async function showBookingStatus(planId: string, baseUrl: string, json: boolean,
     // amountCents. One name per unit across every CLI machine surface.
     const renamed = checkouts.map((c) => ({
       ...c,
-      bookingRecords: c.bookingRecords.map(({ amount, ...rest }) => ({ ...rest, amountCents: amount })),
+      // ?? [] : guard schema drift — the selection implies non-null, but a null
+      // here previously serialized fine and must not become a TypeError.
+      bookingRecords: (c.bookingRecords ?? []).map(({ amount, ...rest }) => ({ ...rest, amountCents: amount })),
     }));
     process.stdout.write(JSON.stringify({
       ok: true,
