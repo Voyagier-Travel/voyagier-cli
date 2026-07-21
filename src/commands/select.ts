@@ -362,6 +362,18 @@ export function registerSelectCommands(program: Command): void {
         const result = await setSelectedOption(state.selectionId, selected.optionId, opts);
         const waitOutcome = opts.wait ? await runPickWait(state.selectionId, selected.optionId, opts) : undefined;
 
+        // VOY-1718: every vertical is a decision chain — a pick usually spawns
+        // the NEXT decision. Tell the agent where the chain goes next so it
+        // doesn't stop at the parent thinking the goal is done.
+        const chainNote =
+          state.type === "hotels"
+            ? "Picking the hotel spawns its room decision; pick a room and the baseline rate auto-selects. Run plan-status to surface the next pick (tip: passing --wait on a pick returns it inline)."
+            : state.type === "flights"
+              ? state.returnSelectionId
+                ? "Once both legs are picked, choose Fare & Cabin (FlightClass) here in the CLI — it defaults to Economy. Run plan-status to surface it (tip: passing --wait on a pick returns it inline)."
+                : "Next: choose Fare & Cabin (FlightClass) here in the CLI — it defaults to Economy. Run plan-status to surface it (tip: passing --wait on a pick returns it inline)."
+              : undefined;
+
         if (opts.json) {
           jsonOutputWithPlan(
             {
@@ -379,6 +391,7 @@ export function registerSelectCommands(program: Command): void {
                 ? { returnSelectionId: state.returnSelectionId, note: "Round trip: choose on returnSelectionId too." }
                 : {}),
               parentOptionId: result.parentOptionId ?? null,
+              ...(chainNote ? { chainNote } : {}),
               url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
               ...(waitOutcome !== undefined ? waitJsonFragment(waitOutcome) : {}),
             },
@@ -391,6 +404,22 @@ export function registerSelectCommands(program: Command): void {
             ...(state.type === "flights" && state.returnSelectionId
               ? [
                   `- Choose the RETURN leg too: \`voyagier select --selection-id ${shellArg(state.returnSelectionId)} --option-id <id>\` (options: \`voyagier selection-options ${shellArg(state.returnSelectionId)} --json\`)`,
+                  // VOY-1718: after BOTH legs, the Fare & Cabin (FlightClass)
+                  // decision is next — the fare class is picked here (seat
+                  // selection / cabin upgrades stay airline-side after booking).
+                  `- Then pick Fare & Cabin (FlightClass) — defaults to Economy. Surface it: \`voyagier plan-status ${shellArg(state.tripPlanId)} --json\` (tip: \`--wait\` on a pick returns it inline)`,
+                ]
+              : []),
+            // VOY-1718: one-way flight — the Fare & Cabin decision is next.
+            ...(state.type === "flights" && !state.returnSelectionId
+              ? [
+                  `- Next pick: Fare & Cabin (FlightClass) — defaults to Economy. Surface it: \`voyagier plan-status ${shellArg(state.tripPlanId)} --json\` (tip: \`--wait\` on a pick returns it inline)`,
+                ]
+              : []),
+            // VOY-1718: picking a hotel opens its room decision — don't stop here.
+            ...(state.type === "hotels"
+              ? [
+                  `- Room decision comes next (pick a room → baseline rate auto-carts). Surface it: \`voyagier plan-status ${shellArg(state.tripPlanId)} --json\` (tip: \`--wait\` on a pick returns it inline)`,
                 ]
               : []),
             `- View cart: \`voyagier cart ${shellArg(state.tripPlanId)}\``,

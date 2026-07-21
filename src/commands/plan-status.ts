@@ -21,11 +21,21 @@
  *   acting on them won't help.
  * - `nextSteps[]` = runnable commands mapping onto blockers/waits, ending with
  *   the terminal command when ready.
- * - Divergent picks are VALID (demmersong 2026-07-20): if every traveller
- *   picked, the pick is complete even when picks differ. `consensus: false`
- *   is informational; PICK_PENDING fires only when someone hasn't picked.
+ * - Divergent picks are VALID: if every traveller picked, the pick is complete even when picks differ.
+ *   `consensus: false` is informational; PICK_PENDING fires only when someone hasn't picked.
+ * - Dead-branch suppression (VOY-1718): the goal graph pre-creates a decision
+ *   chain for EVERY candidate parent option (pick a hotel → per-hotel room
+ *   list → room → rate). After a pick, the sibling chains are alternates. We
+ *   group Single-mode selections by type within a goal; once one member is
+ *   complete (or a bookable cart item joins to it), the incomplete siblings
+ *   are alternates and their PICK_PENDING is suppressed (`branch`:
+ *   "alternate" | "deadBranch", counted in `alternateBranchCount`). When a
+ *   parent hasn't been picked at all, a group of ≥2 pending siblings collapses
+ *   into ONE aggregated PICK_PENDING carrying `candidateSelectionIds`.
  * - STABILITY PROMISE: additive-only. Keys are never renamed/removed; new
  *   blocker/waiting kinds may appear — consumers must tolerate unknown kinds.
+ *   Additive since v2.6.0 (VOY-1718): selection `branch`, goal + summary
+ *   `alternateBranchCount`, blocker `candidateSelectionIds`.
  *
  * Reuses (never re-derives): deriveChosen + deriveBlockedOn (choices.js),
  * classifySelection status vocabulary (selection-status.js).
@@ -74,6 +84,13 @@ interface RawStatusSelection {
   isLocked?: boolean | null;
   blueprintMonitorId?: string | null;
   parentOptionId?: string | null;
+  /**
+   * VOY-1718: the *List selection this Single decision mirrors its options
+   * from (populated on mirror selections; null on lists/rates/leaves). Used to
+   * classify a suppressed pick as a same-list `alternate` vs a `deadBranch`
+   * under a parent option that was not chosen.
+   */
+  mirrorListSelectionId?: string | null;
   travellerOptionChoices?: RawTravellerChoice[] | null;
   inputs?: RawSelectionInput[] | null;
   options?: { id: string; name?: string | null; isBookable?: boolean | null }[] | null;
@@ -141,6 +158,14 @@ export interface Blocker {
    * over these.
    */
   unverified?: true;
+  /**
+   * VOY-1718: for an aggregated PICK_PENDING (one blocker standing in for a
+   * whole group of sibling candidate selections whose parent hasn't been
+   * picked yet), the ids of the candidate selections it rolls up. Absent on
+   * ordinary single-selection blockers. Pick the PARENT decision first, then
+   * re-run plan-status — the aggregate collapses once a branch is chosen.
+   */
+  candidateSelectionIds?: string[];
 }
 
 export interface Waiting {
@@ -159,6 +184,12 @@ export interface PlanStatusData {
     goalsDecided: number;
     goalsBooked: number;
     blockerCount: number;
+    /**
+     * VOY-1718: total Single-mode selections suppressed as alternate branches
+     * across all goals — incomplete picks under a decision whose type already
+     * has a complete/booked sibling chain. Informational; never a blocker.
+     */
+    alternateBranchCount: number;
   };
   goals: {
     goalId: string;
@@ -167,6 +198,8 @@ export interface PlanStatusData {
     isDecided: boolean;
     isBooked: boolean;
     isReady: boolean;
+    /** VOY-1718: suppressed alternate-branch selections in this goal. */
+    alternateBranchCount: number;
     selections: {
       selectionId: string;
       type: string | null;
@@ -176,6 +209,17 @@ export interface PlanStatusData {
       status: string;
       chosenOptionId: string | null;
       chosenOptionName: string | null;
+      /**
+       * VOY-1718 branch classification:
+       *   "active"     — a live decision surface (or a complete sibling).
+       *   "alternate"  — an incomplete pick suppressed because a sibling of the
+       *                  same type is already complete AND it mirrors the same
+       *                  list (a legit extra mirror of the chosen branch).
+       *   "deadBranch" — an incomplete pick under a parent option that was NOT
+       *                  chosen (mirrors a different list than the completed
+       *                  sibling). Its pick never surfaces as a blocker.
+       */
+      branch: "active" | "alternate" | "deadBranch";
       consensus: boolean;
       /** Every traveller with a choice row has picked (picks may differ — that's valid). */
       allPicked: boolean;
@@ -227,9 +271,15 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
       }
     }
   }
-  const bookableCount = cartItems.filter(
+  const bookableCartItems = cartItems.filter(
     (i) => i.selectionId && i.optionId && bookableOptionKeys.has(`${i.selectionId}:${i.optionId}`),
-  ).length;
+  );
+  const bookableCount = bookableCartItems.length;
+  // VOY-1718: which selections have a bookable item in the cart — counts as
+  // completion evidence for that selection's type even if `isComplete` lags.
+  const bookableCartSelectionIds = new Set(
+    bookableCartItems.map((i) => i.selectionId as string),
+  );
   const cart = {
     itemCount: plan.cart?.itemCount ?? 0,
     bookableCount,
@@ -279,9 +329,16 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
   // 2–3. Walk goal selections: SELECTION_INPUT / PICK_PENDING blockers,
   //      OPTIONS_PENDING waits.
   const coveredSelectionIds = new Set<string>();
+  // VOY-1718: selections suppressed as alternate branches (across all goals),
+  // read by the REQUIREMENT_UNMET pass to downgrade requirements that point at
+  // a dead branch instead of hiding them via coveredSelectionIds dedupe.
+  const suppressedSelectionIds = new Set<string>();
   const goalsOut = goals.map((g) => {
     const selections = (g.items ?? []).flatMap((i) => i.selections ?? []);
-    const selectionsOut = selections.map((sel) => {
+
+    // Enrich each selection once (status + chosen/allPicked derivation) so the
+    // dead-branch pre-pass and the output walk share one computation.
+    const enriched = selections.map((sel) => {
       const options = sel.options ?? [];
       // classifySelection with monitor:null — monitor detail isn't fetched
       // here (one-round-trip budget); its "monitor id set, state unknown" arm
@@ -301,8 +358,114 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
       const allPicked = choices.length > 0 && travellersPending.length === 0;
       const blockedOn = status === "AWAITING_INPUT" ? deriveBlockedOn(sel) : [];
       const blockedOnUnavailable = status === "AWAITING_INPUT" && blockedOn.length === 0;
+      // Would this selection emit an ordinary PICK_PENDING (before any
+      // dead-branch suppression)? Single-mode decision surface, options ready,
+      // nobody has picked, not locked, backend doesn't call it complete.
+      const wouldPickPend =
+        status === "READY" &&
+        !allPicked &&
+        !chosenOptionId &&
+        !sel.isLocked &&
+        sel.mode !== "List" &&
+        sel.isComplete !== true;
+      return {
+        sel,
+        options,
+        status,
+        chosenOptionId,
+        consensus,
+        choices,
+        travellersPending,
+        allPicked,
+        blockedOn,
+        blockedOnUnavailable,
+        wouldPickPend,
+      };
+    });
 
-      if (status === "AWAITING_INPUT" && !sel.isLocked && blockedOn.length > 0) {
+    // ── VOY-1718 dead-branch pre-pass ──────────────────────────────────────
+    // Group Single-mode selections by type WITHIN this goal. The goal graph
+    // pre-creates a full decision chain for every candidate parent option, so
+    // a type-group holds one live pick plus N sibling picks under parents the
+    // client didn't choose. Once a member is complete (or a bookable cart item
+    // joins to it), the incomplete siblings are alternates — suppress their
+    // picks. When NO member is settled yet and ≥2 would each pick-pend, roll
+    // them into ONE aggregated blocker (pick the parent decision first).
+    const branchOf = new Map<string, "active" | "alternate" | "deadBranch">();
+    const aggregatedIds = new Set<string>();
+    const aggregateBlockers: Blocker[] = [];
+    let alternateBranchCount = 0;
+
+    const singleByType = new Map<string, typeof enriched>();
+    for (const e of enriched) {
+      // Skip List-mode mirror sources, and skip selections with no `type` —
+      // grouping is BY type, so untyped selections can't be meaningfully
+      // bucketed together (they'd suppress/aggregate unrelated decisions).
+      // They fall through to the ordinary per-selection arms unchanged.
+      // (Mode stays `!== "List"`, matching the PICK_PENDING predicate: real
+      // decision surfaces may carry a null mode.)
+      if (e.sel.mode === "List" || !e.sel.type) continue;
+      const t = e.sel.type;
+      const bucket = singleByType.get(t);
+      if (bucket) bucket.push(e);
+      else singleByType.set(t, [e]);
+    }
+
+    for (const [t, members] of singleByType) {
+      // Evidence-bearing siblings: backend-complete OR joined to a bookable
+      // cart item (cart truth beats a lagging isComplete flag).
+      const settled = members.filter(
+        (m) => m.sel.isComplete === true || bookableCartSelectionIds.has(m.sel.id),
+      );
+      // "Incomplete" = NOT settled (not the raw isComplete flag): a selection
+      // whose bookable item is already in the cart is settled evidence even
+      // while the backend's isComplete lags — it must never suppress itself.
+      const settledIds = new Set(settled.map((m) => m.sel.id));
+      const incomplete = members.filter((m) => !settledIds.has(m.sel.id));
+      if (settled.length > 0) {
+        const settledMirrors = new Set(settled.map((m) => m.sel.mirrorListSelectionId ?? null));
+        for (const m of incomplete) {
+          const mir = m.sel.mirrorListSelectionId ?? null;
+          branchOf.set(m.sel.id, settledMirrors.has(mir) ? "alternate" : "deadBranch");
+          suppressedSelectionIds.add(m.sel.id);
+          alternateBranchCount += 1;
+        }
+      } else {
+        const candidates = incomplete.filter((m) => m.wouldPickPend);
+        if (candidates.length >= 2) {
+          for (const c of candidates) aggregatedIds.add(c.sel.id);
+          // Distinct mirrored lists = sibling branches. A candidate with no
+          // mirrorListSelectionId counts as its OWN branch (unknown list) so
+          // mixed null/non-null groups don't undercount.
+          const branches = new Set(
+            candidates.map((c) => c.sel.mirrorListSelectionId ?? c.sel.id),
+          );
+          const branchCount = branches.size;
+          aggregateBlockers.push({
+            kind: "PICK_PENDING",
+            message:
+              `${g.name ?? (t || "Selection")}: ${t || "selection"} pick pending ` +
+              `(${candidates.length} candidate selection(s) across ${branchCount} sibling ` +
+              `branch(es) — pick the parent decision first, then re-run plan-status)`,
+            refs: { goalId: g.id },
+            candidateSelectionIds: candidates.map((c) => c.sel.id),
+          });
+        }
+      }
+    }
+
+    const selectionsOut = enriched.map((e) => {
+      const { sel, options, status, chosenOptionId, consensus } = e;
+      const { travellersPending, allPicked, blockedOn, blockedOnUnavailable } = e;
+      const branch = branchOf.get(sel.id) ?? "active";
+      const suppressed = branch !== "active";
+
+      // VOY-1718: a suppressed alternate/dead branch emits NO blocker and NO
+      // wait — not just no PICK_PENDING. A dead-branch selection awaiting an
+      // input, or still fetching options, is as irrelevant as its pending pick
+      // (its whole chain lost). Its state stays visible in the selection
+      // detail (status/blockedOnUnavailable) for anyone inspecting goals.
+      if (!suppressed && status === "AWAITING_INPUT" && !sel.isLocked && blockedOn.length > 0) {
         // Only NAMED inputs become blockers — an AWAITING_INPUT selection with
         // no unbound required inputs is dependency-pending (its inputs flow
         // from upstream outputs); the actionable root cause surfaces via
@@ -315,29 +478,22 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
           message: `${g.name ?? sel.type ?? "Selection"} is blocked on: ${named}`,
           refs: { selectionId: sel.id, goalId: g.id },
         });
-      } else if (
-        status === "READY" &&
-        !allPicked &&
-        !chosenOptionId &&
-        !sel.isLocked &&
-        // Only Single-mode selections are decision surfaces an agent picks;
-        // List-mode selections (FlightList, HotelList, FlightJourney, …)
-        // expose items for OTHER selections to mirror — never picked directly.
-        sel.mode !== "List" &&
-        // Server-side completion wins: if the backend says complete, no pick
-        // is pending regardless of how the choice rows look from here.
-        sel.isComplete !== true
-      ) {
+      } else if (e.wouldPickPend && !suppressed && !aggregatedIds.has(sel.id)) {
+        // A live pick: not a suppressed alternate, not rolled into an aggregate.
         coveredSelectionIds.add(sel.id);
         blockers.push({
           kind: "PICK_PENDING",
           message:
-            travellersPending.length > 0 && choices.length > travellersPending.length
+            travellersPending.length > 0 && e.choices.length > travellersPending.length
               ? `${g.name ?? sel.type ?? "Selection"}: ${travellersPending.length} traveller(s) still need to pick`
               : `${g.name ?? sel.type ?? "Selection"} has ${options.length} option(s) ready — none picked yet`,
           refs: { selectionId: sel.id, goalId: g.id },
         });
-      } else if (status === "FETCHING") {
+      } else if (aggregatedIds.has(sel.id)) {
+        // Covered by the group's aggregated PICK_PENDING — a requirement that
+        // points here dedupes onto the aggregate rather than firing twice.
+        coveredSelectionIds.add(sel.id);
+      } else if (!suppressed && status === "FETCHING") {
         coveredSelectionIds.add(sel.id);
         waiting.push({
           kind: "OPTIONS_PENDING",
@@ -357,6 +513,7 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
         status,
         chosenOptionId,
         chosenOptionName,
+        branch,
         consensus,
         allPicked,
         travellersPending,
@@ -364,6 +521,10 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
         blockedOnUnavailable,
       };
     });
+
+    // Aggregated group blockers sit alongside the per-selection ones; the
+    // final kind-sort orders all PICK_PENDING together.
+    blockers.push(...aggregateBlockers);
 
     const unmetRequirements = (g.checkoutReadiness?.requirements ?? [])
       .filter((r) => r.isRequired && !r.isFulfilled)
@@ -381,6 +542,7 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
       isDecided: g.isBooked === true || g.isDecided === true,
       isBooked: g.isBooked === true,
       isReady: g.checkoutReadiness?.isReady === true,
+      alternateBranchCount,
       selections: selectionsOut,
       unmetRequirements,
     };
@@ -396,7 +558,12 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
   );
   for (const g of goalsOut) {
     for (const r of g.unmetRequirements) {
-      if (r.selectionId && coveredSelectionIds.has(r.selectionId)) continue;
+      // VOY-1718: a requirement pointing at a suppressed alternate/dead branch
+      // must NOT be silently deduped by coveredSelectionIds — a sibling chain
+      // is complete, so it's very likely a stale ref, but we keep it visible
+      // and mark it unverified (checkout truth wins) rather than dropping it.
+      const refersSuppressedBranch = !!r.selectionId && suppressedSelectionIds.has(r.selectionId);
+      if (r.selectionId && coveredSelectionIds.has(r.selectionId) && !refersSuppressedBranch) continue;
       if (
         r.missingTravellerIds.length > 0 &&
         r.missingTravellerIds.every((id) => blockedTravellerIds.has(id))
@@ -407,16 +574,18 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
       // data (VOY-1715: the fulfilling selection may live in another goal and
       // isFulfilled may never flip). Label them honestly instead of sending
       // the agent into a `plans goal` dead-loop that shows the same null ref.
-      const unverified = !r.selectionId;
+      const unverified = !r.selectionId || refersSuppressedBranch;
+      const suffix = refersSuppressedBranch
+        ? " (references an alternate branch — a sibling chain is already complete; verify with book --dry-run)"
+        : !r.selectionId
+          ? " (server reports this unmet but references no selection — may be stale; verify with book --dry-run)"
+          : "";
       blockers.push({
         kind: "REQUIREMENT_UNMET",
         message:
           (r.label
             ? `${g.name ?? "Goal"}: ${r.label}`
-            : `${g.name ?? "Goal"} has an unmet checkout requirement`) +
-          (unverified
-            ? " (server reports this unmet but references no selection — may be stale; verify with book --dry-run)"
-            : ""),
+            : `${g.name ?? "Goal"} has an unmet checkout requirement`) + suffix,
         refs: {
           goalId: g.goalId,
           ...(r.selectionId ? { selectionId: r.selectionId } : {}),
@@ -497,8 +666,14 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
         push(`voyagier plans goal ${shellArg(b.refs.goalId)} --json   # inspect the blocking requirements`);
         break;
       case "PICK_PENDING":
-        push(`voyagier selection-options ${shellArg(b.refs.selectionId)} --json   # list options`);
-        push(`voyagier select --selection-id ${shellArg(b.refs.selectionId)} --option-id <optionId>`);
+        if (b.candidateSelectionIds && b.candidateSelectionIds.length > 0) {
+          // Aggregated group blocker — no single selection to pick yet; the
+          // agent inspects the candidates and picks the parent decision first.
+          push(`voyagier plans goal ${shellArg(b.refs.goalId)} --json   # inspect candidate selections`);
+        } else {
+          push(`voyagier selection-options ${shellArg(b.refs.selectionId)} --json   # list options`);
+          push(`voyagier select --selection-id ${shellArg(b.refs.selectionId)} --option-id <optionId>`);
+        }
         break;
       case "REQUIREMENT_UNMET":
         if (b.unverified) {
@@ -532,6 +707,7 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
       goalsDecided: goalsOut.filter((g) => g.isDecided).length,
       goalsBooked,
       blockerCount: blockers.length,
+      alternateBranchCount: goalsOut.reduce((n, g) => n + g.alternateBranchCount, 0),
     },
     goals: goalsOut,
     travellers: travellerOut,
@@ -568,6 +744,13 @@ function renderHuman(s: PlanStatusData): void {
       console.log(`  ${chalk.red("●")} [${b.kind}] ${b.message}`);
     }
   }
+  if (s.summary.alternateBranchCount > 0) {
+    console.log(
+      chalk.dim(
+        `  (${s.summary.alternateBranchCount} alternate-branch selection(s) suppressed — sibling chains superseded by a settled pick of the same type; see goals detail)`,
+      ),
+    );
+  }
   if (s.waiting.length > 0) {
     console.log();
     console.log(chalk.bold("Waiting on the system (no action needed):"));
@@ -582,6 +765,11 @@ function renderHuman(s: PlanStatusData): void {
     const badge = g.isBooked ? "✅" : g.isReady ? "🟢" : "⏳";
     console.log(`  ${badge} ${g.name ?? g.type ?? g.goalId}`);
     for (const sel of g.selections) {
+      if (sel.branch !== "active") {
+        // Suppressed alternate/dead branch — dim, marked (alt), never a to-do.
+        console.log(chalk.dim(`      ${sel.type ?? "?"} · ${sel.status} (alt)`));
+        continue;
+      }
       // Divergent-complete picks are VALID: everyone picked, picks differ.
       const chosen = sel.chosenOptionName
         ? chalk.green(sel.chosenOptionName)
@@ -613,6 +801,12 @@ function renderAgent(s: PlanStatusData): void {
     lines.push("");
     lines.push("## Blockers (act on these, in order)");
     for (const b of s.blockers) lines.push(`- [${b.kind}] ${b.message}`);
+  }
+  if (s.summary.alternateBranchCount > 0) {
+    lines.push("");
+    lines.push(
+      `_${s.summary.alternateBranchCount} alternate-branch selection(s) suppressed — sibling chains superseded by a settled pick of the same type; not blockers._`,
+    );
   }
   if (s.waiting.length > 0) {
     lines.push("");
