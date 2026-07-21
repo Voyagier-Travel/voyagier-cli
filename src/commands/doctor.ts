@@ -53,7 +53,10 @@ import * as queries from "../queries.js";
  * peripheral ops classify themselves; anything unmatched is treated as CORE
  * (fail-closed: unknown ops err on the side of blocking).
  */
-export const PERIPHERAL_OP_PATTERN = /PLACE|COMMENT|BOOKING_RECORD/;
+export // Anchored to token starts (^ or _) so substring hits inside other words
+// can't misclassify — e.g. a future REPLACE_HOTEL_SELECTION must stay CORE
+// (fail-closed), not match "PLACE".
+const PERIPHERAL_OP_PATTERN = /(^|_)(PLACE|COMMENT|BOOKING_RECORD)/;
 
 export function collectCliOperations(): Array<{ name: string; operation: string }> {
   const ops: Array<{ name: string; operation: string }> = [];

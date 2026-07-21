@@ -375,6 +375,14 @@ describe("buildSchemaDriftCheck — core vs peripheral classification (VOY-1714)
   it("unknown op names classify as CORE (fail-closed)", () => {
     expect(buildSchemaDriftCheck(10, [err("SOME_FUTURE_OP")]).status).toBe("FAIL");
   });
+
+  it("peripheral pattern is token-anchored — REPLACE_* does not match PLACE (fail-closed)", () => {
+    // "REPLACE" contains "PLACE" as a substring; an unanchored pattern would
+    // misclassify a future core op as peripheral and wave the agent through.
+    expect(buildSchemaDriftCheck(10, [err("REPLACE_HOTEL_SELECTION")]).status).toBe("FAIL");
+    // While genuinely peripheral shapes still match at token boundaries:
+    expect(buildSchemaDriftCheck(10, [err("UPSERT_TRIP_PLAN_PLACE")]).status).toBe("WARN");
+  });
 });
 
 describe("validateOperationsAgainstSchema", () => {

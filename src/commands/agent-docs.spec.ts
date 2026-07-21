@@ -210,8 +210,13 @@ describe("agent-docs", () => {
         expect(content).toContain("--full");
         expect(content).toContain("optionCount");
         // The stale pre-VOY-1692 async narrative must NOT come back: options
-        // are inline when the reused selection already has inventory.
-        expect(content).not.toMatch(/often no options yet/);
+        // are inline when the reused selection already has inventory. The
+        // original stale phrasings were "often **no options yet**" (markdown
+        // bold between the words), "options often empty initially", and the
+        // Known Quirks "Search is asynchronous." — pin all three shapes.
+        expect(content).not.toMatch(/often\s+(\*\*)?no options yet/);
+        expect(content).not.toMatch(/options often empty/);
+        expect(content).not.toMatch(/Search is asynchronous/);
         // The fare/cabin third pick is a first-class Quick Start step.
         expect(content).toContain("Flight Booking Details");
         expect(content).toMatch(/defaults to Economy/i);

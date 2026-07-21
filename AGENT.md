@@ -563,7 +563,7 @@ Manual lookup: `voyagier search airports "tokyo" --json`.
 ## Known Quirks
 
 - **JSON shape is not uniform across commands** (see Output Conventions above).
-- **Search is asynchronous.** `search` returns a `selectionId`, not priced options. Poll with `voyagier selection-options <selectionId> --wait` until the status is terminal before selecting.
+- **Search options may lag.** When the reused selection already has inventory, `search --json` returns priced `topOptions` inline; when `optionCount` is 0 the fetch is still running — poll `voyagier selection-options <selectionId> --wait` until the status is terminal before selecting.
 - **`plan-trip` is a scaffold.** It creates the plan + default goal graph (travellers only with `--travellers`) and prints compose next-steps; it does not search or select. Follow its `nextSteps`.
 - **`plan-trip` requires a client.** Pass `--client <id|email|name>`. With exactly one active client the flag is optional and the CLI auto-picks (logs `auto-resolved client: ...` to stderr). With zero active clients you get `NO_CLIENTS`; with multiple, `MULTIPLE_CLIENTS`.
 - **`book` always pins the checkout to the gated bookable set via `itemIds`** — `--types` / `--only-bookable` narrow that set server-side. You do not need to curate the cart to control what's charged.
