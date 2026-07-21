@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [2.6.0] — 2026-07-21
+
 ### Changed
 - **Cart-item `source` values are now supplier-agnostic (breaking):** `cart` / `book` / `plans bookable` JSON emit `AIR_SUPPLIER` / `ACCOMMODATION_SUPPLIER` / `ACTIVITY_SUPPLIER` (previously vendor-branded values). `OTHER` / `UNKNOWN` unchanged. Update any switches on `source`.
 - **Stale flight guidance purged from runtime output:** the air-supplier bookability reason and blocker fix string claimed flights were "itinerary display only; book directly with the airline" — wrong since flights became bookable via the fare-level (Fare & Cabin) item. Both now explain the fare-level pick, and the reason is emitted only when the line is actually not bookable.
