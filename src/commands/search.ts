@@ -223,6 +223,41 @@ function resolveAirportInput(value: string, flagName: string, quiet: boolean): s
   throw new CliError(CliErrorCode.VALIDATION, `Multiple airports found for ${flagName}: "${value}". Specify a code: ${codes}\n  Run: voyagier search airports "${value}" for details`);
 }
 
+/**
+ * Cap on options shown by default (VOY-1714). The full option dump spreads raw
+ * provider `bookingData` — a single flight search measured 2.7 MB of JSON —
+ * which scrolls the selectionIds off the top of any terminal/agent buffer and
+ * is exactly the oversized-payload shape that poisons LLM transcripts. Default
+ * output = ids + counts + top summaries (everything an agent needs to pick);
+ * the complete dump stays available behind --full.
+ */
+const TOP_OPTIONS = 10;
+
+/**
+ * Compact `--json` search envelope; `full` restores the complete option dump.
+ * `refineHint` lists ONLY the refinement flags the calling subcommand actually
+ * supports (`--max-stops` is flights-only; hotels/activities have `--sort`).
+ */
+function searchJsonBody(
+  base: Record<string, unknown>,
+  options: Array<Record<string, unknown>>,
+  topOptions: Array<Record<string, unknown>>,
+  full: boolean | undefined,
+  refineHint: string,
+): Record<string, unknown> {
+  if (full) {
+    return { ...base, optionCount: options.length, options: options.map((opt, i) => ({ index: i + 1, ...opt })) };
+  }
+  return {
+    ...base,
+    optionCount: options.length,
+    topOptions: topOptions.slice(0, TOP_OPTIONS),
+    ...(options.length > TOP_OPTIONS
+      ? { note: `Showing top ${TOP_OPTIONS} of ${options.length} options — re-run with --full for the complete dump (large: includes raw provider bookingData), or refine with ${refineHint}.` }
+      : {}),
+  };
+}
+
 export function registerSearchCommands(program: Command): void {
   const search = program.command("search").description("Search flights, hotels, and activities");
 
@@ -276,6 +311,7 @@ export function registerSearchCommands(program: Command): void {
     .option("--return <date>", "Return date (YYYY-MM-DD) for round-trip")
     .option("--max-stops <n>", "Maximum number of stops")
     .option("--sort <field>", "Sort by: price, duration, stops, default", "default")
+    .option("--full", "Include ALL options with raw provider data in the output (large; default shows top summaries)")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL query without executing")
@@ -421,14 +457,19 @@ export function registerSearchCommands(program: Command): void {
         });
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({
-            tripPlanId,
-            selectionId,
-            ...(returnSelectionId ? { returnSelectionId } : {}),
-            isRoundTrip,
-            options: options.map((opt, i) => ({ index: i + 1, ...opt })),
-            url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
-          }, null, 2) + "\n");
+          process.stdout.write(JSON.stringify(searchJsonBody(
+            {
+              tripPlanId,
+              selectionId,
+              ...(returnSelectionId ? { returnSelectionId } : {}),
+              isRoundTrip,
+              url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
+            },
+            options as unknown as Array<Record<string, unknown>>,
+            searchResults,
+            opts.full,
+            "--sort/--max-stops",
+          ), null, 2) + "\n");
           return;
         }
 
@@ -444,7 +485,11 @@ export function registerSearchCommands(program: Command): void {
             lines.push("");
             lines.push(`**Next:** \`voyagier selection-options ${shellArg(selectionId)} --wait --json\``);
           } else {
-            lines.push(agentFlightOptions(options));
+            const shown = opts.full ? options : options.slice(0, TOP_OPTIONS);
+            lines.push(agentFlightOptions(shown));
+            if (options.length > shown.length) {
+              lines.push(`_…and ${options.length - shown.length} more — \`--full\` lists all, \`--sort price\`/\`--max-stops\` refine._`);
+            }
             lines.push("");
             lines.push("**Next:** `voyagier select <number>`");
           }
@@ -490,6 +535,7 @@ export function registerSearchCommands(program: Command): void {
     .option("--currency <code>", "Currency code", "USD")
     .option("--guests <n>", "Number of adult guests", "1")
     .option("--sort <field>", "Sort by: price, default", "default")
+    .option("--full", "Include ALL options with raw provider data in the output (large; default shows top summaries)")
     .option("--replace", "Replace existing hotel items for this location (removes old selections)")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
@@ -625,12 +671,17 @@ export function registerSearchCommands(program: Command): void {
         });
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({
-            tripPlanId: tripPlanId,
-            selectionId: selectionId,
-            options: options.map((opt, i) => ({ index: i + 1, ...opt })),
-            url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
-          }, null, 2) + "\n");
+          process.stdout.write(JSON.stringify(searchJsonBody(
+            {
+              tripPlanId: tripPlanId,
+              selectionId: selectionId,
+              url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
+            },
+            options as unknown as Array<Record<string, unknown>>,
+            searchResults,
+            opts.full,
+            "--sort",
+          ), null, 2) + "\n");
           return;
         }
 
@@ -645,7 +696,11 @@ export function registerSearchCommands(program: Command): void {
             lines.push("");
             lines.push(`**Next:** \`voyagier selection-options ${shellArg(selectionId)} --wait --json\``);
           } else {
-            lines.push(agentHotelOptions(options));
+            const shown = opts.full ? options : options.slice(0, TOP_OPTIONS);
+            lines.push(agentHotelOptions(shown));
+            if (options.length > shown.length) {
+              lines.push(`_…and ${options.length - shown.length} more — \`--full\` lists all._`);
+            }
             lines.push("");
             lines.push("**Next:** `voyagier select <number>`");
           }
@@ -694,6 +749,7 @@ export function registerSearchCommands(program: Command): void {
     .option("--query <text>", "Free text search (e.g. 'snorkeling')")
     .option("--currency <code>", "Currency code", "USD")
     .option("--sort <field>", "Sort by: price, default", "default")
+    .option("--full", "Include ALL options with raw provider data in the output (large; default shows top summaries)")
     .option("--replace", "Replace existing activity items for this destination (removes old selections)")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
@@ -815,12 +871,17 @@ export function registerSearchCommands(program: Command): void {
         });
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({
-            tripPlanId: tripPlanId,
-            selectionId: selectionId,
-            options: options.map((opt, i) => ({ index: i + 1, ...opt })),
-            url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
-          }, null, 2) + "\n");
+          process.stdout.write(JSON.stringify(searchJsonBody(
+            {
+              tripPlanId: tripPlanId,
+              selectionId: selectionId,
+              url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
+            },
+            options as unknown as Array<Record<string, unknown>>,
+            searchResults,
+            opts.full,
+            "--sort",
+          ), null, 2) + "\n");
           return;
         }
 
@@ -831,7 +892,11 @@ export function registerSearchCommands(program: Command): void {
           if (options.length === 0) {
             lines.push("_No activities found for this destination and date._");
           } else {
-            lines.push(agentActivityOptions(options));
+            const shown = opts.full ? options : options.slice(0, TOP_OPTIONS);
+            lines.push(agentActivityOptions(shown));
+            if (options.length > shown.length) {
+              lines.push(`_…and ${options.length - shown.length} more — \`--full\` lists all._`);
+            }
           }
           lines.push("");
           lines.push(`👉 **Plan:** ${planUrl}`);

@@ -252,7 +252,7 @@ export function registerSelectCommands(program: Command): void {
       if (opts.clear) {
         clearSearchState();
         if (!opts.json) console.log(chalk.green("✓ Search cache cleared."));
-        else process.stdout.write(JSON.stringify({ cleared: true }) + "\n");
+        else process.stdout.write(JSON.stringify({ ok: true, cleared: true }) + "\n");
         return;
       }
 
@@ -272,6 +272,10 @@ export function registerSelectCommands(program: Command): void {
           const waitOutcome = opts.wait ? await runPickWait(opts.selectionId, opts.optionId, opts) : undefined;
           if (opts.json) {
             jsonOutput({
+              // ok mirrors the error envelope's shape so agents can check one
+              // key on every outcome instead of inferring success from the
+              // absence of an error (VOY-1714 finding #9).
+              ok: true,
               success: true,
               type: "option_selected",
               selectionId: result.id,
@@ -324,7 +328,7 @@ export function registerSelectCommands(program: Command): void {
           throw new CliError(CliErrorCode.NOT_FOUND, `No option [${infoIdx}]. Valid range: 1-${state.results.length}`);
         }
         if (opts.json) {
-          process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({ ok: true, ...result }, null, 2) + "\n");
         } else {
           console.log(chalk.bold(`\nOption [${infoIdx}]:`));
           console.log(`  ${result.summary}`);
@@ -361,6 +365,7 @@ export function registerSelectCommands(program: Command): void {
         if (opts.json) {
           jsonOutputWithPlan(
             {
+              ok: true,
               success: true,
               type:
                 state.type === "flights"

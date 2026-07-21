@@ -379,8 +379,46 @@ describe("buildPlanStatus — blockers", () => {
     // One TRAVELLER_DATA root cause, not three; Cabin class survives (not traveller-rooted).
     expect(s.blockers.map((b) => `${b.kind}:${b.message}`)).toEqual([
       "TRAVELLER_DATA:T T1 is missing gender (required for checkout)",
-      "REQUIREMENT_UNMET:Outbound: Cabin class",
+      "REQUIREMENT_UNMET:Outbound: Cabin class (server reports this unmet but references no selection — may be stale; verify with book --dry-run)",
     ]);
+  });
+
+  it("requirements without a selection ref are flagged unverified and route to book --dry-run, not a plans-goal dead-loop (VOY-1714/VOY-1715)", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan({ travellers: [traveller("t1")] }),
+        tripPlanGoals: [
+          goal({
+            id: "g1",
+            name: "Outbound",
+            checkoutReadiness: {
+              isReady: false,
+              requirements: [
+                // The VOY-1715 phantom: no selectionId, no missing travellers —
+                // the fulfilling FlightClass selection lives in another goal and
+                // isFulfilled never flips server-side.
+                { label: "Cabin class", isFulfilled: false, isRequired: true, type: "ParticipantChoice", missingTravellerIds: [] },
+                // A verifiable requirement keeps the normal inspect route.
+                { label: "Passport required", isFulfilled: false, isRequired: true, selectionId: "s-other", type: "ParticipantChoice" },
+              ],
+            },
+          }),
+        ],
+      },
+      BASE,
+    );
+    const phantom = s.blockers.find((b) => b.message.includes("Cabin class"));
+    const verifiable = s.blockers.find((b) => b.message.includes("Passport required"));
+    expect(phantom).toMatchObject({ kind: "REQUIREMENT_UNMET", unverified: true });
+    expect(phantom!.refs.selectionId).toBeUndefined();
+    expect(verifiable!.unverified).toBeUndefined();
+    // Unverified → checkout-truth tie-breaker; verified → goal inspection.
+    expect(s.nextSteps).toContain(
+      "voyagier book plan-1 --dry-run --json   # checkout truth — if blockers are [], this requirement is a stale server ref",
+    );
+    expect(s.nextSteps).toContain(
+      "voyagier plans goal g1 --json   # inspect the blocking requirements",
+    );
   });
 
   it("traveller gaps do NOT block when no server requirement demands the field (hotel-only plan)", () => {
