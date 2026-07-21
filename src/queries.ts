@@ -379,6 +379,7 @@ export const GET_PLAN_STATUS = `
           isLocked
           blueprintMonitorId
           parentOptionId
+          mirrorListSelectionId
           travellerOptionChoices {
             traveller { id }
             selectedOption { id }

@@ -10,21 +10,35 @@ const HINT_PREFIX = "  💡 ";
 
 /**
  * After selecting a flight (departure or return or one-way).
+ *
+ * VOY-1718: the fare/cabin CLASS is a decision made IN the CLI (the Fare &
+ * Cabin step, defaults to Economy). Seat selection and cabin UPGRADES remain
+ * airline-side after booking — the fare pick doesn't cover those, so both
+ * sentences below are intentional.
  */
 export function hintFlightSelected(): string {
   return HINT_STYLE(
-    `${HINT_PREFIX}This reserves your itinerary. Seat selection and cabin upgrades\n` +
-    `     can be done directly with the airline after booking is confirmed.`
+    `${HINT_PREFIX}This reserves the itinerary. Once every leg is picked (a\n` +
+    `     one-way has just one), the Fare & Cabin (FlightClass) step is chosen\n` +
+    `     here in the CLI (defaults to Economy) — run plan-status to surface it.\n` +
+    `     Seat selection and cabin upgrades can be done directly with the\n` +
+    `     airline after booking is confirmed.`
   );
 }
 
 /**
  * After selecting a hotel.
+ *
+ * VOY-1718: picking the hotel is the FIRST link in a chain — the room decision
+ * comes next, and the baseline rate is then auto-selected for you.
  */
 export function hintHotelSelected(): string {
   return HINT_STYLE(
-    `${HINT_PREFIX}Room preferences (bed type, floor, view) can usually be requested\n` +
-    `     with the hotel after booking. Special requests aren't guaranteed.`
+    `${HINT_PREFIX}Picking the hotel spawns its room decision. Choose a room and\n` +
+    `     the baseline rate is auto-selected — run plan-status to see the next\n` +
+    `     pick (tip: --wait on a pick returns it inline). Bed type / floor /\n` +
+    `     view are requested with the hotel after booking; special requests\n` +
+    `     aren't guaranteed.`
   );
 }
 
