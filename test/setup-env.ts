@@ -13,15 +13,29 @@
  * fallback mint below only fires if globalSetup was bypassed — the prefix
  * check ensures an ambient VOYAGIER_CONFIG_DIR from the caller's shell never
  * leaks into tests.
+ *
+ * Each worker gets its OWN subdirectory of the run sandbox: several suites
+ * (config, auth, api) do real credential-file persistence, and parallel
+ * workers sharing one dir race each other (one worker's clearCredentials()
+ * lands between another's save and read — flaky AUTH_FAILED failures).
+ * Suites within a worker run sequentially, so per-worker isolation is enough,
+ * and global-teardown still removes everything by deleting the parent.
  */
-import { mkdtempSync } from "fs";
+import { mkdtempSync, mkdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
 const sandboxPrefix = join(tmpdir(), "voyagier-test-");
 if (!process.env.VOYAGIER_CONFIG_DIR?.startsWith(sandboxPrefix)) {
   process.env.VOYAGIER_CONFIG_DIR = mkdtempSync(sandboxPrefix);
+  process.env.VOYAGIER_TEST_SANDBOX_ROOT = process.env.VOYAGIER_CONFIG_DIR;
 }
+// Derive the worker dir from the run ROOT (not the current value) so re-entry
+// in the same process (--runInBand) can't nest worker-0/worker-0/...
+const sandboxRoot = process.env.VOYAGIER_TEST_SANDBOX_ROOT ?? process.env.VOYAGIER_CONFIG_DIR;
+const workerDir = join(sandboxRoot, `worker-${process.env.JEST_WORKER_ID ?? "0"}`);
+mkdirSync(workerDir, { recursive: true });
+process.env.VOYAGIER_CONFIG_DIR = workerDir;
 // Belt and braces: no spec should ever hit real telemetry or inherit ambient auth.
 delete process.env.DD_API_KEY; // telemetry is gated on this
 delete process.env.VOYAGIER_TOKEN;

@@ -8,7 +8,10 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 export default function globalTeardown(): void {
-  const dir = process.env.VOYAGIER_CONFIG_DIR;
+  // Prefer the run-sandbox ROOT recorded by global-setup: in --runInBand,
+  // setup-env.ts repoints VOYAGIER_CONFIG_DIR at a worker-<id> subdir in this
+  // same process, and deleting only the subdir would leak the parent.
+  const dir = process.env.VOYAGIER_TEST_SANDBOX_ROOT ?? process.env.VOYAGIER_CONFIG_DIR;
   if (dir?.startsWith(join(tmpdir(), "voyagier-test-"))) {
     rmSync(dir, { recursive: true, force: true });
   }

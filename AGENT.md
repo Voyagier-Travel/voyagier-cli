@@ -21,7 +21,7 @@ A trip plan is a **goal graph**. When you create a plan it ships with a default 
 
 > **Note on `--json` shapes:** the envelope is not uniform across every command. Newer surfaces (cart, book, bookable, itinerary, listings, places) emit `{ ok: true, data, planContext? }`; older surfaces (clients, plans, search, select) emit domain-specific shapes documented per-command below. When in doubt, pipe `--json` through `jq keys`.
 >
-> **Note on `book` filters:** `--types` and `--only-bookable` are client-side preflight gates — they do not pass an item filter to the `createTripPlanCheckout` mutation. Use `--validate` first, and only invoke `book` once the cart contains exactly the items you want to charge.
+> **Note on `book`:** a real checkout REQUIRES a price gate — `--expect-total <amt>` (exact) or `--max-total <amt>` (cap) — checked against the **chargeable subtotal** (bookable items only). Run `book --dry-run` first to get it. The checkout is always pinned to the gated set via `itemIds`; `--types` and `--only-bookable` narrow it server-side.
 
 ---
 
@@ -69,13 +69,12 @@ voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
 voyagier plan-status <PLAN_ID> --json
 # Switch on data.readiness: BLOCKED → act on data.blockers[] (data.nextSteps[]
 # are the exact commands, in order); IN_PROGRESS → poll (system is working);
-# READY_TO_BOOK → book --dry-run; BOOKED → done.
+# READY_TO_BOOK → book --dry-run to get the chargeable subtotal; BOOKED → done.
 # (plans goals <PLAN_ID> --json remains the per-goal deep view.)
 
-# 6) Pre-flight + book
-voyagier book <PLAN_ID> --validate --json    # see what's actually bookable
-# Then build a fresh cart with only the items you want and call book again.
-voyagier book <PLAN_ID> --json
+# 6) Pre-flight + book (price gate is REQUIRED)
+voyagier book <PLAN_ID> --dry-run --json                   # pre-flight: blockers + data.chargeableSubtotal + data.nextStep (no gate needed)
+voyagier book <PLAN_ID> --expect-total <subtotal> --json   # creates the Stripe session only at that exact price
 ```
 
 Pass `--plan <id>` on `select` to assert the cached search belongs to that plan — it guards against cross-plan state corruption when you run multiple workflows in parallel. (Not needed in direct `--selection-id`/`--option-id` mode.)
@@ -213,8 +212,10 @@ Branch on `code`. The CLI exits 1 for `CliError`s, 2 for unexpected errors. Pass
 | `CLIENT_REQUIRED` | `plan-trip --client ""` was passed (explicit-but-empty) | drop the flag (auto-resolves) or pass an id/email/name |
 | `PERMISSION_DENIED` | RBAC failure (non-advisor on advisor-gated mutation) | escalate to user |
 | `SCHEMA_DRIFT` | CLI is older than backend; queries don't validate | `npm i -g @voyagier/cli@latest` |
-| `NOT_BOOKABLE` | Selection type is display-only (e.g. flight) | filter the cart manually before booking |
+| `NOT_BOOKABLE` | No bookable items in the (filtered) cart | check `voyagier book <id> --dry-run` / `plan-status` for what's missing |
 | `BOOKING_BLOCKED` | Pre-flight blockers found by `book --validate` | each blocker carries its own context in `details.blockers[]` |
+| `PRICE_CHANGED` | Chargeable subtotal fails `--expect-total` / `--max-total` | re-check with `book --dry-run`; re-run with the current total if acceptable; `details.{expectedTotal,maxTotal,actualTotal,items}` |
+| `ALREADY_BOOKED` | A Paid checkout already exists for this plan | review `book <id> --status`; override with `--rebook` only if intentional |
 | `EXPIRED_OFFER` | Selection option no longer available | re-run `voyagier search ...` |
 | `STALE_PLAN_STATE` | Cached search/option expired | re-run `voyagier search ...` with `--plan <id>` |
 | `LISTING_NOT_FOUND` | Blueprint listing missing or unavailable | `voyagier listings recent --selection <id>` |
@@ -408,17 +409,23 @@ voyagier cart <planId> --json
 ```
 
 ```bash
-voyagier book <planId> --validate --json                 # pre-flight only; reports blockers, no Stripe call
-voyagier book <planId> --only-bookable --json            # client-side filter; skips display-only items in the preflight gate
-voyagier book <planId> --types Activity,Hotel --json     # client-side filter; case-insensitive match against CartItemType
-voyagier book <planId> --idempotency-key <ulid> --json   # echoed in JSON; not yet sent server-side
-voyagier book <planId> --dry-run --json                  # show GraphQL without executing
-voyagier book <planId> --status --json                   # post-payment confirmation lookup
+voyagier book <planId> --dry-run --json                       # preview: chargeableSubtotal, blockers, existing checkouts, nextStep; no gate needed
+voyagier book <planId> --expect-total 339.10 --json           # REQUIRED gate: create checkout only at exactly this chargeable subtotal (cents-compared)
+voyagier book <planId> --max-total 400 --json                 # alternative gate: create checkout only if chargeable ≤ cap (both flags → both enforced)
+voyagier book <planId> --validate --expect-total 339.10 --json  # additionally fail on any non-bookable line (BOOKING_BLOCKED)
+voyagier book <planId> --types Activity,Hotel --expect-total <amt> --json  # server-side filter via itemIds; charges exactly the narrowed set
+voyagier book <planId> --only-bookable --expect-total <amt> --json         # server-side filter to bookable items
+voyagier book <planId> --expect-total <amt> --rebook --json       # proceed even though a Paid checkout already exists
+voyagier book <planId> --status --json                        # post-payment confirmation lookup
 ```
 
-> ⚠️ **`--types` and `--only-bookable` are client-side preflight gates today.** They affect what `--validate` considers blocking, but the actual `createTripPlanCheckout` mutation still targets the full cart. To control what's charged, **build a clean cart first** (don't add display-only items, or remove them) and then call `book`.
+> 🔒 **Price hard-gate.** `book` mints a Stripe URL a human will pay; the gate checks that URL's contents against a **point-in-time snapshot** of the cart. Without `--expect-total`/`--max-total` the command refuses (`VALIDATION`). The gate compares against `chargeableSubtotal` (bookable items only — NOT the display `subtotal`, which can include non-bookable lines). On mismatch you get `PRICE_CHANGED` with `details.{expectedTotal,maxTotal,actualTotal,items}` and **no checkout is created**. Known limits: the checkout pins *items* (`itemIds`), not prices — a server-side price change in the moment between the cart read and checkout creation is not caught; and Voyagier adds a travel fee at checkout, so Stripe shows a higher final total than the gated subtotal.
+>
+> 🔁 **Paid-checkout pre-flight.** Before creating a session, `book` checks existing checkouts: a `Paid` one → `ALREADY_BOOKED` with `details.paidCheckouts[]` (booking-record amounts there are `amountCents`); override with `--rebook` only if you intend a second charge. If the check itself fails, `book` fails closed rather than risk a duplicate. ⚠️ **Unpaid (Pending) sessions are invisible to the CLI** — the server excludes them from this query — so retrying `book` after a success mints a NEW Stripe session (the old unpaid link remains payable until it expires). Do not retry a successful `book`; hand over the URL you already have.
+>
+> **The checkout is always item-pinned:** `book` sends `itemIds` (the exact bookable set the gate priced) on `createTripPlanCheckout`, so the charged set always equals the gated set; `--types` / `--only-bookable` narrow that same set server-side.
 
-`--validate` returns blockers without attempting checkout. Sample shape (matches the standard error envelope above — there is no top-level `ok`, `data`, or `planContext` on `CliError` output):
+`--validate` is a strictness modifier on a real (gated) booking: when blockers exist it fails with `BOOKING_BLOCKED` before attempting checkout. For a gate-free blocker check use `--dry-run`. Sample shape (matches the standard error envelope above — there is no top-level `ok`, `data`, or `planContext` on `CliError` output):
 
 ```json
 {
@@ -487,7 +494,7 @@ voyagier agent-docs                   # prints this file
 | Ride | ❌ | TBD | Selection type exists; no booking source wired. |
 | Restaurant | ❌ | Internal | Selection type exists; booking path unclear. |
 
-Always `voyagier book --validate <planId>` before checkout. Branch on `details.blockers[]`. Build a clean cart for the `book` call rather than relying on `--types` to filter the mutation. The matrix above is a prior, not a contract — the cart's per-item `isBookable` is the live truth.
+Always `voyagier book <planId> --dry-run` before checkout — it reports blockers and the chargeable subtotal without a gate. Branch on `data.blockers[]`; add `--validate` to the real booking to abort on any non-bookable line. Build a clean cart for the `book` call rather than relying on `--types` to filter the mutation. The matrix above is a prior, not a contract — the cart's per-item `isBookable` is the live truth.
 
 ---
 
@@ -512,7 +519,8 @@ Manual lookup: `voyagier search airports "tokyo" --json`.
 - **Search is asynchronous.** `search` returns a `selectionId`, not priced options. Poll with `voyagier selection-options <selectionId> --wait` until the status is terminal before selecting.
 - **`plan-trip` is a scaffold.** It creates the plan + default goal graph (travellers only with `--travellers`) and prints compose next-steps; it does not search or select. Follow its `nextSteps`.
 - **`plan-trip` requires a client.** Pass `--client <id|email|name>`. With exactly one active client the flag is optional and the CLI auto-picks (logs `auto-resolved client: ...` to stderr). With zero active clients you get `NO_CLIENTS`; with multiple, `MULTIPLE_CLIENTS`.
-- **`book --types` and `--only-bookable` are client-side gates only** — they don't filter the checkout mutation. Build a clean cart before calling `book`.
+- **`book` always pins the checkout to the gated bookable set via `itemIds`** — `--types` / `--only-bookable` narrow that set server-side. You do not need to curate the cart to control what's charged.
+- **Unpaid (Pending) checkout sessions are invisible to `book --status` and the pre-flight** — the server excludes them. Never retry a successful `book`; you'd mint a second payable link.
 - **`plans summary` reads `plan.items`**, not `tripPlanEvents`. Use `voyagier itinerary <planId>` for the canonical time-sorted view.
 - **State files are global, not per-plan.** Cross-plan corruption is prevented by `--plan <id>` mismatch checks, not by file partitioning.
 - **Flight prices are per-person.** Multiply by traveller count for total.
