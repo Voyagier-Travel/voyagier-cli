@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- **`voyagier quote <planId>` (VOY-1212):** read-only offer snapshot — itemized cart with per-item bookability, client + trip dates, and a `chargeableTotal` computed through the same cents-rounding the `book` gate compares (quoted ≡ gated by construction). `--json` includes a machine-readable `acceptance` block (`{ command, itemIds, expectedTotal }`) — the exact gated booking that accepts the offer — or `acceptance: null` with a reason when nothing is bookable. Deliberately does NOT render client-facing documents (the webapp is the offer surface) or embed payment links (sessions expire; links are minted fresh at acceptance by `book`).
+- **`voyagier send <planId> [--note <text>]` (VOY-1212):** email the client their invite link to the live trip plan in the webapp (exposes `sendTripPlanToClient`), where they can view and pay self-serve. Emails a real client and is not idempotent, so it confirms interactively and hard-requires `--yes` in non-interactive runs (`CONFIRMATION_REQUIRED`); the recipient is pre-checked before the mutation so a plan without a client email fails fast with a fix hint.
+- New error code `CONFIRMATION_REQUIRED` for externally-visible actions run non-interactively without `--yes`.
+
 ### Changed
 - **`book --status --json` and `bookings list/get --json` rename `amount` → `amountCents` (VOY-1713, breaking):** the API stores integer cents but exposes them as an undocumented `Float` named `amount` — the dollar-looking name caused the v2.3.0 100× display bug and `ALREADY_BOOKED.details` already says `amountCents`. One name per unit across every CLI machine surface.
 - **`book --dry-run` reports a gate verdict (VOY-1713):** when `--expect-total`/`--max-total` accompany `--dry-run`, output includes `data.gate.{wouldPass,failReason}` (and a ✓/✗ line in human/agent modes) so agents can pre-verify a gate without risking `PRICE_CHANGED`. Dry-run still requires no gate.
