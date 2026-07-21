@@ -560,8 +560,8 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
       // must NOT be silently deduped by coveredSelectionIds — a sibling chain
       // is complete, so it's very likely a stale ref, but we keep it visible
       // and mark it unverified (checkout truth wins) rather than dropping it.
-      const refersDeadBranch = !!r.selectionId && suppressedSelectionIds.has(r.selectionId);
-      if (r.selectionId && coveredSelectionIds.has(r.selectionId) && !refersDeadBranch) continue;
+      const refersSuppressedBranch = !!r.selectionId && suppressedSelectionIds.has(r.selectionId);
+      if (r.selectionId && coveredSelectionIds.has(r.selectionId) && !refersSuppressedBranch) continue;
       if (
         r.missingTravellerIds.length > 0 &&
         r.missingTravellerIds.every((id) => blockedTravellerIds.has(id))
@@ -572,8 +572,8 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
       // data (VOY-1715: the fulfilling selection may live in another goal and
       // isFulfilled may never flip). Label them honestly instead of sending
       // the agent into a `plans goal` dead-loop that shows the same null ref.
-      const unverified = !r.selectionId || refersDeadBranch;
-      const suffix = refersDeadBranch
+      const unverified = !r.selectionId || refersSuppressedBranch;
+      const suffix = refersSuppressedBranch
         ? " (references an alternate branch — a sibling chain is already complete; verify with book --dry-run)"
         : !r.selectionId
           ? " (server reports this unmet but references no selection — may be stale; verify with book --dry-run)"
@@ -745,7 +745,7 @@ function renderHuman(s: PlanStatusData): void {
   if (s.summary.alternateBranchCount > 0) {
     console.log(
       chalk.dim(
-        `  (${s.summary.alternateBranchCount} alternate-branch selection(s) suppressed — chains under options you didn't pick; see goals detail)`,
+        `  (${s.summary.alternateBranchCount} alternate-branch selection(s) suppressed — sibling chains superseded by a settled pick of the same type; see goals detail)`,
       ),
     );
   }
@@ -803,7 +803,7 @@ function renderAgent(s: PlanStatusData): void {
   if (s.summary.alternateBranchCount > 0) {
     lines.push("");
     lines.push(
-      `_${s.summary.alternateBranchCount} alternate-branch selection(s) suppressed — chains under options you didn't pick; not blockers._`,
+      `_${s.summary.alternateBranchCount} alternate-branch selection(s) suppressed — sibling chains superseded by a settled pick of the same type; not blockers._`,
     );
   }
   if (s.waiting.length > 0) {
