@@ -1569,7 +1569,9 @@ export const SEND_TRIP_PLAN_TO_CLIENT = `
 
 // Quote = GET_CART_V2's cart+goals walk (bookability join) + the client/date
 // metadata a client-facing offer needs. Kept as its own query so quote and
-// book can evolve their selections independently.
+// book can evolve their selections independently. Cart items trimmed to what
+// quote renders — no description/metadata (metadata can be large; quote is a
+// read-only snapshot, keep it light).
 export const GET_QUOTE_DATA = `
   query TripPlanQuote($id: String!) {
     tripPlan(id: $id) {
@@ -1582,13 +1584,11 @@ export const GET_QUOTE_DATA = `
         items {
           id
           name
-          description
           price
           currency
           type
           selectionId
           optionId
-          metadata
         }
         itemCount
         total
