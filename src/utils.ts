@@ -63,6 +63,16 @@ export function formatPrice(price: number): string {
 }
 
 /**
+ * Dollars → integer cents, the ONE rounding used on money comparisons.
+ * book's price gate and quote's offer total must share this function so a
+ * quoted total can never disagree with the gate that later enforces it
+ * (VOY-1706 self-consistency, extended cross-command by VOY-1212).
+ */
+export function cents(n: number): number {
+  return Math.round(n * 100);
+}
+
+/**
  * Validate a YYYY-MM-DD date string.
  * Exits with a helpful error if invalid.
  */

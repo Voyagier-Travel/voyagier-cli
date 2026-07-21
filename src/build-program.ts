@@ -22,6 +22,8 @@ import { registerListingsCommands } from "./commands/listings.js";
 import { registerPlacesCommands } from "./commands/places.js";
 import { registerTravellerGroupsCommands } from "./commands/traveller-groups.js";
 import { registerTravellerChoicesCommands } from "./commands/traveller-choices.js";
+import { registerQuoteCommand } from "./commands/quote.js";
+import { registerSendCommand } from "./commands/send.js";
 
 /**
  * Build the full Voyagier CLI command tree onto a fresh Command instance.
@@ -61,6 +63,8 @@ Full reference: voyagier agent-docs`,
   registerSelectCommands(program);
   registerSelectionOptionsCommands(program);
   registerCartCommands(program);
+  registerQuoteCommand(program);
+  registerSendCommand(program);
   registerBookCommands(program);
   registerBookingsCommands(program);
   registerChatCommands(program);

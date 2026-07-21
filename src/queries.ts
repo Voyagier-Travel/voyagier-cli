@@ -1550,3 +1550,85 @@ export const GET_TRAVELLER_CHOICES = `
     }
   }
 `;
+
+// --- Send to client + Quote (VOY-1212) ---
+
+export const SEND_TRIP_PLAN_TO_CLIENT = `
+  mutation SendTripPlanToClient($tripPlanId: String!, $input: SendToClientInput) {
+    sendTripPlanToClient(tripPlanId: $tripPlanId, input: $input) {
+      id
+      email
+      status
+      invitedUserId
+      expiresAt
+    }
+  }
+`;
+// NB: TripPlanUserInvite.createdAt is NOT exposed on prod GraphQL (live-verified
+// 2026-07-20) even though the entity decorates it — do not add it back.
+
+// Quote = GET_CART_V2's cart+goals walk (bookability join) + the client/date
+// metadata a client-facing offer needs. Kept as its own query so quote and
+// book can evolve their selections independently.
+export const GET_QUOTE_DATA = `
+  query TripPlanQuote($id: String!) {
+    tripPlan(id: $id) {
+      id
+      title
+      startDate
+      endDate
+      client { id name email phone }
+      cart {
+        items {
+          id
+          name
+          description
+          price
+          currency
+          type
+          selectionId
+          optionId
+          metadata
+        }
+        itemCount
+        total
+        currency
+      }
+      goals {
+        id
+        name
+        sortOrder
+        items {
+          id
+          title
+          goalId
+          selections {
+            id
+            type
+            isLocked
+            options {
+              id
+              name
+              isBookable
+              status
+              blueprintListingId
+              externalId
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+// Lightweight client-email pre-check for `send` — lets the confirm rail show
+// the real recipient (and fail fast with a fix hint) BEFORE the mutation.
+export const GET_PLAN_CLIENT = `
+  query TripPlanClientCheck($id: String!) {
+    tripPlan(id: $id) {
+      id
+      title
+      client { id name email }
+    }
+  }
+`;

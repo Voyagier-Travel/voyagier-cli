@@ -408,6 +408,26 @@ voyagier cart <planId> --json
 # Returns: { ok, data: { items, blockers, summary }, planContext }
 ```
 
+### Two ways to close (quote / send / book)
+
+The client's "yes" is paying a checkout. There are two paths to that checkout:
+
+1. **Self-serve close:** `voyagier send <planId>` emails the client an invite link to the LIVE trip in the webapp, where they can view everything and pay their own checkout. No document is generated — the webapp is the offer surface.
+2. **Advisor-mediated close:** `voyagier quote <planId>` produces the offer snapshot; when the client says yes in a human channel, run the emitted acceptance command — `voyagier book <planId> --expect-total <quoted>` — which fails closed (`PRICE_CHANGED`) if anything drifted since the quote. Then hand the client the fresh checkout URL.
+
+Both paths converge on the same checkouts, so `book`'s Paid pre-flight catches a client who already paid self-serve.
+
+```bash
+voyagier quote <planId> --json   # offer snapshot: items, chargeableTotal, and acceptance: { command, itemIds, expectedTotal }
+voyagier quote <planId> --agent  # markdown offer summary for chat surfaces
+voyagier send <planId> --yes --json                    # email the invite (REQUIRES --yes non-interactively — it emails a real client)
+voyagier send <planId> --yes --note 'Ready when you are!' --json
+```
+
+> 💰 **Quoted ≡ gated.** `quote`'s `chargeableTotal` is computed through the same cents-rounding the `book` gate compares, so the acceptance command can never fail its own gate on an unchanged cart. `acceptance` is `null` (with `acceptanceUnavailableReason`) when nothing is bookable.
+>
+> ✉️ **`send` is not idempotent** — every invocation emails the client again. Non-interactive runs refuse without `--yes` (`CONFIRMATION_REQUIRED`). Send once; track with `plan-status`.
+
 ```bash
 voyagier book <planId> --dry-run --json                       # preview: chargeableSubtotal, blockers, existing checkouts, nextStep; no gate needed
 voyagier book <planId> --dry-run --expect-total 339.10 --json # + gate verdict: data.gate.{wouldPass,failReason} — pre-verify without risking PRICE_CHANGED

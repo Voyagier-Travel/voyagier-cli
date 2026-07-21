@@ -182,6 +182,26 @@ describe("agent-docs", () => {
       }
     });
 
+    it("should document quote/send honestly (VOY-1212: two closes, no doc rendering, no embedded pay links)", () => {
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        // Both closes must be taught: self-serve (send → webapp) and
+        // advisor-mediated (quote → book --expect-total).
+        expect(content).toContain("voyagier quote");
+        expect(content).toContain("voyagier send");
+        expect(content).toContain("CONFIRMATION_REQUIRED");
+        // quote's total and book's gate share one rounding — the doc makes
+        // the quoted ≡ gated promise, which quote.spec proves by execution.
+        expect(content.toLowerCase()).toMatch(/quoted\s*≡\s*gated|quoted ≡ gated/);
+        // send is not idempotent and must require --yes non-interactively.
+        expect(content.toLowerCase()).toMatch(/send.*not idempotent|not idempotent.*send/);
+        // quote must NOT promise document rendering or embedded payment links
+        // (killed in planning: webapp is the offer surface; links go stale).
+        expect(content).not.toMatch(/quote[^\n]*--format/);
+        expect(content).not.toMatch(/quote[^\n]*(pdf|--output)/i);
+      }
+    });
+
     it("should describe the actual state-file layout (global, not per-plan)", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
