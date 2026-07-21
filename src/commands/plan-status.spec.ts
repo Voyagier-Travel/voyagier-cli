@@ -1097,3 +1097,39 @@ describe("buildPlanStatus — VOY-1718 cart-settled selection never suppresses i
     expect(s.blockers.filter((b) => b.refs.selectionId === "rate-live")).toEqual([]);
   });
 });
+
+describe("buildPlanStatus — VOY-1718 aggregate branch count with mixed null mirrors (PR #79 review)", () => {
+  it("candidates without mirrorListSelectionId each count as their own branch (no undercount)", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan(),
+        tripPlanGoals: [
+          goal({
+            id: "gM",
+            name: "Secure Lodging",
+            type: "Hotel",
+            items: [
+              {
+                id: "iM",
+                selections: [
+                  // Two candidates mirror the same list, two have NO mirror id.
+                  { id: "m-1", type: "HotelRoom", mode: "Single", isComplete: false, blueprintMonitorId: "m", mirrorListSelectionId: "lst-1", options: [{ id: "o1", name: "A" }], travellerOptionChoices: [choice("t1", null)] },
+                  { id: "m-2", type: "HotelRoom", mode: "Single", isComplete: false, blueprintMonitorId: "m", mirrorListSelectionId: "lst-1", options: [{ id: "o2", name: "B" }], travellerOptionChoices: [choice("t1", null)] },
+                  { id: "m-3", type: "HotelRoom", mode: "Single", isComplete: false, blueprintMonitorId: "m", mirrorListSelectionId: null, options: [{ id: "o3", name: "C" }], travellerOptionChoices: [choice("t1", null)] },
+                  { id: "m-4", type: "HotelRoom", mode: "Single", isComplete: false, blueprintMonitorId: "m", options: [{ id: "o4", name: "D" }], travellerOptionChoices: [choice("t1", null)] },
+                ],
+              },
+            ],
+          }),
+        ],
+      },
+      BASE,
+    );
+    const agg = s.blockers.find((b) => b.candidateSelectionIds);
+    expect(agg).toBeTruthy();
+    expect(agg!.candidateSelectionIds).toHaveLength(4);
+    // lst-1 (shared) + m-3 (own) + m-4 (own) = 3 branches — NOT 1 (the old
+    // filter(Boolean) undercount).
+    expect(agg!.message).toContain("4 candidate selection(s) across 3 sibling branch(es)");
+  });
+});

@@ -435,10 +435,13 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
         const candidates = incomplete.filter((m) => m.wouldPickPend);
         if (candidates.length >= 2) {
           for (const c of candidates) aggregatedIds.add(c.sel.id);
+          // Distinct mirrored lists = sibling branches. A candidate with no
+          // mirrorListSelectionId counts as its OWN branch (unknown list) so
+          // mixed null/non-null groups don't undercount.
           const branches = new Set(
-            candidates.map((c) => c.sel.mirrorListSelectionId).filter(Boolean),
+            candidates.map((c) => c.sel.mirrorListSelectionId ?? c.sel.id),
           );
-          const branchCount = branches.size > 0 ? branches.size : candidates.length;
+          const branchCount = branches.size;
           aggregateBlockers.push({
             kind: "PICK_PENDING",
             message:

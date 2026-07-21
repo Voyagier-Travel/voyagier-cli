@@ -367,11 +367,11 @@ export function registerSelectCommands(program: Command): void {
         // doesn't stop at the parent thinking the goal is done.
         const chainNote =
           state.type === "hotels"
-            ? "Picking the hotel spawns its room decision; pick a room and the baseline rate auto-selects. Run plan-status (or select --wait) to surface the next pick."
+            ? "Picking the hotel spawns its room decision; pick a room and the baseline rate auto-selects. Run plan-status to surface the next pick (tip: passing --wait on a pick returns it inline)."
             : state.type === "flights"
               ? state.returnSelectionId
-                ? "Once both legs are picked, choose Fare & Cabin (FlightClass) here in the CLI — it defaults to Economy. Run plan-status (or select --wait) to surface it."
-                : "Next: choose Fare & Cabin (FlightClass) here in the CLI — it defaults to Economy. Run plan-status (or select --wait) to surface it."
+                ? "Once both legs are picked, choose Fare & Cabin (FlightClass) here in the CLI — it defaults to Economy. Run plan-status to surface it (tip: passing --wait on a pick returns it inline)."
+                : "Next: choose Fare & Cabin (FlightClass) here in the CLI — it defaults to Economy. Run plan-status to surface it (tip: passing --wait on a pick returns it inline)."
               : undefined;
 
         if (opts.json) {
@@ -407,19 +407,19 @@ export function registerSelectCommands(program: Command): void {
                   // VOY-1718: after BOTH legs, the Fare & Cabin (FlightClass)
                   // decision is next — the fare class is picked here (seat
                   // selection / cabin upgrades stay airline-side after booking).
-                  `- Then pick Fare & Cabin (FlightClass) — defaults to Economy. Surface it: \`voyagier plan-status ${shellArg(state.tripPlanId)} --json\` (or add \`--wait\` to this pick)`,
+                  `- Then pick Fare & Cabin (FlightClass) — defaults to Economy. Surface it: \`voyagier plan-status ${shellArg(state.tripPlanId)} --json\` (tip: \`--wait\` on a pick returns it inline)`,
                 ]
               : []),
             // VOY-1718: one-way flight — the Fare & Cabin decision is next.
             ...(state.type === "flights" && !state.returnSelectionId
               ? [
-                  `- Next pick: Fare & Cabin (FlightClass) — defaults to Economy. Surface it: \`voyagier plan-status ${shellArg(state.tripPlanId)} --json\` (or add \`--wait\` to this pick)`,
+                  `- Next pick: Fare & Cabin (FlightClass) — defaults to Economy. Surface it: \`voyagier plan-status ${shellArg(state.tripPlanId)} --json\` (tip: \`--wait\` on a pick returns it inline)`,
                 ]
               : []),
             // VOY-1718: picking a hotel opens its room decision — don't stop here.
             ...(state.type === "hotels"
               ? [
-                  `- Room decision comes next (pick a room → baseline rate auto-carts). Surface it: \`voyagier plan-status ${shellArg(state.tripPlanId)} --json\` (or add \`--wait\` to this pick)`,
+                  `- Room decision comes next (pick a room → baseline rate auto-carts). Surface it: \`voyagier plan-status ${shellArg(state.tripPlanId)} --json\` (tip: \`--wait\` on a pick returns it inline)`,
                 ]
               : []),
             `- View cart: \`voyagier cart ${shellArg(state.tripPlanId)}\``,

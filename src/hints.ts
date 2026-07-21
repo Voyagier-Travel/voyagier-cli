@@ -13,8 +13,8 @@ const HINT_PREFIX = "  💡 ";
  *
  * VOY-1718: the fare/cabin CLASS is a decision made IN the CLI (the Fare &
  * Cabin step, defaults to Economy). Seat selection and cabin UPGRADES remain
- * airline-side after booking — the fare pick doesn't cover those (demmersong
- * 2026-07-21: keep that sentence).
+ * airline-side after booking — the fare pick doesn't cover those, so both
+ * sentences below are intentional.
  */
 export function hintFlightSelected(): string {
   return HINT_STYLE(
@@ -35,9 +35,10 @@ export function hintFlightSelected(): string {
 export function hintHotelSelected(): string {
   return HINT_STYLE(
     `${HINT_PREFIX}Picking the hotel spawns its room decision. Choose a room and\n` +
-    `     the baseline rate is auto-selected — run plan-status (or select --wait)\n` +
-    `     to see the next pick. Bed type / floor / view are requested with the\n` +
-    `     hotel after booking; special requests aren't guaranteed.`
+    `     the baseline rate is auto-selected — run plan-status to see the next\n` +
+    `     pick (tip: --wait on a pick returns it inline). Bed type / floor /\n` +
+    `     view are requested with the hotel after booking; special requests\n` +
+    `     aren't guaranteed.`
   );
 }
 
