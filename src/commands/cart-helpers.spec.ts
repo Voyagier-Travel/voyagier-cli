@@ -217,17 +217,17 @@ describe("inferSource", () => {
     expect(out.source).toBe("UNKNOWN");
     expect(out.reason).toContain("refresh");
   });
-  it("returns BLUEPRINT for items with blueprintListingId", () => {
+  it("returns ACCOMMODATION_SUPPLIER for items with blueprintListingId", () => {
     expect(inferSource({
       isBookable: true, blueprintListingId: "bl-1", externalId: null, selectionId: "s", optionId: "o",
     } as never).source).toBe("ACCOMMODATION_SUPPLIER");
   });
-  it("returns SABRE for externalId starting with sabre:", () => {
+  it("returns AIR_SUPPLIER for air-supplier externalId prefixes", () => {
     expect(inferSource({
       isBookable: false, blueprintListingId: null, externalId: "sabre:foo", selectionId: "s", optionId: "o",
     } as never).source).toBe("AIR_SUPPLIER");
   });
-  it("returns VIATOR for externalId starting with viator:", () => {
+  it("returns ACTIVITY_SUPPLIER for activity-supplier externalId prefixes", () => {
     expect(inferSource({
       isBookable: true, blueprintListingId: null, externalId: "viator:abc", selectionId: "s", optionId: "o",
     } as never).source).toBe("ACTIVITY_SUPPLIER");
