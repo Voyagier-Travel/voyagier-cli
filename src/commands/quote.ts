@@ -64,7 +64,11 @@ const TYPE_ICONS: Record<string, string> = {
 function itemLine(item: EnrichedCartItem): string {
   const icon = TYPE_ICONS[item.type] ?? "•";
   const price = item.price > 0 ? formatPrice(item.price) : "—";
-  const tag = item.isBookable ? "" : "  (display only — not charged)";
+  // Surface the specific bookableReason (matching cart's rendering) — a
+  // generic tag would hide actionable issues like unavailable listings.
+  const tag = item.isBookable
+    ? ""
+    : `  (display only — not charged${item.bookableReason ? `: ${item.bookableReason}` : ""})`;
   return `${icon} ${item.name} · ${price}${tag}`;
 }
 

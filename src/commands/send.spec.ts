@@ -28,8 +28,10 @@ beforeAll(async () => {
 });
 
 let writes: string[];
+let errWrites: string[];
 let stdoutSpy: ReturnType<typeof jest.spyOn>;
 let logSpy: ReturnType<typeof jest.spyOn>;
+let errSpy: ReturnType<typeof jest.spyOn>;
 const originalIsTTY = process.stdin.isTTY;
 const originalCI = process.env.CI;
 
@@ -44,11 +46,16 @@ beforeEach(() => {
   logSpy = jest.spyOn(console, "log").mockImplementation(((...args: unknown[]) => {
     writes.push(args.join(" ") + "\n");
   }) as never);
+  errWrites = [];
+  errSpy = jest.spyOn(console, "error").mockImplementation(((...args: unknown[]) => {
+    errWrites.push(args.join(" ") + "\n");
+  }) as never);
 });
 
 afterEach(() => {
   stdoutSpy.mockRestore();
   logSpy.mockRestore();
+  errSpy.mockRestore();
   Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, configurable: true });
   if (originalCI === undefined) delete process.env.CI;
   else process.env.CI = originalCI;
@@ -124,13 +131,15 @@ describe("send confirmation rail", () => {
     expect(sendVars()).toBeDefined();
   });
 
-  it("interactive decline → aborts, NOTHING sent, no error", async () => {
+  it("interactive decline → aborts, NOTHING sent, no error; abort note on stderr (stdout stays pure for --json pipes)", async () => {
     setInteractive(true);
     routeSend();
     mockQuestion.mockResolvedValue("n");
-    await runSend(["plan-1"]);
+    await runSend(["plan-1", "--json"]);
     expect(sendVars()).toBeUndefined();
-    expect(writes.join("")).toContain("Nothing sent");
+    expect(errWrites.join("")).toContain("Nothing sent");
+    // stdout got NOTHING: no prompt text, no partial JSON.
+    expect(writes.join("")).toBe("");
   });
 });
 

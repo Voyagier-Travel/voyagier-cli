@@ -179,7 +179,9 @@ describe("quote human/agent output", () => {
     expect(out).toContain("Quote — BWI Getaway");
     expect(out).toContain("Ada Client");
     expect(out).toContain("BWI→MCO / Economy");
-    expect(out).toContain("display only — not charged");
+    // The specific bookableReason must surface (matching cart) — a generic
+    // tag would hide actionable issues.
+    expect(out).toMatch(/display only — not charged: .+/);
     expect(out).toContain("Chargeable total: $339.10");
     expect(out).toContain("Prepared by Daniel Gardner");
     expect(out).toContain("voyagier book plan-1 --expect-total 339.10");

@@ -94,13 +94,16 @@ export function registerSendCommand(program: Command): void {
             { recipient: clientEmail, planId: plan.id },
           );
         }
-        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        // Prompt + abort diagnostics go to STDERR: in --json mode stdout must
+        // stay a pure JSON stream (a piped consumer would otherwise ingest the
+        // prompt text), and stdin-TTY does not imply stdout-TTY.
+        const rl = createInterface({ input: process.stdin, output: process.stderr });
         try {
           const answer = (
             await rl.question(`Send "${plan.title}" invite email to ${chalk.bold(clientEmail)}? [y/N] `)
           ).trim().toLowerCase();
           if (answer !== "y" && answer !== "yes") {
-            console.log(chalk.dim("Aborted. Nothing sent."));
+            console.error(chalk.dim("Aborted. Nothing sent."));
             return;
           }
         } finally {
