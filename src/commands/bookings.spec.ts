@@ -104,6 +104,9 @@ describe("bookings list", () => {
     const out = JSON.parse(writes.join(""));
     expect(out.bookings).toHaveLength(1);
     expect(out.bookings[0].url).toContain("/plans/plan-1");
+    // Machine surface says amountCents, never a dollar-looking `amount` (VOY-1713)
+    expect(out.bookings[0].amountCents).toBe(26800);
+    expect(out.bookings[0]).not.toHaveProperty("amount");
   });
 
   it("uses the filtered query and forwards parsed filters", async () => {
@@ -158,6 +161,8 @@ describe("bookings get", () => {
     expect(vars).toEqual({ id: "bkg_1" });
     const out = JSON.parse(writes.join(""));
     expect(out.id).toBe("bkg_1");
+    expect(out.amountCents).toBe(26800);
+    expect(out).not.toHaveProperty("amount");
     expect(out.url).toContain("/plans/plan-1");
   });
 
