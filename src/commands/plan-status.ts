@@ -13,7 +13,10 @@
  *     BLOCKED        system is waiting on the AGENT/USER — act
  *     IN_PROGRESS    system is waiting on ITSELF — poll, don't act
  * - `blockers[]` = the agent's to-do list (ordered: traveller data → inputs →
- *   picks → requirements), each { kind, message, refs }.
+ *   picks → requirements), each { kind, message, refs }. Blockers whose server
+ *   requirement carries no selection ref get `unverified: true` — they may be
+ *   stale phantoms (VOY-1715); `book --dry-run` is the checkout truth and wins
+ *   on contradiction.
  * - `waiting[]` = self-resolving waits, kept SEPARATE from blockers because
  *   acting on them won't help.
  * - `nextSteps[]` = runnable commands mapping onto blockers/waits, ending with
@@ -127,6 +130,17 @@ export interface Blocker {
   kind: BlockerKind;
   message: string;
   refs: { travellerId?: string; selectionId?: string; goalId?: string };
+  /**
+   * true when the server reported this requirement without referencing any
+   * selection (refs.selectionId absent), so the CLI cannot verify it or point
+   * at a fixing command (VOY-1714/VOY-1715: goal-level checkoutReadiness refs
+   * are unstable — e.g. "Cabin class" stays unfulfilled with a null ref even
+   * after the FlightClass selection in the shared Flight Booking Details goal
+   * is complete). Unverified blockers may be phantoms: `voyagier book <planId>
+   * --dry-run` is the checkout truth — when it reports no blockers, trust it
+   * over these.
+   */
+  unverified?: true;
 }
 
 export interface Waiting {
@@ -389,15 +403,25 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
       ) {
         continue; // root cause already listed as TRAVELLER_DATA
       }
+      // Requirements without a selection ref cannot be verified from goal
+      // data (VOY-1715: the fulfilling selection may live in another goal and
+      // isFulfilled may never flip). Label them honestly instead of sending
+      // the agent into a `plans goal` dead-loop that shows the same null ref.
+      const unverified = !r.selectionId;
       blockers.push({
         kind: "REQUIREMENT_UNMET",
-        message: r.label
-          ? `${g.name ?? "Goal"}: ${r.label}`
-          : `${g.name ?? "Goal"} has an unmet checkout requirement`,
+        message:
+          (r.label
+            ? `${g.name ?? "Goal"}: ${r.label}`
+            : `${g.name ?? "Goal"} has an unmet checkout requirement`) +
+          (unverified
+            ? " (server reports this unmet but references no selection — may be stale; verify with book --dry-run)"
+            : ""),
         refs: {
           goalId: g.goalId,
           ...(r.selectionId ? { selectionId: r.selectionId } : {}),
         },
+        ...(unverified ? { unverified: true as const } : {}),
       });
     }
   }
@@ -477,7 +501,13 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
         push(`voyagier select --selection-id ${shellArg(b.refs.selectionId)} --option-id <optionId>`);
         break;
       case "REQUIREMENT_UNMET":
-        push(`voyagier plans goal ${shellArg(b.refs.goalId)} --json   # inspect the blocking requirements`);
+        if (b.unverified) {
+          // No selection ref to inspect — `plans goal` would just show the
+          // same null ref. Route to the checkout truth instead.
+          push(`voyagier book ${shellArg(plan.id)} --dry-run --json   # checkout truth — if blockers are [], this requirement is a stale server ref`);
+        } else {
+          push(`voyagier plans goal ${shellArg(b.refs.goalId)} --json   # inspect the blocking requirements`);
+        }
         break;
     }
   }

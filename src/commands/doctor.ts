@@ -46,6 +46,15 @@ import * as queries from "../queries.js";
  * validates the WHOLE surface and can never silently drift back to a
  * hardcoded subset (the original VOY-1411 bug).
  */
+/**
+ * Operations OUTSIDE the core compose/close loop. Drift here breaks only its
+ * own command (places/comments/booking-record reads — tracked as VOY-1417/
+ * 1418/1419), never plan→search→select→quote→book. Name-pattern match so new
+ * peripheral ops classify themselves; anything unmatched is treated as CORE
+ * (fail-closed: unknown ops err on the side of blocking).
+ */
+export const PERIPHERAL_OP_PATTERN = /PLACE|COMMENT|BOOKING_RECORD/;
+
 export function collectCliOperations(): Array<{ name: string; operation: string }> {
   const ops: Array<{ name: string; operation: string }> = [];
   for (const [name, value] of Object.entries(queries as Record<string, unknown>)) {
@@ -242,19 +251,51 @@ async function checkSchema(): Promise<DoctorCheck> {
   // 2. Validate every shipped operation against it.
   const ops = collectCliOperations();
   const drifted = validateOperationsAgainstSchema(schema, ops);
+  return buildSchemaDriftCheck(ops.length, drifted);
+}
 
+/**
+ * Turn drift diagnostics into the schema check verdict. Pure so the WARN/FAIL
+ * classification is unit-testable without a live schema.
+ *
+ * Classification rationale (VOY-1714 #5): a cold agent seeing `overall: FAIL`
+ * has no way to know whether it can proceed. Drift confined to peripheral
+ * surfaces (places / comments / booking-record reads — the known VOY-1417/
+ * 1418/1419 cluster) does NOT block the core compose/close loop (plan →
+ * search → select → travellers → quote → book), so it downgrades to WARN with
+ * an explicit go-ahead. Any core-surface drift stays FAIL.
+ */
+export function buildSchemaDriftCheck(
+  opsCount: number,
+  drifted: Array<{ name: string; errors: string[] }>,
+): DoctorCheck {
   if (drifted.length === 0) {
     return {
       name: "schema",
       status: "PASS",
-      message: `All ${ops.length} CLI operations valid against live schema`,
+      message: `All ${opsCount} CLI operations valid against live schema`,
+    };
+  }
+
+  const coreDrifted = drifted.filter((d) => !PERIPHERAL_OP_PATTERN.test(d.name));
+  if (coreDrifted.length === 0) {
+    return {
+      name: "schema",
+      status: "WARN",
+      message:
+        `Schema drift on ${drifted.length}/${opsCount} operation(s), ALL on peripheral surfaces ` +
+        `(places/comments/booking-records) — the core compose/close loop is unaffected; safe to proceed`,
+      details: {
+        drifted: drifted.map((d) => `${d.name}: ${d.errors.join("; ")}`),
+      },
     };
   }
   return {
     name: "schema",
     status: "FAIL",
-    message: `Schema drift detected on ${drifted.length}/${ops.length} operation(s)`,
+    message: `Schema drift detected on ${drifted.length}/${opsCount} operation(s), ${coreDrifted.length} on CORE surfaces — core commands may fail`,
     details: {
+      coreDrifted: coreDrifted.map((d) => d.name),
       drifted: drifted.map((d) => `${d.name}: ${d.errors.join("; ")}`),
     },
   };

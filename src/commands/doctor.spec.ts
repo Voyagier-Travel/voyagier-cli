@@ -47,6 +47,10 @@ let validateOperationsAgainstSchema: (
   schema: any,
   ops: Array<{ name: string; operation: string }>,
 ) => Array<{ name: string; errors: string[] }>;
+let buildSchemaDriftCheck: (
+  opsCount: number,
+  drifted: Array<{ name: string; errors: string[] }>,
+) => { name: string; status: "PASS" | "WARN" | "FAIL"; message: string; details?: Record<string, unknown> };
 
 beforeAll(async () => {
   const mod = await import("./doctor.js");
@@ -54,6 +58,7 @@ beforeAll(async () => {
   rollUpStatus = mod.rollUpStatus;
   collectCliOperations = mod.collectCliOperations;
   validateOperationsAgainstSchema = mod.validateOperationsAgainstSchema;
+  buildSchemaDriftCheck = mod.buildSchemaDriftCheck;
 });
 
 // A small but real introspection result, used to drive the live-schema check
@@ -339,6 +344,36 @@ describe("collectCliOperations", () => {
       expect(o.operation.length).toBeGreaterThan(0);
       expect(o.operation).toMatch(/^(query|mutation|subscription|fragment|\{)/);
     }
+  });
+});
+
+describe("buildSchemaDriftCheck — core vs peripheral classification (VOY-1714)", () => {
+  const err = (name: string) => ({ name, errors: ["Cannot query field x"] });
+
+  it("PASS when nothing drifted", () => {
+    expect(buildSchemaDriftCheck(100, [])).toMatchObject({ status: "PASS" });
+  });
+
+  it("WARN with explicit go-ahead when drift is confined to peripheral surfaces", () => {
+    const check = buildSchemaDriftCheck(100, [
+      err("GET_PLACE_BY_ID"),
+      err("SEARCH_PLACES"),
+      err("GET_COMMENTS"),
+      err("GET_BOOKING_RECORDS_BY_USER"),
+    ]);
+    expect(check.status).toBe("WARN");
+    expect(check.message).toMatch(/core compose\/close loop is unaffected; safe to proceed/);
+  });
+
+  it("FAIL naming the core ops when any core-surface op drifted", () => {
+    const check = buildSchemaDriftCheck(100, [err("GET_PLACE_BY_ID"), err("GET_QUOTE_DATA")]);
+    expect(check.status).toBe("FAIL");
+    expect(check.message).toMatch(/1 on CORE surfaces/);
+    expect((check.details as { coreDrifted: string[] }).coreDrifted).toEqual(["GET_QUOTE_DATA"]);
+  });
+
+  it("unknown op names classify as CORE (fail-closed)", () => {
+    expect(buildSchemaDriftCheck(10, [err("SOME_FUTURE_OP")]).status).toBe("FAIL");
   });
 });
 

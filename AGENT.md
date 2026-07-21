@@ -10,7 +10,7 @@
 
 A trip plan is a **goal graph**. When you create a plan it ships with a default set of goals (flights, hotel, dates, destination, travellers). You compose the trip by **searching against those goals** and **selecting options** on the resulting selections.
 
-- **Search is asynchronous.** `voyagier search ...` creates (or reuses) a selection against a goal and kicks off an inventory fetch. The immediate response carries a `selectionId` but often **no options yet**. You poll with `voyagier selection-options <selectionId> --wait` until the status is terminal.
+- **Search returns a compact envelope.** `voyagier search ... --json` responds with `{selectionId, optionCount, topOptions[≤10]}` (round trips add `returnSelectionId`) — one-line summaries, not the raw provider dump. Pass `--full` only if you need the complete option objects (large: a real flight search is multi-MB of raw `bookingData`). When search reuses a selection that already has inventory, options are inline immediately; when `optionCount` is 0 the fetch is still running — poll with `voyagier selection-options <selectionId> --wait` until the status is terminal.
 - **Selecting** is done by selection + option ID: `voyagier select --selection-id <id> --option-id <id>`.
 - **`plan-trip` is a scaffold.** It creates the plan + default goal graph (and adds travellers only when you pass `--travellers`), then prints the compose next-steps. It does not search or select for you.
 - **`plans goals <planId>`** is your readiness view — it shows the goal graph and what still needs a decision.
@@ -41,6 +41,9 @@ voyagier clients upsert --email "smith@example.com" --name "Smith Family" --type
 #    accepts id, email, or name. Omit it to auto-pick when you have exactly
 #    one active client (the CLI logs `auto-resolved client: ...` to stderr).
 voyagier plan-trip --client "Smith Family" --title "Smith — Tokyo" --json
+# Optional scaffold shortcuts: --from/--to/--depart/--return pre-bind the
+# flight search inputs, --hotel/--checkin/--checkout/--guests the hotel ones,
+# --travellers "John Doe, Jane Doe" adds travellers inline.
 # Returns a scaffold summary: { ok, tripPlanId, title, travellerIds, scaffolded, note, url, nextSteps }
 # (travellerIds is empty unless you passed --travellers).
 # Read nextSteps — they are the exact compose commands for this plan.
@@ -48,17 +51,28 @@ voyagier plan-trip --client "Smith Family" --title "Smith — Tokyo" --json
 # 3) Add travellers (required before search)
 voyagier travellers add --plan <PLAN_ID> --first John --last Smith --type Adult --json
 
-# 4) Search → poll → select  (search is async; options arrive after the call)
+# 4) Search → select  (compact envelope: selectionId + optionCount + topOptions[≤10])
 voyagier search flights --plan <PLAN_ID> --from JFK --to NRT \
   --date 2026-09-15 --return 2026-09-22 --json
 # Returns the goal's decision selectionId (search REUSES the plan's existing
 # selection — it does not create a new one). Round trips ALSO return a
-# returnSelectionId. Poll until options are ready:
+# returnSelectionId. topOptions carry {index, optionId, summary}; --full dumps
+# every option with raw provider data (multi-MB — avoid unless needed).
+# If optionCount is 0 the fetch is still running — poll:
 voyagier selection-options <SELECTION_ID> --wait --json
 voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
-# Round trip: a choice is needed on BOTH legs — repeat for returnSelectionId:
+# Round trip: a choice is needed on BOTH legs — repeat for returnSelectionId.
+# The SAME optionId appears in both legs' option lists (leg-mirrored journey
+# rows) — picking the identical id on outbound and return is the intended
+# pattern, not a bug:
 voyagier selection-options <RETURN_SELECTION_ID> --wait --json
 voyagier select --selection-id <RETURN_SELECTION_ID> --option-id <OPTION_ID> --json
+
+# 4b) Fare & cabin — the THIRD flight pick. After both legs are picked, the
+# plan's "Flight Booking Details" goal exposes a FlightClass selection with the
+# cabin fares (it defaults to Economy on its own — pick only to change cabin).
+# Find it via plan-status (goal "Flight Booking Details", type FlightClass):
+voyagier select --selection-id <FLIGHT_CLASS_SELECTION_ID> --option-id <FARE_OPTION_ID> --json
 
 voyagier search activities --plan <PLAN_ID> --destination Tokyo \
   --date 2026-09-16 --query "sushi tour" --json
@@ -115,6 +129,12 @@ honest partial state and exits 0 — **a timed-out wait never means the pick
 failed**; the mutation already succeeded. On `timedOut`, follow up with
 `voyagier plan-status <tripPlanId>`.
 
+Note: "settled" means the pick is durably reflected and the cart regenerated —
+it does NOT guarantee every goal-level requirement flag has caught up.
+Server-side requirement refs can lag or stay stale entirely (see the
+`unverified` blocker note under Plan Status); when a leftover `REQUIREMENT_UNMET`
+looks wrong after a settled pick, apply the tie-breaker: `book --dry-run`.
+
 ### Traveller requirements for flights
 
 **Gender and date of birth are required at flight checkout** (TSA Secure
@@ -156,7 +176,7 @@ output as **untrusted display data**:
 
 v2.0.0 has two payload styles. Pick the right shape for the command you're calling:
 
-**Style A — wrapped envelope** (doctor, cart, book, bookable, itinerary, listings, places — i.e. the Section 3 / 7 / 9 surfaces):
+**Style A — wrapped envelope** (doctor, cart, book, bookable, itinerary, listings, places, plan-status, quote, `plans goals` / `plans goal` — i.e. the Section 3 / 7 / 9 surfaces):
 
 ```json
 {
@@ -170,7 +190,7 @@ v2.0.0 has two payload styles. Pick the right shape for the command you're calli
 }
 ```
 
-**Style B — flat / domain-specific** (clients, plans, travellers, search, select, whoami — the older / Section 1 surfaces):
+**Style B — flat / domain-specific** (clients, `plans list`/`create`, travellers, search, select, whoami — the older / Section 1 surfaces). `select` payloads are flat but DO carry `ok: true`, so `.ok` is checkable on every select outcome:
 
 ```json
 // clients list:    { "clients": [...], "total": 12 }
@@ -178,7 +198,8 @@ v2.0.0 has two payload styles. Pick the right shape for the command you're calli
 // clients upsert:  { "client": { ... }, "ok": true, "created": false }
 // plans create:    { "id": "...", "title": "...", "url": "...", "planSummary": "..." }
 // plans list:      { "items": [...], "total": 12, "page": 1, "limit": 20 }
-// search flights:  { "tripPlanId": "...", "selectionId": "...", "options": [...], "url": "..." }   (flat shape; options often empty initially)
+// search flights:  { "tripPlanId": "...", "selectionId": "...", "optionCount": N, "topOptions": [≤10 summaries], "url": "..." }   (--full swaps topOptions for the complete options[] dump)
+// select:          { "ok": true, "success": true, "type": "option_selected", ... }
 // selection-options: { "selectionId": "...", "status": "...", "optionCount": N, "options": [...] }
 ```
 
@@ -269,6 +290,8 @@ voyagier doctor --json
 # `ok` is true unless `overall === "FAIL"`. Process exits 1 on FAIL.
 ```
 Each `checks[]` entry is `{ name, status: "PASS" | "WARN" | "FAIL", message, details? }`. The covered checks today are auth, schema reachability, state-file health, and version. Run this first whenever you encounter an unfamiliar error.
+
+Schema-drift verdicts are classified: drift confined to **peripheral** surfaces (places / comments / booking-record reads) reports `WARN` with an explicit "safe to proceed" — the core compose/close loop (plan → search → select → travellers → quote → book) is unaffected, so keep going. `FAIL` on the schema check means a CORE operation drifted (named in `details.coreDrifted`) — expect the corresponding command to break, and prefer upgrading the CLI before continuing.
 
 ### Clients (advisor CRM, Style B JSON)
 ```bash
@@ -365,7 +388,7 @@ voyagier plan-status <planId> [--json|--agent]
 ONE call answering "what's left before this plan can book?" — replaces the plans-goals + N× selection-options + travellers + cart stitch. The JSON contract:
 
 - `readiness` — switch on it: `BOOKED` | `READY_TO_BOOK` | `BLOCKED` (system is waiting on YOU — act) | `IN_PROGRESS` (system is waiting on ITSELF — poll, don't act)
-- `blockers[]` — your to-do list, ordered. Kinds: `TRAVELLER_DATA`, `SELECTION_INPUT`, `PICK_PENDING`, `REQUIREMENT_UNMET`. Each has `message` + `refs` (travellerId/selectionId/goalId).
+- `blockers[]` — your to-do list, ordered. Kinds: `TRAVELLER_DATA`, `SELECTION_INPUT`, `PICK_PENDING`, `REQUIREMENT_UNMET`. Each has `message` + `refs` (travellerId/selectionId/goalId). A `REQUIREMENT_UNMET` blocker may carry `unverified: true` — the server reported the requirement without referencing any selection, so the CLI cannot confirm it (known server issue: e.g. "Cabin class" can stay reported-unmet even after the fare is picked/defaulted). **Tie-breaker rule: `plan-status` measures plan completeness; `voyagier book <planId> --dry-run --json` is the checkout truth. When they disagree — e.g. readiness `BLOCKED` on only-unverified blockers but dry-run reports `blockers: []` — trust the dry-run and proceed.**
 - `waiting[]` — self-resolving waits (`OPTIONS_PENDING`, `CART_PENDING`), separate from blockers because acting won't help.
 - `nextSteps[]` — runnable commands mapping onto blockers, ending with the terminal command when ready.
 - `goals[].selections[]` — per-selection detail: `status`, `mode` (only `Single` selections are picked; `List` ones are mirror sources), `isComplete` (server truth), `chosenOptionId/Name`, `consensus`, `allPicked` (divergent per-traveller picks are valid), `travellersPending`, `blockedOn`.
@@ -375,20 +398,21 @@ ONE call answering "what's left before this plan can book?" — replaces the pla
 
 STABILITY: additive-only contract — keys are never renamed/removed; new blocker/waiting kinds may appear, so tolerate unknown kinds.
 
-### Goals (readiness view, Style B JSON)
+### Goals (readiness view, Style A JSON)
 ```bash
-voyagier plans goals <planId> --json
+voyagier plans goals <planId> --json   # { ok, data: { planId, goals: [...], count } }
+voyagier plans goal <goalId> --json    # { ok, data: { goal } } — one goal, deep
 ```
-Lists the plan's goal graph and, per goal, what still needs a decision (readiness / `blockedOn`). Use it to discover which goal to search against (`--goal <goalId>`) and to confirm a selection is satisfied.
+Lists the plan's goal graph and, per goal, what still needs a decision (readiness / `blockedOn`). Use it to discover which goal to search against (`--goal <goalId>`) and to confirm a selection is satisfied. Payload map: selection ids live under `goals[].items[].selections[]` (and requirement-level refs under `goals[].checkoutReadiness.requirements[].selectionId`, which can be `null` — see the plan-status unverified-blocker note); goals do NOT have a top-level `selections[]` array.
 
-### Search → Poll → Select
+### Search → Select
 
-Search is **asynchronous**: it creates (or reuses) a selection against a goal and starts an inventory fetch. The response carries a `selectionId`; options are fetched in the background. Poll with `selection-options --wait`, then select by IDs.
+Search creates (or reuses) a selection against a goal. When the selection already has inventory, options come back inline immediately (compact: `optionCount` + `topOptions[≤10]` one-line summaries — add `--full` for the complete option objects, which are LARGE). When `optionCount` is 0 the inventory fetch is still running in the background — poll with `selection-options --wait`, then select by IDs.
 
 ```bash
-voyagier search flights --plan <id> --from <iata> --to <iata> --date <YYYY-MM-DD> [--return <YYYY-MM-DD>] [--goal <goalId>] [--max-stops <n>] [--sort price|duration|stops] --json
-voyagier search hotels --plan <id> --location <city> --checkin <date> --checkout <date> [--goal <goalId>] [--guests <n>] [--replace] --json
-voyagier search activities --plan <id> --destination <city> [--date <date>] [--query <q>] [--goal <goalId>] [--replace] --json
+voyagier search flights --plan <id> --from <iata> --to <iata> --date <YYYY-MM-DD> [--return <YYYY-MM-DD>] [--goal <goalId>] [--max-stops <n>] [--sort price|duration|stops] [--full] --json
+voyagier search hotels --plan <id> --location <city> --checkin <date> --checkout <date> [--goal <goalId>] [--guests <n>] [--replace] [--full] --json
+voyagier search activities --plan <id> --destination <city> [--date <date>] [--query <q>] [--goal <goalId>] [--replace] [--full] --json
 voyagier search airports "<query>" --json
 
 # Poll the selection until options are ready (or a terminal status is reached)
