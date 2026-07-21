@@ -16,7 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Changed
 - **Decision-chain docs (VOY-1718):** AGENT.md adds a "Decision chains" section (decision → list → decision → bookable leaf; alternates are suppressed; baselines auto-fill; pick the parent first) and documents the new plan-status fields; README's "What's Bookable" table now shows hotels as bookable via the auto-carted room-rate. Both note that live-rate cart items may report `source: "OTHER"` (normal, not an error).
-- **Post-pick chain guidance (VOY-1718):** `select`'s flight/hotel hints and `--agent`/`--json` output now point at the next link in the chain — after a hotel pick the room decision (baseline rate auto-carts); after both flight legs the Fare & Cabin (FlightClass) pick, chosen in the CLI (defaults to Economy), not "with the airline". `--json` gains an additive `chainNote`.
+- **Post-pick chain guidance (VOY-1718):** `select`'s flight/hotel hints and `--agent`/`--json` output now point at the next link in the chain — after a hotel pick the room decision (baseline rate auto-carts); after the flight leg(s) the Fare & Cabin (FlightClass) pick, chosen in the CLI (defaults to Economy) — seat selection and cabin upgrades remain with the airline after booking. `--json` gains an additive `chainNote`.
 
 ## [2.6.0] — 2026-07-21
 

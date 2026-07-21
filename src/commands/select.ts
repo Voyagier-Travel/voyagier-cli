@@ -405,7 +405,8 @@ export function registerSelectCommands(program: Command): void {
               ? [
                   `- Choose the RETURN leg too: \`voyagier select --selection-id ${shellArg(state.returnSelectionId)} --option-id <id>\` (options: \`voyagier selection-options ${shellArg(state.returnSelectionId)} --json\`)`,
                   // VOY-1718: after BOTH legs, the Fare & Cabin (FlightClass)
-                  // decision is next — it's picked here, not with the airline.
+                  // decision is next — the fare class is picked here (seat
+                  // selection / cabin upgrades stay airline-side after booking).
                   `- Then pick Fare & Cabin (FlightClass) — defaults to Economy. Surface it: \`voyagier plan-status ${shellArg(state.tripPlanId)} --json\` (or add \`--wait\` to this pick)`,
                 ]
               : []),

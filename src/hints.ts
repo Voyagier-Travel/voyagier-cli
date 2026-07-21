@@ -11,15 +11,18 @@ const HINT_PREFIX = "  💡 ";
 /**
  * After selecting a flight (departure or return or one-way).
  *
- * VOY-1718: the cabin/fare is a decision made IN the CLI (the Fare & Cabin
- * step), NOT something handled later with the airline — the old hint was wrong.
+ * VOY-1718: the fare/cabin CLASS is a decision made IN the CLI (the Fare &
+ * Cabin step, defaults to Economy). Seat selection and cabin UPGRADES remain
+ * airline-side after booking — the fare pick doesn't cover those (demmersong
+ * 2026-07-21: keep that sentence).
  */
 export function hintFlightSelected(): string {
   return HINT_STYLE(
     `${HINT_PREFIX}This reserves the itinerary. Once every leg is picked (a\n` +
     `     one-way has just one), the Fare & Cabin (FlightClass) step is chosen\n` +
-    `     here in the CLI (defaults to Economy) — run plan-status to surface\n` +
-    `     it. Seat assignments happen with the airline after ticketing.`
+    `     here in the CLI (defaults to Economy) — run plan-status to surface it.\n` +
+    `     Seat selection and cabin upgrades can be done directly with the\n` +
+    `     airline after booking is confirmed.`
   );
 }
 
