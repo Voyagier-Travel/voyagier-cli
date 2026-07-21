@@ -148,8 +148,10 @@ describe("agent-docs", () => {
         // The stale "display only" claim must never come back.
         expect(content).toMatch(/Flight.*Fare & Cabin/i);
         expect(content).not.toMatch(/Flight.*display only|display only.*Flight/i);
-        // Activities (Viator) remain a bookable path.
-        expect(content.toLowerCase()).toContain("viator");
+        // Activities remain a bookable path (supplier named generically —
+        // internal supplier brands are deliberately not shipped in the docs).
+        expect(content).toMatch(/Activity.*✅ per slot/i);
+        expect(content.toLowerCase()).not.toContain("viator");
       }
     });
 

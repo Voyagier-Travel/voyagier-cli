@@ -53,9 +53,9 @@ voyagier book <PLAN_ID> --validate --expect-total <subtotal> --json  # strict: a
 
 | Selection | Bookable? | Source |
 |-----------|-----------|--------|
-| Activity | ✅ per slot | Viator |
-| Hotel | ⚠️ partial | Blueprint Listings (checkout coverage incomplete) |
-| Flight | ✅ via Fare & Cabin item | Sabre (fare-level item carted once all legs are picked; defaults to Economy) |
+| Activity | ✅ per slot | Activity supplier |
+| Hotel | ⚠️ partial | Accommodation supplier / advisor inventory (checkout coverage incomplete) |
+| Flight | ✅ via Fare & Cabin item | Air supplier / GDS (fare-level item carted once all legs are picked; defaults to Economy) |
 
 The cart materializes only bookable, fare/room-level options — the per-item `isBookable` flag is the live truth. Always run `voyagier book <planId> --dry-run` first for pre-flight checks (blockers + chargeable subtotal, no gate needed); `--validate` is a strictness modifier on the real booking that aborts if any item is non-bookable. A real checkout requires a **price gate** (`--expect-total` or `--max-total`) against the chargeable subtotal, and the checkout is always pinned to that gated set via `itemIds` — `--types` / `--only-bookable` narrow it server-side. Note: unpaid (Pending) checkout sessions are not visible to the CLI, so never retry a successful `book`.
 
@@ -75,8 +75,8 @@ The cart materializes only bookable, fare/room-level options — the per-item `i
 | `voyagier selection-options <selectionId>` | Read / poll a selection's options (`--wait` to poll until ready) |
 | `voyagier select` | Choose an option (`--selection-id <id> --option-id <id>`, or by index; `--wait` to settle readiness after the pick) |
 | `voyagier itinerary` | Computed itinerary (sourced from `tripPlanEvents`) |
-| `voyagier listings` | Blueprint Listings — recent change events, add to selection |
-| `voyagier places` | Search / get / attach / list / highlight (Google Places + internal catalog) |
+| `voyagier listings` | Advisor inventory listings — recent change events, add to selection |
+| `voyagier places` | Search / get / attach / list / highlight (external places + internal catalog) |
 | `voyagier cart` | View cart with by-goal grouping and per-item bookability |
 | `voyagier quote` | Offer snapshot: itemized bookables + the exact total a gated `book` will enforce (`--json` includes the acceptance command) |
 | `voyagier send` | Email the client an invite link to the live trip (self-serve close; requires confirmation / `--yes`) |
@@ -106,7 +106,7 @@ Or read [AGENT.md](./AGENT.md) directly. It covers the goal-graph compose model,
 
 ## How It Works
 
-Thin client over Voyagier's GraphQL API — the same API the web app uses. Everything syncs both ways. A plan is a goal graph; searching composes selections against goals, and Blueprint Listings, Viator, Google Places, and Sabre are all surfaced through the unified selection model.
+Thin client over Voyagier's GraphQL API — the same API the web app uses. Everything syncs both ways. A plan is a goal graph; searching composes selections against goals, and air, accommodation, activity, and places suppliers are all surfaced through one unified selection model.
 
 ## License
 

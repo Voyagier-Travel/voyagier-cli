@@ -184,7 +184,7 @@ export function inferSource(info: BookabilityInfo | undefined): {
   if (ext.startsWith("viator")) {
     return {
       source: "VIATOR",
-      reason: info.isBookable ? null : "Activity not currently available via Viator.",
+      reason: info.isBookable ? null : "Activity not currently available from the supplier.",
     };
   }
   return {

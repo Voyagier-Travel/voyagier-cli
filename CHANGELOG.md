@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- **Published docs no longer name internal suppliers or processes:** AGENT.md / README / skill docs refer to air, accommodation, and activity suppliers generically; compiled `dist/` output no longer ships source comments (`removeComments`), and `.d.ts` emission is off (the package is a CLI binary, not a library). The checkout fee line now explains what the ~6% processing fee covers (credit card, booking, servicing).
+- **`skills/SKILL.md` rewritten for the v2.5 surface (was v1-era):** price-gated `book` flow, compact search envelope, `plan-status` / `quote` / `send`, uniform error envelope, and a pointer to `voyagier agent-docs` as the canonical reference. The old copy taught a gate-less `book` that now fails by design.
+
+## [2.5.0] — 2026-07-21
+
 ### Added
 - **`voyagier quote <planId>` (VOY-1212):** read-only offer snapshot — itemized cart with per-item bookability, client + trip dates, and a `chargeableTotal` computed through the same cents-rounding the `book` gate compares (quoted ≡ gated by construction). `--json` includes a machine-readable `acceptance` block (`{ command, itemIds, expectedTotal }`) — the exact gated booking that accepts the offer — or `acceptance: null` with a reason when nothing is bookable. Deliberately does NOT render client-facing documents (the webapp is the offer surface) or embed payment links (sessions expire; links are minted fresh at acceptance by `book`).
 - **`voyagier send <planId> [--note <text>]` (VOY-1212):** email the client their invite link to the live trip plan in the webapp (exposes `sendTripPlanToClient`), where they can view and pay self-serve. Emails a real client and is not idempotent, so it confirms interactively and hard-requires `--yes` in non-interactive runs (`CONFIRMATION_REQUIRED`); the recipient is pre-checked before the mutation so a plan without a client email fails fast with a fix hint.
