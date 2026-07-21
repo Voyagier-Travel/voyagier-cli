@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Fixed
+- **Round-trip and hotel date ranges no longer land one day early (VOY-1723):** the Date selection's `duration` input is an INCLUSIVE day count on the server (endDate = startDate + duration − 1), but the CLI sent the exclusive difference between the two dates — so a `--return 2026-09-15` search produced return flights on 09-14 and a `--checkout` hotel stay lost its last night. The CLI now sends `daysBetween + 1`.
+
 ## [2.6.1] — 2026-07-21
 ### Fixed
 - **`plan-status` suppresses alternate-branch picks (VOY-1718):** the goal graph pre-creates a decision chain for every candidate parent option, so after a hotel/flight pick the sibling chains (rooms/rates under hotels you didn't choose, extra mirrors of the one you did) were each emitting a phantom `PICK_PENDING`. `plan-status` now groups Single-mode selections by type within a goal; once one is complete (or a bookable cart item joins to it), the incomplete siblings are classified `branch: "alternate" | "deadBranch"` and their picks are suppressed. A group with no settled member and ≥2 pending siblings collapses into ONE aggregated `PICK_PENDING` carrying `candidateSelectionIds[]` (pick the parent first). A `REQUIREMENT_UNMET` pointing at a suppressed branch is kept but downgraded to `unverified`. On a real fully-composed plan this cut blockers from 17 to a handful of genuine ones.
