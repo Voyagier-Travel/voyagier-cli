@@ -233,12 +233,17 @@ function resolveAirportInput(value: string, flagName: string, quiet: boolean): s
  */
 const TOP_OPTIONS = 10;
 
-/** Compact `--json` search envelope; `full` restores the complete option dump. */
+/**
+ * Compact `--json` search envelope; `full` restores the complete option dump.
+ * `refineHint` lists ONLY the refinement flags the calling subcommand actually
+ * supports (`--max-stops` is flights-only; hotels/activities have `--sort`).
+ */
 function searchJsonBody(
   base: Record<string, unknown>,
   options: Array<Record<string, unknown>>,
   topOptions: Array<Record<string, unknown>>,
   full: boolean | undefined,
+  refineHint: string,
 ): Record<string, unknown> {
   if (full) {
     return { ...base, optionCount: options.length, options: options.map((opt, i) => ({ index: i + 1, ...opt })) };
@@ -248,7 +253,7 @@ function searchJsonBody(
     optionCount: options.length,
     topOptions: topOptions.slice(0, TOP_OPTIONS),
     ...(options.length > TOP_OPTIONS
-      ? { note: `Showing top ${TOP_OPTIONS} of ${options.length} options — re-run with --full for the complete dump (large: includes raw provider bookingData), or refine with --sort/--max-stops.` }
+      ? { note: `Showing top ${TOP_OPTIONS} of ${options.length} options — re-run with --full for the complete dump (large: includes raw provider bookingData), or refine with ${refineHint}.` }
       : {}),
   };
 }
@@ -463,6 +468,7 @@ export function registerSearchCommands(program: Command): void {
             options as unknown as Array<Record<string, unknown>>,
             searchResults,
             opts.full,
+            "--sort/--max-stops",
           ), null, 2) + "\n");
           return;
         }
@@ -674,6 +680,7 @@ export function registerSearchCommands(program: Command): void {
             options as unknown as Array<Record<string, unknown>>,
             searchResults,
             opts.full,
+            "--sort",
           ), null, 2) + "\n");
           return;
         }
@@ -873,6 +880,7 @@ export function registerSearchCommands(program: Command): void {
             options as unknown as Array<Record<string, unknown>>,
             searchResults,
             opts.full,
+            "--sort",
           ), null, 2) + "\n");
           return;
         }

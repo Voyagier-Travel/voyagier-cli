@@ -383,6 +383,17 @@ describe("buildSchemaDriftCheck — core vs peripheral classification (VOY-1714)
     // While genuinely peripheral shapes still match at token boundaries:
     expect(buildSchemaDriftCheck(10, [err("UPSERT_TRIP_PLAN_PLACE")]).status).toBe("WARN");
   });
+
+  it("peripheral pattern is bounded on BOTH sides — PLACEMENT does not match PLACE (fail-closed)", () => {
+    // Trailing boundary: "PLACEMENT" starts with "PLACE" at a token start; a
+    // pattern without a trailing bound would misclassify it as peripheral.
+    expect(buildSchemaDriftCheck(10, [err("GET_PLACEMENT_FEE")]).status).toBe("FAIL");
+    expect(buildSchemaDriftCheck(10, [err("COMMENTARY_FEED")]).status).toBe("FAIL");
+    // While plural peripheral ops (real names in queries.ts) still match:
+    expect(buildSchemaDriftCheck(10, [err("GET_COMMENTS")]).status).toBe("WARN");
+    expect(buildSchemaDriftCheck(10, [err("SEARCH_PLACES")]).status).toBe("WARN");
+    expect(buildSchemaDriftCheck(10, [err("GET_BOOKING_RECORDS_BY_USER")]).status).toBe("WARN");
+  });
 });
 
 describe("validateOperationsAgainstSchema", () => {
