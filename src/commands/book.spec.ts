@@ -24,6 +24,9 @@ jest.unstable_mockModule("../utils.js", () => ({
   formatPrice: (n: number) => `$${n.toFixed(2)}`,
   openBrowser: mockOpenBrowser,
   deriveBaseUrl: () => "https://travel.voyagier.com",
+  // Real semantics required: the gate's cents-rounding IS the behavior under
+  // test (moved to utils in VOY-1212 so quote shares it).
+  cents: (n: number) => Math.round(n * 100),
   // Real implementation semantics matter here: nextStep assertions verify the
   // recipe stays paste-runnable (simple tokens unquoted, unsafe ones quoted).
   shellArg: (v: string | number | null | undefined) => {
