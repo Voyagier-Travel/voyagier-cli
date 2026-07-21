@@ -16,10 +16,10 @@ const HINT_PREFIX = "  💡 ";
  */
 export function hintFlightSelected(): string {
   return HINT_STYLE(
-    `${HINT_PREFIX}This reserves the itinerary. Once both legs are picked, the\n` +
-    `     Fare & Cabin (FlightClass) step is chosen here in the CLI (defaults to\n` +
-    `     Economy) — run plan-status to surface it. Seat assignments happen with\n` +
-    `     the airline after ticketing.`
+    `${HINT_PREFIX}This reserves the itinerary. Once every leg is picked (a\n` +
+    `     one-way has just one), the Fare & Cabin (FlightClass) step is chosen\n` +
+    `     here in the CLI (defaults to Economy) — run plan-status to surface\n` +
+    `     it. Seat assignments happen with the airline after ticketing.`
   );
 }
 

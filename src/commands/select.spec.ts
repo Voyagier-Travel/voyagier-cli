@@ -726,3 +726,52 @@ describe("select: participant-choice scope flags (VOY-1692)", () => {
   });
 });
 
+
+// ── Tests: one-way flight chain guidance (VOY-1718, PR #79 review) ─────────
+
+describe("select: one-way flight — chain guidance has no 'both legs' claim", () => {
+  let stdoutOutput: string[];
+  let stdoutSpy: ReturnType<typeof jest.spyOn>;
+  let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+  beforeEach(() => {
+    process.env.VOYAGIER_TOKEN = "tok";
+    stdoutOutput = [];
+    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      stdoutOutput.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    mockLoadSearchState.mockReturnValue({
+      type: "flights" as const,
+      tripPlanId: "plan-123",
+      selectionId: "sel-out",
+      // NO returnSelectionId — one-way itinerary.
+      results: [{ index: 1, optionId: "opt-1", summary: "BWI→SIN · SQ · $900" }],
+      timestamp: new Date().toISOString(),
+    });
+    mockIsSearchStateStale.mockReturnValue(false);
+    mockGraphql.mockResolvedValue(MOCK_SET_SELECTED);
+  });
+
+  afterEach(() => {
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+    delete process.env.VOYAGIER_TOKEN;
+  });
+
+  it("JSON chainNote points at Fare & Cabin next WITHOUT claiming a second leg", async () => {
+    await runSelect(["1", "--json"]);
+    const parsed = JSON.parse(stdoutOutput.join(""));
+    expect(parsed.chainNote).toContain("Fare & Cabin");
+    expect(parsed.chainNote).not.toContain("both legs");
+    expect(parsed.returnSelectionId).toBeUndefined();
+  });
+
+  it("agent output adds the Fare & Cabin next-pick line with no RETURN-leg guidance", async () => {
+    await runSelect(["1", "--agent"]);
+    const output = stdoutOutput.join("");
+    expect(output).toContain("Fare & Cabin");
+    expect(output).not.toContain("RETURN leg");
+  });
+});

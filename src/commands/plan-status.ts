@@ -418,7 +418,11 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
       const settled = members.filter(
         (m) => m.sel.isComplete === true || bookableCartSelectionIds.has(m.sel.id),
       );
-      const incomplete = members.filter((m) => m.sel.isComplete !== true);
+      // "Incomplete" = NOT settled (not the raw isComplete flag): a selection
+      // whose bookable item is already in the cart is settled evidence even
+      // while the backend's isComplete lags — it must never suppress itself.
+      const settledIds = new Set(settled.map((m) => m.sel.id));
+      const incomplete = members.filter((m) => !settledIds.has(m.sel.id));
       if (settled.length > 0) {
         const settledMirrors = new Set(settled.map((m) => m.sel.mirrorListSelectionId ?? null));
         for (const m of incomplete) {

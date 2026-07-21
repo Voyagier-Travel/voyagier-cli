@@ -1052,3 +1052,48 @@ describe("buildPlanStatus — VOY-1718 untyped selections are never grouped (PR 
     expect(s.goals[0].selections.every((x) => x.branch === "active")).toBe(true);
   });
 });
+
+describe("buildPlanStatus — VOY-1718 cart-settled selection never suppresses itself (PR #79 review)", () => {
+  it("a cart-joined bookable selection with lagging isComplete stays 'active'; only its true siblings suppress", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan({
+          cart: {
+            itemCount: 1,
+            total: 500,
+            currency: "USD",
+            items: [{ selectionId: "rate-live", optionId: "oR" }],
+          },
+        }),
+        tripPlanGoals: [
+          goal({
+            id: "gL",
+            name: "Secure Lodging",
+            type: "Hotel",
+            items: [
+              {
+                id: "iL",
+                selections: [
+                  // The chosen chain's rate: bookable item IS in the cart, but
+                  // the backend hasn't flipped isComplete yet.
+                  { id: "rate-live", type: "HotelRoomRate", mode: "Single", isComplete: false, blueprintMonitorId: "m", mirrorListSelectionId: "lst-chosen", options: [{ id: "oR", name: "Flexible", isBookable: true }], travellerOptionChoices: [choice("t1", "oR")] },
+                  // A dead-branch rate under an unchosen room.
+                  { id: "rate-dead", type: "HotelRoomRate", mode: "Single", isComplete: false, blueprintMonitorId: "m", mirrorListSelectionId: "lst-unchosen", options: [{ id: "oX", name: "Saver", isBookable: true }], travellerOptionChoices: [choice("t1", null)] },
+                ],
+              },
+            ],
+          }),
+        ],
+      },
+      BASE,
+    );
+    const gL = s.goals[0];
+    const live = gL.selections.find((x) => x.selectionId === "rate-live")!;
+    const dead = gL.selections.find((x) => x.selectionId === "rate-dead")!;
+    // The cart-settled selection is evidence, not a suppression target.
+    expect(live.branch).toBe("active");
+    expect(dead.branch).toBe("deadBranch");
+    expect(gL.alternateBranchCount).toBe(1); // only rate-dead
+    expect(s.blockers.filter((b) => b.refs.selectionId === "rate-live")).toEqual([]);
+  });
+});
