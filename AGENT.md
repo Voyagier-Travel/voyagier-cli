@@ -426,6 +426,8 @@ voyagier send <planId> --yes --note 'Ready when you are!' --json
 
 > 💰 **Quoted ≡ gated.** `quote`'s `chargeableTotal` is computed through the same cents-rounding the `book` gate compares, so the acceptance command can never fail its own gate on an unchanged cart. `acceptance` is `null` (with `acceptanceUnavailableReason`) when nothing is bookable.
 >
+> 🔢 **Rounding semantics:** `chargeableTotalCents` is rounded ONCE on the raw-dollar subtotal (gate semantics) — do NOT sum per-item `priceCents`, which is rounded per line and can differ on fractional-cent prices; raw `price` is included per item for re-derivation.
+>
 > ✉️ **`send` is not idempotent** — every invocation emails the client again. Non-interactive runs refuse without `--yes` (`CONFIRMATION_REQUIRED`). Send once; track with `plan-status`.
 
 ```bash

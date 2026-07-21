@@ -121,8 +121,8 @@ describe("quote --json", () => {
     expect(data.items).toHaveLength(2);
     const flight = data.items.find((i: any) => i.type === "Flight");
     const hotel = data.items.find((i: any) => i.type === "Hotel");
-    expect(flight).toMatchObject({ priceCents: 33910, bookable: true });
-    expect(hotel).toMatchObject({ priceCents: 10000, bookable: false });
+    expect(flight).toMatchObject({ price: 339.1, priceCents: 33910, bookable: true });
+    expect(hotel).toMatchObject({ price: 100, priceCents: 10000, bookable: false });
     // Total = bookable only (hotel is display-only, never charged)
     expect(data.chargeableTotalCents).toBe(33910);
     expect(data.chargeableTotal).toBe("339.10");
@@ -133,6 +133,37 @@ describe("quote --json", () => {
       expectedTotal: "339.10",
     });
     expect(data.alternatives.selfServe).toBe("voyagier send plan-1");
+  });
+
+  it("chargeableTotalCents is subtotal-rounded (gate semantics), NOT the sum of per-item priceCents", async () => {
+    // Two bookable half-cent items: per-line rounding gives 2¢ + 2¢ = 4¢, but
+    // the gate rounds ONCE on the raw subtotal: cents(0.015 + 0.015) = 3¢.
+    // The total must match the gate — consumers re-derive from raw `price`.
+    const fixture = quoteFixture();
+    const plan = (fixture as any).tripPlan;
+    plan.cart.items = [
+      { id: "ci-1", name: "A", type: "Flight", price: 0.015, currency: "USD", selectionId: "sel-f", optionId: "opt-f" },
+      { id: "ci-2", name: "B", type: "Flight", price: 0.015, currency: "USD", selectionId: "sel-f2", optionId: "opt-f2" },
+    ];
+    plan.goals = [
+      {
+        id: "g1", name: "Flights", sortOrder: 1,
+        items: [{ selections: [
+          { id: "sel-f", options: [{ id: "opt-f", isBookable: true, status: "Available", blueprintListingId: null, externalId: "s1" }] },
+          { id: "sel-f2", options: [{ id: "opt-f2", isBookable: true, status: "Available", blueprintListingId: null, externalId: "s2" }] },
+        ] }],
+      },
+    ];
+    routeQuote(fixture);
+    await runQuote(["plan-1", "--json"]);
+    const { data } = lastJson();
+    const itemCentsSum = data.items.reduce((acc: number, i: any) => acc + i.priceCents, 0);
+    expect(itemCentsSum).toBe(4); // per-line rounding
+    expect(data.chargeableTotalCents).toBe(3); // gate rounding — authoritative
+    expect(data.chargeableTotal).toBe("0.03");
+    expect(data.acceptance.expectedTotal).toBe("0.03");
+    // Raw price present for consumers who need to re-derive totals.
+    expect(data.items.map((i: any) => i.price)).toEqual([0.015, 0.015]);
   });
 
   it("zero bookable items → acceptance null with a reason (still ok:true)", async () => {

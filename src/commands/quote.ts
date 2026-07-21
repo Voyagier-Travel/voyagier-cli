@@ -109,6 +109,11 @@ export function registerQuoteCommand(program: Command): void {
       // every bookable item has an optionId (same constraint book enforces on
       // its itemIds pin — money path, so surface the gap instead of emitting a
       // command that book would refuse).
+      // NB: unreachable today — enrichCartItem marks any optionId-less line
+      // isBookable:false (cart-helpers.ts), so `bookable` items always carry an
+      // optionId. Kept as fail-closed defense-in-depth: if that invariant ever
+      // changes, quote must refuse to emit `sel:undefined` in the acceptance
+      // contract rather than hand an agent a pin book would reject.
       const inexpressible = bookable.filter((i) => !i.optionId);
       const acceptance =
         bookable.length > 0 && inexpressible.length === 0
@@ -144,10 +149,16 @@ export function registerQuoteCommand(program: Command): void {
                 client: plan.client
                   ? { name: plan.client.name, email: plan.client.email ?? null, phone: plan.client.phone ?? null }
                   : null,
+                // Per-item priceCents is rounded per line; the authoritative
+                // total below is rounded ONCE on the raw-dollar subtotal (the
+                // same number book's gate compares). On fractional-cent prices
+                // sum(items[].priceCents) may differ from chargeableTotalCents
+                // — raw `price` is included so consumers can re-derive it.
                 items: enriched.map((i) => ({
                   id: i.id,
                   name: i.name,
                   type: i.type,
+                  price: i.price,
                   priceCents: cents(i.price),
                   currency: i.currency,
                   bookable: i.isBookable,
