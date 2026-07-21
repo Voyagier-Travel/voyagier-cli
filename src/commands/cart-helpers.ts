@@ -87,7 +87,12 @@ export interface BookabilityIndex {
   selectionToGoal: Map<string, { goalId: string; goalName: string; sortOrder: number }>;
 }
 
-export type CartItemSource = "BLUEPRINT" | "SABRE" | "VIATOR" | "OTHER" | "UNKNOWN";
+export type CartItemSource =
+  | "ACCOMMODATION_SUPPLIER"
+  | "AIR_SUPPLIER"
+  | "ACTIVITY_SUPPLIER"
+  | "OTHER"
+  | "UNKNOWN";
 
 export interface EnrichedCartItem {
   id: string;
@@ -170,20 +175,24 @@ export function inferSource(info: BookabilityInfo | undefined): {
   }
   if (info.blueprintListingId) {
     return {
-      source: "BLUEPRINT",
+      source: "ACCOMMODATION_SUPPLIER",
       reason: info.isBookable ? null : "Listing currently unavailable.",
     };
   }
   const ext = info.externalId?.toLowerCase() ?? "";
   if (ext.startsWith("sabre")) {
     return {
-      source: "SABRE",
-      reason: "Flights are itinerary display only; book directly with the airline.",
+      source: "AIR_SUPPLIER",
+      // Flights book via the fare-level (Fare & Cabin) cart item; the parent
+      // Flight pick itself is never carted. Reason only when NOT bookable.
+      reason: info.isBookable
+        ? null
+        : "This flight line is display-only; the bookable fare-level (Fare & Cabin) item is carted once all legs are picked.",
     };
   }
   if (ext.startsWith("viator")) {
     return {
-      source: "VIATOR",
+      source: "ACTIVITY_SUPPLIER",
       reason: info.isBookable ? null : "Activity not currently available from the supplier.",
     };
   }
@@ -306,9 +315,9 @@ export function collectBlockers(items: EnrichedCartItem[]): Blocker[] {
       itemName: item.name,
       reason: item.bookableReason ?? "Item is not bookable.",
       fix:
-        item.source === "SABRE"
-          ? "Book this flight directly with the airline; remove from cart with the web UI to clear the blocker."
-          : item.source === "BLUEPRINT"
+        item.source === "AIR_SUPPLIER"
+          ? "Pick the fare-level (Fare & Cabin) option once all legs are selected — that is the bookable flight item; this line itself is display-only."
+          : item.source === "ACCOMMODATION_SUPPLIER"
             ? "Refresh the listing or pick a different option."
             : item.source === "UNKNOWN"
               ? "Refresh the plan to re-resolve the cart line."

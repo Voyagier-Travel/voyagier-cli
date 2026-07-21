@@ -9,6 +9,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Changed
+- **Cart-item `source` values are now supplier-agnostic (breaking):** `cart` / `book` / `plans bookable` JSON emit `AIR_SUPPLIER` / `ACCOMMODATION_SUPPLIER` / `ACTIVITY_SUPPLIER` (previously vendor-branded values). `OTHER` / `UNKNOWN` unchanged. Update any switches on `source`.
+- **Stale flight guidance purged from runtime output:** the air-supplier bookability reason and blocker fix string claimed flights were "itinerary display only; book directly with the airline" — wrong since flights became bookable via the fare-level (Fare & Cabin) item. Both now explain the fare-level pick, and the reason is emitted only when the line is actually not bookable.
+- **"Travel fee" → "Processing fee"** across cart/book output and hints, matching the docs — it covers processing costs (credit card, booking, servicing).
 - **Published docs no longer name internal suppliers or processes:** AGENT.md / README / skill docs refer to air, accommodation, and activity suppliers generically; compiled `dist/` output no longer ships source comments (`removeComments`), and `.d.ts` emission is off (the package is a CLI binary, not a library). The checkout fee line now explains what the ~6% processing fee covers (credit card, booking, servicing).
 - **`skills/SKILL.md` rewritten for the v2.5 surface (was v1-era):** price-gated `book` flow, compact search envelope, `plan-status` / `quote` / `send`, uniform error envelope, and a pointer to `voyagier agent-docs` as the canonical reference. The old copy taught a gate-less `book` that now fails by design.
 
