@@ -21,9 +21,8 @@
  *   acting on them won't help.
  * - `nextSteps[]` = runnable commands mapping onto blockers/waits, ending with
  *   the terminal command when ready.
- * - Divergent picks are VALID (demmersong 2026-07-20): if every traveller
- *   picked, the pick is complete even when picks differ. `consensus: false`
- *   is informational; PICK_PENDING fires only when someone hasn't picked.
+ * - Divergent picks are VALID: if every traveller picked, the pick is complete even when picks differ.
+ *   `consensus: false` is informational; PICK_PENDING fires only when someone hasn't picked.
  * - Dead-branch suppression (VOY-1718): the goal graph pre-creates a decision
  *   chain for EVERY candidate parent option (pick a hotel → per-hotel room
  *   list → room → rate). After a pick, the sibling chains are alternates. We
