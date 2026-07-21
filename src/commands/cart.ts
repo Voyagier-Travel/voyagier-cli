@@ -126,8 +126,8 @@ function renderHuman(
   }
 
   console.log(chalk.dim("  ─────────────────────────────────"));
-  console.log(`  Total:         ${chalk.bold(formatPrice(cart.total))}`);
-  console.log(`  Travel fee:    ${chalk.dim("added at checkout")}`);
+  console.log(`  Total:          ${chalk.bold(formatPrice(cart.total))}`);
+  console.log(`  Processing fee: ${chalk.dim("added at checkout")}`);
   console.log();
 
   const bookableCount = byGoal.reduce((acc, g) => acc + g.items.filter((i) => i.isBookable).length, 0);
@@ -174,7 +174,7 @@ function renderAgent(
     lines.push("");
   }
   lines.push(`**Total:** ${formatPrice(total)}`);
-  lines.push("_(Travel fee added at checkout)_");
+  lines.push("_(Processing fee added at checkout)_");
   lines.push("");
 
   const bookableCount = byGoal.reduce((acc, g) => acc + g.items.filter((i) => i.isBookable).length, 0);

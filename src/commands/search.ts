@@ -360,7 +360,7 @@ export function registerSearchCommands(program: Command): void {
             JSON.stringify(
               {
                 dryRun: true,
-                flow: "goal/mirror-list (VOY-1414)",
+                flow: "goal/mirror-list",
                 steps: [
                   `resolve Flight goal (--goal or first Flight goal)`,
                   `set origin airport -> ${origin}, destination airport -> ${destination}`,
@@ -614,7 +614,7 @@ export function registerSearchCommands(program: Command): void {
             JSON.stringify(
               {
                 dryRun: true,
-                flow: "goal/mirror-list (VOY-1414)",
+                flow: "goal/mirror-list",
                 steps: [
                   `resolve Hotel goal (--goal or first Hotel goal)`,
                   `set date -> ${opts.checkin} (and ${opts.checkout})`,
@@ -741,7 +741,7 @@ export function registerSearchCommands(program: Command): void {
 
   search
     .command("activities")
-    .description("Search for Viator experiences and activities")
+    .description("Search for bookable experiences and activities")
     .option("--plan <id>", "Trip plan ID (or auto-resolved from last search)")
     .option("--goal <goalId>", "Target Activity goal (defaults to the first Activity goal on the plan)")
     .requiredOption("--destination <place>", "Destination name (city or region)")
@@ -817,7 +817,7 @@ export function registerSearchCommands(program: Command): void {
             JSON.stringify(
               {
                 dryRun: true,
-                flow: "goal/mirror-list (VOY-1414)",
+                flow: "goal/mirror-list",
                 steps: [
                   `resolve Activity goal (--goal or first Activity goal)`,
                   `set date -> ${opts.date}`,

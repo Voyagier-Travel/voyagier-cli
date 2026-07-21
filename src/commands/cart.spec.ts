@@ -126,10 +126,10 @@ describe("voyagier cart", () => {
     const flightItem = out.data.cart.byGoal.find((g: { goalId: string }) => g.goalId === "g-flight").items[0];
     const hotelItem = out.data.cart.byGoal.find((g: { goalId: string }) => g.goalId === "g-hotel").items[0];
     expect(flightItem.isBookable).toBe(false);
-    expect(flightItem.source).toBe("SABRE");
-    expect(flightItem.bookableReason).toContain("airline");
+    expect(flightItem.source).toBe("AIR_SUPPLIER");
+    expect(flightItem.bookableReason).toContain("Fare & Cabin");
     expect(hotelItem.isBookable).toBe(true);
-    expect(hotelItem.source).toBe("BLUEPRINT");
+    expect(hotelItem.source).toBe("ACCOMMODATION_SUPPLIER");
     expect(hotelItem.bookableReason).toBeNull();
   });
 

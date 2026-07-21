@@ -34,7 +34,7 @@ export function hintHotelSelected(): string {
 export function hintCartCheckout(): string {
   return HINT_STYLE(
     `${HINT_PREFIX}Prices are held temporarily and may change if not booked soon.\n` +
-    `     A travel fee will be added at checkout for booking management and support.`
+    `     A processing fee will be added at checkout — it covers processing costs (credit card, booking, servicing).`
   );
 }
 
