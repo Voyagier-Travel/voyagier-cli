@@ -8,6 +8,10 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+    ignore:
+      # ts-jest declares peer typescript ">=4.3 <7" — unignore once ts-jest supports TS 7
+      - dependency-name: typescript
+        versions: [">=7"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
