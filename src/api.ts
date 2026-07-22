@@ -67,7 +67,7 @@ export async function graphql<T = unknown>(
     if (res.status === 403) {
       throw new CliError(
         CliErrorCode.PERMISSION_DENIED,
-        "Permission denied: your token does not have access to this resource.\n  Fix: confirm the token belongs to the right account, or ask a workspace admin for access.",
+        "Permission denied: your token does not have access to this resource — or the resource does not exist (the server reports missing and forbidden identically).\n  Fix: double-check any resource id in the command (if the operation targets one), confirm the token belongs to the right account, or ask a workspace admin for access.",
       );
     }
     // Try to extract GraphQL error details from the response body
@@ -98,7 +98,7 @@ export async function graphql<T = unknown>(
     if (code === "FORBIDDEN") {
       throw new CliError(
         CliErrorCode.PERMISSION_DENIED,
-        `Permission denied: ${err.message}`,
+        `Permission denied: ${err.message}\n  Note: this can also mean the requested resource does not exist — the server reports missing and forbidden identically. If the operation targets an id, double-check it before assuming an access problem.`,
       );
     }
     // Schema-drift signals from the GraphQL validator. CLI is out of sync with the server schema.

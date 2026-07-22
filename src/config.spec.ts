@@ -1,7 +1,7 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync, chmodSync } from "fs";
 import { join } from "path";
-import { loadCredentials, saveCredentials, clearCredentials, credentialsExist, getToken, getApiUrl, CONFIG_DIR, saveUserContext, getUserContext, getHomeAirports, getPreferredCabin, assertSecureApiUrl } from "./config.js";
+import { loadCredentials, saveCredentials, clearCredentials, credentialsExist, getToken, getApiUrl, CONFIG_DIR, saveUserContext, getUserContext, getHomeAirports, getPreferredCabin, assertSecureApiUrl, resetEnvUrlWarningForTests } from "./config.js";
 import { CliError, CliErrorCode } from "./errors.js";
 
 const credFile = join(CONFIG_DIR, "credentials.json");
@@ -105,6 +105,30 @@ describe("config", () => {
       process.env.VOYAGIER_API_URL = "https://env-api.com";
       const creds = loadCredentials();
       expect(creds?.apiUrl).toBe("https://env-api.com");
+    });
+
+    it("ignores VOYAGIER_API_URL without VOYAGIER_TOKEN and warns once on stderr", () => {
+      // Explicit reset makes this order-independent: Jest can't isolate ESM
+      // module registries, so the warn-once flag persists across tests in
+      // this file — reset it instead of relying on test position.
+      resetEnvUrlWarningForTests();
+      saveCredentials("file-token", "https://file.example.com");
+      process.env.VOYAGIER_API_URL = "https://env-api.com";
+      const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        const creds = loadCredentials();
+        // File creds (and their saved URL) win — the env URL must not redirect them.
+        expect(creds?.token).toBe("file-token");
+        expect(creds?.apiUrl).toBe("https://file.example.com");
+        const warned = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+        expect(warned).toContain("VOYAGIER_API_URL is ignored unless VOYAGIER_TOKEN");
+        // Warn-once: a second load stays quiet.
+        stderrSpy.mockClear();
+        loadCredentials();
+        expect(stderrSpy).not.toHaveBeenCalled();
+      } finally {
+        stderrSpy.mockRestore();
+      }
     });
   });
 

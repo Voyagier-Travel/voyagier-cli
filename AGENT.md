@@ -301,7 +301,7 @@ voyagier auth login                # browser-based flow
 voyagier auth logout
 ```
 
-Env vars: `VOYAGIER_TOKEN`, `VOYAGIER_API_URL`. Tokens never expire automatically; rotate when team membership changes.
+Env vars: `VOYAGIER_TOKEN`, `VOYAGIER_API_URL`. `VOYAGIER_API_URL` is only honored when `VOYAGIER_TOKEN` is also set — saved credentials always use their own saved URL (a token is never redirected to a host it wasn't saved for). Tokens never expire automatically; rotate when team membership changes.
 
 Top-level shortcut: `voyagier login` is rewritten to `voyagier auth login`.
 
@@ -355,7 +355,7 @@ voyagier plans goals <id> --json
 voyagier plans bookable <id> --json
 # Style A: { ok: true, data: { items: [...], blockers: [...], summary }, planContext }
 
-voyagier plans delete <id> --json
+voyagier plans delete <id> --force --json   # --force required: also removes the plan's goals, selections, and cart
 ```
 
 ### Itinerary (Style A JSON)
@@ -623,7 +623,7 @@ Manual lookup: `voyagier search airports "tokyo" --json`.
 
 ```bash
 export VOYAGIER_TOKEN=voy_pat_xxxxx
-export VOYAGIER_API_URL=https://travel.voyagier.com/api   # optional; CLI appends /graphql
+export VOYAGIER_API_URL=https://travel.voyagier.com/api   # optional; only honored alongside VOYAGIER_TOKEN; CLI appends /graphql
 ```
 
 PATs are created at voyagier.com → Settings → Personal Access Tokens.
