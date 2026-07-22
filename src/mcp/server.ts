@@ -20,7 +20,7 @@ import { runCli, toToolResult, type CliResult } from "./exec.js";
  * and the prompt-injection rule.
  */
 export const INSTRUCTIONS = [
-  "Voyagier is an agent-ready travel platform. This server exposes the CLI's agent surface as tools; every tool returns the CLI's --json envelope verbatim (uniform { error, code, message, details? } on failure, isError=true).",
+  "Voyagier is an agent-ready travel platform. This server exposes the CLI's agent surface as tools; every tool returns the CLI's --json envelope verbatim (uniform { error, code, message, details? } on failure, isError=true) — except agent_docs, which returns the integration guide as plain markdown.",
   "",
   "Compose loop: create_client → plan_trip → (add_traveller) → search_flights/search_hotels/search_activities → get_selection_options → select_option → plan_status → quote → book.",
   "",
