@@ -546,6 +546,21 @@ export function buildPlanStatus(
       classifyGroupLegacy(members);
     }
 
+    // VOY-1724: List-mode HotelRoomList sources sit outside the pick machinery
+    // (they emit no picks — their Single-mode mirrors do), but their `branch`
+    // label still reads "active" to an agent browsing selections. When the
+    // chosen hotel's code is known, label wrong-hotel list sources deadBranch
+    // so agents don't waste reads on selection-options for a lost chain.
+    if (chosenHotelCode) {
+      for (const e of enriched) {
+        if (e.sel.type !== "HotelRoomList" || e.sel.mode !== "List") continue;
+        const code = hotelCodeBySelection?.get(e.sel.id);
+        if (code && code !== chosenHotelCode && !isSettledSel(e)) {
+          suppress(e, "deadBranch");
+        }
+      }
+    }
+
     const selectionsOut = enriched.map((e) => {
       const { sel, options, status, chosenOptionId, consensus } = e;
       const { travellersPending, allPicked, blockedOn, blockedOnUnavailable } = e;
@@ -915,9 +930,14 @@ export async function resolveHotelCodes(
     }
   }
   // Room-chain siblings → the code of their mirrored HotelRoomList (or self).
+  // The mirrored list itself was fetched as the room's proxy — map its code
+  // too, so List-mode HotelRoomList sources can be branch-labelled as well.
   for (const [roomId, fetchId] of roomToFetchId) {
     const code = fetched.get(fetchId)?.firstCode;
-    if (code) codeBySelection.set(roomId, code);
+    if (code) {
+      codeBySelection.set(roomId, code);
+      codeBySelection.set(fetchId, code);
+    }
   }
   return codeBySelection;
 }

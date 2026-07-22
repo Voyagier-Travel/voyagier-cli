@@ -1235,6 +1235,40 @@ describe("buildPlanStatus — VOY-1724 hotelCode matching", () => {
     expect(s.summary.alternateBranchCount).toBe(1); // only room-B
   });
 
+  it("labels List-mode HotelRoomList sources by code too: wrong-hotel lists deadBranch, matching list stays active", () => {
+    // List-mode sources emit no picks, but their `branch` label guides agents
+    // browsing selections — a wrong-hotel list must not read "active".
+    const listSrc = (id: string) => ({
+      id,
+      type: "HotelRoomList",
+      mode: "List",
+      isComplete: false,
+      blueprintMonitorId: "m",
+      options: [{ id: `${id}-o`, name: "Rooms", isBookable: false }],
+    });
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan(),
+        tripPlanGoals: [
+          hotelGoal([listSrc("list-A"), listSrc("list-B"), roomDec("room-A", "list-A"), roomDec("room-B", "list-B")]),
+        ],
+      },
+      BASE,
+      new Map([
+        ["hotel-dec", "HC-001"],
+        ["room-A", "HC-001"],
+        ["room-B", "HC-002"],
+        ["list-A", "HC-001"],
+        ["list-B", "HC-002"],
+      ]),
+    );
+    expect(sel(s, "list-A").branch).toBe("active");
+    expect(sel(s, "list-B").branch).toBe("deadBranch");
+    expect(sel(s, "room-B").branch).toBe("deadBranch");
+    // Both the dead room AND its dead list source count.
+    expect(s.summary.alternateBranchCount).toBe(2);
+  });
+
   it("when the matching room is already complete, its same-hotel mirror is an alternate and the mismatch is dead", () => {
     const s = buildPlanStatus(
       {
