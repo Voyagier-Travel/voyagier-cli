@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ---
 
-## [Unreleased]
+## [2.7.0] — 2026-07-21
 
 ### Fixed
 - **`plan-status` maps room chains to the chosen hotel by supplier `hotelCode` (VOY-1724):** hotel options AND room options both carry the supplier hotel code, so after a hotel pick `plan-status` now marks every room/rate chain under a *different* hotel `branch: "deadBranch"` immediately — even before any room is picked — and keeps only the chosen hotel's chain `active`. The aggregated `PICK_PENDING` collapses to that one chain ("room pick pending in your chosen hotel — N candidate selection(s)") instead of "11 candidates across 6 branches", and a 1-candidate collapse routes straight to the real `select` command. The VOY-1718 completion-evidence rule stays as fallback when a code is missing on either side; a `REQUIREMENT_UNMET` pointing at a code-mismatched chain downgrades to `unverified`.
@@ -17,13 +17,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **`plan-status --verify` (VOY-1724):** runs the same `book --dry-run` checkout truth (shared helper — no logic duplication) and appends `verify: { bookable, blockers, chargeableSubtotal }` to the JSON payload plus a human/agent section. On dry-run error it degrades to `verify: { error: <code> }` and never fails the command.
 - **`plan-status` additive `summary.bookableNow` (VOY-1724):** `true` when the cart holds ≥1 bookable item AND every remaining blocker is `unverified`. When readiness is `BLOCKED` but `bookableNow`, the headline says all remaining blockers are unverified and names the bookable count — trust `book --dry-run`. The readiness enum is unchanged.
 - **Room nights × rate breakdown (VOY-1724):** `selection-options` on a room/rate selection now derives `N nights · $total (~$/nt incl. tax)` from the option's nightly rate breakdown (human line + additive `stay` object in `--json`), via a targeted secondary read that never dumps raw `optionData`.
+- **Post-hotel-pick guidance names the room chain (VOY-1724):** after a hotel pick, `select` resolves the chosen hotel's actual room chain by `hotelCode` and points next-steps at its real selection id (additive `roomSelectionId` in `--json`), falling back to the generic text when unresolvable.
+- **`quote` header shows the full date range (VOY-1724):** departure AND return/end date (inclusive of the end since VOY-1723). `search hotels --json` gains additive per-result `stayTotal` / `nights` / `perNight` / `checkIn` / `checkOut` fields.
 
 ## [2.6.2] — 2026-07-21
 
 ### Fixed
 - **Round-trip and hotel date ranges no longer land one day early (VOY-1723):** the Date selection's `duration` input is an INCLUSIVE day count on the server (endDate = startDate + duration − 1), but the CLI sent the exclusive difference between the two dates — so a `--return 2026-09-15` search produced return flights on 09-14 and a `--checkout` hotel stay lost its last night. The CLI now sends `daysBetween + 1`.
-- **Post-hotel-pick guidance names the room chain (VOY-1724):** after a hotel pick, `select` resolves the chosen hotel's actual room chain by `hotelCode` and points next-steps at its real selection id (additive `roomSelectionId` in `--json`), falling back to the generic text when unresolvable.
-- **`quote` header shows the full date range (VOY-1724):** departure AND return/end date (inclusive of the end since VOY-1723). `search hotels --json` gains additive per-result `stayTotal` / `nights` / `perNight` / `checkIn` / `checkOut` fields.
 
 ## [2.6.1] — 2026-07-21
 ### Fixed
