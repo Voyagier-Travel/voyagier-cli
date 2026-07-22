@@ -1,10 +1,10 @@
 ---
 name: voyagier-cli
-version: 2.8.1
-description: "Voyagier CLI — search, plan, and book travel for clients. For human advisors and AI agents."
+version: 2.9.0
+description: "Book real travel from your terminal — search flights, hotels & activities, plan trips, and check out with a price-gated booking. For AI agents and travel advisors."
 metadata:
   openclaw:
-    category: travel
+    category: lifestyle
     requires:
       bins:
         - voyagier
@@ -105,7 +105,7 @@ voyagier send <PLAN_ID> --yes --json   # email client an invite to pay self-serv
 - **Hotel checkout coverage is partial** — search/watch works; check per-item `isBookable` in the cart. Luxury/boutique properties may need direct booking.
 - **Prices reflect the searched party, not per-person** — the price shown is what checkout charges for the whole party; don't multiply by traveller count. Sanity-check multi-traveller flight math before quoting (`book --dry-run`/`quote` are the chargeable truth).
 - **Hotel search prices are stay totals** — a hotel option's price is the whole-stay "from" rate, shown as `from $X total · N nights (~$Y/nt)`; room options carry a per-night breakdown. Date ranges are inclusive of the end date.
-- **Processing fee (~6%)** is added at checkout, not in the cart subtotal — covers processing costs (credit card, booking, servicing).
+- **Processing fee** is added at checkout, not in the cart subtotal — covers processing costs (credit card, booking, servicing).
 - **The air fare is locked at checkout, not at selection** — a successful `select` does not hold the price.
 - **Search results expire (~2h)** — `EXPIRED_OFFER`/`STALE_PLAN_STATE` → re-run the search.
 - **Use `--plan <id>` on `select`** when running parallel workflows (guards the global state files against cross-plan mixups).
