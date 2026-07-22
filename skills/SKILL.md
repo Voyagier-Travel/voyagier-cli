@@ -44,6 +44,8 @@ voyagier agent-docs    # prints AGENT.md: JSON shapes, error-code table, bookabi
 
 Read it once per session before non-trivial work. Everything below is a summary of that document.
 
+**MCP-native host?** The CLI doubles as a Model Context Protocol stdio server — `voyagier mcp` — exposing this same surface (plan → search → selection-options → select → plan-status → quote → book) as tools, with identical error codes and the same price-gated `book`. Prefer it over shelling out in shell-less environments. (`send` is intentionally not exposed.)
+
 ## The model (30 seconds)
 
 A trip plan is a **goal graph**. `plan-trip` scaffolds the plan + default goals (flights, hotel, dates, destination, travellers); you compose the trip by **searching against goals** and **selecting options** on the resulting selections. `plan-status` tells you what's left; `book` closes with a price-gated checkout.
