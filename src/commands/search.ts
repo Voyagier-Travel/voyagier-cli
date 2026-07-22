@@ -353,7 +353,7 @@ export function registerSearchCommands(program: Command): void {
         const dryRun = !!opts.dryRun;
         const showProgress = !dryRun && !opts.json && !opts.agent;
 
-        const travellerSpinner = showProgress ? startSpinner("Resolving travellers…") : null;
+        const travellerSpinner = showProgress ? startSpinner("Resolving travellers...") : null;
         let travellerIds: string[];
         try {
           travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
@@ -392,7 +392,7 @@ export function registerSearchCommands(program: Command): void {
         // asynchronously by the backend monitor (surfaced via selection-options).
         // The whole fetch runs under a spinner (try/finally so a thrown CliError
         // never leaves a dangling animation interval).
-        const searchSpinner = showProgress ? startSpinner("Searching flights…") : null;
+        const searchSpinner = showProgress ? startSpinner("Searching flights...") : null;
         let selectionId: string;
         let fetchedOptions: SelectOption[];
         let returnSelectionId: string | null = null;
@@ -575,7 +575,7 @@ export function registerSearchCommands(program: Command): void {
         const dryRun = !!opts.dryRun;
         const showProgress = !dryRun && !opts.json && !opts.agent;
 
-        const travellerSpinner = showProgress ? startSpinner("Resolving travellers…") : null;
+        const travellerSpinner = showProgress ? startSpinner("Resolving travellers...") : null;
         let travellerIds: string[];
         try {
           travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
@@ -656,7 +656,7 @@ export function registerSearchCommands(program: Command): void {
 
         // The whole fetch runs under a spinner (try/finally so a thrown CliError
         // never leaves a dangling animation interval).
-        const searchSpinner = showProgress ? startSpinner("Searching hotels…") : null;
+        const searchSpinner = showProgress ? startSpinner("Searching hotels...") : null;
         let selectionId: string;
         let fetchedOptions: SelectOption[];
         try {
@@ -813,7 +813,7 @@ export function registerSearchCommands(program: Command): void {
         const dryRun = !!opts.dryRun;
         const showProgress = !dryRun && !opts.json && !opts.agent;
 
-        const travellerSpinner = showProgress ? startSpinner("Resolving travellers…") : null;
+        const travellerSpinner = showProgress ? startSpinner("Resolving travellers...") : null;
         let travellerIds: string[];
         try {
           travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
@@ -887,7 +887,7 @@ export function registerSearchCommands(program: Command): void {
 
         // The whole fetch runs under a spinner (try/finally so a thrown CliError
         // never leaves a dangling animation interval).
-        const searchSpinner = showProgress ? startSpinner("Searching activities…") : null;
+        const searchSpinner = showProgress ? startSpinner("Searching activities...") : null;
         let selectionId: string;
         let fetchedOptions: SelectOption[];
         try {

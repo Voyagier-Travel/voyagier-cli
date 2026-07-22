@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, jest, beforeAll, beforeEach, afterEach } from "@jest/globals";
 import chalk from "chalk";
-import { startSpinner } from "./spinner.js";
+import { spinnerAnimates, startSpinner } from "./spinner.js";
 
 beforeAll(() => {
   chalk.level = 0;
@@ -202,5 +202,14 @@ describe("startSpinner — non-TTY / CI fallback", () => {
     expect(out).not.toContain("⠋");
     expect(out).not.toMatch(/\x1b\[/);
     spinner.stop();
+  });
+
+  it("spinnerAnimates mirrors the animation gate (TTY yes; non-TTY no; CI no)", () => {
+    const tty = makeStream(true).stream;
+    const pipe = makeStream(false).stream;
+    expect(spinnerAnimates(tty)).toBe(true);
+    expect(spinnerAnimates(pipe)).toBe(false);
+    process.env.CI = "1";
+    expect(spinnerAnimates(tty)).toBe(false);
   });
 });

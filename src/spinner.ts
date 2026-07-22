@@ -23,6 +23,16 @@ const INTERVAL_MS = 120;
 /** Only surface the elapsed suffix once the op has visibly stalled (>3s). */
 const ELAPSED_AFTER_MS = 3000;
 
+/**
+ * True when a spinner on `stream` would actually animate (interactive TTY,
+ * not CI). Call sites that must keep their non-TTY stderr output byte-identical
+ * to pre-spinner behaviour use this to branch to their original writes instead
+ * of the spinner's generic label-per-line fallback.
+ */
+export function spinnerAnimates(stream: NodeJS.WriteStream = process.stderr): boolean {
+  return stream.isTTY === true && !process.env.CI;
+}
+
 export interface SpinnerHandle {
   /** Swap the label shown next to the spinner mid-flight. */
   update(label: string): void;
@@ -39,7 +49,7 @@ export function startSpinner(
   opts: { stream?: NodeJS.WriteStream } = {},
 ): SpinnerHandle {
   const stream = opts.stream ?? process.stderr;
-  const animate = stream.isTTY === true && !process.env.CI;
+  const animate = spinnerAnimates(stream);
 
   if (!animate) {
     // Non-TTY / CI: preserve the pre-spinner behaviour exactly — a single dim

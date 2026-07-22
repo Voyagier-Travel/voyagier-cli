@@ -17,7 +17,7 @@ import {
   type SelectionStatusResult,
 } from "../selection-status.js";
 import { deriveChosen, deriveBlockedOn, type RawTravellerChoice, type RawSelectionInput } from "../choices.js";
-import { startSpinner } from "../spinner.js";
+import { spinnerAnimates, startSpinner } from "../spinner.js";
 
 // Re-exported so downstream consumers (and specs) keep one import site.
 export { deriveChosen, deriveBlockedOn };
@@ -156,13 +156,13 @@ export function registerSelectionOptionsCommands(program: Command): void {
           const startedAt = Date.now();
           const deadline = startedAt + timeoutMs;
           let delay = retryAfterMs;
-          // Spinner on stderr so the poll loop is never a silent black box, while
-          // --json stdout stays clean (VOY-1437). On a TTY it animates in place;
-          // piped/CI it degrades to one line per DISTINCT label — and since each
-          // poll's label carries a rising attempt/elapsed count, every poll still
-          // emits a heartbeat line (the non-TTY dedupe never swallows them).
+          // Heartbeat to stderr so the poll loop is never a silent black box,
+          // while --json stdout stays clean (VOY-1437). On an interactive TTY
+          // the heartbeat is a live in-place spinner; everywhere else (pipes,
+          // CI, agents) it stays byte-identical to the pre-spinner per-poll
+          // `polling…` lines so downstream log tooling never sees a new format.
           let attempt = 0;
-          const spinner = startSpinner("Fetching options…");
+          const spinner = spinnerAnimates() ? startSpinner("Fetching options...") : null;
           try {
             while (!isTerminal(result.status) && Date.now() < deadline) {
               const remaining = deadline - Date.now();
@@ -170,13 +170,21 @@ export function registerSelectionOptionsCommands(program: Command): void {
               ({ raw, result } = await loadSelectionState(selectionId, retryAfterMs));
               attempt++;
               const elapsed = Math.round((Date.now() - startedAt) / 1000);
-              spinner.update(
-                `Fetching options… (attempt ${attempt}, status=${result.status}, options=${result.optionCount}, ${elapsed}s)`,
-              );
+              if (spinner) {
+                spinner.update(
+                  `Fetching options... (attempt ${attempt}, status=${result.status}, options=${result.optionCount}, ${elapsed}s)`,
+                );
+              } else {
+                process.stderr.write(
+                  chalk.dim(
+                    `  polling… status=${result.status} options=${result.optionCount} elapsed=${elapsed}s\n`,
+                  ),
+                );
+              }
               delay = Math.min(delay * 1.5, 8000); // exponential backoff, capped
             }
           } finally {
-            spinner.stop();
+            spinner?.stop();
           }
 
           if (!isTerminal(result.status)) {
