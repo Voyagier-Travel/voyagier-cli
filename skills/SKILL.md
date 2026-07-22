@@ -1,6 +1,6 @@
 ---
 name: voyagier-cli
-version: 2.8.0
+version: 2.8.1
 description: "Voyagier CLI — search, plan, and book travel for clients. For human advisors and AI agents."
 metadata:
   openclaw:
@@ -18,8 +18,10 @@ Search flights, hotels, and activities; compose trip plans; take them to a paid 
 
 ```bash
 npm install -g @voyagier/cli
-voyagier auth set-token <PAT>    # save Personal Access Token
-voyagier doctor --json           # verify auth + schema + state + version
+voyagier login                       # interactive — keeps the token out of shell history
+# or, for scripts/agents: pipe the token via stdin (never pass it as an argument)
+printf '%s' "$PAT" | voyagier auth set-token -
+voyagier doctor --json               # verify auth + schema + state + version
 ```
 
 Get a PAT: voyagier.com → Settings → Personal Access Tokens → Create.
@@ -27,7 +29,7 @@ Get a PAT: voyagier.com → Settings → Personal Access Tokens → Create.
 Or use env vars for CI/scripts:
 ```bash
 export VOYAGIER_TOKEN=***
-export VOYAGIER_API_URL=https://travel.voyagier.com/api  # optional (default); CLI appends /graphql
+export VOYAGIER_API_URL=https://travel.voyagier.com/api  # optional (default); only honored alongside VOYAGIER_TOKEN; CLI appends /graphql
 ```
 
 No install permissions? Zero-install works for every command: `npx @voyagier/cli doctor --json`.
