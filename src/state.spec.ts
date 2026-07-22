@@ -105,6 +105,18 @@ describe("state", () => {
       writeFileSync(STATE_FILE, JSON.stringify({ results: [] }), { mode: 0o600 });
       expect(loadSearchState()).toBeNull();
     });
+
+    it("returns null when type is not a known search type (L5 shape guard)", () => {
+      writeFileSync(STATE_FILE, JSON.stringify({ ...MOCK_STATE, type: "bookings" }), { mode: 0o600 });
+      expect(loadSearchState()).toBeNull();
+    });
+
+    it("returns null when a results entry is missing optionId (L5 shape guard)", () => {
+      // A tampered entry must not reach setSelectedOption with undefined ids.
+      const tampered = { ...MOCK_STATE, results: [{ index: 1, summary: "LAX→NRT" }] };
+      writeFileSync(STATE_FILE, JSON.stringify(tampered), { mode: 0o600 });
+      expect(loadSearchState()).toBeNull();
+    });
   });
 
   describe("clearSearchState", () => {
@@ -190,6 +202,12 @@ describe("OptionsState", () => {
     saveOptionsState(testState);
     expect(loadOptionsState()).not.toBeNull();
     clearOptionsState();
+    expect(loadOptionsState()).toBeNull();
+  });
+
+  it("returns null for a structurally invalid options file (L5 shape guard)", () => {
+    const OPTIONS_FILE = join(CONFIG_DIR, "last-options.json");
+    writeFileSync(OPTIONS_FILE, JSON.stringify({ tripPlanId: "plan-abc", results: [{ index: 1 }], timestamp: new Date().toISOString() }), { mode: 0o600 });
     expect(loadOptionsState()).toBeNull();
   });
 

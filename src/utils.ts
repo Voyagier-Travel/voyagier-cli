@@ -131,7 +131,8 @@ export function looksLikeAirportCode(location: string): boolean {
 }
 
 /**
- * Open a URL in the user's default browser. Fails silently.
+ * Open a URL in the user's default browser. Throws CliError(VALIDATION) for
+ * malformed or non-http(s) URLs; launch/spawn failures are still silent.
  *
  * L4: only http(s) URLs are launched. A hostile API-provided URL (e.g. a
  * checkoutUrl) using a `file:`/`smb:`/custom scheme could otherwise launch a

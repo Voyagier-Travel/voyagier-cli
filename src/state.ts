@@ -59,15 +59,50 @@ export function saveSearchState(state: SearchState): void {
 }
 
 /**
- * L5: the state file lives beside the token; a malformed or tampered file must
- * degrade to "no state" rather than feed junk ids into GraphQL variables or
- * suggested-command text. Minimal structural check — ids are strings, results
- * is an array — nothing more.
+ * L5: the state files live beside the token; a malformed or tampered file must
+ * degrade to "no state" rather than feed junk into GraphQL variables or
+ * suggested-command text. The guards validate exactly the fields downstream
+ * code dereferences (ids fed to mutations, `type`/`timestamp`/`index`/`summary`
+ * used for staleness, lookup, and display) — optional fields are left alone.
  */
+function isValidSearchResult(v: unknown): boolean {
+  if (typeof v !== "object" || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.index === "number" && typeof r.optionId === "string" && typeof r.summary === "string";
+}
+
 function isValidSearchState(v: unknown): v is SearchState {
   if (typeof v !== "object" || v === null) return false;
   const s = v as Record<string, unknown>;
-  return typeof s.tripPlanId === "string" && typeof s.selectionId === "string" && Array.isArray(s.results);
+  return (
+    (s.type === "flights" || s.type === "hotels" || s.type === "activities") &&
+    typeof s.tripPlanId === "string" &&
+    typeof s.selectionId === "string" &&
+    typeof s.timestamp === "string" &&
+    Array.isArray(s.results) &&
+    s.results.every(isValidSearchResult)
+  );
+}
+
+/** L5 sibling guard for the options cache (same trust boundary as above). */
+function isValidOptionsState(v: unknown): v is OptionsState {
+  if (typeof v !== "object" || v === null) return false;
+  const s = v as Record<string, unknown>;
+  return (
+    typeof s.tripPlanId === "string" &&
+    typeof s.timestamp === "string" &&
+    Array.isArray(s.results) &&
+    s.results.every((r) => {
+      if (typeof r !== "object" || r === null) return false;
+      const o = r as Record<string, unknown>;
+      return (
+        typeof o.index === "number" &&
+        typeof o.subSelectionId === "string" &&
+        typeof o.optionId === "string" &&
+        typeof o.summary === "string"
+      );
+    })
+  );
 }
 
 export function loadSearchState(): SearchState | null {
@@ -112,7 +147,9 @@ export function loadOptionsState(): OptionsState | null {
   if (!existsSync(OPTIONS_FILE)) return null;
   try {
     const raw = readFileSync(OPTIONS_FILE, "utf-8");
-    return JSON.parse(raw) as OptionsState;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isValidOptionsState(parsed)) return null;
+    return parsed;
   } catch (err) {
     if (err instanceof SyntaxError) {
       try { unlinkSync(OPTIONS_FILE); } catch { /* ignore */ }

@@ -540,7 +540,8 @@ export function registerAuthCommands(program: Command): void {
                   const airline = parts[0].toUpperCase();
                   const number = parts.slice(1).join("");
                   if (/^[A-Z0-9]{2}$/.test(airline)) {
-                    // Store masked (L3) — the full number is only ever displayed.
+                    // Store masked (L3) — the full number is never persisted
+                    // (the confirmation echo below is masked too).
                     programs.push({ airlineCode: airline, membershipNumber: maskNumber(number) });
                     console.log(chalk.green(`     ✓ ${airline} ${maskNumber(number)}`));
                   } else {
