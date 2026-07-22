@@ -106,16 +106,14 @@ export function selectGoalsToPrune(
     for (const g of returnGoals) prune.set(g.id, g);
   }
 
-  if (shape.flightOnly || shape.hotelOnly) {
+  if (shape.flightOnly) {
     const hotelGoals = goals.filter(g => g.type === "Hotel");
-    if (shape.flightOnly && hotelGoals.length === 0) {
+    if (hotelGoals.length === 0) {
       warnings.push(
         "--flight-only: no Hotel goal found to prune (scaffold may have changed). Inspect `plans goals <planId>`.",
       );
     }
-    if (shape.flightOnly) {
-      for (const g of hotelGoals) prune.set(g.id, g);
-    }
+    for (const g of hotelGoals) prune.set(g.id, g);
   }
 
   if (shape.hotelOnly) {
