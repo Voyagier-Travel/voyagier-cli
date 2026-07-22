@@ -13,14 +13,17 @@
  * Everything here is DERIVED and shown as a short label — raw `optionData` is
  * never emitted (payload discipline).
  */
-import { formatPrice } from "./utils.js";
+import { formatPrice } from "./format.js";
 
 /**
  * Count nights between two YYYY-MM-DD (or ISO) dates. Returns null when either
  * is missing/unparseable or the range is non-positive.
  */
 export function nightsBetween(checkIn?: string | null, checkOut?: string | null): number | null {
-  if (!checkIn || !checkOut) return null;
+  // Values come from raw optionData/API payloads — guard the type, not just
+  // truthiness (a numeric/object date would throw on .slice and take down
+  // every derived stay label).
+  if (typeof checkIn !== "string" || typeof checkOut !== "string") return null;
   const a = Date.parse(`${checkIn.slice(0, 10)}T00:00:00Z`);
   const b = Date.parse(`${checkOut.slice(0, 10)}T00:00:00Z`);
   if (Number.isNaN(a) || Number.isNaN(b)) return null;

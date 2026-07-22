@@ -20,6 +20,11 @@ describe("nightsBetween", () => {
     expect(nightsBetween("2026-09-14", "2026-09-10")).toBeNull();
     expect(nightsBetween("not-a-date", "2026-09-14")).toBeNull();
   });
+  it("returns null (not throw) on non-string truthy payload values", () => {
+    // optionData is raw API JSONB — dates can arrive as numbers/objects.
+    expect(nightsBetween(20260910 as unknown as string, "2026-09-14")).toBeNull();
+    expect(nightsBetween("2026-09-10", { d: "2026-09-14" } as unknown as string)).toBeNull();
+  });
 });
 
 describe("deriveHotelStay + hotelStayLabel (search: minRate = STAY TOTAL)", () => {

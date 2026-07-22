@@ -247,14 +247,20 @@ async function resolveChosenHotelRoomStep(tripPlanId: string): Promise<string | 
     if (!data.tripPlan) return null;
     const codes = await resolveHotelCodes(data);
     const status = buildPlanStatus(data, deriveBaseUrl(getApiUrl()), codes);
-    // The collapsed matching-chain blocker: a PICK_PENDING naming the chosen
-    // hotel with exactly one candidate selection.
-    const match = status.blockers.find(
-      (b) =>
-        b.kind === "PICK_PENDING" &&
-        b.candidateSelectionIds?.length === 1 &&
-        b.message.includes("chosen hotel"),
-    );
+    // The collapsed matching-chain blocker: a PICK_PENDING with exactly one
+    // candidate whose selection is a room chain (HotelRoom / HotelRoomRate).
+    // Matched structurally — blocker message text is display copy, not a
+    // contract.
+    const typeBySelection = new Map<string, string>();
+    for (const g of status.goals) {
+      for (const s of g.selections) {
+        if (s.type) typeBySelection.set(s.selectionId, s.type);
+      }
+    }
+    const match = status.blockers.find((b) => {
+      if (b.kind !== "PICK_PENDING" || b.candidateSelectionIds?.length !== 1) return false;
+      return (typeBySelection.get(b.candidateSelectionIds[0]) ?? "").startsWith("HotelRoom");
+    });
     return match?.candidateSelectionIds?.[0] ?? null;
   } catch {
     return null;

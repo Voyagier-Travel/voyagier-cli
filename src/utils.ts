@@ -1,7 +1,13 @@
 import chalk from "chalk";
 import { spawn } from "child_process";
 import { CliError, CliErrorCode } from "./errors.js";
+import { formatPrice } from "./format.js";
 import { hotelStayLabel } from "./hotel-format.js";
+
+// Re-exported from the leaf module so existing call sites keep importing from
+// utils; the definitions moved to format.ts to break the utils ↔ hotel-format
+// import cycle.
+export { formatPrice, cents } from "./format.js";
 
 /**
  * Extract a flight token from a booking data JSONB blob.
@@ -65,23 +71,6 @@ export function buildActivitySummary(opt: { name: string; price?: number; durati
   return parts.join(" · ");
 }
 
-/**
- * Format a price with commas and 2 decimal places.
- * e.g. 1234.5 → "$1,234.50"
- */
-export function formatPrice(price: number): string {
-  return "$" + price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-/**
- * Dollars → integer cents, the ONE rounding used on money comparisons.
- * book's price gate and quote's offer total must share this function so a
- * quoted total can never disagree with the gate that later enforces it
- * (VOY-1706 self-consistency, extended cross-command by VOY-1212).
- */
-export function cents(n: number): number {
-  return Math.round(n * 100);
-}
 
 /**
  * Validate a YYYY-MM-DD date string.

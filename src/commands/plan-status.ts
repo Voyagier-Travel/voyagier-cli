@@ -1077,7 +1077,7 @@ function renderAgent(s: PlanStatusData, verify?: VerifyResult | { error: string 
   lines.push(
     `- goals: ${s.summary.goalsDecided}/${s.summary.goalsTotal} decided, ${s.summary.goalsBooked} booked`,
   );
-  lines.push(`- cart: ${s.cart.itemCount} item(s), ${s.cart.total} ${s.cart.currency}`);
+  lines.push(`- cart: ${s.cart.itemCount} item(s), ${formatPrice(s.cart.total)} ${s.cart.currency}`);
   if (s.readiness === "BLOCKED" && s.summary.bookableNow) {
     lines.push(
       `- ⚠️ all remaining blockers are unverified — the cart holds ${s.cart.bookableCount} bookable item(s); verify with \`voyagier book ${shellArg(s.planId)} --dry-run\``,
@@ -1111,7 +1111,7 @@ function renderAgent(s: PlanStatusData, verify?: VerifyResult | { error: string 
       lines.push(`- ⚠️ could not verify (${verify.error}) — run \`voyagier book ${shellArg(s.planId)} --dry-run\``);
     } else {
       lines.push(
-        `- ${verify.bookable ? "bookable" : "nothing bookable"} — chargeable ${verify.chargeableSubtotal} ${verify.currency}`,
+        `- ${verify.bookable ? "bookable" : "nothing bookable"} — chargeable ${formatPrice(verify.chargeableSubtotal)} ${verify.currency}`,
       );
       for (const b of verify.blockers) lines.push(`- blocker: ${b.itemName} — ${b.reason}`);
     }
