@@ -17,6 +17,7 @@ import {
   type SelectionStatusResult,
 } from "../selection-status.js";
 import { deriveChosen, deriveBlockedOn, type RawTravellerChoice, type RawSelectionInput } from "../choices.js";
+import { startSpinner } from "../spinner.js";
 
 // Re-exported so downstream consumers (and specs) keep one import site.
 export { deriveChosen, deriveBlockedOn };
@@ -155,19 +156,27 @@ export function registerSelectionOptionsCommands(program: Command): void {
           const startedAt = Date.now();
           const deadline = startedAt + timeoutMs;
           let delay = retryAfterMs;
-          while (!isTerminal(result.status) && Date.now() < deadline) {
-            const remaining = deadline - Date.now();
-            await sleep(Math.min(delay, Math.max(0, remaining)));
-            ({ raw, result } = await loadSelectionState(selectionId, retryAfterMs));
-            // Heartbeat to stderr so the poll loop is never a silent black box.
-            // stderr keeps --json stdout clean. (VOY-1437)
-            const elapsed = Math.round((Date.now() - startedAt) / 1000);
-            process.stderr.write(
-              chalk.dim(
-                `  polling… status=${result.status} options=${result.optionCount} elapsed=${elapsed}s\n`,
-              ),
-            );
-            delay = Math.min(delay * 1.5, 8000); // exponential backoff, capped
+          // Spinner on stderr so the poll loop is never a silent black box, while
+          // --json stdout stays clean (VOY-1437). On a TTY it animates in place;
+          // piped/CI it degrades to one line per DISTINCT label — and since each
+          // poll's label carries a rising attempt/elapsed count, every poll still
+          // emits a heartbeat line (the non-TTY dedupe never swallows them).
+          let attempt = 0;
+          const spinner = startSpinner("Fetching options…");
+          try {
+            while (!isTerminal(result.status) && Date.now() < deadline) {
+              const remaining = deadline - Date.now();
+              await sleep(Math.min(delay, Math.max(0, remaining)));
+              ({ raw, result } = await loadSelectionState(selectionId, retryAfterMs));
+              attempt++;
+              const elapsed = Math.round((Date.now() - startedAt) / 1000);
+              spinner.update(
+                `Fetching options… (attempt ${attempt}, status=${result.status}, options=${result.optionCount}, ${elapsed}s)`,
+              );
+              delay = Math.min(delay * 1.5, 8000); // exponential backoff, capped
+            }
+          } finally {
+            spinner.stop();
           }
 
           if (!isTerminal(result.status)) {

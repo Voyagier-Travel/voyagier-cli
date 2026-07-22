@@ -20,6 +20,7 @@
 
 import { graphql } from "../api.js";
 import { deriveChosen, type RawTravellerChoice } from "../choices.js";
+import { startSpinner, type SpinnerHandle } from "../spinner.js";
 import { GET_SELECTION_WITH_MONITOR, GET_PLAN_STATUS } from "../queries.js";
 import {
   buildPlanStatus,
@@ -116,9 +117,23 @@ export async function waitForPickSettle(
   deps: WaitDeps = {},
 ): Promise<PickWaitOutcome> {
   const gql = deps.gql ?? graphql;
-  const heartbeat = deps.heartbeat ?? ((line: string) => process.stderr.write(line));
   const now = deps.now ?? Date.now;
   const sleepFn = deps.sleepFn ?? sleep;
+
+  // Default heartbeat routes through a spinner: on a TTY it's a single live,
+  // in-place animation; piped/CI it degrades to the pre-spinner behaviour —
+  // one stderr line per heartbeat (labels vary by elapsed, so none are deduped
+  // away). An INJECTED heartbeat is used verbatim (the DI seam tests rely on),
+  // and then no spinner is created. Lazily started on first beat so no extra
+  // "starting" line precedes the caller's own progress message.
+  let spinner: SpinnerHandle | null = null;
+  const heartbeat =
+    deps.heartbeat ??
+    ((line: string): void => {
+      const label = line.replace(/\n+$/, "");
+      if (spinner) spinner.update(label);
+      else spinner = startSpinner(label);
+    });
 
   const started = now();
   const deadline = started + timeoutMs;
@@ -129,6 +144,7 @@ export async function waitForPickSettle(
   let planStatus: PlanStatusData | null = null;
   let settled = false;
 
+  try {
   // Phase A: pick visibility (also resolves tripPlanId for phase B).
   for (;;) {
     const data = await gql<{ getTripPlanSelection: WaitSelectionRead | null }>(
@@ -170,6 +186,13 @@ export async function waitForPickSettle(
       );
       delay = Math.min(delay * BACKOFF_FACTOR, MAX_DELAY_MS);
     }
+  }
+  } finally {
+    // Clear the live spinner (default path only; injected heartbeats own no spinner).
+    // `spinner` is only assigned inside the heartbeat closure, which TS's flow
+    // analysis can't see, so it mis-narrows the direct read to null — cast back
+    // to the declared type so the optional-chained stop() is well-typed.
+    (spinner as SpinnerHandle | null)?.stop();
   }
 
   return {

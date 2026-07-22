@@ -33,6 +33,7 @@ import { deriveHotelStay } from "../hotel-format.js";
 import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 import { CliError, CliErrorCode } from "../errors.js";
+import { startSpinner } from "../spinner.js";
 
 interface SelectOption {
   id: string;
@@ -345,15 +346,19 @@ export function registerSearchCommands(program: Command): void {
 
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
+        const showProgress = !dryRun && !opts.json && !opts.agent;
 
-        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Resolving travellers...\n"));
-
-        const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
+        const travellerSpinner = showProgress ? startSpinner("Resolving travellers…") : null;
+        let travellerIds: string[];
+        try {
+          travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
+        } finally {
+          travellerSpinner?.stop();
+        }
         if (!dryRun && travellerIds.length === 0) {
           throw new CliError(CliErrorCode.VALIDATION, `No travellers on this plan. Add one first:\n  voyagier travellers add --plan ${shellArg(tripPlanId)} --first <name> --last <name> --type ADULT`);
         }
 
-        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Searching flights...\n"));
         const isRoundTrip = !!opts.return;
 
         if (dryRun) {
@@ -380,47 +385,56 @@ export function registerSearchCommands(program: Command): void {
         // New goal/mirror-list model: set the goal's inputs, then create a
         // selection mirroring the goal's FlightList. Options are produced
         // asynchronously by the backend monitor (surfaced via selection-options).
-        const goals = await loadGoals(tripPlanId);
-        const goal = resolveGoal(goals, "flights", opts.goal);
-        const mirrorListSelectionId = resolveMirrorList(goal, "flights");
-        // Fail fast if the goal graph can't accept the required inputs, rather
-        // than create a selection silently stuck AWAITING_INPUT downstream.
-        const aps = requireAirports(goal, 2);
-        const dateSel = requireDateSelection(goals);
-        await setAirport(aps[0], origin);
-        await setAirport(aps[1], destination);
-        // Round-trip: also wire the RETURN-leg goal's airports (reversed:
-        // destination -> origin), or its segment query stays insufficient and
-        // no inventory is fetched (VOY-1421). One-way plans have no return goal.
+        // The whole fetch runs under a spinner (try/finally so a thrown CliError
+        // never leaves a dangling animation interval).
+        const searchSpinner = showProgress ? startSpinner("Searching flights…") : null;
+        let selectionId: string;
+        let fetchedOptions: SelectOption[];
         let returnSelectionId: string | null = null;
-        if (isRoundTrip) {
-          const returnGoal = resolveReturnFlightGoal(goals, goal.id);
-          if (returnGoal) {
-            const returnAps = requireAirports(returnGoal, 2);
-            await setAirport(returnAps[0], destination);
-            await setAirport(returnAps[1], origin);
-            // Surface the return goal's decision selection too: a round trip is
-            // complete only when BOTH legs carry a choice (VOY-1692).
-            returnSelectionId = resolveDecisionSelection(returnGoal, "flights");
+        try {
+          const goals = await loadGoals(tripPlanId);
+          const goal = resolveGoal(goals, "flights", opts.goal);
+          const mirrorListSelectionId = resolveMirrorList(goal, "flights");
+          // Fail fast if the goal graph can't accept the required inputs, rather
+          // than create a selection silently stuck AWAITING_INPUT downstream.
+          const aps = requireAirports(goal, 2);
+          const dateSel = requireDateSelection(goals);
+          await setAirport(aps[0], origin);
+          await setAirport(aps[1], destination);
+          // Round-trip: also wire the RETURN-leg goal's airports (reversed:
+          // destination -> origin), or its segment query stays insufficient and
+          // no inventory is fetched (VOY-1421). One-way plans have no return goal.
+          if (isRoundTrip) {
+            const returnGoal = resolveReturnFlightGoal(goals, goal.id);
+            if (returnGoal) {
+              const returnAps = requireAirports(returnGoal, 2);
+              await setAirport(returnAps[0], destination);
+              await setAirport(returnAps[1], origin);
+              // Surface the return goal's decision selection too: a round trip is
+              // complete only when BOTH legs carry a choice (VOY-1692).
+              returnSelectionId = resolveDecisionSelection(returnGoal, "flights");
+            }
           }
-        }
-        // Resolve BOTH date outputs so the round-trip monitor query is
-        // sufficient (VOY-1421): startDate from --date, endDate via duration
-        // when --return is given.
-        await resolveDateRange(dateSel, opts.date, opts.return);
+          // Resolve BOTH date outputs so the round-trip monitor query is
+          // sufficient (VOY-1421): startDate from --date, endDate via duration
+          // when --return is given.
+          await resolveDateRange(dateSel, opts.date, opts.return);
 
-        // Reuse the goal's existing Flight (leg) selection — the one wired
-        // 1 mirror hop from the FlightJourney's option rows — instead of
-        // creating a duplicate 2 hops away (VOY-1692).
-        const { selectionId, options: fetchedOptions } = await resolveOrCreateDecisionSelection(
-          "flights",
-          goal,
-          tripPlanId,
-          CREATE_FLIGHT_SELECTION,
-          "createTripPlanFlightSelection",
-          { goalId: goal.id, mirrorListSelectionId, travellerIds, title: `Flight: ${origin} → ${destination}` },
-          quiet,
-        );
+          // Reuse the goal's existing Flight (leg) selection — the one wired
+          // 1 mirror hop from the FlightJourney's option rows — instead of
+          // creating a duplicate 2 hops away (VOY-1692).
+          ({ selectionId, options: fetchedOptions } = await resolveOrCreateDecisionSelection(
+            "flights",
+            goal,
+            tripPlanId,
+            CREATE_FLIGHT_SELECTION,
+            "createTripPlanFlightSelection",
+            { goalId: goal.id, mirrorListSelectionId, travellerIds, title: `Flight: ${origin} → ${destination}` },
+            quiet,
+          ));
+        } finally {
+          searchSpinner?.stop();
+        }
 
         const sortBy = (opts.sort ?? "default") as SortField;
         // --max-stops is a client-side presentation filter over the options the
@@ -553,10 +567,15 @@ export function registerSearchCommands(program: Command): void {
 
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
+        const showProgress = !dryRun && !opts.json && !opts.agent;
 
-        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Resolving travellers...\n"));
-
-        const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
+        const travellerSpinner = showProgress ? startSpinner("Resolving travellers…") : null;
+        let travellerIds: string[];
+        try {
+          travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
+        } finally {
+          travellerSpinner?.stop();
+        }
         if (!dryRun && travellerIds.length === 0) {
           throw new CliError(CliErrorCode.VALIDATION, `No travellers on this plan. Add one first:\n  voyagier travellers add --plan ${shellArg(tripPlanId)} --first <name> --last <name> --type ADULT`);
         }
@@ -600,7 +619,6 @@ export function registerSearchCommands(program: Command): void {
           }
         }
 
-        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Searching hotels...\n"));
         if (!dryRun && opts.verbose) {
           process.stderr.write(chalk.dim(`API request — location: "${opts.location}", check-in: ${opts.checkin}, check-out: ${opts.checkout}\n`));
         }
@@ -630,27 +648,36 @@ export function registerSearchCommands(program: Command): void {
           return;
         }
 
-        const goals = await loadGoals(tripPlanId);
-        const goal = resolveGoal(goals, "hotels", opts.goal);
-        const mirrorListSelectionId = resolveMirrorList(goal, "hotels");
-        const dateSel = requireDateSelection(goals);
-        // --location applies to the plan-level Destination selection (Hotel goals
-        // inherit destination via bindings; there's no per-Hotel location input).
-        // Throws if no Destination selection exists, so the flag never silently no-ops.
-        if (opts.location) await setDestination(goals, opts.location);
-        // Resolve check-in + check-out so the hotel monitor query is sufficient
-        // (VOY-1421): check-out is derived as a duration from check-in.
-        await resolveDateRange(dateSel, opts.checkin, opts.checkout);
+        // The whole fetch runs under a spinner (try/finally so a thrown CliError
+        // never leaves a dangling animation interval).
+        const searchSpinner = showProgress ? startSpinner("Searching hotels…") : null;
+        let selectionId: string;
+        let fetchedOptions: SelectOption[];
+        try {
+          const goals = await loadGoals(tripPlanId);
+          const goal = resolveGoal(goals, "hotels", opts.goal);
+          const mirrorListSelectionId = resolveMirrorList(goal, "hotels");
+          const dateSel = requireDateSelection(goals);
+          // --location applies to the plan-level Destination selection (Hotel goals
+          // inherit destination via bindings; there's no per-Hotel location input).
+          // Throws if no Destination selection exists, so the flag never silently no-ops.
+          if (opts.location) await setDestination(goals, opts.location);
+          // Resolve check-in + check-out so the hotel monitor query is sufficient
+          // (VOY-1421): check-out is derived as a duration from check-in.
+          await resolveDateRange(dateSel, opts.checkin, opts.checkout);
 
-        const { selectionId, options: fetchedOptions } = await resolveOrCreateDecisionSelection(
-          "hotels",
-          goal,
-          tripPlanId,
-          CREATE_HOTEL_SELECTION,
-          "createTripPlanHotelSelection",
-          { goalId: goal.id, mirrorListSelectionId, travellerIds, title: `Hotel: ${opts.location}` },
-          !!(opts.json || opts.agent),
-        );
+          ({ selectionId, options: fetchedOptions } = await resolveOrCreateDecisionSelection(
+            "hotels",
+            goal,
+            tripPlanId,
+            CREATE_HOTEL_SELECTION,
+            "createTripPlanHotelSelection",
+            { goalId: goal.id, mirrorListSelectionId, travellerIds, title: `Hotel: ${opts.location}` },
+            !!(opts.json || opts.agent),
+          ));
+        } finally {
+          searchSpinner?.stop();
+        }
 
         const sortBy = (opts.sort ?? "default") as SortField;
         const options = sortBy === "price"
@@ -777,10 +804,15 @@ export function registerSearchCommands(program: Command): void {
 
         const tripPlanId = resolvePlanId(opts);
         const dryRun = !!opts.dryRun;
+        const showProgress = !dryRun && !opts.json && !opts.agent;
 
-        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Resolving travellers...\n"));
-
-        const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
+        const travellerSpinner = showProgress ? startSpinner("Resolving travellers…") : null;
+        let travellerIds: string[];
+        try {
+          travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
+        } finally {
+          travellerSpinner?.stop();
+        }
         if (!dryRun && travellerIds.length === 0) {
           throw new CliError(CliErrorCode.VALIDATION, `No travellers on this plan. Add one first:\n  voyagier travellers add --plan ${shellArg(tripPlanId)} --first <name> --last <name> --type ADULT`);
         }
@@ -819,7 +851,6 @@ export function registerSearchCommands(program: Command): void {
           }
         }
 
-        if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Searching activities...\n"));
         if (!dryRun && opts.verbose) {
           process.stderr.write(chalk.dim(`API request — destination: "${opts.destination}", date: ${opts.date}${opts.query ? `, query: "${opts.query}"` : ""}\n`));
         }
@@ -847,24 +878,33 @@ export function registerSearchCommands(program: Command): void {
           return;
         }
 
-        const goals = await loadGoals(tripPlanId);
-        const goal = resolveGoal(goals, "activities", opts.goal);
-        const mirrorListSelectionId = resolveMirrorList(goal, "activities");
-        const dateSel = requireDateSelection(goals);
-        // --destination applies to the plan-level Destination selection (Activity
-        // goals inherit destination via bindings; no per-Activity location input).
-        if (opts.destination) await setDestination(goals, opts.destination);
-        await addDateOption(dateSel, opts.date);
+        // The whole fetch runs under a spinner (try/finally so a thrown CliError
+        // never leaves a dangling animation interval).
+        const searchSpinner = showProgress ? startSpinner("Searching activities…") : null;
+        let selectionId: string;
+        let fetchedOptions: SelectOption[];
+        try {
+          const goals = await loadGoals(tripPlanId);
+          const goal = resolveGoal(goals, "activities", opts.goal);
+          const mirrorListSelectionId = resolveMirrorList(goal, "activities");
+          const dateSel = requireDateSelection(goals);
+          // --destination applies to the plan-level Destination selection (Activity
+          // goals inherit destination via bindings; no per-Activity location input).
+          if (opts.destination) await setDestination(goals, opts.destination);
+          await addDateOption(dateSel, opts.date);
 
-        const { selectionId, options: fetchedOptions } = await resolveOrCreateDecisionSelection(
-          "activities",
-          goal,
-          tripPlanId,
-          CREATE_ACTIVITY_SELECTION,
-          "createTripPlanActivitySelection",
-          { goalId: goal.id, mirrorListSelectionId, travellerIds, title: titleParts.join(" — ") },
-          !!(opts.json || opts.agent),
-        );
+          ({ selectionId, options: fetchedOptions } = await resolveOrCreateDecisionSelection(
+            "activities",
+            goal,
+            tripPlanId,
+            CREATE_ACTIVITY_SELECTION,
+            "createTripPlanActivitySelection",
+            { goalId: goal.id, mirrorListSelectionId, travellerIds, title: titleParts.join(" — ") },
+            !!(opts.json || opts.agent),
+          ));
+        } finally {
+          searchSpinner?.stop();
+        }
 
         const sortBy = (opts.sort ?? "default") as SortField;
         const options = sortBy === "price"
