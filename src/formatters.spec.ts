@@ -49,13 +49,26 @@ describe("formatFlights", () => {
 });
 
 describe("formatHotels", () => {
-  it("should format a single hotel option", () => {
+  it("renders price as a STAY TOTAL, not per-night (VOY-1724)", () => {
     const output = stripAnsi(formatHotels([
       { name: "W Punta Cana", price: 450 },
     ]));
     expect(output).toContain("[1]");
     expect(output).toContain("W Punta Cana");
-    expect(output).toContain("$450.00/night");
+    expect(output).toContain("from $450.00 total");
+    expect(output).not.toContain("/night");
+  });
+
+  it("adds nights + per-night when dates are present (VOY-1724)", () => {
+    const output = stripAnsi(formatHotels([
+      {
+        name: "W Punta Cana",
+        price: 450,
+        bookingData: { searchQuery: { checkInDate: "2026-09-10", checkOutDate: "2026-09-13" } },
+      },
+    ]));
+    // 3 nights, 450/3 = 150 → ~$150/nt
+    expect(output).toContain("from $450.00 total · 3 nights (~$150/nt)");
   });
 
   it("should format multiple hotels", () => {
@@ -64,9 +77,9 @@ describe("formatHotels", () => {
       { name: "Grand Resort", price: 1200 },
     ]));
     expect(output).toContain("[1]");
-    expect(output).toContain("$89.00/night");
+    expect(output).toContain("from $89.00 total");
     expect(output).toContain("[2]");
-    expect(output).toContain("$1,200.00/night");
+    expect(output).toContain("from $1,200.00 total");
   });
 
   it("should handle missing price", () => {

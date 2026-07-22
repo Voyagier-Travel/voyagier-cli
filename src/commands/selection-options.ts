@@ -5,7 +5,9 @@ import {
   GET_SELECTION_WITH_MONITOR,
   GET_BLUEPRINT_MONITOR,
   REFRESH_SELECTION_OPTIONS,
+  GET_HOTEL_OPTION_DATA,
 } from "../queries.js";
+import { deriveRoomStay, type RoomStay } from "../hotel-format.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import {
@@ -96,6 +98,30 @@ async function loadSelectionState(
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/**
+ * VOY-1724: room/rate options carry a nightly rate breakdown + check-in/out
+ * dates in their `optionData`. Fetch it via a targeted secondary query (kept
+ * out of the lean monitor query so flight lists aren't bloated) and derive a
+ * "N nights · $total (~$/nt incl. tax)" label per option. Best-effort: any
+ * failure returns an empty map and the breakdown is silently skipped. Raw
+ * optionData is extracted-then-discarded — never emitted.
+ */
+async function loadRoomStays(selectionId: string): Promise<Map<string, RoomStay>> {
+  const stays = new Map<string, RoomStay>();
+  try {
+    const res = await graphql<{
+      getTripPlanSelection: { options?: { id: string; optionData?: unknown }[] | null } | null;
+    }>(GET_HOTEL_OPTION_DATA, { tripPlanSelectionId: selectionId });
+    for (const o of res.getTripPlanSelection?.options ?? []) {
+      const stay = deriveRoomStay(o.optionData);
+      if (stay) stays.set(o.id, stay);
+    }
+  } catch {
+    // Best-effort — no breakdown shown.
+  }
+  return stays;
+}
+
 export function registerSelectionOptionsCommands(program: Command): void {
   program
     .command("selection-options <selectionId>")
@@ -164,6 +190,12 @@ export function registerSelectionOptionsCommands(program: Command): void {
 
         const blockedOn = result.status === "AWAITING_INPUT" ? deriveBlockedOn(raw) : [];
 
+        // VOY-1724: for room/rate selections, derive the nights × rate breakdown
+        // (secondary optionData fetch). Skipped silently for other types.
+        const roomStays = (raw.type ?? "").startsWith("HotelRoom")
+          ? await loadRoomStays(raw.id)
+          : new Map<string, RoomStay>();
+
         if (asJson) {
           jsonOutput({
             selectionId: raw.id,
@@ -188,14 +220,19 @@ export function registerSelectionOptionsCommands(program: Command): void {
             // yet — inspect travellerChoices to tell which.
             consensus,
             ...(travellerChoices.length > 0 ? { travellerChoices } : {}),
-            options: sortedOptions.map((o) => ({
-              id: o.id,
-              name: o.name,
-              price: o.price ?? null,
-              time: o.time ?? null,
-              airline: o.airline ?? null,
-              duration: o.duration ?? null,
-            })),
+            options: sortedOptions.map((o) => {
+              const stay = roomStays.get(o.id);
+              return {
+                id: o.id,
+                name: o.name,
+                price: o.price ?? null,
+                time: o.time ?? null,
+                airline: o.airline ?? null,
+                duration: o.duration ?? null,
+                // VOY-1724 additive: nights × rate breakdown for room/rate options.
+                ...(stay ? { stay: { nights: stay.nights, total: stay.total, perNight: stay.perNight } } : {}),
+              };
+            }),
           });
           return;
         }
@@ -224,6 +261,8 @@ export function registerSelectionOptionsCommands(program: Command): void {
             const price = o.price != null ? chalk.green(` · $${o.price}`) : "";
             const chosen = chosenOptionId === o.id ? chalk.green(" ✓") : "";
             console.log(`    ${chalk.white(o.name)}${price}${chosen}`);
+            const stay = roomStays.get(o.id);
+            if (stay) console.log(chalk.dim(`      ${stay.label}`));
             console.log(chalk.dim(`      ${o.id}`));
           }
         }
