@@ -119,7 +119,7 @@ Thin client over Voyagier's GraphQL API — the same API the web app uses. Every
 
 Voyagier is currently invite-based. Advisors and agent builders can request access at [voyagier.com](https://voyagier.com) — once invited, you can self-serve a personal access token from your account.
 
-> **Tip:** prefer `voyagier login` (interactive prompt) over `voyagier auth set-token <token>` — it keeps your token out of shell history. For scripts, use the `VOYAGIER_TOKEN` env var or `voyagier auth set-token -` (stdin).
+> **Tip:** prefer `voyagier login` (interactive prompt) over `voyagier auth set-token <token>` — it keeps your token out of shell history. For scripts, use the `VOYAGIER_TOKEN` env var.
 
 ## License
 
