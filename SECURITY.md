@@ -19,6 +19,6 @@ Only the latest published version of `@voyagier/cli` is supported. Please reprod
 
 ## Token Safety
 
-- Prefer `voyagier login` (interactive) or the `VOYAGIER_TOKEN` env var; `auth set-token <token>` places the token in your shell history.
+- Prefer `voyagier login` (interactive) or the `VOYAGIER_TOKEN` env var; `voyagier auth set-token <token>` places the token in your shell history.
 - Credentials are stored in `~/.voyagier/credentials.json` with `0600` permissions.
 - If you believe a token has been exposed, revoke it from your Voyagier account immediately.

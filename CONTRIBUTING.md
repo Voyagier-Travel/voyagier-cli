@@ -32,4 +32,4 @@ Node >= 20 required (CI runs on 22).
 
 ## Agent-facing docs
 
-`AGENT.md` is a load-bearing artifact consumed by AI agents (`voyagier agent-doc`). If your change alters command surfaces, flags, or JSON shapes, update `AGENT.md` — `doc-drift.spec.ts` will fail if key claims drift from reality.
+`AGENT.md` is a load-bearing artifact consumed by AI agents (`voyagier agent-docs`). If your change alters command surfaces, flags, or JSON shapes, update `AGENT.md` — `doc-drift.spec.ts` will fail if key claims drift from reality.
