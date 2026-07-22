@@ -481,10 +481,19 @@ export function registerCrudCommands(plans: Command): void {
 
   plans
     .command("delete <id>")
-    .description("Delete a trip plan")
+    .description("Delete a trip plan (use --force to confirm)")
+    .option("--force", "Required to confirm deletion", false)
     .option("--json", "Output raw JSON")
     .action(async (id: string, opts) => {
       try {
+        // Same confirmation convention as goal-remove: destructive ops take
+        // --force. Deleting a plan drops its goals/selections/cart with it.
+        if (!opts.force) {
+          throw new CliError(
+            CliErrorCode.VALIDATION,
+            "delete requires --force. Deleting a plan also removes its goals, selections, and cart; pass --force to confirm.",
+          );
+        }
         await graphql<{ deleteTripPlan: boolean }>(
           DELETE_TRIP_PLAN,
           { id }

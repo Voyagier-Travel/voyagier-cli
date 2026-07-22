@@ -106,6 +106,26 @@ describe("config", () => {
       const creds = loadCredentials();
       expect(creds?.apiUrl).toBe("https://env-api.com");
     });
+
+    it("ignores VOYAGIER_API_URL without VOYAGIER_TOKEN and warns once on stderr", () => {
+      saveCredentials("file-token", "https://file.example.com");
+      process.env.VOYAGIER_API_URL = "https://env-api.com";
+      const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        const creds = loadCredentials();
+        // File creds (and their saved URL) win — the env URL must not redirect them.
+        expect(creds?.token).toBe("file-token");
+        expect(creds?.apiUrl).toBe("https://file.example.com");
+        const warned = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+        expect(warned).toContain("VOYAGIER_API_URL is ignored unless VOYAGIER_TOKEN");
+        // Warn-once: a second load stays quiet.
+        stderrSpy.mockClear();
+        loadCredentials();
+        expect(stderrSpy).not.toHaveBeenCalled();
+      } finally {
+        stderrSpy.mockRestore();
+      }
+    });
   });
 
   describe("clearCredentials", () => {

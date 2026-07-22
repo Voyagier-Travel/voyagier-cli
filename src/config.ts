@@ -145,11 +145,24 @@ export function getPreferredCabin(): string | null {
   return user?.preferredCabin ?? null;
 }
 
+let warnedIgnoredEnvUrl = false;
+
 export function loadCredentials(): Credentials | null {
   const envToken = process.env.VOYAGIER_TOKEN;
   const envUrl = process.env.VOYAGIER_API_URL;
   if (envToken) {
     return { token: envToken, apiUrl: envUrl ?? "https://travel.voyagier.com/api" };
+  }
+
+  // VOYAGIER_API_URL is only honored together with VOYAGIER_TOKEN — file
+  // credentials always travel with their own saved URL so a token is never
+  // redirected to a host it wasn't saved for (M2). Setting the URL var alone
+  // is almost always a mistake; say so instead of silently ignoring it.
+  if (envUrl && !warnedIgnoredEnvUrl) {
+    warnedIgnoredEnvUrl = true;
+    process.stderr.write(
+      "Warning: VOYAGIER_API_URL is ignored unless VOYAGIER_TOKEN is also set (saved credentials use their own URL). To switch APIs: voyagier auth set-token - --url <url>\n",
+    );
   }
 
   if (!existsSync(CREDENTIALS_FILE)) return null;
