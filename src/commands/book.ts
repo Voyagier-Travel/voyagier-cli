@@ -58,13 +58,12 @@ import { formatPrice, openBrowser, deriveBaseUrl, shellArg, cents } from "../uti
 import { hintCheckoutCreated, hintBookingConfirmed, hintBookingPending, hintDryRun } from "../hints.js";
 import { GET_CART_V2, CREATE_CHECKOUT, GET_PAYMENT_CHECKOUTS } from "../queries.js";
 import {
-  buildBookabilityIndex,
   collectBlockers,
-  enrichCartItems,
   filterBookable,
   filterByTypes,
   type CartV2QueryResult,
 } from "./cart-helpers.js";
+import { buildCheckoutPreview } from "./checkout-preview.js";
 
 interface PaymentCheckout {
   id: string;
@@ -191,8 +190,9 @@ export function registerBookCommands(program: Command): void {
       }
       const plan = data.tripPlan;
       const cart = plan.cart ?? { items: [], itemCount: 0, total: 0, currency: "USD" };
-      const bookability = buildBookabilityIndex(plan.goals ?? []);
-      const enriched = enrichCartItems(cart.items, bookability);
+      // Shared with `plan-status --verify`: one definition of the cart→bookable
+      // enrichment so the two commands can never disagree (VOY-1724).
+      const enriched = buildCheckoutPreview(data).enriched;
 
       // Cart-empty short-circuit
       if (enriched.length === 0) {

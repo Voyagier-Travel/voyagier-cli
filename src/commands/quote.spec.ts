@@ -227,6 +227,17 @@ describe("quote human/agent output", () => {
     expect(out).toContain("**Chargeable total: $339.10**");
     expect(out).toContain("voyagier book plan-1 --expect-total 339.10");
   });
+
+  it("VOY-1724: header shows the full date range (departure AND return), inclusive of the end", async () => {
+    // Fixture: startDate 2027-03-01, endDate 2027-03-08.
+    routeQuote();
+    await runQuote(["plan-1", "--agent"]);
+    expect(writes.join("")).toContain("Dates: Mar 1-8, 2027");
+    writes.length = 0;
+    routeQuote();
+    await runQuote(["plan-1"]);
+    expect(writes.join("")).toContain("Mar 1-8, 2027");
+  });
 });
 
 describe("quote → book cross-command consistency (quoted ≡ gated, proven by execution)", () => {

@@ -7,6 +7,13 @@ export interface SearchResult {
   optionId: string;
   flightToken?: string;
   summary: string;
+  // VOY-1724: hotel search results carry derived stay fields (minRate is a
+  // STAY TOTAL). All optional/additive; absent for flights/activities.
+  stayTotal?: number;
+  nights?: number | null;
+  perNight?: number | null;
+  checkIn?: string | null;
+  checkOut?: string | null;
 }
 
 export interface SearchState {
