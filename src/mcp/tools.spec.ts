@@ -3,8 +3,9 @@
  *
  * The builders are the contract between MCP tool input and the CLI's argv, so
  * every case here pins a representative input against the exact args produced:
- * boolean flags omitted when false, arrays → CSV, money rendered with String(),
- * wait defaulting to true, and the "--json on everything but agent_docs" rule.
+ * boolean flags omitted when false, arrays → CSV, money rendered via moneyArg()
+ * (strings verbatim, numbers toFixed(2)), wait defaulting to true, and the
+ * "--json on everything but agent_docs" rule.
  */
 import { describe, it, expect } from "@jest/globals";
 import {

@@ -12,8 +12,9 @@
  *    never index mode, so concurrent tool calls can't collide via the CLI's
  *    global last-search.json / last-options.json state files.
  *  - `book` requires `expect_total` at the SCHEMA level, mirroring the CLI's
- *    hard price gate (fails closed with PRICE_CHANGED). Money values render with
- *    `String(n)` — the CLI parses dollars.decimal; we never round or reformat.
+ *    hard price gate (fails closed with PRICE_CHANGED). Money values accept
+ *    string OR number and render via `moneyArg()`: strings forward verbatim
+ *    (exact passthrough), numbers normalise with `toFixed(2)` — see moneyArg.
  *  - `send` is intentionally absent (it emails a real client) — see README.
  */
 import { z } from "zod";
