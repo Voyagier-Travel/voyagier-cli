@@ -63,5 +63,8 @@ export class CliError extends Error {
 
 /** Standardized auth failure message — used by all AUTH_FAILED errors. */
 export function authFailedMessage(reason: string): string {
-  return `${reason}\n\n  Run:  voyagier login\n  Or:   voyagier auth set-token <token>\n\n  Get a token: https://travel.voyagier.com → Settings → Personal Access Tokens`;
+  // M4: recommend the interactive `login` first (reads the token via prompt, so
+  // it never lands in shell history / `ps`); offer stdin `set-token -` as the
+  // scripting alternative. Avoid `set-token <token>`, which leaks the PAT.
+  return `${reason}\n\n  Log in (interactive — keeps your token out of shell history):\n    voyagier login\n\n  Or, for scripting, pipe the token via stdin:\n    echo "$VOYAGIER_PAT" | voyagier auth set-token -\n\n  Get a token: https://travel.voyagier.com → Settings → Personal Access Tokens`;
 }

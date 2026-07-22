@@ -5,7 +5,7 @@ import { createInterface } from "readline/promises";
 import { stdin, stdout } from "process";
 import { graphql } from "../api.js";
 import { getApiUrl, getUserContext } from "../config.js";
-import { validateDate, deriveBaseUrl } from "../utils.js";
+import { validateDate, deriveBaseUrl, shellArg } from "../utils.js";
 import { jsonOutput, fatal, warn } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import {
@@ -229,7 +229,7 @@ export function registerTravellerCommands(program: Command): void {
 
         if (list.length === 0) {
           console.log(chalk.dim("No travellers on this plan."));
-          console.log(chalk.dim(`Add one: voyagier travellers add --plan ${opts.plan} --first <name> --last <name> --type ADULT`));
+          console.log(chalk.dim(`Add one: voyagier travellers add --plan ${shellArg(opts.plan)} --first <name> --last <name> --type ADULT`));
           console.log(chalk.dim(`Plan: ${planUrl}`));
           return;
         }

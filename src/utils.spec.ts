@@ -19,7 +19,7 @@ import {
   formatNullableBool,
   escapeMdTableCell,
 } from "./utils.js";
-import { CliError } from "./errors.js";
+import { CliError, CliErrorCode } from "./errors.js";
 
 describe("extractFlightToken", () => {
   it("should return undefined when bookingData is undefined", () => {
@@ -300,6 +300,43 @@ describe("openBrowser", () => {
   it("does not throw on any platform", () => {
     // openBrowser swallows errors — just verify it doesn't throw
     expect(() => openBrowser("https://example.com")).not.toThrow();
+  });
+
+  it("does not throw for an http:// URL (allowed web scheme)", () => {
+    expect(() => openBrowser("http://example.com/path")).not.toThrow();
+  });
+
+  it("refuses a file:// URL before spawning (L4)", () => {
+    // The scheme guard runs before spawn, so nothing is ever launched.
+    try {
+      openBrowser("file:///etc/passwd");
+      fail("Expected CliError to be thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+      expect((err as CliError).message).toMatch(/non-web URL/);
+    }
+  });
+
+  it("refuses a custom-scheme URL (L4)", () => {
+    try {
+      openBrowser("voyagier://checkout/steal");
+      fail("Expected CliError to be thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+    }
+  });
+
+  it("refuses a malformed URL (L4)", () => {
+    try {
+      openBrowser("not a url");
+      fail("Expected CliError to be thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+      expect((err as CliError).message).toMatch(/malformed URL/);
+    }
   });
 
   describe("warnPastDate", () => {

@@ -28,6 +28,7 @@ import {
   CREATE_TRIP_PLAN_CLIENT,
   UPDATE_TRIP_PLAN_CLIENT,
 } from "../queries.js";
+import { shellArg } from "../utils.js";
 
 export interface TripPlanClient {
   id: string;
@@ -425,7 +426,7 @@ export function registerClientsCommands(program: Command): void {
       if (archived) {
         const message = `Found an Archived client with email ${opts.email} (id ${archived.id}).\n` +
           `  Reactivate first, or create with a different email:\n` +
-          `    voyagier clients update ${archived.id} --status active`;
+          `    voyagier clients update ${shellArg(archived.id)} --status active`;
         throw new CliError(CliErrorCode.VALIDATION, message, { archivedClientId: archived.id });
       }
 

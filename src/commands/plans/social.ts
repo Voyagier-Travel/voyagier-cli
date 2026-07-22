@@ -11,6 +11,7 @@ import {
   CREATE_VOTE,
   UPDATE_VOTE,
 } from "../../queries.js";
+import { shellArg } from "../../utils.js";
 
 export function registerSocialCommands(plans: Command): void {
   plans
@@ -79,7 +80,7 @@ export function registerSocialCommands(plans: Command): void {
 
         if (comments.length === 0) {
           console.log(chalk.dim("\n  No comments yet.\n"));
-          console.log(chalk.dim(`  Add one: voyagier plans comments ${itemId} --add "Looks great!"\n`));
+          console.log(chalk.dim(`  Add one: voyagier plans comments ${shellArg(itemId)} --add "Looks great!"\n`));
           return;
         }
 
