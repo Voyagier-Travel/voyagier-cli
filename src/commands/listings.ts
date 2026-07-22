@@ -17,7 +17,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
-import { parsePositiveInt, formatPrice, formatNullableBool, escapeMdTableCell } from "../utils.js";
+import { parsePositiveInt, formatPrice, formatNullableBool, escapeMdTableCell, shellArg } from "../utils.js";
 import {
   GET_BLUEPRINT_LISTING_CHANGE_EVENTS,
   GET_BLUEPRINT_LISTING_CHANGE_EVENTS_BY_TYPE,
@@ -145,7 +145,7 @@ export function registerListingsCommands(program: Command): void {
       if (!monitorId) {
         throw new CliError(
           CliErrorCode.NO_MONITOR,
-          `Selection "${selectionId}" has no blueprintMonitorId. Cannot fetch listing events.\n  Fix: voyagier monitors create --selection ${selectionId}`
+          `Selection "${selectionId}" has no blueprintMonitorId. Cannot fetch listing events.\n  Fix: voyagier monitors create --selection ${shellArg(selectionId)}`
         );
       }
 
@@ -247,7 +247,7 @@ export function registerListingsCommands(program: Command): void {
       if (!option) {
         throw new CliError(
           CliErrorCode.LISTING_NOT_FOUND,
-          `Listing "${listingId}" could not be added. It may not exist or may be unavailable.\n  Fix: voyagier listings recent --selection ${selectionId}`
+          `Listing "${listingId}" could not be added. It may not exist or may be unavailable.\n  Fix: voyagier listings recent --selection ${shellArg(selectionId)}`
         );
       }
 

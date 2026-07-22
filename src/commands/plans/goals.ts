@@ -36,6 +36,7 @@ import chalk from "chalk";
 import { graphql } from "../../api.js";
 import { jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
+import { shellArg } from "../../utils.js";
 import {
   LIST_TRIP_PLAN_GOALS,
   LIST_TRIP_PLAN_GOALS_DEEP,
@@ -296,7 +297,7 @@ export function nextStepForRequirement(r: CheckoutRequirementStatus): string | n
   }
   // PARTICIPANT_CHOICE (and any future selection-backed type)
   if (!r.selectionId) return null;
-  return `voyagier select --selection-id ${r.selectionId} --option-id <optionId>`;
+  return `voyagier select --selection-id ${shellArg(r.selectionId)} --option-id <optionId>`;
 }
 
 /**

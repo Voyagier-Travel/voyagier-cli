@@ -321,7 +321,8 @@ describe("auth setup", () => {
     await buildProgram().parseAsync(["node", "v", "auth", "setup", "--airports", "BOS"]);
     const ctx = getUserContext();
     expect(ctx?.passport?.last4).toBe("4321");
-    expect(ctx?.frequentFlyerPrograms).toEqual([{ airlineCode: "BA", membershipNumber: "9998887" }]);
+    // L3: frequent-flyer numbers are stored masked (last 4), never in full.
+    expect(ctx?.frequentFlyerPrograms).toEqual([{ airlineCode: "BA", membershipNumber: "••••8887" }]);
     expect(out()).toMatch(/Imported from profile/);
   });
 
@@ -356,7 +357,8 @@ describe("auth setup", () => {
       nationalityCountry: "US", // defaulted from issue country on empty input
       expirationDate: "2030-05",
     });
-    expect(ctx?.frequentFlyerPrograms).toEqual([{ airlineCode: "DL", membershipNumber: "1234567890" }]);
+    // L3: stored masked (last 4), never in full.
+    expect(ctx?.frequentFlyerPrograms).toEqual([{ airlineCode: "DL", membershipNumber: "••••7890" }]);
     expect(out()).toMatch(/Setup complete/);
   });
 

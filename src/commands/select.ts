@@ -149,7 +149,7 @@ function mapChoiceError(err: unknown, selectionId: string): unknown {
       CliErrorCode.API_ERROR,
       `That option does not belong to selection ${selectionId} (the backend only accepts options from the selection itself or its direct mirrored list).\n` +
         `  List THIS selection's options and pick one of those IDs:\n` +
-        `    voyagier selection-options ${selectionId} --wait --json`,
+        `    voyagier selection-options ${shellArg(selectionId)} --wait --json`,
     );
   }
   return err;
@@ -388,7 +388,7 @@ export function registerSelectCommands(program: Command): void {
         const searchType = state.type === "flights" ? "flights" : state.type === "activities" ? "activities" : "hotels";
         throw new CliError(
           CliErrorCode.NOT_FOUND,
-          `No option [${idx}]. Valid range: 1-${state.results.length}\n  Tip: voyagier search ${searchType} --plan ${state.tripPlanId} ... to refresh results`,
+          `No option [${idx}]. Valid range: 1-${state.results.length}\n  Tip: voyagier search ${searchType} --plan ${shellArg(state.tripPlanId)} ... to refresh results`,
         );
       }
 

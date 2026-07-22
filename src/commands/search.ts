@@ -96,7 +96,7 @@ export async function resolveOrCreateDecisionSelection(
       throw new CliError(
         CliErrorCode.API_ERROR,
         `The goal's ${KIND_LABEL[kind]} selection ${existingId} could not be loaded (stale goal graph or deleted selection). ` +
-          `Re-check the plan structure with: voyagier plans goals ${tripPlanId}`,
+          `Re-check the plan structure with: voyagier plans goals ${shellArg(tripPlanId)}`,
       );
     }
     return { selectionId: existingId, options: data.getTripPlanSelection.options ?? [], reused: true };
@@ -211,7 +211,7 @@ function resolveAirportInput(value: string, flagName: string, quiet: boolean): s
   // Try to resolve as city name
   const matches = searchAirports(value);
   if (matches.length === 0) {
-    throw new CliError(CliErrorCode.VALIDATION, `No airports found for ${flagName}: "${value}"\n  Use a 3-letter IATA code (e.g., LAX) or search: voyagier search airports "${value}"`);
+    throw new CliError(CliErrorCode.VALIDATION, `No airports found for ${flagName}: "${value}"\n  Use a 3-letter IATA code (e.g., LAX) or search: voyagier search airports ${shellArg(value)}`);
   }
   if (matches.length === 1) {
     if (!quiet) {
@@ -221,7 +221,7 @@ function resolveAirportInput(value: string, flagName: string, quiet: boolean): s
   }
   // Multiple matches but not a known metro — show them all
   const codes = matches.slice(0, 10).map((m) => m.code).join(", ");
-  throw new CliError(CliErrorCode.VALIDATION, `Multiple airports found for ${flagName}: "${value}". Specify a code: ${codes}\n  Run: voyagier search airports "${value}" for details`);
+  throw new CliError(CliErrorCode.VALIDATION, `Multiple airports found for ${flagName}: "${value}". Specify a code: ${codes}\n  Run: voyagier search airports ${shellArg(value)} for details`);
 }
 
 /**
@@ -350,7 +350,7 @@ export function registerSearchCommands(program: Command): void {
 
         const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
         if (!dryRun && travellerIds.length === 0) {
-          throw new CliError(CliErrorCode.VALIDATION, `No travellers on this plan. Add one first:\n  voyagier travellers add --plan ${tripPlanId} --first <name> --last <name> --type ADULT`);
+          throw new CliError(CliErrorCode.VALIDATION, `No travellers on this plan. Add one first:\n  voyagier travellers add --plan ${shellArg(tripPlanId)} --first <name> --last <name> --type ADULT`);
         }
 
         if (!dryRun && !opts.json && !opts.agent) process.stderr.write(chalk.dim("Searching flights...\n"));
@@ -558,7 +558,7 @@ export function registerSearchCommands(program: Command): void {
 
         const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
         if (!dryRun && travellerIds.length === 0) {
-          throw new CliError(CliErrorCode.VALIDATION, `No travellers on this plan. Add one first:\n  voyagier travellers add --plan ${tripPlanId} --first <name> --last <name> --type ADULT`);
+          throw new CliError(CliErrorCode.VALIDATION, `No travellers on this plan. Add one first:\n  voyagier travellers add --plan ${shellArg(tripPlanId)} --first <name> --last <name> --type ADULT`);
         }
 
         // Check for existing hotel items and handle --replace.
@@ -782,7 +782,7 @@ export function registerSearchCommands(program: Command): void {
 
         const travellerIds = dryRun ? ["<traveller-id>"] : await resolveTravellerIds(tripPlanId);
         if (!dryRun && travellerIds.length === 0) {
-          throw new CliError(CliErrorCode.VALIDATION, `No travellers on this plan. Add one first:\n  voyagier travellers add --plan ${tripPlanId} --first <name> --last <name> --type ADULT`);
+          throw new CliError(CliErrorCode.VALIDATION, `No travellers on this plan. Add one first:\n  voyagier travellers add --plan ${shellArg(tripPlanId)} --first <name> --last <name> --type ADULT`);
         }
 
         // Check for existing activity items and handle --replace.

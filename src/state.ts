@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync, chmodSync } from "fs";
 import { join } from "path";
 import { CONFIG_DIR } from "./config.js";
 
@@ -52,15 +52,30 @@ const DEFAULT_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
 // --- Search state (flights/hotels) ---
 
 export function saveSearchState(state: SearchState): void {
-  mkdirSync(CONFIG_DIR, { recursive: true });
+  mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
+  chmodSync(STATE_FILE, 0o600);
+}
+
+/**
+ * L5: the state file lives beside the token; a malformed or tampered file must
+ * degrade to "no state" rather than feed junk ids into GraphQL variables or
+ * suggested-command text. Minimal structural check — ids are strings, results
+ * is an array — nothing more.
+ */
+function isValidSearchState(v: unknown): v is SearchState {
+  if (typeof v !== "object" || v === null) return false;
+  const s = v as Record<string, unknown>;
+  return typeof s.tripPlanId === "string" && typeof s.selectionId === "string" && Array.isArray(s.results);
 }
 
 export function loadSearchState(): SearchState | null {
   if (!existsSync(STATE_FILE)) return null;
   try {
     const raw = readFileSync(STATE_FILE, "utf-8");
-    return JSON.parse(raw) as SearchState;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isValidSearchState(parsed)) return null;
+    return parsed;
   } catch (err) {
     if (err instanceof SyntaxError) {
       // JSON parse failure — corrupted file, safe to delete
@@ -86,8 +101,9 @@ export function isSearchStateStale(state: SearchState, maxAgeMs = DEFAULT_MAX_AG
 // --- Options state (sub-selections: cabin class, room type) ---
 
 export function saveOptionsState(state: OptionsState): void {
-  mkdirSync(CONFIG_DIR, { recursive: true });
+  mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   writeFileSync(OPTIONS_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
+  chmodSync(OPTIONS_FILE, 0o600);
 }
 
 export function loadOptionsState(): OptionsState | null {

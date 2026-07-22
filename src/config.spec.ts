@@ -1,7 +1,7 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync, chmodSync } from "fs";
 import { join } from "path";
-import { loadCredentials, saveCredentials, clearCredentials, credentialsExist, getToken, getApiUrl, CONFIG_DIR, saveUserContext, getUserContext, getHomeAirports, getPreferredCabin } from "./config.js";
+import { loadCredentials, saveCredentials, clearCredentials, credentialsExist, getToken, getApiUrl, CONFIG_DIR, saveUserContext, getUserContext, getHomeAirports, getPreferredCabin, assertSecureApiUrl } from "./config.js";
 import { CliError, CliErrorCode } from "./errors.js";
 
 const credFile = join(CONFIG_DIR, "credentials.json");

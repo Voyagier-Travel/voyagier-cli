@@ -1,8 +1,8 @@
 import { randomUUID, randomBytes } from "crypto";
-import { hostname } from "os";
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from "fs";
 import { join } from "path";
-import { CONFIG_DIR, getUserContext } from "./config.js";
+import { CONFIG_DIR } from "./config.js";
+import { CliError } from "./errors.js";
 
 const TELEMETRY_FILE = join(CONFIG_DIR, "telemetry.json");
 
@@ -16,8 +16,13 @@ interface CommandEvent {
   subcommand?: string;
   durationMs: number;
   success: boolean;
-  error?: string;
-  userId?: string;
+  /**
+   * M1 (privacy): a stable, non-identifying failure label — a CliError.code
+   * (e.g. "VALIDATION") or, for unexpected errors, the error constructor name
+   * (e.g. "TypeError"). NEVER the raw error message: those routinely embed
+   * emails, plan titles, and other PII.
+   */
+  errorCode?: string;
   traceId?: string;
 }
 
@@ -48,7 +53,11 @@ function loadTelemetryConfig(): TelemetryConfig {
 }
 
 function saveTelemetryConfig(config: TelemetryConfig): void {
+  // 0o700 dir + 0o600 file, chmod after write to correct pre-existing loose
+  // perms (L1/L2).
+  mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   writeFileSync(TELEMETRY_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
+  chmodSync(TELEMETRY_FILE, 0o600);
 }
 
 export function isTelemetryEnabled(): boolean {
@@ -82,20 +91,20 @@ export function trackCommand(event: CommandEvent): void {
   if (!apiKey) return;
 
   const config = loadTelemetryConfig();
-  const user = getUserContext();
 
+  // M1 (privacy): NO hostname (often a person's name), NO user_id, NO raw error
+  // message (embeds PII). Only a non-identifying error CODE is included on
+  // failure. This keeps the "No personal data" claim TRUE.
   const logEntry = {
     ddsource: "voyagier-cli",
     ddtags: `command:${event.command}${event.subcommand ? `,subcommand:${event.subcommand}` : ""},env:${process.env.VOYAGIER_ENV ?? "production"},success:${event.success}`,
-    hostname: hostname(),
     service: "voyagier-cli",
     message: `${event.command}${event.subcommand ? ` ${event.subcommand}` : ""} ${event.success ? "✓" : "✗"} (${event.durationMs}ms)`,
     command: event.command,
     subcommand: event.subcommand,
     duration_ms: event.durationMs,
     success: event.success,
-    error: event.error,
-    user_id: user?.id ?? undefined,
+    error_code: event.errorCode,
     anonymous_id: config.anonymousId,
     trace_id: event.traceId ?? getTraceId(),
     cli_version: getCLIVersion(),
@@ -150,16 +159,27 @@ export function withTelemetry(
         traceId,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
       trackCommand({
         command,
         subcommand,
         durationMs: Date.now() - start,
         success: false,
-        error: message,
+        errorCode: telemetryErrorCode(err),
         traceId,
       });
       throw err;
     }
   };
+}
+
+/**
+ * M1 (privacy): derive a non-identifying failure label for telemetry.
+ * A CliError contributes its `code` (e.g. "VALIDATION"); any other error
+ * contributes only its constructor name (e.g. "TypeError"). The error message
+ * — which routinely embeds emails, plan titles, and other PII — is NEVER sent.
+ */
+export function telemetryErrorCode(err: unknown): string {
+  if (err instanceof CliError) return err.code;
+  if (err instanceof Error) return err.constructor?.name ?? err.name ?? "Error";
+  return "Error";
 }
