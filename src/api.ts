@@ -147,7 +147,7 @@ export async function streamChat(
 
   const messageId = crypto.randomUUID();
 
-  const res = await fetch(`${apiUrl}/chat/sessions/${sessionId}/stream`, {
+  const res = await fetch(`${apiUrl}/chat/sessions/${encodeURIComponent(sessionId)}/stream`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { credentialsExist, getUserContext, getApiUrl, saveUserContext } from "../config.js";
 import { graphql } from "../api.js";
 import { CliError, CliErrorCode, authFailedMessage } from "../errors.js";
-import { deriveBaseUrl } from "../utils.js";
+import { deriveBaseUrl, shellArg } from "../utils.js";
 
 const CABIN_LABELS: Record<string, string> = {
   economy: "Economy",
@@ -62,7 +62,8 @@ export function registerWhoamiCommand(program: Command): void {
             throw new CliError(
               CliErrorCode.AUTH_FAILED,
               `Token rejected by ${getApiUrl()} — it is stale or revoked.\n` +
-                `Fix: voyagier auth set-token --url ${getApiUrl()} <PAT>\n` +
+                `Fix: voyagier login   (interactive — keeps your token out of shell history)\n` +
+                `Or, for scripting: echo "$VOYAGIER_PAT" | voyagier auth set-token - --url ${shellArg(getApiUrl())}\n` +
                 `(Cached identity deliberately NOT shown; use --cached only for offline reads.)`,
             );
           }

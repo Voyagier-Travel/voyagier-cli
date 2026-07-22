@@ -18,8 +18,8 @@ export function registerTelemetryCommands(program: Command): void {
         console.log(chalk.yellow("  ⚠ DD_API_KEY not set — telemetry won't send until it is."));
         console.log(chalk.dim("    export DD_API_KEY=your-datadog-api-key\n"));
       } else {
-        console.log(chalk.dim("  Command usage, latency, and errors will be sent to Datadog."));
-        console.log(chalk.dim("  No personal data is included — only command names and timing.\n"));
+        console.log(chalk.dim("  Command usage, latency, and error codes will be sent to Datadog."));
+        console.log(chalk.dim("  No personal data is included — command names, timing, error codes only.\n"));
       }
     });
 
@@ -48,7 +48,7 @@ export function registerTelemetryCommands(program: Command): void {
         console.log(chalk.dim("\n  Set your key: export DD_API_KEY=your-datadog-api-key"));
       }
 
-      console.log(chalk.dim("\n  Data sent: command name, duration, success/failure, CLI version."));
-      console.log(chalk.dim("  Not sent: tokens, search queries, personal info, trip data.\n"));
+      console.log(chalk.dim("\n  Data sent: command name, duration, success/failure, error code, CLI version."));
+      console.log(chalk.dim("  Not sent: tokens, hostname, user id, error messages, search queries, personal info, trip data.\n"));
     });
 }

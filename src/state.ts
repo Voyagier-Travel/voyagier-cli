@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync, chmodSync } from "fs";
 import { join } from "path";
 import { CONFIG_DIR } from "./config.js";
 
@@ -52,15 +52,66 @@ const DEFAULT_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
 // --- Search state (flights/hotels) ---
 
 export function saveSearchState(state: SearchState): void {
-  mkdirSync(CONFIG_DIR, { recursive: true });
+  mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  chmodSync(CONFIG_DIR, 0o700); // L1: correct a pre-existing loose-perm dir
   writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
+  chmodSync(STATE_FILE, 0o600);
+}
+
+/**
+ * L5: the state files live beside the token; a malformed or tampered file must
+ * degrade to "no state" rather than feed junk into GraphQL variables or
+ * suggested-command text. The guards validate exactly the fields downstream
+ * code dereferences (ids fed to mutations, `type`/`timestamp`/`index`/`summary`
+ * used for staleness, lookup, and display) — optional fields are left alone.
+ */
+function isValidSearchResult(v: unknown): boolean {
+  if (typeof v !== "object" || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.index === "number" && typeof r.optionId === "string" && typeof r.summary === "string";
+}
+
+function isValidSearchState(v: unknown): v is SearchState {
+  if (typeof v !== "object" || v === null) return false;
+  const s = v as Record<string, unknown>;
+  return (
+    (s.type === "flights" || s.type === "hotels" || s.type === "activities") &&
+    typeof s.tripPlanId === "string" &&
+    typeof s.selectionId === "string" &&
+    typeof s.timestamp === "string" &&
+    Array.isArray(s.results) &&
+    s.results.every(isValidSearchResult)
+  );
+}
+
+/** L5 sibling guard for the options cache (same trust boundary as above). */
+function isValidOptionsState(v: unknown): v is OptionsState {
+  if (typeof v !== "object" || v === null) return false;
+  const s = v as Record<string, unknown>;
+  return (
+    typeof s.tripPlanId === "string" &&
+    typeof s.timestamp === "string" &&
+    Array.isArray(s.results) &&
+    s.results.every((r) => {
+      if (typeof r !== "object" || r === null) return false;
+      const o = r as Record<string, unknown>;
+      return (
+        typeof o.index === "number" &&
+        typeof o.subSelectionId === "string" &&
+        typeof o.optionId === "string" &&
+        typeof o.summary === "string"
+      );
+    })
+  );
 }
 
 export function loadSearchState(): SearchState | null {
   if (!existsSync(STATE_FILE)) return null;
   try {
     const raw = readFileSync(STATE_FILE, "utf-8");
-    return JSON.parse(raw) as SearchState;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isValidSearchState(parsed)) return null;
+    return parsed;
   } catch (err) {
     if (err instanceof SyntaxError) {
       // JSON parse failure — corrupted file, safe to delete
@@ -86,15 +137,19 @@ export function isSearchStateStale(state: SearchState, maxAgeMs = DEFAULT_MAX_AG
 // --- Options state (sub-selections: cabin class, room type) ---
 
 export function saveOptionsState(state: OptionsState): void {
-  mkdirSync(CONFIG_DIR, { recursive: true });
+  mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  chmodSync(CONFIG_DIR, 0o700); // L1: correct a pre-existing loose-perm dir
   writeFileSync(OPTIONS_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
+  chmodSync(OPTIONS_FILE, 0o600);
 }
 
 export function loadOptionsState(): OptionsState | null {
   if (!existsSync(OPTIONS_FILE)) return null;
   try {
     const raw = readFileSync(OPTIONS_FILE, "utf-8");
-    return JSON.parse(raw) as OptionsState;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isValidOptionsState(parsed)) return null;
+    return parsed;
   } catch (err) {
     if (err instanceof SyntaxError) {
       try { unlinkSync(OPTIONS_FILE); } catch { /* ignore */ }

@@ -30,7 +30,7 @@ import {
   ADD_TRAVELLERS_TO_GROUP,
   REMOVE_TRAVELLERS_FROM_GROUP,
 } from "../queries.js";
-import { deriveBaseUrl } from "../utils.js";
+import { deriveBaseUrl, shellArg } from "../utils.js";
 import { getApiUrl } from "../config.js";
 
 // ---------- Types ----------
@@ -126,7 +126,7 @@ export async function resolveGroupId(planId: string, nameOrId: string): Promise<
   if (!match) {
     throw new CliError(
       CliErrorCode.NOT_FOUND,
-      `No group found with name or id "${nameOrId}" in plan "${planId}".\n  Fix: voyagier traveller-groups list --plan ${planId}`,
+      `No group found with name or id "${nameOrId}" in plan "${planId}".\n  Fix: voyagier traveller-groups list --plan ${shellArg(planId)}`,
     );
   }
   return match.id;
@@ -178,7 +178,7 @@ export function registerTravellerGroupsCommands(program: Command): void {
         console.log(chalk.dim(`No traveller groups for plan "${plan.title}".`));
         console.log(
           chalk.dim(
-            `  Create one: voyagier traveller-groups create --plan ${opts.plan} --name "Adults"`,
+            `  Create one: voyagier traveller-groups create --plan ${shellArg(opts.plan)} --name "Adults"`,
           ),
         );
         return;
@@ -268,7 +268,7 @@ export function registerTravellerGroupsCommands(program: Command): void {
         ) {
           throw new CliError(
             CliErrorCode.TRAVELLER_NOT_IN_PLAN,
-            `One or more travellers are not in this trip plan. Only plan travellers can be added to groups.\n  Fix: voyagier travellers list --plan ${opts.plan}`,
+            `One or more travellers are not in this trip plan. Only plan travellers can be added to groups.\n  Fix: voyagier travellers list --plan ${shellArg(opts.plan)}`,
           );
         }
         throw err;
@@ -539,7 +539,7 @@ export function registerTravellerGroupsCommands(program: Command): void {
         ) {
           throw new CliError(
             CliErrorCode.TRAVELLER_NOT_IN_PLAN,
-            `One or more travellers are not in this trip plan. Only plan travellers can be added to groups.\n  Fix: voyagier travellers list --plan ${opts.plan}`,
+            `One or more travellers are not in this trip plan. Only plan travellers can be added to groups.\n  Fix: voyagier travellers list --plan ${shellArg(opts.plan)}`,
           );
         }
         // Race condition: two concurrent upserts may both pass the "no existing group"

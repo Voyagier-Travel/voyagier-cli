@@ -9,7 +9,7 @@ import chalk from "chalk";
 import { graphql } from "../../api.js";
 import { CliError, CliErrorCode } from "../../errors.js";
 import { getApiUrl } from "../../config.js";
-import { formatPrice, deriveBaseUrl } from "../../utils.js";
+import { formatPrice, deriveBaseUrl, shellArg } from "../../utils.js";
 import { GET_CART_V2 } from "../../queries.js";
 import {
   buildBookabilityIndex,
@@ -53,7 +53,7 @@ export function registerBookableCommand(plans: Command): void {
         planId: plan.id,
         title: plan.title,
         url: planUrl,
-        urlForCli: `voyagier plans get ${plan.id}`,
+        urlForCli: `voyagier plans get ${shellArg(plan.id)}`,
       };
 
       if (opts.json) {

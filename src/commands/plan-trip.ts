@@ -351,11 +351,11 @@ Examples:
               if (del.deleteTripPlanGoal === true) {
                 prunedGoals.push(g);
               } else {
-                pruneWarnings.push(`Server declined to delete goal "${g.name ?? g.id}" (${g.type}). Remove it manually: voyagier plans goal-remove ${g.id} --force`);
+                pruneWarnings.push(`Server declined to delete goal "${g.name ?? g.id}" (${g.type}). Remove it manually: voyagier plans goal-remove ${shellArg(g.id)} --force`);
               }
             } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              pruneWarnings.push(`Failed to delete goal "${g.name ?? g.id}" (${g.type}): ${message}. Remove it manually: voyagier plans goal-remove ${g.id} --force`);
+              const message = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ");
+              pruneWarnings.push(`Failed to delete goal "${g.name ?? g.id}" (${g.type}): ${message}. Remove it manually: voyagier plans goal-remove ${shellArg(g.id)} --force`);
             }
           }
           for (const w of pruneWarnings) warn(w);

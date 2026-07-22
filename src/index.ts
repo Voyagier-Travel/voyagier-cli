@@ -2,7 +2,7 @@
 import { Command } from "commander";
 import { readFileSync } from "fs";
 import { buildProgram } from "./build-program.js";
-import { trackCommand, getTraceId, isTelemetryEnabled } from "./telemetry.js";
+import { trackCommand, getTraceId, isTelemetryEnabled, telemetryErrorCode } from "./telemetry.js";
 import { credentialsExist } from "./config.js";
 import { CliError } from "./errors.js";
 import chalk from "chalk";
@@ -29,8 +29,7 @@ function instrumentCommands(cmd: Command): void {
           }
         } catch (err) {
           if (isTelemetryEnabled()) {
-            const msg = err instanceof Error ? err.message : String(err);
-            trackCommand({ command: commandPath, subcommand: subName, durationMs: Date.now() - start, success: false, error: msg, traceId });
+            trackCommand({ command: commandPath, subcommand: subName, durationMs: Date.now() - start, success: false, errorCode: telemetryErrorCode(err), traceId });
           }
           throw err;
         }
@@ -52,10 +51,10 @@ if (userArgs.length === 0 && !credentialsExist()) {
   console.log(chalk.bold("\n  Welcome to Voyagier CLI! 🌍\n"));
   console.log("  Plan and book travel from the command line.\n");
   console.log("  Get started:\n");
-  console.log(chalk.cyan("    voyagier login") + chalk.dim("                     — log in (opens browser)"));
+  console.log(chalk.cyan("    voyagier login") + chalk.dim("                     — log in (opens browser, keeps your token out of shell history)"));
   console.log();
-  console.log(chalk.dim("  Already have a token?\n"));
-  console.log(chalk.cyan("    voyagier auth set-token <token>"));
+  console.log(chalk.dim("  Scripting? Pipe a token via stdin (keeps it out of shell history):\n"));
+  console.log(chalk.cyan('    echo "$VOYAGIER_PAT" | voyagier auth set-token -'));
   console.log();
   process.exit(0);
 }

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, chmodSync } from "fs";
 import chalk from "chalk";
 import { join } from "path";
 import { homedir } from "os";
@@ -47,8 +47,47 @@ interface Credentials {
 
 function ensureConfigDir(): void {
   if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true });
+    // 0o700: the dir holds credentials/state — keep it owner-only (L1).
+    mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   }
+  // L1: `mode` only applies on creation — correct a pre-existing loose-perm
+  // dir too (same correct-after pattern as the 0600 file chmods).
+  chmodSync(CONFIG_DIR, 0o700);
+}
+
+/**
+ * M2 (HTTPS enforcement): the access token is sent as a Bearer header to the
+ * configured API URL on every request. A plaintext `http://` endpoint would
+ * leak the token over the wire, so reject any non-`https:` URL — the sole
+ * exception being loopback hosts for local development.
+ *
+ * Applied on BOTH the write path (`auth set-token --url`) and the read path
+ * (`VOYAGIER_API_URL` env + `credentials.json`), so a token can never be sent
+ * over cleartext regardless of how the URL was configured.
+ *
+ * @throws CliError(VALIDATION) for unparseable or insecure URLs.
+ */
+export function assertSecureApiUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Invalid API URL: "${url}".\n  Expected an absolute https:// URL (e.g. https://travel.voyagier.com/api).`,
+    );
+  }
+  const host = parsed.hostname;
+  const isLoopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
+  if (parsed.protocol === "https:") return;
+  if (parsed.protocol === "http:" && isLoopback) return;
+  throw new CliError(
+    CliErrorCode.VALIDATION,
+    `Insecure API URL: "${url}".\n` +
+      `  Your access token would be sent over cleartext ${parsed.protocol}// — anyone on the network path could read it.\n` +
+      `  Fix: use an https:// URL (e.g. https://travel.voyagier.com/api).\n` +
+      `  Plain http:// is allowed only for localhost / 127.0.0.1 / ::1 during local development.`,
+  );
 }
 
 // Load credentials directly from file, ignoring environment variables.
@@ -66,12 +105,17 @@ function loadFileCredentials(): Credentials | null {
 }
 
 export function saveCredentials(token: string, apiUrl: string = "https://travel.voyagier.com/api"): void {
+  // Reject cleartext endpoints before persisting (M2) — the token is sent to
+  // this URL on every request.
+  assertSecureApiUrl(apiUrl);
   ensureConfigDir();
   // Preserve existing user context from file (not env vars)
   const existing = loadFileCredentials();
   const creds: Credentials = { token, apiUrl };
   if (existing?.user) creds.user = existing.user;
   writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2), { mode: 0o600 });
+  // chmod after write so a pre-existing loose-perm file gets corrected (L2).
+  chmodSync(CREDENTIALS_FILE, 0o600);
 }
 
 export function saveUserContext(user: UserContext): void {
@@ -83,6 +127,7 @@ export function saveUserContext(user: UserContext): void {
   }
   const creds: Credentials = { ...existing, user };
   writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2), { mode: 0o600 });
+  chmodSync(CREDENTIALS_FILE, 0o600);
 }
 
 export function getUserContext(): UserContext | null {
@@ -126,7 +171,13 @@ export function clearCredentials(): void {
 
 export function getApiUrl(): string {
   const creds = loadCredentials();
-  return creds?.apiUrl ?? "https://travel.voyagier.com/api";
+  const apiUrl = creds?.apiUrl ?? "https://travel.voyagier.com/api";
+  // Read-path enforcement (M2): a token from VOYAGIER_API_URL env or an
+  // on-disk credentials.json written by an older/hand-edited version must not
+  // be sent over cleartext. Throws a clear CliError (surfaced by the top-level
+  // handler), never crashes.
+  assertSecureApiUrl(apiUrl);
+  return apiUrl;
 }
 
 export function getToken(): string {

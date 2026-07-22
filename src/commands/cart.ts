@@ -14,7 +14,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
-import { formatPrice, deriveBaseUrl } from "../utils.js";
+import { formatPrice, deriveBaseUrl, shellArg } from "../utils.js";
 import { GET_CART_V2 } from "../queries.js";
 import {
   buildBookabilityIndex,
@@ -58,7 +58,7 @@ export function registerCartCommands(program: Command): void {
         planId: plan.id,
         title: plan.title,
         url: planUrl,
-        urlForCli: `voyagier plans get ${plan.id}`,
+        urlForCli: `voyagier plans get ${shellArg(plan.id)}`,
       };
 
       if (opts.json) {
@@ -133,7 +133,7 @@ function renderHuman(
   const bookableCount = byGoal.reduce((acc, g) => acc + g.items.filter((i) => i.isBookable).length, 0);
   if (bookableCount > 0) {
     console.log(chalk.green(`  ✓ ${bookableCount} bookable item${bookableCount === 1 ? "" : "s"} ready.`));
-    console.log(chalk.dim(`  Run: voyagier book ${planId}\n`));
+    console.log(chalk.dim(`  Run: voyagier book ${shellArg(planId)}\n`));
   } else {
     console.log(chalk.yellow("  No items are currently bookable through Voyagier checkout."));
     console.log(chalk.dim("  See per-item reasons above.\n"));
@@ -179,7 +179,7 @@ function renderAgent(
 
   const bookableCount = byGoal.reduce((acc, g) => acc + g.items.filter((i) => i.isBookable).length, 0);
   if (bookableCount > 0) {
-    lines.push(`✅ ${bookableCount} bookable item${bookableCount === 1 ? "" : "s"} — \`voyagier book ${planId}\``);
+    lines.push(`✅ ${bookableCount} bookable item${bookableCount === 1 ? "" : "s"} — \`voyagier book ${shellArg(planId)}\``);
   } else {
     lines.push("⚠️ No items are currently bookable through Voyagier checkout.");
   }
