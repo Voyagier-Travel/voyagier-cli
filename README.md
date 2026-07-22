@@ -115,6 +115,12 @@ Or read [AGENT.md](./AGENT.md) directly. It covers the goal-graph compose model,
 
 Thin client over Voyagier's GraphQL API — the same API the web app uses. Everything syncs both ways. A plan is a goal graph; searching composes selections against goals, and air, accommodation, activity, and places suppliers are all surfaced through one unified selection model.
 
+## Getting Access
+
+Voyagier is currently invite-based. Advisors and agent builders can request access at [voyagier.com](https://voyagier.com) — once invited, you can self-serve a personal access token from your account.
+
+> **Tip:** prefer `voyagier login` (interactive prompt) over `voyagier auth set-token <token>` — it keeps your token out of shell history. For scripts, use the `VOYAGIER_TOKEN` env var.
+
 ## License
 
-UNLICENSED — proprietary.
+Proprietary — Copyright (c) 2026 Voyagier, Inc. The source is public for transparency and auditability; the CLI is free to use with Voyagier services. You may not modify, redistribute, or sell it. See [LICENSE.md](LICENSE.md) and the [Voyagier Terms of Service](https://voyagier.com/terms).

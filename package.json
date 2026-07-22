@@ -1,7 +1,7 @@
 {
   "name": "@voyagier/cli",
   "version": "2.8.0",
-  "description": "Agent-ready travel CLI — search, plan, quote, and book real trips (flights, hotels, activities) against the Voyagier platform. Built for AI agents: --json everywhere, uniform error codes, price-gated checkout, printable agent reference (voyagier agent-docs).",
+  "description": "Agent-ready travel CLI \u2014 search, plan, quote, and book real trips (flights, hotels, activities) against the Voyagier platform. Built for AI agents: --json everywhere, uniform error codes, price-gated checkout, printable agent reference (voyagier agent-docs).",
   "type": "module",
   "bin": {
     "voyagier": "./dist/index.js"
@@ -35,7 +35,7 @@
   "license": "SEE LICENSE IN LICENSE.md",
   "private": false,
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "chalk": "^5.6.2",
@@ -57,5 +57,13 @@
     "skills",
     "README.md",
     "AGENT.md"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Voyagier-Travel/voyagier-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Voyagier-Travel/voyagier-cli/issues"
+  },
+  "homepage": "https://github.com/Voyagier-Travel/voyagier-cli#readme"
 }
