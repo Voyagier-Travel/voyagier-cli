@@ -85,8 +85,17 @@ describe("buildFlightSummary", () => {
 });
 
 describe("buildHotelSummary", () => {
-  it("should build summary with name and price", () => {
-    expect(buildHotelSummary({ name: "W Punta Cana", price: 350 })).toBe("W Punta Cana · $350.00/night");
+  it("renders minRate as a STAY TOTAL, not per-night, with no dates (VOY-1724)", () => {
+    // minRate is a whole-stay price; without dates we can't split it per night.
+    expect(buildHotelSummary({ name: "W Punta Cana", price: 350 })).toBe("W Punta Cana · from $350.00 total");
+  });
+
+  it("adds nights + per-night when the option carries check-in/out dates (VOY-1724)", () => {
+    const bookingData = { searchQuery: { checkInDate: "2026-09-10", checkOutDate: "2026-09-14" } };
+    // 4 nights, 350/4 = 87.5 → ~$88/nt
+    expect(buildHotelSummary({ name: "W Punta Cana", price: 350, bookingData })).toBe(
+      "W Punta Cana · from $350.00 total · 4 nights (~$88/nt)",
+    );
   });
 
   it("should return just name when no price", () => {

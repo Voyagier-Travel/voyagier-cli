@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import { formatPrice } from "./utils.js";
+import { hotelStayLabel } from "./hotel-format.js";
 
 interface FlightOption {
   id?: string;
@@ -72,10 +73,11 @@ export function formatHotels(options: HotelOption[]): string {
     .map((opt, i) => {
       const idx = chalk.bold.cyan(`[${i + 1}]`);
       const name = chalk.white(opt.name);
-      const price = opt.price != null ? chalk.green(`${formatPrice(opt.price)}/night`) : "";
+      // VOY-1724: minRate is the STAY TOTAL — "from $X total · N nights (~$Y/nt)".
+      const label = hotelStayLabel(opt.price, opt.bookingData);
 
       let line = `  🏨  ${idx}  ${name}`;
-      if (price) line += `  ·  ${price}`;
+      if (label) line += `  ·  ${chalk.green(label)}`;
       return line;
     })
     .join("\n\n");

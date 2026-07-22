@@ -28,7 +28,7 @@ import { graphql } from "../api.js";
 import { GET_QUOTE_DATA } from "../queries.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getUserContext } from "../config.js";
-import { formatPrice, shellArg, cents } from "../utils.js";
+import { formatPrice, shellArg, cents, formatDateRange } from "../utils.js";
 import {
   buildBookabilityIndex,
   enrichCartItems,
@@ -184,7 +184,9 @@ export function registerQuoteCommand(program: Command): void {
         const lines: string[] = [];
         lines.push(`## Quote: ${plan.title}`);
         if (plan.client) lines.push(`Client: ${plan.client.name}${plan.client.email ? ` <${plan.client.email}>` : ""}`);
-        if (plan.startDate) lines.push(`Dates: ${plan.startDate}${plan.endDate ? ` → ${plan.endDate}` : ""}`);
+        // VOY-1724: show departure AND return/end (date ranges are inclusive of
+        // the end date since VOY-1723). formatDateRange renders both.
+        if (plan.startDate) lines.push(`Dates: ${formatDateRange(plan.startDate, plan.endDate ?? undefined)}`);
         lines.push("");
         for (const item of bookable) lines.push(`- ${itemLine(item)}`);
         for (const item of displayOnly) lines.push(`- ${itemLine(item)}`);
@@ -205,7 +207,7 @@ export function registerQuoteCommand(program: Command): void {
       console.log(chalk.bold(`\n  Quote — ${plan.title}`));
       const meta: string[] = [];
       if (plan.client) meta.push(`${plan.client.name}${plan.client.email ? ` <${plan.client.email}>` : ""}`);
-      if (plan.startDate) meta.push(`${plan.startDate}${plan.endDate ? ` → ${plan.endDate}` : ""}`);
+      if (plan.startDate) meta.push(formatDateRange(plan.startDate, plan.endDate ?? undefined));
       if (meta.length > 0) console.log(chalk.dim(`  ${meta.join(" · ")}`));
       console.log();
 

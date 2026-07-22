@@ -2,18 +2,19 @@ import { describe, it, expect } from "@jest/globals";
 import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "./agent-output.js";
 
 describe("agentFlightOptions", () => {
-  it("should return numbered list with all fields", () => {
+  it("shows the fare without a misleading /pp per-person suffix (VOY-1724)", () => {
     const output = agentFlightOptions([
       { airline: "United", duration: "5h 30m", price: 423 },
       { airline: "Delta", duration: "6h 15m", price: 389 },
     ]);
-    expect(output).toContain("1. United · 5h 30m · $423.00/pp");
-    expect(output).toContain("2. Delta · 6h 15m · $389.00/pp");
+    expect(output).toContain("1. United · 5h 30m · $423.00");
+    expect(output).toContain("2. Delta · 6h 15m · $389.00");
+    expect(output).not.toContain("/pp");
   });
 
   it("should handle missing fields gracefully", () => {
     const output = agentFlightOptions([{ price: 200 }]);
-    expect(output).toContain("1. $200.00/pp");
+    expect(output).toContain("1. $200.00");
     expect(output).not.toContain("undefined");
   });
 
@@ -30,13 +31,26 @@ describe("agentFlightOptions", () => {
 });
 
 describe("agentHotelOptions", () => {
-  it("should return numbered list with names and prices", () => {
+  it("renders prices as STAY TOTALS, not per-night (VOY-1724)", () => {
     const output = agentHotelOptions([
       { name: "Marriott Monterey", price: 2362.45 },
       { name: "Hilton Garden Inn", price: 189.99 },
     ]);
-    expect(output).toContain("1. Marriott Monterey · $2,362.45/night");
-    expect(output).toContain("2. Hilton Garden Inn · $189.99/night");
+    expect(output).toContain("1. Marriott Monterey · from $2,362.45 total");
+    expect(output).toContain("2. Hilton Garden Inn · from $189.99 total");
+    expect(output).not.toContain("/night");
+  });
+
+  it("adds nights + per-night when the option carries check-in/out dates (VOY-1724)", () => {
+    const output = agentHotelOptions([
+      {
+        name: "Holiday Inn",
+        price: 531.1,
+        bookingData: { searchQuery: { checkInDate: "2026-09-10", checkOutDate: "2026-09-14" } },
+      },
+    ]);
+    // 4 nights, 531.10/4 = 132.775 → ~$133/nt
+    expect(output).toContain("1. Holiday Inn · from $531.10 total · 4 nights (~$133/nt)");
   });
 
   it("should handle missing price", () => {

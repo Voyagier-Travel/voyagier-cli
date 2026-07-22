@@ -634,7 +634,7 @@ describe("buildPlanStatus — misc contract", () => {
     const s = buildPlanStatus({ tripPlan: plan({ travellers: [] }), tripPlanGoals: [] }, BASE);
     expect(s.readiness).toBe("IN_PROGRESS");
     expect(s.url).toBe("https://travel.voyagier.com/plans/plan-1");
-    expect(s.summary).toEqual({ goalsTotal: 0, goalsDecided: 0, goalsBooked: 0, blockerCount: 0, alternateBranchCount: 0 });
+    expect(s.summary).toEqual({ goalsTotal: 0, goalsDecided: 0, goalsBooked: 0, blockerCount: 0, alternateBranchCount: 0, bookableNow: false });
   });
 
   it("goals sort by sortOrder", () => {
@@ -1131,5 +1131,255 @@ describe("buildPlanStatus — VOY-1718 aggregate branch count with mixed null mi
     // lst-1 (shared) + m-3 (own) + m-4 (own) = 3 branches — NOT 1 (the old
     // filter(Boolean) undercount).
     expect(agg!.message).toContain("4 candidate selection(s) across 3 sibling branch(es)");
+  });
+});
+
+// ── VOY-1724: hotelCode room-chain matching ─────────────────────────────────
+
+/** A COMPLETE Hotel decision (chosen option "hopt-A"). */
+const hotelDecision = () => ({
+  id: "hotel-dec",
+  type: "Hotel",
+  mode: "Single",
+  isComplete: true,
+  blueprintMonitorId: "m",
+  mirrorListSelectionId: "hotel-list",
+  options: [{ id: "hopt-A", name: "Alpha Hotel", isBookable: false }],
+  travellerOptionChoices: [choice("t1", "hopt-A")],
+});
+/** A pending HotelRoom decision mirroring `mirror`. */
+const roomDec = (id: string, mirror: string, type = "HotelRoom") => ({
+  id,
+  type,
+  mode: "Single",
+  isComplete: false,
+  blueprintMonitorId: "m",
+  mirrorListSelectionId: mirror,
+  options: [{ id: `${id}-o`, name: "Room", isBookable: false }],
+  travellerOptionChoices: [choice("t1", null)],
+});
+/** A COMPLETE HotelRoom decision. */
+const roomDone = (id: string, mirror: string) => ({
+  ...roomDec(id, mirror),
+  isComplete: true,
+  travellerOptionChoices: [choice("t1", `${id}-o`)],
+});
+const hotelGoal = (rooms: Record<string, unknown>[]) =>
+  goal({
+    id: "gh",
+    name: "Secure Lodging",
+    type: "Hotel",
+    items: [
+      {
+        id: "ih",
+        selections: [
+          hotelDecision(),
+          { id: "hotel-list", type: "HotelList", mode: "List", blueprintMonitorId: "m", options: [{ id: "hopt-A", name: "Alpha Hotel" }] },
+          ...rooms,
+        ],
+      },
+    ],
+  });
+const lodging = (s: ReturnType<typeof buildPlanStatus>) => s.goals.find((g) => g.goalId === "gh")!;
+const sel = (s: ReturnType<typeof buildPlanStatus>, id: string) =>
+  lodging(s).selections.find((x) => x.selectionId === id)!;
+
+describe("buildPlanStatus — VOY-1724 hotelCode matching", () => {
+  it("marks code-mismatched room chains deadBranch and keeps the matching one active — pre-room-pick, zero completed rooms", () => {
+    const s = buildPlanStatus(
+      { tripPlan: plan(), tripPlanGoals: [hotelGoal([roomDec("room-A", "list-A"), roomDec("room-B", "list-B")])] },
+      BASE,
+      new Map([["hotel-dec", "HC-001"], ["room-A", "HC-001"], ["room-B", "HC-002"]]),
+    );
+    expect(sel(s, "room-A").branch).toBe("active");
+    expect(sel(s, "room-B").branch).toBe("deadBranch");
+    expect(s.summary.alternateBranchCount).toBe(1);
+    // Aggregate collapses to the matching chain and SAYS it names the chosen hotel.
+    const picks = s.blockers.filter((b) => b.kind === "PICK_PENDING");
+    expect(picks).toHaveLength(1);
+    expect(picks[0].candidateSelectionIds).toEqual(["room-A"]);
+    expect(picks[0].message).toContain("chosen hotel");
+    expect(picks[0].message).toContain("1 candidate selection");
+    // A 1-candidate collapse routes straight to the pick (real selection id).
+    expect(s.nextSteps).toContain("voyagier select --selection-id room-A --option-id <optionId>");
+  });
+
+  it("collapses ≥2 matching same-hotel candidates (same type) into ONE 'chosen hotel' blocker, dropping mismatches", () => {
+    // Two HotelRoom mirrors of the SAME chosen hotel (grouping is by type) plus
+    // one under a different hotel.
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan(),
+        tripPlanGoals: [
+          hotelGoal([
+            roomDec("room-A", "list-A"),
+            roomDec("room-A2", "list-A"),
+            roomDec("room-B", "list-B"),
+          ]),
+        ],
+      },
+      BASE,
+      new Map([
+        ["hotel-dec", "HC-001"],
+        ["room-A", "HC-001"],
+        ["room-A2", "HC-001"],
+        ["room-B", "HC-002"],
+      ]),
+    );
+    const picks = s.blockers.filter((b) => b.kind === "PICK_PENDING");
+    expect(picks).toHaveLength(1);
+    expect(picks[0].candidateSelectionIds!.sort()).toEqual(["room-A", "room-A2"]);
+    expect(picks[0].message).toContain("chosen hotel");
+    expect(picks[0].message).toContain("2 candidate selection(s)");
+    expect(sel(s, "room-B").branch).toBe("deadBranch");
+    expect(s.summary.alternateBranchCount).toBe(1); // only room-B
+  });
+
+  it("labels List-mode HotelRoomList sources by code too: wrong-hotel lists deadBranch, matching list stays active", () => {
+    // List-mode sources emit no picks, but their `branch` label guides agents
+    // browsing selections — a wrong-hotel list must not read "active".
+    const listSrc = (id: string) => ({
+      id,
+      type: "HotelRoomList",
+      mode: "List",
+      isComplete: false,
+      blueprintMonitorId: "m",
+      options: [{ id: `${id}-o`, name: "Rooms", isBookable: false }],
+    });
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan(),
+        tripPlanGoals: [
+          hotelGoal([listSrc("list-A"), listSrc("list-B"), roomDec("room-A", "list-A"), roomDec("room-B", "list-B")]),
+        ],
+      },
+      BASE,
+      new Map([
+        ["hotel-dec", "HC-001"],
+        ["room-A", "HC-001"],
+        ["room-B", "HC-002"],
+        ["list-A", "HC-001"],
+        ["list-B", "HC-002"],
+      ]),
+    );
+    expect(sel(s, "list-A").branch).toBe("active");
+    expect(sel(s, "list-B").branch).toBe("deadBranch");
+    expect(sel(s, "room-B").branch).toBe("deadBranch");
+    // Both the dead room AND its dead list source count.
+    expect(s.summary.alternateBranchCount).toBe(2);
+  });
+
+  it("when the matching room is already complete, its same-hotel mirror is an alternate and the mismatch is dead", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan(),
+        tripPlanGoals: [
+          hotelGoal([roomDone("room-A", "list-A"), roomDec("room-A2", "list-A"), roomDec("room-B", "list-B")]),
+        ],
+      },
+      BASE,
+      new Map([
+        ["hotel-dec", "HC-001"],
+        ["room-A", "HC-001"],
+        ["room-A2", "HC-001"],
+        ["room-B", "HC-002"],
+      ]),
+    );
+    expect(sel(s, "room-A").branch).toBe("active");
+    expect(sel(s, "room-A2").branch).toBe("alternate");
+    expect(sel(s, "room-B").branch).toBe("deadBranch");
+    expect(s.blockers.filter((b) => b.kind === "PICK_PENDING")).toEqual([]);
+    expect(s.summary.alternateBranchCount).toBe(2);
+  });
+
+  it("falls back to the VOY-1718 rule when the chosen hotel's code is missing", () => {
+    // Map omits "hotel-dec" → chosenHotelCode undefined → legacy aggregation.
+    const s = buildPlanStatus(
+      { tripPlan: plan(), tripPlanGoals: [hotelGoal([roomDec("room-A", "list-A"), roomDec("room-B", "list-B")])] },
+      BASE,
+      new Map([["room-A", "HC-001"], ["room-B", "HC-002"]]),
+    );
+    const agg = s.blockers.find((b) => b.candidateSelectionIds);
+    expect(agg!.candidateSelectionIds!.sort()).toEqual(["room-A", "room-B"]);
+    expect(agg!.message).toContain("across 2 sibling branch(es)");
+    // Neither is code-suppressed under the fallback.
+    expect(sel(s, "room-A").branch).toBe("active");
+    expect(sel(s, "room-B").branch).toBe("active");
+    expect(s.summary.alternateBranchCount).toBe(0);
+  });
+
+  it("REQUIREMENT_UNMET pointing at a code-mismatched chain downgrades to unverified", () => {
+    const g = {
+      ...hotelGoal([roomDec("room-A", "list-A"), roomDec("room-B", "list-B")]),
+      checkoutReadiness: {
+        isReady: false,
+        requirements: [
+          { label: "Room", isFulfilled: false, isRequired: true, selectionId: "room-B", type: "ParticipantChoice" },
+        ],
+      },
+    };
+    const s = buildPlanStatus(
+      { tripPlan: plan(), tripPlanGoals: [g] },
+      BASE,
+      new Map([["hotel-dec", "HC-001"], ["room-A", "HC-001"], ["room-B", "HC-002"]]),
+    );
+    const req = s.blockers.find((b) => b.kind === "REQUIREMENT_UNMET" && b.message.startsWith("Secure Lodging: Room"));
+    expect(req).toMatchObject({ unverified: true });
+    expect(req!.message).toContain("references an alternate branch");
+  });
+});
+
+describe("buildPlanStatus — VOY-1724 bookableNow", () => {
+  it("true when the cart is bookable and every blocker is unverified (BLOCKED but really bookable)", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan({ cart: bookableCart() }),
+        tripPlanGoals: [
+          goal({
+            items: [{ id: "i1", selections: [pickedSelection()] }],
+            checkoutReadiness: {
+              isReady: false,
+              // Null-ref requirement → unverified REQUIREMENT_UNMET (the only blocker).
+              requirements: [{ label: "Cabin class", isFulfilled: false, isRequired: true, type: "ParticipantChoice", missingTravellerIds: [] }],
+            },
+          }),
+        ],
+      },
+      BASE,
+    );
+    expect(s.readiness).toBe("BLOCKED");
+    expect(s.blockers.every((b) => b.unverified)).toBe(true);
+    expect(s.summary.bookableNow).toBe(true);
+  });
+
+  it("false when a verifiable blocker remains", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan({ cart: bookableCart() }),
+        tripPlanGoals: [
+          goal({
+            items: [{ id: "i1", selections: [pickedSelection()] }],
+            checkoutReadiness: {
+              isReady: false,
+              requirements: [{ label: "Pick", isFulfilled: false, isRequired: true, selectionId: "s-other", type: "ParticipantChoice" }],
+            },
+          }),
+        ],
+      },
+      BASE,
+    );
+    expect(s.summary.bookableNow).toBe(false);
+  });
+
+  it("false when the cart holds no bookable item", () => {
+    const s = buildPlanStatus(
+      {
+        tripPlan: plan({ cart: { itemCount: 1, total: 100, currency: "USD", items: [{ selectionId: "s1", optionId: "o-unknown" }] } }),
+        tripPlanGoals: [goal({ items: [{ id: "i1", selections: [pickedSelection()] }] })],
+      },
+      BASE,
+    );
+    expect(s.cart.bookableCount).toBe(0);
+    expect(s.summary.bookableNow).toBe(false);
   });
 });

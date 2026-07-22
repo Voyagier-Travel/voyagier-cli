@@ -101,7 +101,8 @@ voyagier send <PLAN_ID> --yes --json   # email client an invite to pay self-serv
 - **Never retry a successful `book`** — unpaid (Pending) sessions are invisible to the CLI; a retry mints a second payable link.
 - **`plan-status` vs `book --dry-run` tie-breaker:** if plan-status shows only `unverified` blockers but dry-run says `blockers: []`, trust the dry-run and proceed.
 - **Hotel checkout coverage is partial** — search/watch works; check per-item `isBookable` in the cart. Luxury/boutique properties may need direct booking.
-- **Flight prices are per-person** — multiply by traveller count.
+- **Prices reflect the searched party, not per-person** — the price shown is what checkout charges for the whole party; don't multiply by traveller count. Sanity-check multi-traveller flight math before quoting (`book --dry-run`/`quote` are the chargeable truth).
+- **Hotel search prices are stay totals** — a hotel option's price is the whole-stay "from" rate, shown as `from $X total · N nights (~$Y/nt)`; room options carry a per-night breakdown. Date ranges are inclusive of the end date.
 - **Processing fee (~6%)** is added at checkout, not in the cart subtotal — covers processing costs (credit card, booking, servicing).
 - **The air fare is locked at checkout, not at selection** — a successful `select` does not hold the price.
 - **Search results expire (~2h)** — `EXPIRED_OFFER`/`STALE_PLAN_STATE` → re-run the search.
