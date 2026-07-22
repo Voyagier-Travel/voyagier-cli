@@ -1,6 +1,6 @@
 {
   "name": "@voyagier/cli",
-  "version": "2.8.0",
+  "version": "2.8.1",
   "description": "Agent-ready travel CLI — search, plan, quote, and book real trips (flights, hotels, activities) against the Voyagier platform. Built for AI agents: --json everywhere, uniform error codes, price-gated checkout, printable agent reference (voyagier agent-docs).",
   "type": "module",
   "bin": {
