@@ -81,11 +81,16 @@ export async function resolveOrCreateDecisionSelection(
   createResultKey: string,
   input: Record<string, unknown>,
   quiet: boolean,
+  progress?: (line: string) => void,
 ): Promise<{ selectionId: string; options: SelectOption[]; reused: boolean }> {
   const existingId = resolveDecisionSelection(goal as never, kind);
   if (existingId) {
     if (!quiet) {
-      process.stderr.write(chalk.dim(`Using the goal's existing ${KIND_LABEL[kind]} selection.\n`));
+      // When a spinner is live (progress provided), route through it — a raw
+      // stderr write mid-animation garbles the current frame in scrollback.
+      const line = `Using the goal's existing ${KIND_LABEL[kind]} selection.`;
+      if (progress) progress(line);
+      else process.stderr.write(chalk.dim(`${line}\n`));
     }
     const data = await graphql<{ getTripPlanSelection: { id?: string; options?: SelectOption[] } | null }>(
       GET_DECISION_SELECTION_OPTIONS,
@@ -431,6 +436,7 @@ export function registerSearchCommands(program: Command): void {
             "createTripPlanFlightSelection",
             { goalId: goal.id, mirrorListSelectionId, travellerIds, title: `Flight: ${origin} → ${destination}` },
             quiet,
+            searchSpinner ? (l) => searchSpinner.update(l) : undefined,
           ));
         } finally {
           searchSpinner?.stop();
@@ -674,6 +680,7 @@ export function registerSearchCommands(program: Command): void {
             "createTripPlanHotelSelection",
             { goalId: goal.id, mirrorListSelectionId, travellerIds, title: `Hotel: ${opts.location}` },
             !!(opts.json || opts.agent),
+            searchSpinner ? (l) => searchSpinner.update(l) : undefined,
           ));
         } finally {
           searchSpinner?.stop();
@@ -901,6 +908,7 @@ export function registerSearchCommands(program: Command): void {
             "createTripPlanActivitySelection",
             { goalId: goal.id, mirrorListSelectionId, travellerIds, title: titleParts.join(" — ") },
             !!(opts.json || opts.agent),
+            searchSpinner ? (l) => searchSpinner.update(l) : undefined,
           ));
         } finally {
           searchSpinner?.stop();
