@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ---
 
-## [Unreleased]
+## [2.8.0] — 2026-07-22
 
 ### Added
 - **Trip-shape flags on `plan-trip` (VOY-1727):** `--one-way` prunes the scaffold's default Return Flights goal, `--flight-only` prunes the hotel goal, `--hotel-only` prunes all flight goals (Flight + FlightJourney). The default goal graph is a round-trip + hotel template; un-pruned goals the brief doesn't need are not inert — an un-pruned Return Flights goal blocks one-way inventory fetch AND fare carting, and un-pruned hotel/flight goals pin `plan-status` readiness at `BLOCKED` forever. Shape flags prune client-side via the existing `deleteTripPlanGoal` mutation (scaffold-then-prune; no server change). JSON output additively gains `shape[]`, `prunedGoals[]`, and `pruneWarnings[]` (only when shape flags are used); delete failures degrade to warnings with a manual `plans goal-remove` fallback command. Conflicting combos (`--one-way` + `--return`, `--hotel-only` + flight flags, `--flight-only` + hotel flags, shape flags + `--plan`) fail fast with `VALIDATION`.
