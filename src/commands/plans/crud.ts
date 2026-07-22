@@ -491,7 +491,7 @@ export function registerCrudCommands(plans: Command): void {
         if (!opts.force) {
           throw new CliError(
             CliErrorCode.VALIDATION,
-            "delete requires --force. Deleting a plan also removes its goals, selections, and cart; pass --force to confirm.",
+            "plans delete requires --force. Deleting a plan also removes its goals, selections, and cart; pass --force to confirm.",
           );
         }
         await graphql<{ deleteTripPlan: boolean }>(
