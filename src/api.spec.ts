@@ -156,6 +156,39 @@ describe("graphql", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
+  it("PERMISSION_DENIED on 403 mentions the not-found ambiguity (server conflates them)", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      statusText: "Forbidden",
+    } as any);
+
+    try {
+      await graphql("query { me { id } }");
+      fail("Expected CliError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.PERMISSION_DENIED);
+      expect((err as CliError).message).toContain("or the resource does not exist");
+    }
+  });
+
+  it("PERMISSION_DENIED on GraphQL FORBIDDEN mentions the not-found ambiguity", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ errors: [{ message: "Forbidden resource", extensions: { code: "FORBIDDEN" } }] }),
+    } as any);
+
+    try {
+      await graphql("query { me { id } }");
+      fail("Expected CliError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.PERMISSION_DENIED);
+      expect((err as CliError).message).toContain("the requested resource does not exist");
+    }
+  });
+
   it("should handle dry-run mode without calling fetch", async () => {
     const exitSpy = jest.spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit(0)");

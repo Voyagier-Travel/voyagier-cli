@@ -706,9 +706,16 @@ describe("plans update", () => {
 // ── Coverage: delete ─────────────────────────────────────────────────────────
 
 describe("plans delete", () => {
+  it("requires --force (same convention as goal-remove); no mutation without it", async () => {
+    await expect(runPlans(["delete", "plan-1", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.VALIDATION,
+    });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
   it("--json emits { success, id }", async () => {
     mockGraphql.mockResolvedValueOnce({ deleteTripPlan: true });
-    await runPlans(["delete", "plan-1", "--json"]);
+    await runPlans(["delete", "plan-1", "--force", "--json"]);
     expect(mockGraphql).toHaveBeenCalledTimes(1);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars).toEqual({ id: "plan-1" });
@@ -717,13 +724,13 @@ describe("plans delete", () => {
 
   it("human mode prints a confirmation", async () => {
     mockGraphql.mockResolvedValueOnce({ deleteTripPlan: true });
-    await runPlans(["delete", "plan-1"]);
+    await runPlans(["delete", "plan-1", "--force"]);
     expect(logJoined()).toContain("Deleted trip plan plan-1");
   });
 
   it("wraps a graphql failure as API_ERROR", async () => {
     mockGraphql.mockRejectedValueOnce(new Error("nope"));
-    await expect(runPlans(["delete", "plan-1", "--json"])).rejects.toMatchObject({
+    await expect(runPlans(["delete", "plan-1", "--force", "--json"])).rejects.toMatchObject({
       code: CliErrorCode.API_ERROR,
     });
   });
