@@ -425,3 +425,201 @@ describe("plan-trip scaffold (VOY-1414)", () => {
     expect(out.tripPlanId).toBe("plan-X");
   });
 });
+
+// ── Unit tests: trip-shape pruning (VOY-1727) ──────────────────────────────
+
+const SCAFFOLD_GOALS = [
+  { id: "g-trav", name: "Travelers", type: "TravellerList" },
+  { id: "g-curr", name: "Choose Currency", type: "Currency" },
+  { id: "g-dur", name: "Choose Duration", type: "Duration" },
+  { id: "g-date", name: "Choose Date", type: "Date" },
+  { id: "g-dest", name: "Choose Destination", type: "Destination" },
+  { id: "g-out", name: "Outbound Flights", type: "Flight" },
+  { id: "g-hotel", name: "Secure Lodging", type: "Hotel" },
+  { id: "g-ret", name: "Return Flights", type: "Flight" },
+  { id: "g-manifest", name: "Traveler Manifest", type: "TravellerList" },
+  { id: "g-journey", name: "Flight Booking Details", type: "FlightJourney" },
+];
+
+describe("selectGoalsToPrune (VOY-1727)", () => {
+  let selectGoalsToPrune: typeof import("./plan-trip.js").selectGoalsToPrune;
+
+  beforeAll(async () => {
+    const mod = await import("./plan-trip.js");
+    selectGoalsToPrune = mod.selectGoalsToPrune;
+  });
+
+  it("--one-way prunes only the return-flight goal", () => {
+    const { prune, warnings } = selectGoalsToPrune(SCAFFOLD_GOALS, { oneWay: true, flightOnly: false, hotelOnly: false });
+    expect(prune.map(g => g.id)).toEqual(["g-ret"]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("--flight-only prunes only Hotel-type goals", () => {
+    const { prune, warnings } = selectGoalsToPrune(SCAFFOLD_GOALS, { oneWay: false, flightOnly: true, hotelOnly: false });
+    expect(prune.map(g => g.id)).toEqual(["g-hotel"]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("--one-way --flight-only prunes both, no duplicates", () => {
+    const { prune } = selectGoalsToPrune(SCAFFOLD_GOALS, { oneWay: true, flightOnly: true, hotelOnly: false });
+    expect(prune.map(g => g.id).sort()).toEqual(["g-hotel", "g-ret"]);
+  });
+
+  it("--hotel-only prunes all Flight and FlightJourney goals, keeps Hotel", () => {
+    const { prune } = selectGoalsToPrune(SCAFFOLD_GOALS, { oneWay: false, flightOnly: false, hotelOnly: true });
+    expect(prune.map(g => g.id).sort()).toEqual(["g-journey", "g-out", "g-ret"]);
+  });
+
+  it("matches the return goal case-insensitively and does NOT touch non-Flight goals named 'return'", () => {
+    const goals = [
+      { id: "g1", name: "RETURN flights", type: "Flight" },
+      { id: "g2", name: "Return policy", type: "Hotel" },
+    ];
+    const { prune } = selectGoalsToPrune(goals, { oneWay: true, flightOnly: false, hotelOnly: false });
+    expect(prune.map(g => g.id)).toEqual(["g1"]);
+  });
+
+  it("warns (does not throw) when a shape flag matches nothing", () => {
+    const noMatch = SCAFFOLD_GOALS.filter(g => g.type !== "Flight" && g.type !== "Hotel" && g.type !== "FlightJourney");
+    const oneWay = selectGoalsToPrune(noMatch, { oneWay: true, flightOnly: false, hotelOnly: false });
+    expect(oneWay.prune).toEqual([]);
+    expect(oneWay.warnings.length).toBe(1);
+    expect(oneWay.warnings[0]).toContain("--one-way");
+    const hotelOnly = selectGoalsToPrune(noMatch, { oneWay: false, flightOnly: true, hotelOnly: true });
+    expect(hotelOnly.prune).toEqual([]);
+    expect(hotelOnly.warnings.length).toBe(2);
+  });
+
+  it("handles null goal names", () => {
+    const goals = [{ id: "g1", name: null, type: "Flight" }];
+    const { prune, warnings } = selectGoalsToPrune(goals, { oneWay: true, flightOnly: false, hotelOnly: false });
+    expect(prune).toEqual([]);
+    expect(warnings.length).toBe(1);
+  });
+});
+
+describe("validateShapeFlags (VOY-1727)", () => {
+  let validateShapeFlags: typeof import("./plan-trip.js").validateShapeFlags;
+
+  beforeAll(async () => {
+    const mod = await import("./plan-trip.js");
+    validateShapeFlags = mod.validateShapeFlags;
+  });
+
+  it("passes with no shape flags regardless of other opts", () => {
+    expect(() => validateShapeFlags({ plan: "p1", return: "2026-09-08", hotel: "Paris" })).not.toThrow();
+  });
+
+  it("rejects shape flags on an existing plan (--plan)", () => {
+    expect(() => validateShapeFlags({ oneWay: true, plan: "p1" })).toThrow(/existing/i);
+    expect(() => validateShapeFlags({ hotelOnly: true, plan: "p1" })).toThrow(/goal-remove/);
+  });
+
+  it("rejects --one-way with --return", () => {
+    expect(() => validateShapeFlags({ oneWay: true, return: "2026-09-08" })).toThrow(/--one-way conflicts with --return/);
+  });
+
+  it("rejects --hotel-only with --one-way or flight flags", () => {
+    expect(() => validateShapeFlags({ hotelOnly: true, oneWay: true })).toThrow(/conflicts/);
+    expect(() => validateShapeFlags({ hotelOnly: true, to: "MCO" })).toThrow(/flight flags/);
+    expect(() => validateShapeFlags({ hotelOnly: true, depart: "2026-09-01" })).toThrow(/flight flags/);
+  });
+
+  it("rejects --flight-only with --hotel", () => {
+    expect(() => validateShapeFlags({ flightOnly: true, hotel: "Paris" })).toThrow(/--flight-only conflicts with hotel flags/);
+    expect(() => validateShapeFlags({ flightOnly: true, checkin: "2026-09-01" })).toThrow(/hotel flags/);
+    expect(() => validateShapeFlags({ hotelOnly: true, flightOnly: true })).toThrow(/--hotel-only conflicts with --flight-only/);
+  });
+
+  it("accepts valid combos", () => {
+    expect(() => validateShapeFlags({ oneWay: true, flightOnly: true, to: "DEN", depart: "2026-10-20" })).not.toThrow();
+    expect(() => validateShapeFlags({ hotelOnly: true, hotel: "Nashville" })).not.toThrow();
+  });
+});
+
+describe("plan-trip shape flags integration (VOY-1727)", () => {
+  let stdout: string;
+  let writeSpy: ReturnType<typeof jest.spyOn>;
+
+  const lastJson = (): any => {
+    const line = stdout.trim().split("\n").filter(Boolean).pop();
+    return line ? JSON.parse(line) : null;
+  };
+
+  beforeEach(() => {
+    mockGraphql.mockReset();
+    stdout = "";
+    writeSpy = jest.spyOn(process.stdout, "write").mockImplementation((c: any) => {
+      stdout += typeof c === "string" ? c : c.toString();
+      return true;
+    });
+  });
+
+  afterEach(() => {
+    writeSpy.mockRestore();
+  });
+
+  it("--one-way --flight-only: fetches goals, deletes return + hotel, reports prunedGoals", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-ow", title: "OW" } }) // CREATE
+      .mockResolvedValueOnce({ tripPlanTravellers: [{ id: "t1", firstName: "A", lastName: "B" }] }) // TRAVELLERS
+      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS }) // LIST goals
+      .mockResolvedValueOnce({ deleteTripPlanGoal: true }) // delete return
+      .mockResolvedValueOnce({ deleteTripPlanGoal: true }); // delete hotel
+
+    await runPlanTrip([
+      "--client", "client-1", "--title", "OW",
+      "--to", "DEN", "--depart", "2026-10-20",
+      "--one-way", "--flight-only", "--json",
+    ]);
+
+    const out = lastJson();
+    expect(out.ok).toBe(true);
+    expect(out.shape).toEqual(["one-way", "flight-only"]);
+    expect(out.prunedGoals.map((g: any) => g.id).sort()).toEqual(["g-hotel", "g-ret"]);
+    expect(out.pruneWarnings).toBeUndefined();
+    // 2 scaffold calls + 1 goals list + 2 deletes
+    expect(mockGraphql).toHaveBeenCalledTimes(5);
+    // The flight search next-step must NOT carry --return.
+    const flightStep = out.nextSteps.find((s: string) => s.includes("search flights"));
+    expect(flightStep).toBeTruthy();
+    expect(flightStep).not.toContain("--return");
+  });
+
+  it("delete failure is a warning, not a fatal — surfaces manual goal-remove fallback", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-f", title: "F" } })
+      .mockResolvedValueOnce({ tripPlanTravellers: [] })
+      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
+      .mockResolvedValueOnce({ deleteTripPlanGoal: false }); // server declines
+
+    await runPlanTrip(["--client", "client-1", "--title", "F", "--one-way", "--json"]);
+
+    const out = lastJson();
+    expect(out.ok).toBe(true);
+    expect(out.prunedGoals).toEqual([]);
+    expect(out.pruneWarnings.length).toBe(1);
+    expect(out.pruneWarnings[0]).toContain("plans goal-remove g-ret --force");
+  });
+
+  it("no shape flags: no goals fetch, no shape/prunedGoals fields (contract unchanged)", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-p", title: "P" } })
+      .mockResolvedValueOnce({ tripPlanTravellers: [] });
+
+    await runPlanTrip(["--client", "client-1", "--title", "P", "--json"]);
+
+    const out = lastJson();
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    expect(out.shape).toBeUndefined();
+    expect(out.prunedGoals).toBeUndefined();
+  });
+
+  it("--one-way with --return fails validation before any API call", async () => {
+    await expect(
+      runPlanTrip(["--client", "client-1", "--title", "X", "--one-way", "--return", "2026-10-26", "--json"]),
+    ).rejects.toThrow(/--one-way conflicts with --return/);
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+});

@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Trip-shape flags on `plan-trip` (VOY-1727):** `--one-way` prunes the scaffold's default Return Flights goal, `--flight-only` prunes the hotel goal, `--hotel-only` prunes all flight goals (Flight + FlightJourney). The default goal graph is a round-trip + hotel template; un-pruned goals the brief doesn't need are not inert — an un-pruned Return Flights goal blocks one-way inventory fetch AND fare carting, and un-pruned hotel/flight goals pin `plan-status` readiness at `BLOCKED` forever. Shape flags prune client-side via the existing `deleteTripPlanGoal` mutation (scaffold-then-prune; no server change). JSON output additively gains `shape[]`, `prunedGoals[]`, and `pruneWarnings[]` (only when shape flags are used); delete failures degrade to warnings with a manual `plans goal-remove` fallback command. Conflicting combos (`--one-way` + `--return`, `--hotel-only` + flight flags, `--flight-only` + hotel flags, shape flags + `--plan`) fail fast with `VALIDATION`.
+
+### Changed
+- **AGENT.md: goal pruning is now a first-class documented step.** Cold-agent run 3 showed agents conclude goal deletion is impossible (it never appears in AGENT.md) and that partial-scope briefs (one-way / flight-only / hotel-only) are therefore uncompletable. New template note documents the default goal graph, why un-pruned goals break partial-scope plans, and both pruning paths (`plan-trip` shape flags; `plans goals` → `plans goal-remove --force`). Also corrected from run-3 evidence: the documented `cart --json` shape is now the real one (`data.cart.{total,currency,itemCount,byGoal}` — there is no top-level `data.items`), and the "flight fare auto-defaults to Economy" claim is softened to "often, but verify via the cart and pick explicitly when `PICK_PENDING`" (a round-trip run observed it as a hard blocker). `plan-trip --help`'s one-way example no longer implies omitting `--return` alone makes a plan one-way.
+
 ## [2.7.0] — 2026-07-21
 
 ### Fixed
