@@ -30,6 +30,7 @@ A trip plan is a **goal graph**. When you create a plan it ships with a default 
 Every vertical is a **chain**, not a single pick: `decision → child list(s) → child decision(s) → bookable leaf`. For flights: `Flight → FlightJourney → FlightClass`. For hotels: `Hotel → HotelRoomList → HotelRoom → HotelRoomRate`. Only the **leaf** (FlightClass, HotelRoomRate) carries `isBookable: true`; parents are `isBookable: false` **by design**. Never conclude "not bookable" from a parent selection — walk to the leaf (or just read the cart).
 
 - **Chains are pre-created for EVERY candidate parent option.** Pick one hotel and the graph still holds room/rate chains for the *other* hotels — those are dead branches. After a pick, sibling chains are **alternates**. `plan-status` suppresses their pending picks: suppressed selections carry `branch: "alternate"` (same list as your pick — a legit extra mirror) or `branch: "deadBranch"` (under a parent you didn't choose), and the count rolls up as `alternateBranchCount` (per goal and in `summary`). **Do not chase picks on selections under a parent you didn't choose** — they will never be blockers.
+- **Suppression fires on completion evidence OR a supplier-code match.** Both hotel options and room options carry the supplier's hotel code, so once you pick a hotel, `plan-status` maps every room/rate chain back to its parent property by that code — a chain under a *different* hotel is a `deadBranch` **immediately, before any room is picked**. When the code can't be resolved on either side, it falls back to completion evidence (a sibling of the same type is already complete/carted → the rest are alternates). **At the room stage: trust `plan-status`'s single `active` room chain** (its `PICK_PENDING` names your chosen hotel and, when it resolves to one selection, its exact id) — don't enumerate the room decisions yourself. The cart is the final truth of "is it carted?" (`cart.bookableCount`, per-item `isBookable`).
 - **Baselines auto-fill downward.** Picking a room auto-selects the baseline HotelRoomRate; the flight cabin defaults to Economy. So a completed vertical is usually **one pick per level**, and the truth of "is it carted?" is the **cart** (`cart.bookableCount`, per-item `isBookable`) — not a hunt through sibling selections.
 - **Aggregated PICK_PENDING.** When a parent hasn't been picked yet and ≥2 sibling candidates are pending, `plan-status` emits ONE aggregated `PICK_PENDING` carrying `candidateSelectionIds[]` instead of N noisy ones. **Pick the PARENT decision first** (e.g. the Hotel), then re-run `plan-status` — the chain below it resolves and the aggregate collapses.
 - **A REQUIREMENT_UNMET that points at a suppressed branch** is kept but marked `unverified: true` (a sibling chain is already complete). Treat it like any unverified blocker: `voyagier book <planId> --dry-run --json` is the checkout truth and wins on contradiction.
@@ -396,7 +397,7 @@ voyagier travellers remove <travellerId> --json
 
 ### Plan Status (one-shot readiness, Style A JSON)
 ```bash
-voyagier plan-status <planId> [--json|--agent]
+voyagier plan-status <planId> [--json|--agent] [--verify]
 ```
 ONE call answering "what's left before this plan can book?" — replaces the plans-goals + N× selection-options + travellers + cart stitch. The JSON contract:
 
@@ -407,6 +408,8 @@ ONE call answering "what's left before this plan can book?" — replaces the pla
 - `goals[].selections[]` — per-selection detail: `status`, `mode` (only `Single` selections are picked; `List` ones are mirror sources), `isComplete` (server truth), `chosenOptionId/Name`, `consensus`, `allPicked` (divergent per-traveller picks are valid), `travellersPending`, `blockedOn`, and `branch` (`"active"` | `"alternate"` | `"deadBranch"` — see [Decision chains](#decision-chains); alternates/dead branches never produce a pick blocker). Each goal and the top-level `summary` also carry `alternateBranchCount` (suppressed sibling picks).
 - `travellers[].missing` — checkout-relevant gaps: `gender`, `dateOfBirth`, and `passport` (passport only when a cart item reports `requiresPassport`, i.e. the itinerary is international — server-decided, fails closed).
 - `cart` — `{ itemCount, bookableCount, total, currency }`. `READY_TO_BOOK` requires `bookableCount ≥ 1` (cart items joined against option bookability); items in the cart that don't resolve to a bookable option keep the plan at `IN_PROGRESS`/`CART_PENDING`, never a false ready.
+- `summary.bookableNow` — `true` when the cart holds ≥1 bookable item AND every remaining blocker is `unverified`. When `readiness` is `BLOCKED` but `bookableNow` is `true`, the only things between you and checkout are unverifiable server refs: trust `book --dry-run` (the human/agent headline says so and names the bookable count). The `readiness` enum is unchanged — `bookableNow` is a separate, additive hint.
+- `--verify` — after computing status, also runs the `book --dry-run` checkout truth and appends `verify: { bookable, blockers, chargeableSubtotal }` (or `verify: { error: <code> }` if the dry-run itself failed — it never fails the whole command). Use it to settle a `BLOCKED`-vs-unverified standoff in one call instead of two.
 - `BOOKED` is terminal: `blockers`, `waiting`, and `nextSteps` are always empty — no contradictory advice next to a done verdict.
 
 STABILITY: additive-only contract — keys are never renamed/removed; new blocker/waiting kinds may appear, so tolerate unknown kinds.
@@ -584,7 +587,9 @@ Manual lookup: `voyagier search airports "tokyo" --json`.
 - **Unpaid (Pending) checkout sessions are invisible to `book --status` and the pre-flight** — the server excludes them. Never retry a successful `book`; you'd mint a second payable link.
 - **`plans summary` reads `plan.items`**, not `tripPlanEvents`. Use `voyagier itinerary <planId>` for the canonical time-sorted view.
 - **State files are global, not per-plan.** Cross-plan corruption is prevented by `--plan <id>` mismatch checks, not by file partitioning.
-- **Flight prices are per-person.** Multiply by traveller count for total.
+- **Prices reflect the searched party, not per-person.** The price shown is what checkout charges for the whole party as searched — do NOT multiply by traveller count. For multi-traveller flights, sanity-check the per-traveller math before quoting a client (known supplier-pricing edge cases exist); `book --dry-run` / `quote` are the chargeable truth.
+- **Hotel search prices are STAY TOTALS, not nightly.** A hotel search option's price is the whole-stay "from" rate; summaries render `from $X total · N nights (~$Y/nt)`. Room options (after a hotel pick) carry a nightly breakdown — `selection-options` shows `N nights · $total (~$/nt incl. tax)` and a `stay` object in `--json`.
+- **Date ranges are INCLUSIVE of the end date.** A search `--return`/`--checkout` (and the `startDate → endDate` a plan carries) lands ON the requested end date. `quote`'s header shows the full departure→return range.
 - **Processing fee (~6%)** is added at checkout, not in the cart subtotal — it covers processing costs (credit card, booking, servicing).
 - **PNR is reserved at checkout time, not selection time.** A successful `select` does not lock the price.
 - **Search results expire ~2h.** Re-run `voyagier search ...` if `EXPIRED_OFFER` fires.

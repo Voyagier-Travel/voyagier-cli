@@ -29,6 +29,7 @@ import { saveSearchState, loadSearchState } from "../state.js";
 import { formatFlights, formatHotels, formatActivities } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivitySummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode, shellArg } from "../utils.js";
 import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "../agent-output.js";
+import { deriveHotelStay } from "../hotel-format.js";
 import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 import { CliError, CliErrorCode } from "../errors.js";
@@ -656,11 +657,25 @@ export function registerSearchCommands(program: Command): void {
           ? [...fetchedOptions].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity))
           : [...fetchedOptions].sort((a, b) => a.sortOrder - b.sortOrder);
 
-        const searchResults = options.map((opt, i) => ({
-          index: i + 1,
-          optionId: opt.id,
-          summary: buildHotelSummary(opt),
-        }));
+        const searchResults = options.map((opt, i) => {
+          // VOY-1724: minRate is a STAY TOTAL — expose derived stay fields
+          // (additive; existing keys unchanged).
+          const stay = deriveHotelStay(opt.price, opt.bookingData);
+          return {
+            index: i + 1,
+            optionId: opt.id,
+            summary: buildHotelSummary(opt),
+            ...(stay
+              ? {
+                  stayTotal: stay.stayTotal,
+                  nights: stay.nights,
+                  perNight: stay.perNight,
+                  checkIn: stay.checkIn,
+                  checkOut: stay.checkOut,
+                }
+              : {}),
+          };
+        });
 
         saveSearchState({
           type: "hotels",

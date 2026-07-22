@@ -11,6 +11,8 @@ import {
 } from "../queries.js";
 import { loadSearchState, clearSearchState, isSearchStateStale } from "../state.js";
 import { deriveBaseUrl, shellArg } from "../utils.js";
+import { GET_PLAN_STATUS } from "../queries.js";
+import { resolveHotelCodes, buildPlanStatus, type PlanStatusQueryResult } from "./plan-status.js";
 import { hintFlightSelected, hintHotelSelected } from "../hints.js";
 import { progress, warn, fatal, jsonOutput, jsonOutputWithPlan } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
@@ -232,6 +234,33 @@ function renderWaitOutcome(outcome: PickWaitOutcome | null, agent: boolean): voi
   }
 }
 
+/**
+ * VOY-1724: after a hotel pick, resolve the ACTUAL matching room chain via
+ * hotelCode matching so next-steps can name its real selection id instead of a
+ * generic "the room decision comes next". Best-effort — returns null (caller
+ * falls back to the generic text) if the pick hasn't propagated yet or the
+ * chain isn't resolvable. Never throws.
+ */
+async function resolveChosenHotelRoomStep(tripPlanId: string): Promise<string | null> {
+  try {
+    const data = await graphql<PlanStatusQueryResult>(GET_PLAN_STATUS, { id: tripPlanId });
+    if (!data.tripPlan) return null;
+    const codes = await resolveHotelCodes(data);
+    const status = buildPlanStatus(data, deriveBaseUrl(getApiUrl()), codes);
+    // The collapsed matching-chain blocker: a PICK_PENDING naming the chosen
+    // hotel with exactly one candidate selection.
+    const match = status.blockers.find(
+      (b) =>
+        b.kind === "PICK_PENDING" &&
+        b.candidateSelectionIds?.length === 1 &&
+        b.message.includes("chosen hotel"),
+    );
+    return match?.candidateSelectionIds?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function registerSelectCommands(program: Command): void {
   program
     .command("select [number]")
@@ -362,6 +391,15 @@ export function registerSelectCommands(program: Command): void {
         const result = await setSelectedOption(state.selectionId, selected.optionId, opts);
         const waitOutcome = opts.wait ? await runPickWait(state.selectionId, selected.optionId, opts) : undefined;
 
+        // VOY-1724: after a hotel pick, try to name the actual matching room
+        // chain (hotelCode matching). Null → fall back to the generic guidance.
+        // Only for agent/json (where next-steps are consumed) — the human path
+        // already prints a hint and shouldn't pay the extra resolution queries.
+        const roomStep =
+          state.type === "hotels" && (opts.json || opts.agent)
+            ? await resolveChosenHotelRoomStep(state.tripPlanId)
+            : null;
+
         // VOY-1718: every vertical is a decision chain — a pick usually spawns
         // the NEXT decision. Tell the agent where the chain goes next so it
         // doesn't stop at the parent thinking the goal is done.
@@ -392,6 +430,8 @@ export function registerSelectCommands(program: Command): void {
                 : {}),
               parentOptionId: result.parentOptionId ?? null,
               ...(chainNote ? { chainNote } : {}),
+              // VOY-1724: the resolved matching room chain's real selection id.
+              ...(roomStep ? { roomSelectionId: roomStep } : {}),
               url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
               ...(waitOutcome !== undefined ? waitJsonFragment(waitOutcome) : {}),
             },
@@ -416,11 +456,17 @@ export function registerSelectCommands(program: Command): void {
                   `- Next pick: Fare & Cabin (FlightClass) — defaults to Economy. Surface it: \`voyagier plan-status ${shellArg(state.tripPlanId)} --json\` (tip: \`--wait\` on a pick returns it inline)`,
                 ]
               : []),
-            // VOY-1718: picking a hotel opens its room decision — don't stop here.
+            // VOY-1718/1724: picking a hotel opens its room decision — don't
+            // stop here. When hotelCode matching resolved the chosen hotel's
+            // room chain, name it directly; otherwise fall back to plan-status.
             ...(state.type === "hotels"
-              ? [
-                  `- Room decision comes next (pick a room → baseline rate auto-carts). Surface it: \`voyagier plan-status ${shellArg(state.tripPlanId)} --json\` (tip: \`--wait\` on a pick returns it inline)`,
-                ]
+              ? roomStep
+                ? [
+                    `- Pick a room in your chosen hotel (baseline rate auto-carts): \`voyagier selection-options ${shellArg(roomStep)} --json\` then \`voyagier select --selection-id ${shellArg(roomStep)} --option-id <id>\``,
+                  ]
+                : [
+                    `- Room decision comes next (pick a room → baseline rate auto-carts). Surface it: \`voyagier plan-status ${shellArg(state.tripPlanId)} --json\` (tip: \`--wait\` on a pick returns it inline)`,
+                  ]
               : []),
             `- View cart: \`voyagier cart ${shellArg(state.tripPlanId)}\``,
           ];

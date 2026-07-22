@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import { spawn } from "child_process";
 import { CliError, CliErrorCode } from "./errors.js";
+import { hotelStayLabel } from "./hotel-format.js";
 
 /**
  * Extract a flight token from a booking data JSONB blob.
@@ -37,10 +38,20 @@ export function buildFlightSummary(
 
 /**
  * Build a human-readable one-line hotel summary.
+ *
+ * VOY-1724: the supplier's minRate is a STAY TOTAL, not a nightly rate — render
+ * it as "from $X total · N nights (~$Y/nt)" using the option's check-in/out
+ * dates, never the old (wrong) "$X/night". Falls back to just the total when
+ * the dates aren't present.
  */
-export function buildHotelSummary(opt: { name: string; price?: number }): string {
+export function buildHotelSummary(opt: {
+  name: string;
+  price?: number;
+  bookingData?: Record<string, unknown> | null;
+}): string {
   const parts = [opt.name];
-  if (opt.price != null) parts.push(`${formatPrice(opt.price)}/night`);
+  const label = hotelStayLabel(opt.price, opt.bookingData);
+  if (label) parts.push(label);
   return parts.join(" · ");
 }
 

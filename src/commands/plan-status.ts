@@ -36,6 +36,12 @@
  *   blocker/waiting kinds may appear — consumers must tolerate unknown kinds.
  *   Additive since v2.6.0 (VOY-1718): selection `branch`, goal + summary
  *   `alternateBranchCount`, blocker `candidateSelectionIds`.
+ *   Additive since VOY-1724: summary `bookableNow`; `--verify` appends a
+ *   `verify` block ({ bookable, blockers, chargeableSubtotal } | { error }).
+ *   Room chains are mapped to the chosen hotel by supplier `hotelCode` (a
+ *   targeted secondary read) so a code-mismatched chain is a dead branch
+ *   immediately — upgrading the VOY-1718 completion-evidence rule (kept as
+ *   fallback when a code is missing on either side).
  *
  * Reuses (never re-derives): deriveChosen + deriveBlockedOn (choices.js),
  * classifySelection status vocabulary (selection-status.js).
@@ -47,7 +53,7 @@ import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
 import { deriveBaseUrl, formatPrice, shellArg } from "../utils.js";
-import { GET_PLAN_STATUS } from "../queries.js";
+import { GET_PLAN_STATUS, GET_HOTEL_OPTION_DATA } from "../queries.js";
 import { classifySelection } from "../selection-status.js";
 import {
   deriveChosen,
@@ -55,6 +61,7 @@ import {
   type RawTravellerChoice,
   type RawSelectionInput,
 } from "../choices.js";
+import { loadCheckoutPreview } from "./checkout-preview.js";
 
 // ── Raw query shapes ────────────────────────────────────────────────────────
 
@@ -190,6 +197,15 @@ export interface PlanStatusData {
      * has a complete/booked sibling chain. Informational; never a blocker.
      */
     alternateBranchCount: number;
+    /**
+     * VOY-1724: true when the cart holds ≥1 bookable item AND every remaining
+     * blocker is `unverified` (i.e. the only things standing between this plan
+     * and checkout are unverifiable server refs — see the `unverified` blocker
+     * note). When readiness is BLOCKED but `bookableNow` is true, an agent
+     * should trust `book --dry-run` (the checkout truth) over the blockers.
+     * Additive; the readiness enum is unchanged.
+     */
+    bookableNow: boolean;
   };
   goals: {
     goalId: string;
@@ -247,7 +263,19 @@ function travellerName(t: { firstName?: string | null; lastName?: string | null 
   return [t.firstName, t.lastName].filter(Boolean).join(" ") || "(unnamed)";
 }
 
-export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string): PlanStatusData {
+export function buildPlanStatus(
+  data: PlanStatusQueryResult,
+  planUrlBase: string,
+  /**
+   * VOY-1724: selectionId → resolved supplier hotelCode, for the chosen Hotel
+   * selection and each room-chain sibling. When present, a HotelRoom/
+   * HotelRoomRate whose code ≠ the chosen hotel's code is a dead branch
+   * IMMEDIATELY (even pre-room-pick); a matching one stays active. Absent (or a
+   * code missing on either side) → the VOY-1718 completion-evidence rule applies
+   * as fallback. Populated by `resolveHotelCodes` before this pure builder runs.
+   */
+  hotelCodeBySelection?: Map<string, string>,
+): PlanStatusData {
   if (!data.tripPlan) {
     throw new Error("buildPlanStatus: tripPlan is null — caller must verify the plan exists first");
   }
@@ -383,52 +411,60 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
       };
     });
 
-    // ── VOY-1718 dead-branch pre-pass ──────────────────────────────────────
-    // Group Single-mode selections by type WITHIN this goal. The goal graph
-    // pre-creates a full decision chain for every candidate parent option, so
-    // a type-group holds one live pick plus N sibling picks under parents the
-    // client didn't choose. Once a member is complete (or a bookable cart item
-    // joins to it), the incomplete siblings are alternates — suppress their
-    // picks. When NO member is settled yet and ≥2 would each pick-pend, roll
-    // them into ONE aggregated blocker (pick the parent decision first).
+    // ── VOY-1718 + VOY-1724 branch classification pre-pass ─────────────────
+    // Group Single-mode selections by type WITHIN this goal (the goal graph
+    // pre-creates a full decision chain per candidate parent option). Two
+    // signals settle which branch is live:
+    //   VOY-1724 (preferred): the supplier `hotelCode`. Hotel options AND room
+    //     options both carry it, so once a hotel is picked we can map every
+    //     HotelRoom/HotelRoomRate chain to its parent hotel by code — a
+    //     code-mismatched chain is a dead branch IMMEDIATELY, even before any
+    //     room is picked.
+    //   VOY-1718 (fallback, when a code is missing on either side): completion
+    //     evidence — once a same-type sibling is complete/carted, the incomplete
+    //     ones are alternates; with no settled member and ≥2 pending, aggregate.
     const branchOf = new Map<string, "active" | "alternate" | "deadBranch">();
     const aggregatedIds = new Set<string>();
     const aggregateBlockers: Blocker[] = [];
     let alternateBranchCount = 0;
 
-    const singleByType = new Map<string, typeof enriched>();
-    for (const e of enriched) {
-      // Skip List-mode mirror sources, and skip selections with no `type` —
-      // grouping is BY type, so untyped selections can't be meaningfully
-      // bucketed together (they'd suppress/aggregate unrelated decisions).
-      // They fall through to the ordinary per-selection arms unchanged.
-      // (Mode stays `!== "List"`, matching the PICK_PENDING predicate: real
-      // decision surfaces may carry a null mode.)
-      if (e.sel.mode === "List" || !e.sel.type) continue;
-      const t = e.sel.type;
-      const bucket = singleByType.get(t);
-      if (bucket) bucket.push(e);
-      else singleByType.set(t, [e]);
-    }
+    type Enriched = (typeof enriched)[number];
+    // Settled = backend-complete OR joined to a bookable cart item (cart truth
+    // beats a lagging isComplete flag). A cart-settled selection is evidence,
+    // never a suppression target.
+    const isSettledSel = (m: Enriched) =>
+      m.sel.isComplete === true || bookableCartSelectionIds.has(m.sel.id);
+    const suppress = (m: Enriched, branch: "alternate" | "deadBranch") => {
+      branchOf.set(m.sel.id, branch);
+      suppressedSelectionIds.add(m.sel.id);
+      alternateBranchCount += 1;
+    };
 
-    for (const [t, members] of singleByType) {
-      // Evidence-bearing siblings: backend-complete OR joined to a bookable
-      // cart item (cart truth beats a lagging isComplete flag).
-      const settled = members.filter(
-        (m) => m.sel.isComplete === true || bookableCartSelectionIds.has(m.sel.id),
+    // The chosen hotel's supplier code (when a Hotel selection in this goal is
+    // settled/picked and we resolved its code).
+    const chosenHotelCode = (() => {
+      if (!hotelCodeBySelection) return undefined;
+      const hotelSel = enriched.find(
+        (e) =>
+          e.sel.type === "Hotel" &&
+          e.sel.mode !== "List" &&
+          (e.sel.isComplete === true || bookableCartSelectionIds.has(e.sel.id) || !!e.chosenOptionId),
       );
-      // "Incomplete" = NOT settled (not the raw isComplete flag): a selection
-      // whose bookable item is already in the cart is settled evidence even
-      // while the backend's isComplete lags — it must never suppress itself.
+      return hotelSel ? hotelCodeBySelection.get(hotelSel.sel.id) : undefined;
+    })();
+    const isRoomChainType = (t: string) => t === "HotelRoom" || t === "HotelRoomRate";
+
+    // Legacy VOY-1718 rule for a type-group (or a code-unresolved subset).
+    const classifyGroupLegacy = (members: Enriched[]) => {
+      const settled = members.filter(isSettledSel);
       const settledIds = new Set(settled.map((m) => m.sel.id));
       const incomplete = members.filter((m) => !settledIds.has(m.sel.id));
+      const typeLabel = members[0]?.sel.type || "Selection";
       if (settled.length > 0) {
         const settledMirrors = new Set(settled.map((m) => m.sel.mirrorListSelectionId ?? null));
         for (const m of incomplete) {
           const mir = m.sel.mirrorListSelectionId ?? null;
-          branchOf.set(m.sel.id, settledMirrors.has(mir) ? "alternate" : "deadBranch");
-          suppressedSelectionIds.add(m.sel.id);
-          alternateBranchCount += 1;
+          suppress(m, settledMirrors.has(mir) ? "alternate" : "deadBranch");
         }
       } else {
         const candidates = incomplete.filter((m) => m.wouldPickPend);
@@ -437,21 +473,77 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
           // Distinct mirrored lists = sibling branches. A candidate with no
           // mirrorListSelectionId counts as its OWN branch (unknown list) so
           // mixed null/non-null groups don't undercount.
-          const branches = new Set(
-            candidates.map((c) => c.sel.mirrorListSelectionId ?? c.sel.id),
-          );
-          const branchCount = branches.size;
+          const branches = new Set(candidates.map((c) => c.sel.mirrorListSelectionId ?? c.sel.id));
           aggregateBlockers.push({
             kind: "PICK_PENDING",
             message:
-              `${g.name ?? (t || "Selection")}: ${t || "selection"} pick pending ` +
-              `(${candidates.length} candidate selection(s) across ${branchCount} sibling ` +
+              `${g.name ?? typeLabel}: ${typeLabel} pick pending ` +
+              `(${candidates.length} candidate selection(s) across ${branches.size} sibling ` +
               `branch(es) — pick the parent decision first, then re-run plan-status)`,
             refs: { goalId: g.id },
             candidateSelectionIds: candidates.map((c) => c.sel.id),
           });
         }
       }
+    };
+
+    const singleByType = new Map<string, Enriched[]>();
+    for (const e of enriched) {
+      // Skip List-mode mirror sources, and skip selections with no `type` —
+      // grouping is BY type, so untyped selections can't be meaningfully
+      // bucketed together (they'd suppress/aggregate unrelated decisions).
+      // (Mode stays `!== "List"`, matching the PICK_PENDING predicate: real
+      // decision surfaces may carry a null mode.)
+      if (e.sel.mode === "List" || !e.sel.type) continue;
+      const bucket = singleByType.get(e.sel.type);
+      if (bucket) bucket.push(e);
+      else singleByType.set(e.sel.type, [e]);
+    }
+
+    for (const [t, members] of singleByType) {
+      // VOY-1724 hotelCode path — only for room chains when the chosen hotel's
+      // code is known. Coded members are classified directly; any member whose
+      // code we couldn't resolve falls back to the VOY-1718 legacy rule.
+      if (isRoomChainType(t) && chosenHotelCode) {
+        const matching: Enriched[] = [];
+        const legacy: Enriched[] = [];
+        for (const m of members) {
+          const code = hotelCodeBySelection?.get(m.sel.id);
+          if (!code) {
+            legacy.push(m);
+          } else if (code !== chosenHotelCode) {
+            // Code-mismatched chain: dead branch immediately (even pre-room-pick).
+            if (!isSettledSel(m)) suppress(m, "deadBranch");
+          } else {
+            matching.push(m); // same hotel — the live chain
+          }
+        }
+        const matchingSettled = matching.filter(isSettledSel);
+        const matchingIncomplete = matching.filter((m) => !isSettledSel(m));
+        if (matchingSettled.length > 0) {
+          // Chosen hotel's room is decided — its incomplete same-hotel mirrors
+          // are alternates.
+          for (const m of matchingIncomplete) suppress(m, "alternate");
+        } else {
+          // Collapse the pending same-hotel candidate(s) into ONE blocker that
+          // names the chosen hotel (VOY-1724 step 2) — not "N across M branches".
+          const live = matchingIncomplete.filter((m) => m.wouldPickPend);
+          if (live.length > 0) {
+            for (const c of live) aggregatedIds.add(c.sel.id);
+            aggregateBlockers.push({
+              kind: "PICK_PENDING",
+              message:
+                `${g.name ?? t}: room pick pending in your chosen hotel — ` +
+                `${live.length} candidate selection(s) (pick a room; the baseline rate auto-carts)`,
+              refs: { goalId: g.id },
+              candidateSelectionIds: live.map((c) => c.sel.id),
+            });
+          }
+        }
+        if (legacy.length > 0) classifyGroupLegacy(legacy);
+        continue;
+      }
+      classifyGroupLegacy(members);
     }
 
     const selectionsOut = enriched.map((e) => {
@@ -666,7 +758,14 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
         push(`voyagier plans goal ${shellArg(b.refs.goalId)} --json   # inspect the blocking requirements`);
         break;
       case "PICK_PENDING":
-        if (b.candidateSelectionIds && b.candidateSelectionIds.length > 0) {
+        if (b.candidateSelectionIds && b.candidateSelectionIds.length === 1) {
+          // VOY-1724: hotelCode matching collapsed the group to ONE live chain
+          // (the chosen hotel's room) — we know the exact selection, so route
+          // straight to the pick instead of a goal inspection.
+          const only = b.candidateSelectionIds[0];
+          push(`voyagier selection-options ${shellArg(only)} --json   # list options`);
+          push(`voyagier select --selection-id ${shellArg(only)} --option-id <optionId>`);
+        } else if (b.candidateSelectionIds && b.candidateSelectionIds.length > 0) {
           // Aggregated group blocker — no single selection to pick yet; the
           // agent inspects the candidates and picks the parent decision first.
           push(`voyagier plans goal ${shellArg(b.refs.goalId)} --json   # inspect candidate selections`);
@@ -697,6 +796,12 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
     push(`voyagier book ${shellArg(plan.id)} --dry-run`);
   }
 
+  // VOY-1724: the cart holds bookable items and nothing left is a VERIFIABLE
+  // blocker (all remaining are unverified server refs). An agent seeing BLOCKED
+  // here should trust `book --dry-run`. `every` over an empty array is true, so
+  // this also reads true on a clean READY_TO_BOOK — harmless and additive.
+  const bookableNow = cart.bookableCount > 0 && blockers.every((b) => b.unverified === true);
+
   return {
     planId: plan.id,
     title: plan.title ?? null,
@@ -708,6 +813,7 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
       goalsBooked,
       blockerCount: blockers.length,
       alternateBranchCount: goalsOut.reduce((n, g) => n + g.alternateBranchCount, 0),
+      bookableNow,
     },
     goals: goalsOut,
     travellers: travellerOut,
@@ -716,6 +822,137 @@ export function buildPlanStatus(data: PlanStatusQueryResult, planUrlBase: string
     waiting,
     nextSteps,
   };
+}
+
+// ── VOY-1724 hotelCode resolution (async, targeted, payload-disciplined) ────
+
+interface HotelOptionDataResult {
+  getTripPlanSelection: {
+    __typename?: string;
+    id?: string;
+    options?: { id: string; optionData?: { hotelCode?: unknown } | null }[] | null;
+  } | null;
+}
+
+/**
+ * For every goal that has a COMPLETE Hotel selection with sibling HotelRoom /
+ * HotelRoomRate chains, resolve the supplier `hotelCode` of the chosen hotel
+ * and of each sibling chain (via its mirrored HotelRoomList). Returns a map
+ * selectionId → hotelCode consumed by buildPlanStatus.
+ *
+ * Payload discipline: we fetch ONLY `id optionData`, pull the one `hotelCode`
+ * string out, and discard the payload. Every fetch is best-effort — a failure
+ * just leaves that selection uncoded, so buildPlanStatus falls back to the
+ * VOY-1718 completion-evidence rule. This never throws.
+ */
+export async function resolveHotelCodes(
+  data: PlanStatusQueryResult,
+): Promise<Map<string, string>> {
+  const codeBySelection = new Map<string, string>();
+  const goals = data.tripPlanGoals ?? [];
+
+  const hotelSelIds = new Set<string>(); // chosen Hotel selections to fetch
+  const roomToFetchId = new Map<string, string>(); // roomSelId → id to fetch (its mirror list, or itself)
+  const fetchIds = new Set<string>();
+
+  for (const g of goals) {
+    const sels = (g.items ?? []).flatMap((i) => i.selections ?? []);
+    const hotelSel = sels.find(
+      (s) =>
+        s.type === "Hotel" &&
+        s.mode !== "List" &&
+        (s.isComplete === true || !!deriveChosen(s).chosenOptionId),
+    );
+    const roomSibs = sels.filter(
+      (s) => (s.type === "HotelRoom" || s.type === "HotelRoomRate") && s.mode !== "List",
+    );
+    if (!hotelSel || roomSibs.length === 0) continue;
+    hotelSelIds.add(hotelSel.id);
+    fetchIds.add(hotelSel.id);
+    for (const r of roomSibs) {
+      const listId = r.mirrorListSelectionId ?? r.id;
+      roomToFetchId.set(r.id, listId);
+      fetchIds.add(listId);
+    }
+  }
+  if (fetchIds.size === 0) return codeBySelection;
+
+  // Fetch each id once; keep only { chosen-option code, first code }.
+  const fetched = new Map<string, { codeByOption: Map<string, string>; firstCode?: string }>();
+  await Promise.all(
+    [...fetchIds].map(async (sid) => {
+      try {
+        const res = await graphql<HotelOptionDataResult>(GET_HOTEL_OPTION_DATA, {
+          tripPlanSelectionId: sid,
+        });
+        const opts = res.getTripPlanSelection?.options ?? [];
+        const codeByOption = new Map<string, string>();
+        let firstCode: string | undefined;
+        for (const o of opts) {
+          const code = o.optionData?.hotelCode;
+          if (typeof code === "string" && code) {
+            codeByOption.set(o.id, code);
+            if (!firstCode) firstCode = code;
+          }
+        }
+        fetched.set(sid, { codeByOption, firstCode });
+      } catch {
+        // Best-effort — leave uncoded, VOY-1718 fallback handles it.
+      }
+    }),
+  );
+
+  // Chosen Hotel selections → the chosen option's code (fallback: first code).
+  for (const g of goals) {
+    const sels = (g.items ?? []).flatMap((i) => i.selections ?? []);
+    for (const s of sels) {
+      if (!hotelSelIds.has(s.id)) continue;
+      const f = fetched.get(s.id);
+      if (!f) continue;
+      const chosenId = deriveChosen(s).chosenOptionId;
+      const code = (chosenId && f.codeByOption.get(chosenId)) || f.firstCode;
+      if (code) codeBySelection.set(s.id, code);
+    }
+  }
+  // Room-chain siblings → the code of their mirrored HotelRoomList (or self).
+  for (const [roomId, fetchId] of roomToFetchId) {
+    const code = fetched.get(fetchId)?.firstCode;
+    if (code) codeBySelection.set(roomId, code);
+  }
+  return codeBySelection;
+}
+
+// ── VOY-1724 checkout verification (--verify) ───────────────────────────────
+
+interface VerifyResult {
+  bookable: boolean;
+  blockers: { itemName: string; reason: string; fix: string }[];
+  chargeableSubtotal: number;
+  currency: string;
+}
+
+/**
+ * Run the same checkout dry-run `book --dry-run` uses (shared helper — no logic
+ * duplication) and reduce it to the verify payload. Degrades to `{ error }` on
+ * any failure — a verify problem must NEVER fail the whole plan-status command.
+ */
+export async function runVerify(planId: string): Promise<VerifyResult | { error: string }> {
+  try {
+    const preview = await loadCheckoutPreview(planId);
+    return {
+      bookable: preview.bookable,
+      blockers: preview.blockers.map((b) => ({ itemName: b.itemName, reason: b.reason, fix: b.fix })),
+      chargeableSubtotal: preview.chargeableSubtotal,
+      currency: preview.currency,
+    };
+  } catch (err) {
+    const code = err instanceof CliError ? err.code : CliErrorCode.API_ERROR;
+    return { error: code };
+  }
+}
+
+function isVerifyError(v: VerifyResult | { error: string }): v is { error: string } {
+  return (v as { error?: string }).error !== undefined;
 }
 
 // ── Rendering (human/agent output is strictly a rendering of the JSON) ─────
@@ -727,7 +964,7 @@ const READINESS_BADGE: Record<Readiness, string> = {
   IN_PROGRESS: "🟡 IN PROGRESS — waiting on the system",
 };
 
-function renderHuman(s: PlanStatusData): void {
+function renderHuman(s: PlanStatusData, verify?: VerifyResult | { error: string }): void {
   console.log();
   console.log(`${chalk.bold(s.title ?? s.planId)}  ${READINESS_BADGE[s.readiness]}`);
   console.log(chalk.dim(s.url));
@@ -736,6 +973,17 @@ function renderHuman(s: PlanStatusData): void {
       `Goals: ${s.summary.goalsDecided}/${s.summary.goalsTotal} decided · ${s.summary.goalsBooked} booked · Cart: ${s.cart.itemCount} item(s) ${s.cart.total > 0 ? formatPrice(s.cart.total) : ""}`,
     ),
   );
+
+  // VOY-1724: BLOCKED but every blocker is unverified and the cart is bookable —
+  // say so, and point at the checkout truth. Don't let the red badge alone tell
+  // the agent to keep grinding on phantom blockers.
+  if (s.readiness === "BLOCKED" && s.summary.bookableNow) {
+    console.log(
+      chalk.yellow(
+        `  ⚠ all remaining blockers are unverified — the cart holds ${s.cart.bookableCount} bookable item(s); verify with book --dry-run`,
+      ),
+    );
+  }
 
   if (s.blockers.length > 0) {
     console.log();
@@ -785,10 +1033,23 @@ function renderHuman(s: PlanStatusData): void {
     console.log(chalk.bold("Next steps:"));
     for (const cmd of s.nextSteps) console.log(`  ${chalk.cyan("$")} ${cmd}`);
   }
+
+  if (verify) {
+    console.log();
+    console.log(chalk.bold("Checkout verification (book --dry-run):"));
+    if (isVerifyError(verify)) {
+      console.log(chalk.yellow(`  ⚠ could not verify (${verify.error}) — run: voyagier book ${shellArg(s.planId)} --dry-run`));
+    } else {
+      console.log(
+        `  ${verify.bookable ? chalk.green("✓ bookable") : chalk.red("✗ nothing bookable")} · chargeable ${formatPrice(verify.chargeableSubtotal)} ${verify.currency}`,
+      );
+      for (const b of verify.blockers) console.log(chalk.yellow(`    • ${b.itemName} — ${b.reason}`));
+    }
+  }
   console.log();
 }
 
-function renderAgent(s: PlanStatusData): void {
+function renderAgent(s: PlanStatusData, verify?: VerifyResult | { error: string }): void {
   const lines: string[] = [];
   lines.push(`# Plan status: ${s.title ?? s.planId}`);
   lines.push("");
@@ -797,6 +1058,11 @@ function renderAgent(s: PlanStatusData): void {
     `- goals: ${s.summary.goalsDecided}/${s.summary.goalsTotal} decided, ${s.summary.goalsBooked} booked`,
   );
   lines.push(`- cart: ${s.cart.itemCount} item(s), ${s.cart.total} ${s.cart.currency}`);
+  if (s.readiness === "BLOCKED" && s.summary.bookableNow) {
+    lines.push(
+      `- ⚠️ all remaining blockers are unverified — the cart holds ${s.cart.bookableCount} bookable item(s); verify with \`voyagier book ${shellArg(s.planId)} --dry-run\``,
+    );
+  }
   if (s.blockers.length > 0) {
     lines.push("");
     lines.push("## Blockers (act on these, in order)");
@@ -818,6 +1084,18 @@ function renderAgent(s: PlanStatusData): void {
     lines.push("## Next steps");
     for (const cmd of s.nextSteps) lines.push(`\`${cmd}\``);
   }
+  if (verify) {
+    lines.push("");
+    lines.push("## Checkout verification (book --dry-run)");
+    if (isVerifyError(verify)) {
+      lines.push(`- ⚠️ could not verify (${verify.error}) — run \`voyagier book ${shellArg(s.planId)} --dry-run\``);
+    } else {
+      lines.push(
+        `- ${verify.bookable ? "bookable" : "nothing bookable"} — chargeable ${verify.chargeableSubtotal} ${verify.currency}`,
+      );
+      for (const b of verify.blockers) lines.push(`- blocker: ${b.itemName} — ${b.reason}`);
+    }
+  }
   console.log(lines.join("\n"));
 }
 
@@ -831,7 +1109,8 @@ export function registerPlanStatusCommand(program: Command): void {
     )
     .option("--json", "Output structured JSON envelope")
     .option("--agent", "Output plain markdown for AI agents")
-    .action(async (planId: string, opts: { json?: boolean; agent?: boolean }) => {
+    .option("--verify", "Also run the book --dry-run checkout truth and append a verify section")
+    .action(async (planId: string, opts: { json?: boolean; agent?: boolean; verify?: boolean }) => {
       let data: PlanStatusQueryResult;
       try {
         data = await graphql<PlanStatusQueryResult>(GET_PLAN_STATUS, { id: planId });
@@ -844,14 +1123,21 @@ export function registerPlanStatusCommand(program: Command): void {
         throw new CliError(CliErrorCode.NOT_FOUND, `Trip plan ${planId} not found.`);
       }
 
-      const status = buildPlanStatus(data, deriveBaseUrl(getApiUrl()));
+      // VOY-1724: resolve supplier hotelCodes (best-effort) so room chains map
+      // to the chosen hotel deterministically. Never throws.
+      const hotelCodes = await resolveHotelCodes(data);
+      const status = buildPlanStatus(data, deriveBaseUrl(getApiUrl()), hotelCodes);
+
+      // --verify: append the checkout truth. Degrades gracefully; never fails
+      // the whole command.
+      const verify = opts.verify ? await runVerify(planId) : undefined;
 
       if (opts.json) {
-        jsonOutput({ ok: true, data: status });
+        jsonOutput({ ok: true, data: verify ? { ...status, verify } : status });
       } else if (opts.agent) {
-        renderAgent(status);
+        renderAgent(status, verify);
       } else {
-        renderHuman(status);
+        renderHuman(status, verify);
       }
     });
 }

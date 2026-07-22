@@ -973,6 +973,28 @@ export const GET_DECISION_SELECTION_OPTIONS = `
 `;
 
 /**
+ * VOY-1724 targeted optionData read: hotel + room selections expose the
+ * supplier `hotelCode` (and rooms expose the nightly rate breakdown) inside
+ * their options' `optionData`. `plan-status` uses this to map every
+ * HotelRoom(List) chain to its parent hotel by code; `selection-options` uses
+ * it to derive the nights × rate breakdown. We fetch ONLY `id optionData`,
+ * extract the one field we need, and discard the payload — raw optionData
+ * NEVER reaches command output or thrown errors (payload discipline). Scoped to
+ * the hotel union members so a flight/activity selection can't drag its
+ * multi-MB bookingData through here.
+ */
+export const GET_HOTEL_OPTION_DATA = `
+  query HotelOptionData($tripPlanSelectionId: String!) {
+    getTripPlanSelection(tripPlanSelectionId: $tripPlanSelectionId) {
+      __typename
+      ... on TripPlanHotelSelection { id options { id optionData } }
+      ... on TripPlanHotelRoomListSelection { id options { id optionData } }
+      ... on TripPlanHotelRoomSelection { id options { id optionData } }
+    }
+  }
+`;
+
+/**
  * Monitor fetch-state, read by selection's blueprintMonitorId. Drives the
  * FETCHING / NO_RESULTS / FETCH_ERROR distinction in `options --wait`.
  */
