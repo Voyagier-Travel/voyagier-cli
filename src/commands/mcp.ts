@@ -29,7 +29,13 @@ export function registerMcpCommand(program: Command): void {
         } catch {
           // best-effort — we're exiting anyway
         }
-        process.exit(0);
+        // Let the event loop drain (buffered stdio flushes, in-flight child
+        // processes reap) instead of truncating output with a hard exit.
+        process.exitCode = 0;
+        // Failsafe: if something keeps the loop alive (leaked handle), force
+        // the exit after a grace period. unref() so the timer itself never
+        // holds the process open.
+        setTimeout(() => process.exit(0), 2000).unref();
       };
 
       process.on("SIGINT", () => void shutdown());

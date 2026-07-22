@@ -81,7 +81,7 @@ describe("MCP server integration", () => {
     const { client } = await connect(run);
     await client.callTool({ name: "book", arguments: { plan_id: "P1", expect_total: 339.1, types: ["Activity", "Hotel"] } });
     expect(run).toHaveBeenCalledWith(
-      ["book", "P1", "--expect-total", "339.1", "--types", "Activity,Hotel", "--json"],
+      ["book", "P1", "--expect-total", "339.10", "--types", "Activity,Hotel", "--json"],
       120_000,
     );
   });

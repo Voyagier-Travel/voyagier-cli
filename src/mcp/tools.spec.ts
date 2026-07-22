@@ -9,6 +9,7 @@
 import { describe, it, expect } from "@jest/globals";
 import {
   TOOLS,
+  moneyArg,
   buildDoctorArgs,
   buildCreateClientArgs,
   buildPlanTripArgs,
@@ -137,13 +138,13 @@ describe("argv builders", () => {
     expect(buildBookingStatusArgs({ plan_id: "p" })).toEqual(["book", "p", "--status", "--json"]);
   });
 
-  it("book_dry_run: --expect-total only when provided, rendered with String()", () => {
+  it("book_dry_run: --expect-total only when provided, rendered via moneyArg", () => {
     expect(buildBookDryRunArgs({ plan_id: "p" })).toEqual(["book", "p", "--dry-run", "--json"]);
     const gated = buildBookDryRunArgs({ plan_id: "p", expect_total: 339.1 });
-    expect(gated).toEqual(["book", "p", "--dry-run", "--expect-total", "339.1", "--json"]);
+    expect(gated).toEqual(["book", "p", "--dry-run", "--expect-total", "339.10", "--json"]);
   });
 
-  it("book: expect_total required + rendered with String; array types → CSV; false booleans omitted", () => {
+  it("book: expect_total required + rendered via moneyArg; array types → CSV; false booleans omitted", () => {
     const args = buildBookArgs({ plan_id: "p", expect_total: 1297.06, validate: false, only_bookable: true, types: ["Activity", "Hotel"], rebook: false });
     expect(args).toEqual([
       "book", "p", "--expect-total", "1297.06", "--only-bookable", "--types", "Activity,Hotel", "--json",
@@ -153,9 +154,27 @@ describe("argv builders", () => {
     expect(args).not.toContain("--max-total");
   });
 
-  it("book: --max-total rendered with String when present", () => {
+  it("book: --max-total rendered via moneyArg when present", () => {
     const args = buildBookArgs({ plan_id: "p", expect_total: 400, max_total: 450 });
-    expect(args).toEqual(expect.arrayContaining(["--expect-total", "400", "--max-total", "450"]));
+    expect(args).toEqual(expect.arrayContaining(["--expect-total", "400.00", "--max-total", "450.00"]));
+  });
+
+  describe("moneyArg", () => {
+    it("forwards strings verbatim (trimmed) — exact passthrough, no float round-trip", () => {
+      expect(moneyArg("339.10")).toBe("339.10");
+      expect(moneyArg(" 2418.60 ")).toBe("2418.60");
+    });
+
+    it("renders numbers with toFixed(2), recovering intended cents from float artifacts", () => {
+      expect(moneyArg(339.1)).toBe("339.10");
+      expect(moneyArg(100.1 + 0.2)).toBe("100.30"); // String() would emit 100.30000000000000004
+      expect(moneyArg(400)).toBe("400.00");
+    });
+
+    it("book schema accepts string money and forwards it verbatim", () => {
+      const args = buildBookArgs({ plan_id: "p", expect_total: "1297.06", max_total: "1300.00" });
+      expect(args).toEqual(expect.arrayContaining(["--expect-total", "1297.06", "--max-total", "1300.00"]));
+    });
   });
 
   it("agent_docs is the ONLY builder without --json", () => {

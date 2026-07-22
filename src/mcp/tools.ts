@@ -60,6 +60,11 @@ function bool(args: string[], name: string, value: boolean | undefined): void {
 // Common timeouts (ms). Search + async polling are slow; reads are quick.
 const T = { quick: 30_000, short: 60_000, medium: 120_000, search: 300_000 } as const;
 
+// Money inputs accept string OR number: strings forward verbatim (exact, no
+// float round-tripping); numbers are rendered via moneyArg's toFixed(2). See
+// moneyArg for the full rationale.
+const money = z.union([z.number(), z.string()]);
+
 // ── argv builders (pure, exported for table tests) ──────────────────────────
 
 export function buildDoctorArgs(): string[] {
@@ -155,17 +160,32 @@ export function buildQuoteArgs(i: { plan_id: string }): string[] {
   return ["quote", i.plan_id, "--json"];
 }
 
-export function buildBookDryRunArgs(i: { plan_id: string; expect_total?: number }): string[] {
+/**
+ * Render a money amount for the CLI's strict `parseMoney` (`^\d+(\.\d{1,2})?$`).
+ *
+ * Strings are forwarded verbatim (trimmed) so hosts can pass the exact value
+ * they read from `book_dry_run` output with zero float round-tripping. Numbers
+ * are rendered with `toFixed(2)`: a bare `String()` on a float that went
+ * through host-side arithmetic (e.g. 100.30000000000000004) fails the CLI's
+ * regex — fail-closed, but needlessly. `toFixed(2)` recovers the intended
+ * cents; if the result still isn't a valid money literal (huge numbers →
+ * exponent form), the CLI's own VALIDATION error passes through unchanged.
+ */
+export function moneyArg(v: number | string): string {
+  return typeof v === "string" ? v.trim() : v.toFixed(2);
+}
+
+export function buildBookDryRunArgs(i: { plan_id: string; expect_total?: number | string }): string[] {
   const args = ["book", i.plan_id, "--dry-run"];
-  if (i.expect_total !== undefined) args.push("--expect-total", String(i.expect_total));
+  if (i.expect_total !== undefined) args.push("--expect-total", moneyArg(i.expect_total));
   args.push("--json");
   return args;
 }
 
 export interface BookInput {
   plan_id: string;
-  expect_total: number;
-  max_total?: number;
+  expect_total: number | string;
+  max_total?: number | string;
   validate?: boolean;
   only_bookable?: boolean;
   types?: string[];
@@ -179,8 +199,8 @@ export interface BookInput {
 // would reject violates the "CLI surface IS the contract" invariant, so it's out
 // of v1 — reintroduce here only once the CLI actually accepts it.
 export function buildBookArgs(i: BookInput): string[] {
-  const args = ["book", i.plan_id, "--expect-total", String(i.expect_total)];
-  if (i.max_total !== undefined) args.push("--max-total", String(i.max_total));
+  const args = ["book", i.plan_id, "--expect-total", moneyArg(i.expect_total)];
+  if (i.max_total !== undefined) args.push("--max-total", moneyArg(i.max_total));
   bool(args, "--validate", i.validate);
   bool(args, "--only-bookable", i.only_bookable);
   if (i.types && i.types.length > 0) args.push("--types", i.types.join(","));
@@ -367,7 +387,7 @@ export const TOOLS: ToolDef[] = [
     timeoutMs: T.medium,
     inputSchema: {
       plan_id: z.string().describe("Trip plan id."),
-      expect_total: z.number().optional().describe("Optional gate to pre-verify (dollars, e.g. 339.10). Not rounded."),
+      expect_total: money.optional().describe("Optional gate to pre-verify (dollars, e.g. 339.10 or \"339.10\"). Pass the exact string from book_dry_run output when possible."),
     },
     buildArgs: (i) => buildBookDryRunArgs(i),
   }),
@@ -379,8 +399,8 @@ export const TOOLS: ToolDef[] = [
     timeoutMs: T.medium,
     inputSchema: {
       plan_id: z.string().describe("Trip plan id."),
-      expect_total: z.number().describe("REQUIRED price gate: exact chargeable subtotal in dollars (e.g. 339.10). Not rounded."),
-      max_total: z.number().optional().describe("Alternative/added cap gate: fail unless chargeable ≤ this."),
+      expect_total: money.describe("REQUIRED price gate: exact chargeable subtotal in dollars (e.g. 339.10 or \"339.10\"). Pass the exact string from book_dry_run output when possible."),
+      max_total: money.optional().describe("Alternative/added cap gate: fail unless chargeable ≤ this."),
       validate: z.boolean().optional().describe("Fail with BOOKING_BLOCKED if any cart item is non-bookable."),
       only_bookable: z.boolean().optional().describe("Restrict checkout to bookable items (server-side via itemIds)."),
       types: z.array(z.string()).optional().describe("CartItemType filter (e.g. [\"Activity\",\"Hotel\"]) — narrows the charged set server-side."),
