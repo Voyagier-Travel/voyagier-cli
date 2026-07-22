@@ -50,6 +50,9 @@ function ensureConfigDir(): void {
     // 0o700: the dir holds credentials/state — keep it owner-only (L1).
     mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   }
+  // L1: `mode` only applies on creation — correct a pre-existing loose-perm
+  // dir too (same correct-after pattern as the 0600 file chmods).
+  chmodSync(CONFIG_DIR, 0o700);
 }
 
 /**

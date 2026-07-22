@@ -91,6 +91,20 @@ describe("state", () => {
       saveSearchState(MOCK_STATE);
       expect(statSync(STATE_FILE).mode & 0o777).toBe(0o600);
     });
+
+    it("returns null for a structurally invalid state file (L5 shape guard)", () => {
+      // Valid JSON, wrong shape — a tampered/malformed file must degrade to
+      // "no state", never feed junk ids into GraphQL variables.
+      writeFileSync(STATE_FILE, JSON.stringify({ tripPlanId: 123, results: "nope" }), { mode: 0o600 });
+      expect(loadSearchState()).toBeNull();
+      // Not a JSON syntax error — the file is left in place for inspection.
+      expect(existsSync(STATE_FILE)).toBe(true);
+    });
+
+    it("returns null when required string ids are missing (L5 shape guard)", () => {
+      writeFileSync(STATE_FILE, JSON.stringify({ results: [] }), { mode: 0o600 });
+      expect(loadSearchState()).toBeNull();
+    });
   });
 
   describe("clearSearchState", () => {

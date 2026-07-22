@@ -78,6 +78,17 @@ describe("config", () => {
       expect(statSync(credFile).mode & 0o777).toBe(0o600);
     });
 
+    it("corrects a pre-existing loose-perm (0755) config dir to 0700 (L1)", () => {
+      // `mode` on mkdirSync only applies at creation — a dir left group/world
+      // readable by an older version must be tightened on the next save.
+      mkdirSync(CONFIG_DIR, { recursive: true });
+      chmodSync(CONFIG_DIR, 0o755); // defeat umask so the pre-state is truly 0755
+      expect(statSync(CONFIG_DIR).mode & 0o777).toBe(0o755);
+
+      saveCredentials("tok", "https://example.com");
+      expect(statSync(CONFIG_DIR).mode & 0o777).toBe(0o700);
+    });
+
     it("should return null when credentials file doesn't exist", () => {
       expect(loadCredentials()).toBeNull();
     });

@@ -56,6 +56,7 @@ function saveTelemetryConfig(config: TelemetryConfig): void {
   // 0o700 dir + 0o600 file, chmod after write to correct pre-existing loose
   // perms (L1/L2).
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  chmodSync(CONFIG_DIR, 0o700); // L1: correct a pre-existing loose-perm dir
   writeFileSync(TELEMETRY_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
   chmodSync(TELEMETRY_FILE, 0o600);
 }

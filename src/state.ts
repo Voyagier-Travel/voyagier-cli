@@ -53,6 +53,7 @@ const DEFAULT_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 export function saveSearchState(state: SearchState): void {
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  chmodSync(CONFIG_DIR, 0o700); // L1: correct a pre-existing loose-perm dir
   writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
   chmodSync(STATE_FILE, 0o600);
 }
@@ -102,6 +103,7 @@ export function isSearchStateStale(state: SearchState, maxAgeMs = DEFAULT_MAX_AG
 
 export function saveOptionsState(state: OptionsState): void {
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  chmodSync(CONFIG_DIR, 0o700); // L1: correct a pre-existing loose-perm dir
   writeFileSync(OPTIONS_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
   chmodSync(OPTIONS_FILE, 0o600);
 }
