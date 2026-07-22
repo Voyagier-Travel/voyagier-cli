@@ -7,6 +7,8 @@ import {
   CREATE_TRIP_PLAN_BASIC,
   CREATE_TRAVELLER_BRIEF,
   GET_TRAVELLERS_BRIEF,
+  LIST_TRIP_PLAN_GOALS,
+  DELETE_TRIP_PLAN_GOAL,
 } from "../queries.js";
 import { validateDate, warnPastDate, validateIata, deriveBaseUrl, shellArg } from "../utils.js";
 import { progress, warn, fatal, jsonOutput } from "../output.js";
@@ -56,6 +58,124 @@ export function parseStops(bookingData?: Record<string, unknown>): number {
   return Infinity;
 }
 
+/** Minimal goal shape needed for shape-flag pruning. */
+export interface PrunableGoal {
+  id: string;
+  name?: string | null;
+  type: string;
+}
+
+export interface ShapeFlags {
+  oneWay: boolean;
+  flightOnly: boolean;
+  hotelOnly: boolean;
+}
+
+/**
+ * Given the default scaffold goal graph and the requested trip shape, compute
+ * which goals to prune. Pure function for testability.
+ *
+ * Rules:
+ *  - --one-way    → the return-leg Flight goal (type Flight, name matching
+ *                   /return/i). The scaffold names it "Return Flights".
+ *  - --flight-only   → every Hotel-type goal (scaffold: "Secure Lodging").
+ *  - --hotel-only → every Flight-type AND FlightJourney-type goal
+ *                   (scaffold: "Outbound Flights", "Return Flights",
+ *                   "Flight Booking Details") — plus nothing else.
+ *
+ * Returns the goals to delete and any warnings (e.g. a shape flag that
+ * matched nothing — server scaffold may have changed; agent should inspect
+ * `plans goals` and prune manually with `plans goal-remove`).
+ */
+export function selectGoalsToPrune(
+  goals: PrunableGoal[],
+  shape: ShapeFlags,
+): { prune: PrunableGoal[]; warnings: string[] } {
+  const prune = new Map<string, PrunableGoal>();
+  const warnings: string[] = [];
+
+  if (shape.oneWay) {
+    const returnGoals = goals.filter(
+      g => g.type === "Flight" && /return/i.test(g.name ?? ""),
+    );
+    if (returnGoals.length === 0) {
+      warnings.push(
+        "--one-way: no return-flight goal found to prune (scaffold may have changed). Inspect `plans goals <planId>` and remove it with `plans goal-remove <goalId> --force`.",
+      );
+    }
+    for (const g of returnGoals) prune.set(g.id, g);
+  }
+
+  if (shape.flightOnly || shape.hotelOnly) {
+    const hotelGoals = goals.filter(g => g.type === "Hotel");
+    if (shape.flightOnly && hotelGoals.length === 0) {
+      warnings.push(
+        "--flight-only: no Hotel goal found to prune (scaffold may have changed). Inspect `plans goals <planId>`.",
+      );
+    }
+    if (shape.flightOnly) {
+      for (const g of hotelGoals) prune.set(g.id, g);
+    }
+  }
+
+  if (shape.hotelOnly) {
+    const flightish = goals.filter(g => g.type === "Flight" || g.type === "FlightJourney");
+    if (flightish.length === 0) {
+      warnings.push(
+        "--hotel-only: no Flight/FlightJourney goals found to prune (scaffold may have changed). Inspect `plans goals <planId>`.",
+      );
+    }
+    for (const g of flightish) prune.set(g.id, g);
+  }
+
+  return { prune: [...prune.values()], warnings };
+}
+
+/**
+ * Validate shape-flag combinations against the other plan-trip options.
+ * Throws VALIDATION on conflicts. Pure for testability.
+ */
+export function validateShapeFlags(opts: {
+  oneWay?: boolean;
+  flightOnly?: boolean;
+  hotelOnly?: boolean;
+  plan?: string;
+  return?: string;
+  hotel?: string;
+  checkin?: string;
+  checkout?: string;
+  to?: string;
+  from?: string;
+  depart?: string;
+}): void {
+  const anyShape = !!(opts.oneWay || opts.flightOnly || opts.hotelOnly);
+  if (!anyShape) return;
+  if (opts.plan) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      "Shape flags (--one-way/--flight-only/--hotel-only) only apply when scaffolding a NEW plan. For an existing plan, prune goals directly: `voyagier plans goals <planId>` then `voyagier plans goal-remove <goalId> --force`.",
+    );
+  }
+  if (opts.oneWay && opts.return) {
+    throw new CliError(CliErrorCode.VALIDATION, "--one-way conflicts with --return. Drop one.");
+  }
+  if (opts.hotelOnly && opts.flightOnly) {
+    throw new CliError(CliErrorCode.VALIDATION, "--hotel-only conflicts with --flight-only. Pick one.");
+  }
+  if (opts.hotelOnly && opts.oneWay) {
+    throw new CliError(CliErrorCode.VALIDATION, "--hotel-only conflicts with --one-way (a hotel-only plan has no flights).");
+  }
+  if (opts.hotelOnly && (opts.to || opts.from || opts.depart || opts.return)) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      "--hotel-only conflicts with flight flags (--from/--to/--depart/--return). A hotel-only plan has no flights.",
+    );
+  }
+  if (opts.flightOnly && (opts.hotel || opts.checkin || opts.checkout)) {
+    throw new CliError(CliErrorCode.VALIDATION, "--flight-only conflicts with hotel flags (--hotel/--checkin/--checkout). Drop one.");
+  }
+}
+
 function parseTravellers(names: string): Array<{ firstName: string; lastName: string }> {
   return names.split(",")
     .map(name => name.trim())
@@ -78,9 +198,20 @@ Examples:
     --from DCA --to Paris --depart <YYYY-MM-DD> --return <YYYY-MM-DD> \\
     --hotel Paris --travellers "John Doe" --json
 
-  # One-way (omit --client to auto-pick if you have exactly one active client):
+  # One-way, no hotel: pass --one-way --flight-only so the scaffold's default
+  # Return Flights + hotel goals are pruned (otherwise they block readiness
+  # and the fare never carts). Omitting --return alone does NOT make the
+  # plan one-way — the default goal graph still expects a return leg.
   voyagier plan-trip --title "London" --from JFK --to London \\
-    --depart <YYYY-MM-DD> --travellers "Jane Smith" --json
+    --depart <YYYY-MM-DD> --one-way --flight-only --travellers "Jane Smith" --json
+
+  # Hotel-only (no flights at all):
+  voyagier plan-trip --title "Nashville Stay" --hotel Nashville \\
+    --checkin <YYYY-MM-DD> --checkout <YYYY-MM-DD> --hotel-only --json
+
+  The default goal graph is a round-trip + hotel TEMPLATE. Prune goals your
+  brief doesn't need — via these shape flags at scaffold time, or any time
+  with: voyagier plans goals <planId>  →  voyagier plans goal-remove <goalId> --force
 
   Then follow the printed next-steps: search → selection-options --wait → select.
   Full agent reference: voyagier agent-docs
@@ -97,6 +228,9 @@ Examples:
     .option("--checkout <date>", "Hotel check-out date (defaults to --return or --depart + 1 day)")
     .option("--guests <n>", "Number of guests (defaults to traveller count)")
     .option("--travellers <names>", "Comma-separated traveller names, e.g. \"John Doe, Jane Doe\"")
+    .option("--one-way", "One-way trip: prune the scaffold's default Return Flights goal (conflicts with --return)")
+    .option("--flight-only", "No lodging: prune the scaffold's default hotel goal (conflicts with --hotel)")
+    .option("--hotel-only", "Lodging only: prune ALL flight goals from the scaffold (conflicts with flight flags)")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
     .action(async (opts) => {
@@ -108,6 +242,9 @@ Examples:
         if (!opts.plan && !opts.title) {
           fatal("--title is required when --plan is not provided.");
         }
+
+        // Validate trip-shape flag combinations early (cheap, no API calls).
+        validateShapeFlags(opts);
 
         // Validate inputs
         if (opts.depart) {
@@ -185,6 +322,47 @@ Examples:
           warn("No travellers on plan — searches may fail without traveller IDs.");
         }
 
+        // ── Trip-shape pruning (VOY-1727) ───────────────────────────────
+        // The scaffold's default goal graph is a round-trip + hotel TEMPLATE.
+        // Un-pruned goals the brief doesn't need are not inert: an unpruned
+        // Return Flights goal blocks one-way inventory fetch AND fare carting;
+        // unpruned hotel/flight goals pin `plan-status` readiness at BLOCKED
+        // forever. Shape flags prune at scaffold time so partial-scope plans
+        // can genuinely reach READY_TO_BOOK.
+        const prunedGoals: PrunableGoal[] = [];
+        const pruneWarnings: string[] = [];
+        const shape: ShapeFlags = {
+          oneWay: !!opts.oneWay,
+          flightOnly: !!opts.flightOnly,
+          hotelOnly: !!opts.hotelOnly,
+        };
+        if (shape.oneWay || shape.flightOnly || shape.hotelOnly) {
+          if (!json && !agent) progress("Pruning goals to match trip shape...");
+          const goalsData = await graphql<{ tripPlanGoals: PrunableGoal[] }>(
+            LIST_TRIP_PLAN_GOALS,
+            { tripPlanId: plan.id },
+          );
+          const { prune, warnings } = selectGoalsToPrune(goalsData.tripPlanGoals ?? [], shape);
+          pruneWarnings.push(...warnings);
+          for (const g of prune) {
+            try {
+              const del = await graphql<{ deleteTripPlanGoal: boolean }>(
+                DELETE_TRIP_PLAN_GOAL,
+                { id: g.id },
+              );
+              if (del.deleteTripPlanGoal === true) {
+                prunedGoals.push(g);
+              } else {
+                pruneWarnings.push(`Server declined to delete goal "${g.name ?? g.id}" (${g.type}). Remove it manually: voyagier plans goal-remove ${g.id} --force`);
+              }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              pruneWarnings.push(`Failed to delete goal "${g.name ?? g.id}" (${g.type}): ${message}. Remove it manually: voyagier plans goal-remove ${g.id} --force`);
+            }
+          }
+          for (const w of pruneWarnings) warn(w);
+        }
+
         // ── Demoted to scaffold (VOY-1414) ──────────────────────────────
         // plan-trip no longer auto-searches/auto-selects through the deleted
         // flight/sub-selection mutations. In the Goals/Blueprint model the
@@ -219,14 +397,27 @@ Examples:
         nextSteps.push(`voyagier selection-options <selectionId> --wait --json   # poll options for a selection`);
         nextSteps.push(`voyagier select --selection-id <id> --option-id <id>   # choose an option`);
 
+        const shapeLabels = [
+          shape.oneWay ? "one-way" : null,
+          shape.flightOnly ? "flight-only" : null,
+          shape.hotelOnly ? "hotel-only" : null,
+        ].filter((s): s is string => s !== null);
+
         const result = {
           ok: true,
           tripPlanId: plan.id,
           title: plan.title,
           travellerIds,
           scaffolded: true,
-          note: "plan-trip creates a starting plan + default goal graph; compose the trip with the primitives below.",
+          note: "plan-trip creates a starting plan + default goal graph (a round-trip + hotel TEMPLATE); compose the trip with the primitives below. Prune goals your brief doesn't need — shape flags (--one-way/--flight-only/--hotel-only) at scaffold time, or `plans goal-remove <goalId> --force` any time.",
           url: planUrl,
+          ...(shapeLabels.length > 0
+            ? {
+                shape: shapeLabels,
+                prunedGoals: prunedGoals.map(g => ({ id: g.id, name: g.name ?? null, type: g.type })),
+                ...(pruneWarnings.length > 0 ? { pruneWarnings } : {}),
+              }
+            : {}),
           nextSteps,
         };
 
@@ -240,6 +431,9 @@ Examples:
             "",
             `Plan ID: \`${plan.id}\``,
             `👉 ${planUrl}`,
+            ...(prunedGoals.length > 0
+              ? ["", `**Shape:** ${shapeLabels.join(" + ")} — pruned ${prunedGoals.length} default goal(s): ${prunedGoals.map(g => g.name ?? g.id).join(", ")}`]
+              : []),
             "",
             "**Compose the trip:**",
             ...nextSteps.map((s) => `- \`${s}\``),
@@ -250,6 +444,9 @@ Examples:
 
         console.log(chalk.green(`\n✓ Plan ready: ${plan.title}`));
         console.log(chalk.dim(`  ${plan.id}`));
+        if (prunedGoals.length > 0) {
+          console.log(chalk.dim(`  shape: ${shapeLabels.join(" + ")} — pruned ${prunedGoals.map(g => g.name ?? g.id).join(", ")}`));
+        }
         console.log(chalk.bold("\nCompose the trip:"));
         for (const s of nextSteps) console.log(`  ${chalk.cyan(s)}`);
         console.log(chalk.dim(`\n  Plan: ${planUrl}`));
