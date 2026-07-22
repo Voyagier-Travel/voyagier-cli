@@ -1,6 +1,6 @@
 import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals";
 import { Command } from "commander";
-import { CliErrorCode } from "../errors.js";
+import { CliError, CliErrorCode } from "../errors.js";
 // config.js is NOT mocked — it writes to the sandboxed VOYAGIER_CONFIG_DIR set by
 // test/setup-env.ts, so we exercise the real credential/profile persistence and
 // assert on it via the same config API auth.ts uses.
@@ -11,6 +11,7 @@ import {
   credentialsExist,
   getUserContext,
   getApiUrl,
+  loadCredentials,
 } from "../config.js";
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
@@ -92,6 +93,32 @@ function setInteractive(on: boolean): void {
   if (on) delete process.env.CI;
 }
 
+// `set-token -` reads via `for await (const chunk of stdin)`, where `stdin` is
+// the `process.stdin` object captured by auth.ts's `import { stdin } from
+// "process"`. Overriding its async iterator lets us feed scripted bytes without
+// a real pipe. Returns a restore fn.
+function mockStdin(data: string): () => void {
+  const prev = Object.getOwnPropertyDescriptor(process.stdin, Symbol.asyncIterator);
+  Object.defineProperty(process.stdin, Symbol.asyncIterator, {
+    configurable: true,
+    value: function () {
+      const chunks = [Buffer.from(data, "utf-8")];
+      let i = 0;
+      return {
+        next: async () =>
+          i < chunks.length ? { value: chunks[i++], done: false } : { value: undefined, done: true },
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+    },
+  });
+  return () => {
+    if (prev) Object.defineProperty(process.stdin, Symbol.asyncIterator, prev);
+    else delete (process.stdin as unknown as Record<symbol, unknown>)[Symbol.asyncIterator];
+  };
+}
+
 beforeEach(() => {
   mockGraphql.mockReset();
   mockOpenBrowser.mockReset();
@@ -132,6 +159,38 @@ describe("auth set-token", () => {
   it("defaults the URL to the prod API when --url is omitted", async () => {
     await buildProgram().parseAsync(["node", "v", "auth", "set-token", TEST_TOKEN]);
     expect(getApiUrl()).toBe("https://travel.voyagier.com/api");
+  });
+
+  it("set-token -: reads the token from stdin, trims it, and saves it (M4)", async () => {
+    // Leading/trailing whitespace + trailing newline must be stripped so the
+    // saved token matches what was piped.
+    const restore = mockStdin("  voy_pat_piped123\n");
+    try {
+      await buildProgram().parseAsync([
+        "node", "v", "auth", "set-token", "-", "--url", "https://dev.voyagier.com/api",
+      ]);
+    } finally {
+      restore();
+    }
+    expect(credentialsExist()).toBe(true);
+    expect(loadCredentials()?.token).toBe("voy_pat_piped123");
+    expect(getApiUrl()).toBe("https://dev.voyagier.com/api");
+  });
+
+  it("set-token -: rejects empty/whitespace-only stdin with a VALIDATION error (M4)", async () => {
+    const restore = mockStdin("   \n");
+    let caught: unknown;
+    try {
+      await buildProgram().parseAsync(["node", "v", "auth", "set-token", "-"]);
+    } catch (err) {
+      caught = err;
+    } finally {
+      restore();
+    }
+    expect(caught).toBeInstanceOf(CliError);
+    expect((caught as CliError).code).toBe(CliErrorCode.VALIDATION);
+    expect((caught as CliError).message).toMatch(/No token received on stdin/);
+    expect(credentialsExist()).toBe(false);
   });
 });
 

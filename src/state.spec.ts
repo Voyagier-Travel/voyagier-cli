@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { existsSync, unlinkSync, writeFileSync, readFileSync } from "fs";
+import { existsSync, unlinkSync, writeFileSync, readFileSync, statSync, chmodSync } from "fs";
 import { join } from "path";
 import { saveSearchState, loadSearchState, clearSearchState, isSearchStateStale, SearchState, saveOptionsState, loadOptionsState, clearOptionsState } from "./state.js";
 import { CONFIG_DIR } from "./config.js";
@@ -74,6 +74,22 @@ describe("state", () => {
       saveSearchState(rtState);
       const loaded = loadSearchState();
       expect(loaded?.awaitingReturn).toBe(true);
+    });
+
+    it("writes the state file 0600", () => {
+      saveSearchState(MOCK_STATE);
+      expect(statSync(STATE_FILE).mode & 0o777).toBe(0o600);
+    });
+
+    it("corrects a pre-existing loose-perm (0644) state file to 0600 (L2)", () => {
+      // The state file lives beside the token; a world-readable one left by an
+      // older version must be tightened on the next save.
+      writeFileSync(STATE_FILE, "{}", { mode: 0o644 });
+      chmodSync(STATE_FILE, 0o644); // defeat umask so the pre-state is truly 0644
+      expect(statSync(STATE_FILE).mode & 0o777).toBe(0o644);
+
+      saveSearchState(MOCK_STATE);
+      expect(statSync(STATE_FILE).mode & 0o777).toBe(0o600);
     });
   });
 
