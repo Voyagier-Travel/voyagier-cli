@@ -185,7 +185,7 @@ describe("graphql", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(CliError);
       expect((err as CliError).code).toBe(CliErrorCode.PERMISSION_DENIED);
-      expect((err as CliError).message).toContain("the id does not exist");
+      expect((err as CliError).message).toContain("the requested resource does not exist");
     }
   });
 

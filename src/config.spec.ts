@@ -1,7 +1,7 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync, chmodSync } from "fs";
 import { join } from "path";
-import { loadCredentials, saveCredentials, clearCredentials, credentialsExist, getToken, getApiUrl, CONFIG_DIR, saveUserContext, getUserContext, getHomeAirports, getPreferredCabin, assertSecureApiUrl } from "./config.js";
+import { loadCredentials, saveCredentials, clearCredentials, credentialsExist, getToken, getApiUrl, CONFIG_DIR, saveUserContext, getUserContext, getHomeAirports, getPreferredCabin, assertSecureApiUrl, resetEnvUrlWarningForTests } from "./config.js";
 import { CliError, CliErrorCode } from "./errors.js";
 
 const credFile = join(CONFIG_DIR, "credentials.json");
@@ -107,9 +107,11 @@ describe("config", () => {
       expect(creds?.apiUrl).toBe("https://env-api.com");
     });
 
-    // NOTE: must stay the FIRST no-token+URL scenario in this file — the
-    // warn-once module flag means a later position would see no warning.
     it("ignores VOYAGIER_API_URL without VOYAGIER_TOKEN and warns once on stderr", () => {
+      // Explicit reset makes this order-independent: Jest can't isolate ESM
+      // module registries, so the warn-once flag persists across tests in
+      // this file — reset it instead of relying on test position.
+      resetEnvUrlWarningForTests();
       saveCredentials("file-token", "https://file.example.com");
       process.env.VOYAGIER_API_URL = "https://env-api.com";
       const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
