@@ -1,6 +1,6 @@
 ---
 name: voyagier-cli
-version: 2.5.0
+version: 2.9.0
 description: "Voyagier CLI — search, plan, and book travel for clients. For human advisors and AI agents."
 metadata:
   openclaw:
