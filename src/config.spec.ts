@@ -107,6 +107,8 @@ describe("config", () => {
       expect(creds?.apiUrl).toBe("https://env-api.com");
     });
 
+    // NOTE: must stay the FIRST no-token+URL scenario in this file — the
+    // warn-once module flag means a later position would see no warning.
     it("ignores VOYAGIER_API_URL without VOYAGIER_TOKEN and warns once on stderr", () => {
       saveCredentials("file-token", "https://file.example.com");
       process.env.VOYAGIER_API_URL = "https://env-api.com";
