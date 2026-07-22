@@ -2,7 +2,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../../api.js";
 import { printPlanFooter, getPlanSummary } from "../../plan-footer.js";
-import { validateDate, warnPastDate, formatPrice, formatDateRange } from "../../utils.js";
+import { validateDate, warnPastDate, formatPrice, formatDateRange, shellArg } from "../../utils.js";
 import { fatal, jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
 import { resolveClient } from "../clients.js";
@@ -64,7 +64,7 @@ export function registerCrudCommands(plans: Command): void {
           const dateRange = formatDateRange(plan.startDate, plan.endDate);
           if (dateRange) console.log(chalk.dim(`  Dates: ${dateRange}`));
         }
-        console.log(chalk.dim(`\n  Next: voyagier travellers add --plan ${plan.id} --first <name> --last <name> --type ADULT`));
+        console.log(chalk.dim(`\n  Next: voyagier travellers add --plan ${shellArg(plan.id)} --first <name> --last <name> --type ADULT`));
         await printPlanFooter(plan.id);
       } catch (err) {
         if (err instanceof CliError) throw err;

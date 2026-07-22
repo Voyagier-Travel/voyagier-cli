@@ -20,7 +20,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
-import { parsePositiveInt, parseNonNegativeInt, parseFloatStrict, escapeMdTableCell, validateIata } from "../utils.js";
+import { parsePositiveInt, parseNonNegativeInt, parseFloatStrict, escapeMdTableCell, validateIata, shellArg } from "../utils.js";
 import {
   SEARCH_PLACES,
   SEARCH_EXTERNAL_PLACES,
@@ -483,7 +483,7 @@ export function registerPlacesCommands(program: Command): void {
         if (!opts.category) {
           throw new CliError(
             CliErrorCode.VALIDATION,
-            `--category is required when using --highlighted.\n  Fix: voyagier places list --plan ${planId} --highlighted --category hotel`
+            `--category is required when using --highlighted.\n  Fix: voyagier places list --plan ${shellArg(planId)} --highlighted --category hotel`
           );
         }
         const category = normalizeHighlightCategory(opts.category);

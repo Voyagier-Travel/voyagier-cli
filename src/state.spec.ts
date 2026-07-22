@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
-import { existsSync, unlinkSync, writeFileSync, readFileSync } from "fs";
+import { existsSync, unlinkSync, writeFileSync, readFileSync, statSync, chmodSync } from "fs";
 import { join } from "path";
 import { saveSearchState, loadSearchState, clearSearchState, isSearchStateStale, SearchState, saveOptionsState, loadOptionsState, clearOptionsState } from "./state.js";
 import { CONFIG_DIR } from "./config.js";
@@ -74,6 +74,48 @@ describe("state", () => {
       saveSearchState(rtState);
       const loaded = loadSearchState();
       expect(loaded?.awaitingReturn).toBe(true);
+    });
+
+    it("writes the state file 0600", () => {
+      saveSearchState(MOCK_STATE);
+      expect(statSync(STATE_FILE).mode & 0o777).toBe(0o600);
+    });
+
+    it("corrects a pre-existing loose-perm (0644) state file to 0600 (L2)", () => {
+      // The state file lives beside the token; a world-readable one left by an
+      // older version must be tightened on the next save.
+      writeFileSync(STATE_FILE, "{}", { mode: 0o644 });
+      chmodSync(STATE_FILE, 0o644); // defeat umask so the pre-state is truly 0644
+      expect(statSync(STATE_FILE).mode & 0o777).toBe(0o644);
+
+      saveSearchState(MOCK_STATE);
+      expect(statSync(STATE_FILE).mode & 0o777).toBe(0o600);
+    });
+
+    it("returns null for a structurally invalid state file (L5 shape guard)", () => {
+      // Valid JSON, wrong shape — a tampered/malformed file must degrade to
+      // "no state", never feed junk ids into GraphQL variables.
+      writeFileSync(STATE_FILE, JSON.stringify({ tripPlanId: 123, results: "nope" }), { mode: 0o600 });
+      expect(loadSearchState()).toBeNull();
+      // Not a JSON syntax error — the file is left in place for inspection.
+      expect(existsSync(STATE_FILE)).toBe(true);
+    });
+
+    it("returns null when required string ids are missing (L5 shape guard)", () => {
+      writeFileSync(STATE_FILE, JSON.stringify({ results: [] }), { mode: 0o600 });
+      expect(loadSearchState()).toBeNull();
+    });
+
+    it("returns null when type is not a known search type (L5 shape guard)", () => {
+      writeFileSync(STATE_FILE, JSON.stringify({ ...MOCK_STATE, type: "bookings" }), { mode: 0o600 });
+      expect(loadSearchState()).toBeNull();
+    });
+
+    it("returns null when a results entry is missing optionId (L5 shape guard)", () => {
+      // A tampered entry must not reach setSelectedOption with undefined ids.
+      const tampered = { ...MOCK_STATE, results: [{ index: 1, summary: "LAX→NRT" }] };
+      writeFileSync(STATE_FILE, JSON.stringify(tampered), { mode: 0o600 });
+      expect(loadSearchState()).toBeNull();
     });
   });
 
@@ -160,6 +202,12 @@ describe("OptionsState", () => {
     saveOptionsState(testState);
     expect(loadOptionsState()).not.toBeNull();
     clearOptionsState();
+    expect(loadOptionsState()).toBeNull();
+  });
+
+  it("returns null for a structurally invalid options file (L5 shape guard)", () => {
+    const OPTIONS_FILE = join(CONFIG_DIR, "last-options.json");
+    writeFileSync(OPTIONS_FILE, JSON.stringify({ tripPlanId: "plan-abc", results: [{ index: 1 }], timestamp: new Date().toISOString() }), { mode: 0o600 });
     expect(loadOptionsState()).toBeNull();
   });
 

@@ -131,9 +131,27 @@ export function looksLikeAirportCode(location: string): boolean {
 }
 
 /**
- * Open a URL in the user's default browser. Fails silently.
+ * Open a URL in the user's default browser. Throws CliError(VALIDATION) for
+ * malformed or non-http(s) URLs; launch/spawn failures are still silent.
+ *
+ * L4: only http(s) URLs are launched. A hostile API-provided URL (e.g. a
+ * checkoutUrl) using a `file:`/`smb:`/custom scheme could otherwise launch a
+ * local file/UNC handler via the OS opener — refuse anything that isn't
+ * http(s) before spawning.
  */
 export function openBrowser(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new CliError(CliErrorCode.VALIDATION, `Refusing to open malformed URL: "${url}".`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Refusing to open non-web URL: "${url}".\n  Only http:// and https:// links are opened in the browser.`,
+    );
+  }
   try {
     const platform = process.platform;
     if (platform === "darwin") {

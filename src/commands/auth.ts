@@ -64,9 +64,29 @@ function maskNumber(num: string, showLast = 4): string {
   return "••••" + num.slice(-showLast);
 }
 
+/**
+ * L3: frequent-flyer numbers are account-takeover-grade data for airline
+ * programs and are only ever displayed (never sent back to the API). Store them
+ * masked (last 4) so credentials.json never holds a full membership number.
+ */
+function maskFFPrograms(
+  programs: Array<{ airlineCode: string; membershipNumber: string }>,
+): Array<{ airlineCode: string; membershipNumber: string }> {
+  return programs.map((ff) => ({ airlineCode: ff.airlineCode, membershipNumber: maskNumber(ff.membershipNumber) }));
+}
+
 async function prompt(rl: ReturnType<typeof createInterface>, question: string): Promise<string> {
   const answer = await rl.question(question);
   return answer.trim();
+}
+
+/** Read all of stdin as UTF-8 (used by `set-token -`). */
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stdin) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString("utf-8");
 }
 
 interface MeResponse {
@@ -132,9 +152,9 @@ async function fetchAndBuildContext(): Promise<{ ctx: UserContext; me: MeRespons
     ctx.passport = me.passport;
   }
 
-  // Import frequent flyer programs if on profile
+  // Import frequent flyer programs if on profile (stored masked — L3)
   if (me.frequentFlyerPrograms && me.frequentFlyerPrograms.length > 0) {
-    ctx.frequentFlyerPrograms = me.frequentFlyerPrograms;
+    ctx.frequentFlyerPrograms = maskFFPrograms(me.frequentFlyerPrograms);
   }
 
   return { ctx, me };
@@ -185,10 +205,22 @@ export function registerAuthCommands(program: Command): void {
 
   auth
     .command("set-token <token>")
-    .description("Save a personal access token")
+    .description("Save a personal access token (use '-' to read the token from stdin, keeping it out of shell history)")
     .option("--url <apiUrl>", "API base URL", "https://travel.voyagier.com/api")
-    .action((token: string, opts) => {
-      saveCredentials(token, opts.url);
+    .action(async (token: string, opts) => {
+      // M4: `set-token -` reads the token from stdin (trimmed) so scripts can
+      // pipe it in without it landing in argv (shell history / `ps`).
+      let tokenValue = token;
+      if (token === "-") {
+        tokenValue = (await readStdin()).trim();
+        if (!tokenValue) {
+          throw new CliError(
+            CliErrorCode.VALIDATION,
+            'No token received on stdin.\n  Pipe a token: echo "$VOYAGIER_PAT" | voyagier auth set-token -',
+          );
+        }
+      }
+      saveCredentials(tokenValue, opts.url);
       console.log(chalk.green("✓ Token saved."));
       console.log(chalk.dim(`  API URL: ${opts.url}`));
       console.log(chalk.dim("  Next: voyagier auth setup"));
@@ -242,6 +274,8 @@ export function registerAuthCommands(program: Command): void {
           console.log(`  🛂 Passport:   ••••${ctx.passport.last4} (${ctx.passport.issueCountry}, exp ${ctx.passport.expirationDate})`);
         }
         if (ctx.frequentFlyerPrograms && ctx.frequentFlyerPrograms.length > 0) {
+          // Stored masked (L3); re-mask on display too (idempotent) so a
+          // credentials.json written by an older version is masked as well.
           const ffs = ctx.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskNumber(ff.membershipNumber)}`).join(", ");
           console.log(`  ✈️  FF:         ${ffs}`);
         }
@@ -487,7 +521,7 @@ export function registerAuthCommands(program: Command): void {
         if (!opts.skipFf) {
           console.log(`  ✈️  ${chalk.bold("Frequent Flyer Programs")}`);
           if (me.frequentFlyerPrograms && me.frequentFlyerPrograms.length > 0) {
-            userCtx.frequentFlyerPrograms = me.frequentFlyerPrograms;
+            userCtx.frequentFlyerPrograms = maskFFPrograms(me.frequentFlyerPrograms);
             const display = me.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskNumber(ff.membershipNumber)}`).join(", ");
             console.log(chalk.dim(`     On file: ${display}`));
             console.log(chalk.green("     ✓ Imported from profile\n"));
@@ -506,7 +540,9 @@ export function registerAuthCommands(program: Command): void {
                   const airline = parts[0].toUpperCase();
                   const number = parts.slice(1).join("");
                   if (/^[A-Z0-9]{2}$/.test(airline)) {
-                    programs.push({ airlineCode: airline, membershipNumber: number });
+                    // Store masked (L3) — the full number is never persisted
+                    // (the confirmation echo below is masked too).
+                    programs.push({ airlineCode: airline, membershipNumber: maskNumber(number) });
                     console.log(chalk.green(`     ✓ ${airline} ${maskNumber(number)}`));
                   } else {
                     console.log(chalk.yellow(`     ⚠ Invalid airline code "${airline}" (expected 2 characters)`));
@@ -538,6 +574,7 @@ export function registerAuthCommands(program: Command): void {
         if (userCtx.preferredCabin) console.log(`     Cabin:     ${CABIN_LABELS[userCtx.preferredCabin]}`);
         if (userCtx.passport) console.log(`     Passport:  ••••${userCtx.passport.last4} (${userCtx.passport.issueCountry}, exp ${userCtx.passport.expirationDate})`);
         if (userCtx.frequentFlyerPrograms && userCtx.frequentFlyerPrograms.length > 0) {
+          // Stored masked (L3); re-mask on display (idempotent) for legacy files.
           const ffs = userCtx.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskNumber(ff.membershipNumber)}`).join(", ");
           console.log(`     FF:        ${ffs}`);
         }

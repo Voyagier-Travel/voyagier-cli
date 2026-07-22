@@ -248,7 +248,7 @@ export function registerBookCommands(program: Command): void {
         planId: plan.id,
         title: plan.title,
         url: planUrl,
-        urlForCli: `voyagier plans get ${plan.id}`,
+        urlForCli: `voyagier plans get ${shellArg(plan.id)}`,
       };
 
       // Recipe an agent can follow verbatim — must carry the active filters,
@@ -568,7 +568,7 @@ async function showBookingStatus(planId: string, baseUrl: string, json: boolean,
     process.stdout.write(JSON.stringify({
       ok: true,
       data: { checkouts: renamed },
-      planContext: { planId, url: planUrl, urlForCli: `voyagier plans get ${planId}` },
+      planContext: { planId, url: planUrl, urlForCli: `voyagier plans get ${shellArg(planId)}` },
     }, null, 2) + "\n");
     return;
   }
