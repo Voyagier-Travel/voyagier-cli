@@ -66,9 +66,12 @@ const KILL_GRACE_MS = 5000;
  * (non-TTY), so the CLI's spinner/progress code stays silent-safe.
  *
  * Timeout: at `timeoutMs` we SIGTERM the child, then SIGKILL after a 5s grace.
- * The promise resolves only once the child actually exits (bounded by
- * timeoutMs + grace), surfacing a synthetic `{error:true, code:"TIMEOUT"}`
- * envelope on stdout with a non-zero exit code.
+ * The promise resolves only once execFile's callback fires — i.e. when the
+ * child actually exits and its stdio closes. SIGKILL makes that near-certain
+ * shortly after timeoutMs + grace, but it is not a hard upper bound: a child
+ * that can't be reaped (e.g. stuck in uninterruptible I/O) keeps the promise
+ * pending until the OS releases it. On timeout the result carries a synthetic
+ * `{error:true, code:"TIMEOUT"}` envelope on stdout with a non-zero exit code.
  */
 export function runCli(
   args: string[],

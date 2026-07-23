@@ -77,8 +77,8 @@ export function buildCreateClientArgs(i: { email: string; name: string; type?: s
 }
 
 export interface PlanTripInput {
-  client: string;
-  title: string;
+  client?: string;
+  title?: string;
   from?: string;
   to?: string;
   depart?: string;
@@ -254,8 +254,8 @@ export const TOOLS: ToolDef[] = [
       "Scaffold a trip plan: creates the plan + a default goal graph (a round-trip + hotel TEMPLATE) and returns { tripPlanId, travellerIds, nextSteps }. It does NOT search or select — follow nextSteps to compose. Prune goals the brief doesn't need with the shape flags: one_way (drops the Return Flights goal), flight_only (drops the hotel goal), hotel_only (drops ALL flight goals). Omitting return alone does NOT make a plan one-way. Pass travellers as a comma-separated names string to add them inline.",
     timeoutMs: T.medium,
     inputSchema: {
-      client: z.string().describe("Client id, email, or name."),
-      title: z.string().describe("Trip plan title."),
+      client: z.string().optional().describe("Client id, email, or name. Required when creating a plan UNLESS you have exactly one active client (auto-picked); pass it explicitly when in doubt."),
+      title: z.string().optional().describe("Trip plan title. Required when creating a plan; omit in add-to-existing mode (plan provided)."),
       from: z.string().optional().describe("Origin airport code or city (defaults to home airport)."),
       to: z.string().optional().describe("Destination airport code or city."),
       depart: z.string().optional().describe("Departure date (YYYY-MM-DD)."),
@@ -276,7 +276,7 @@ export const TOOLS: ToolDef[] = [
   defineTool({
     name: "add_traveller",
     description:
-      "Add a traveller to a trip plan. Travellers are required before search. Gender and date of birth are required at flight checkout; passport data hard-gates international reserves (set those via the CLI travellers update later).",
+      "Add a traveller to a trip plan. Travellers are required before search. Gender and date of birth are required at flight checkout; passport data hard-gates international reservations (set those via the CLI travellers update later).",
     timeoutMs: T.short,
     inputSchema: {
       plan: z.string().describe("Trip plan id."),

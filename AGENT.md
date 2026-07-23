@@ -160,7 +160,7 @@ looks wrong after a settled pick, apply the tie-breaker: `book --dry-run`.
 ### Traveller requirements for flights
 
 **Gender and date of birth are required at flight checkout** (TSA Secure
-Flight), and **passport data hard-gates international reserves**. Set them
+Flight), and **passport data hard-gates international reservations**. Set them
 early via `travellers add`/`travellers update` (`--gender`, `--dob`,
 `--passport-number`, `--passport-country`, `--passport-nationality`,
 `--passport-expiry`).

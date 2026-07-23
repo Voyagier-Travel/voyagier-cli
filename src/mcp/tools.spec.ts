@@ -85,6 +85,15 @@ describe("argv builders", () => {
     expect(args).not.toContain("--one-way");
   });
 
+  it("plan_trip supports add-to-existing mode: plan only, no client/title (CLI auto-pick + --plan contract)", () => {
+    const args = buildPlanTripArgs({ plan: "pl_42", hotel: "Kyoto", checkin: "2026-09-15", checkout: "2026-09-18" });
+    expect(args).toEqual([
+      "plan-trip", "--hotel", "Kyoto", "--checkin", "2026-09-15", "--checkout", "2026-09-18", "--plan", "pl_42", "--json",
+    ]);
+    expect(args).not.toContain("--client");
+    expect(args).not.toContain("--title");
+  });
+
   it("plan_trip renders numeric guests with String()", () => {
     const args = buildPlanTripArgs({ client: "c", title: "t", guests: 3 });
     const idx = args.indexOf("--guests");
