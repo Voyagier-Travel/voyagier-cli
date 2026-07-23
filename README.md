@@ -104,6 +104,68 @@ npx @voyagier/cli agent-docs   # zero-install variant
 
 Or read [AGENT.md](./AGENT.md) directly. It covers the goal-graph compose model, async option fetch, per-command JSON shapes, the error code table, and the bookability matrix.
 
+## MCP server
+
+The CLI ships an [MCP](https://modelcontextprotocol.io) stdio server that exposes the agent surface as tools, for hosts that speak the Model Context Protocol (Claude Desktop, Cursor, etc.):
+
+```bash
+voyagier mcp          # run the stdio server (JSON-RPC on stdout)
+```
+
+It's a thin adapter: each tool call self-spawns the CLI as a subprocess with `--json` (the one exception is `agent_docs`, which returns the integration guide as plain markdown), so the tools inherit the exact same envelopes, uniform error codes, and price-gated checkout as the CLI itself — zero behaviour drift. Authentication flows through the environment (`VOYAGIER_TOKEN` / `VOYAGIER_API_URL`); the MCP layer never sees your token.
+
+**Claude Desktop** (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "voyagier": {
+      "command": "npx",
+      "args": ["-y", "@voyagier/cli", "mcp"],
+      "env": { "VOYAGIER_TOKEN": "voy_pat_xxxxx" }
+    }
+  }
+}
+```
+
+**Cursor** (`.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "voyagier": {
+      "command": "npx",
+      "args": ["-y", "@voyagier/cli", "mcp"],
+      "env": { "VOYAGIER_TOKEN": "voy_pat_xxxxx" }
+    }
+  }
+}
+```
+
+### Tools
+
+| Tool | Maps to | Notes |
+|------|---------|-------|
+| `doctor` | `doctor` | Health check: auth, schema, state, version. |
+| `create_client` | `clients upsert` | Idempotent by email; a plan needs a client. |
+| `plan_trip` | `plan-trip` | Scaffold a plan + goal graph; returns `nextSteps`. |
+| `add_traveller` | `travellers add` | Required before search. |
+| `search_flights` | `search flights` | Async — `optionCount 0` means poll options. |
+| `search_hotels` | `search hotels` | Prices are stay totals, not nightly. |
+| `search_activities` | `search activities` | Bookable per slot. |
+| `get_selection_options` | `selection-options` | `wait` (default true) polls the async fetch to completion. |
+| `select_option` | `select` | Explicit-id mode; `wait` (default true) settles readiness. |
+| `plan_status` | `plan-status` | One-call "what's left before booking?". |
+| `quote` | `quote` | Advisor offer snapshot + acceptance block. |
+| `book_dry_run` | `book --dry-run` | Chargeable subtotal + blockers; no gate needed. |
+| `book` | `book` | **Requires `expect_total`** — price hard-gate, fails closed with `PRICE_CHANGED`. |
+| `booking_status` | `book --status` | Post-payment confirmation lookup. |
+| `agent_docs` | `agent-docs` | The full agent reference as markdown. |
+
+> **`send` is intentionally excluded from the MCP surface.** `voyagier send` emails a real client an invite link and is not idempotent — every call re-emails. That side effect is too consequential to expose behind an autonomous tool call; use the CLI directly (`voyagier send <planId> --yes`) when you mean it. The MCP close path is `quote` → `book`.
+>
+> **`book` cannot be retried safely.** Unpaid Stripe sessions are invisible to the pre-flight, so a retry mints a duplicate payable link. Treat a successful `book` as terminal.
+
 ## Environment Variables
 
 | Variable | Description |
