@@ -292,6 +292,8 @@ There is no client-list cache file today; `voyagier clients list` always hits th
 
 ## Command Reference (v2 surface)
 
+Every command that takes a trip plan id accepts it either positionally (`voyagier plan-status <planId>`) or via `--plan <id>` — the two forms are interchangeable; supplying both with different values is an error.
+
 ### Auth
 ```bash
 voyagier auth set-token <PAT>      # save Personal Access Token

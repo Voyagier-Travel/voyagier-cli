@@ -59,6 +59,9 @@ jest.unstable_mockModule("../utils.js", () => ({
   formatPrice: jest.fn().mockImplementation((p: unknown) => `$${p}`),
   shellArg: jest.fn().mockImplementation((v: unknown) => String(v ?? "")),
   subSelectionLabel: jest.fn().mockReturnValue("cabin class"),
+  // select.js imports plan-status.js, which now imports resolvePlanId — keep it
+  // exported so the mocked module links.
+  resolvePlanId: (positional: string | undefined, opts: { plan?: string }): string | undefined => positional ?? opts?.plan,
 }));
 
 // ── Dynamic imports after mocks ────────────────────────────────────────────

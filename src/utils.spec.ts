@@ -18,8 +18,47 @@ import {
   parseFloatStrict,
   formatNullableBool,
   escapeMdTableCell,
+  resolvePlanId,
 } from "./utils.js";
 import { CliError, CliErrorCode } from "./errors.js";
+
+describe("resolvePlanId", () => {
+  it("positional only → returns the positional", () => {
+    expect(resolvePlanId("plan-1", {}, "plan-status")).toBe("plan-1");
+  });
+
+  it("--plan only → returns the flag (positional optional)", () => {
+    expect(resolvePlanId(undefined, { plan: "plan-2" }, "plan-status")).toBe("plan-2");
+  });
+
+  it("both provided and identical → proceeds, returns the shared value", () => {
+    expect(resolvePlanId("plan-3", { plan: "plan-3" }, "cart")).toBe("plan-3");
+  });
+
+  it("both provided and different → INVALID_INPUT with the exact conflict message", () => {
+    try {
+      resolvePlanId("plan-a", { plan: "plan-b" }, "cart");
+      throw new Error("expected resolvePlanId to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.INVALID_INPUT);
+      expect((err as CliError).message).toBe("Conflicting plan ids: positional plan-a vs --plan plan-b.");
+    }
+  });
+
+  it("neither provided → INVALID_INPUT naming both the positional and --plan forms", () => {
+    try {
+      resolvePlanId(undefined, {}, "itinerary");
+      throw new Error("expected resolvePlanId to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.INVALID_INPUT);
+      expect((err as CliError).message).toContain("plan id is required");
+      expect((err as CliError).message).toContain("voyagier itinerary <planId>");
+      expect((err as CliError).message).toContain("--plan <id>");
+    }
+  });
+});
 
 describe("extractFlightToken", () => {
   it("should return undefined when bookingData is undefined", () => {

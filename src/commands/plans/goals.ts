@@ -36,7 +36,7 @@ import chalk from "chalk";
 import { graphql } from "../../api.js";
 import { jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
-import { shellArg } from "../../utils.js";
+import { shellArg, resolvePlanId } from "../../utils.js";
 import {
   LIST_TRIP_PLAN_GOALS,
   LIST_TRIP_PLAN_GOALS_DEEP,
@@ -326,11 +326,13 @@ function formatGoalLine(g: TripPlanGoalSummary): string {
 export function registerGoalCommands(plans: Command): void {
   // ---------- LIST ----------
   plans
-    .command("goals <planId>")
+    .command("goals [planId]")
     .description("List goals for a trip plan, sorted by sortOrder")
     .option("--tree", "Include nested items + selections + travellers")
     .option("--json", "Output raw JSON")
-    .action(async (planId: string, opts) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (planIdInput: string | undefined, opts) => {
+      const planId = resolvePlanId(planIdInput, opts, "plans goals");
       try {
         const query = opts.tree ? LIST_TRIP_PLAN_GOALS_DEEP : LIST_TRIP_PLAN_GOALS;
         const data = await graphql<{ tripPlanGoals: TripPlanGoalDeep[] }>(query, { tripPlanId: planId });
@@ -456,7 +458,7 @@ export function registerGoalCommands(plans: Command): void {
 
   // ---------- ADD (bare) ----------
   plans
-    .command("goal-add <planId>")
+    .command("goal-add [planId]")
     .description("Add a goal to a trip plan (no item/selection)")
     .requiredOption("--type <selectionType>", "Selection type (e.g., Hotel, Flight, Activity)")
     .option("--name <name>", "Goal name (required by API; CLI defaults to '<type> goal' if omitted)")
@@ -467,7 +469,9 @@ export function registerGoalCommands(plans: Command): void {
     .option("--travellers <ids>", "Comma-separated traveller ids to assign after create")
     .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
-    .action(async (planId: string, opts) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (planIdInput: string | undefined, opts) => {
+      const planId = resolvePlanId(planIdInput, opts, "plans goal-add");
       try {
         const type = normalizeSelectionType(opts.type);
         // CreateTripPlanGoalInput.name is required by the schema; default if missing.
@@ -570,7 +574,7 @@ export function registerGoalCommands(plans: Command): void {
 
   // ---------- ADD WITH SELECTION ----------
   plans
-    .command("goal-add-with-selection <planId>")
+    .command("goal-add-with-selection [planId]")
     .description("Add a goal with an initial item + selection in one call")
     .requiredOption("--type <selectionType>", "Selection type (e.g., Hotel, Flight, Activity)")
     .option("--name <name>", "Goal name (server may auto-name from selection if omitted)")
@@ -589,7 +593,9 @@ export function registerGoalCommands(plans: Command): void {
     .option("--sort-order <n>", "Explicit sort order (mutually exclusive with --place-before, --place-after)")
     .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
-    .action(async (planId: string, opts) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (planIdInput: string | undefined, opts) => {
+      const planId = resolvePlanId(planIdInput, opts, "plans goal-add-with-selection");
       try {
         const type = normalizeSelectionType(opts.type);
         // --place-before, --place-after, and --sort-order are three different
@@ -940,12 +946,14 @@ export function registerGoalCommands(plans: Command): void {
 
   // ---------- REORDER (synthesized, non-atomic) ----------
   plans
-    .command("goal-reorder <planId>")
+    .command("goal-reorder [planId]")
     .description("Reorder goals on a plan (NON-ATOMIC: synthesizes parallel updateTripPlanGoal calls)")
     .requiredOption("--order <ids>", "Comma-separated goal ids in desired order (must be every goal exactly once)")
     .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
-    .action(async (planId: string, opts) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (planIdInput: string | undefined, opts) => {
+      const planId = resolvePlanId(planIdInput, opts, "plans goal-reorder");
       try {
         // Order must preserve duplicates so we can detect them in computeReorderUpdates.
         const orderIds = parseCsvIds(opts.order, "--order", { dedupe: false });

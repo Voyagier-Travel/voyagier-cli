@@ -9,7 +9,7 @@ import chalk from "chalk";
 import { graphql } from "../../api.js";
 import { CliError, CliErrorCode } from "../../errors.js";
 import { getApiUrl } from "../../config.js";
-import { formatPrice, deriveBaseUrl, shellArg } from "../../utils.js";
+import { formatPrice, deriveBaseUrl, shellArg, resolvePlanId } from "../../utils.js";
 import { GET_CART_V2 } from "../../queries.js";
 import {
   buildBookabilityIndex,
@@ -20,11 +20,13 @@ import {
 
 export function registerBookableCommand(plans: Command): void {
   plans
-    .command("bookable <planId>")
+    .command("bookable [planId]")
     .description("Show which cart items are bookable through Voyagier checkout")
     .option("--json", "Output structured JSON envelope")
     .option("--agent", "Output plain markdown for AI agents")
-    .action(async (planId: string, opts: { json?: boolean; agent?: boolean }) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (planIdInput: string | undefined, opts: { json?: boolean; agent?: boolean; plan?: string }) => {
+      const planId = resolvePlanId(planIdInput, opts, "plans bookable");
       const baseUrl = deriveBaseUrl(getApiUrl());
       const planUrl = `${baseUrl}/plans/${planId}`;
 

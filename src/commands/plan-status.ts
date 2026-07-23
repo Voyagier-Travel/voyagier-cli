@@ -52,7 +52,7 @@ import { graphql } from "../api.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
-import { deriveBaseUrl, formatPrice, shellArg } from "../utils.js";
+import { deriveBaseUrl, formatPrice, shellArg, resolvePlanId } from "../utils.js";
 import { GET_PLAN_STATUS, GET_HOTEL_OPTION_DATA } from "../queries.js";
 import { classifySelection } from "../selection-status.js";
 import {
@@ -1123,14 +1123,16 @@ function renderAgent(s: PlanStatusData, verify?: VerifyResult | { error: string 
 
 export function registerPlanStatusCommand(program: Command): void {
   program
-    .command("plan-status <planId>")
+    .command("plan-status [planId]")
     .description(
       "One-shot readiness: what's left before this plan can book (goals, picks, blockers, next steps)",
     )
     .option("--json", "Output structured JSON envelope")
     .option("--agent", "Output plain markdown for AI agents")
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .option("--verify", "Also run the book --dry-run checkout truth and append a verify section")
-    .action(async (planId: string, opts: { json?: boolean; agent?: boolean; verify?: boolean }) => {
+    .action(async (planIdInput: string | undefined, opts: { json?: boolean; agent?: boolean; verify?: boolean; plan?: string }) => {
+      const planId = resolvePlanId(planIdInput, opts, "plan-status");
       let data: PlanStatusQueryResult;
       try {
         data = await graphql<PlanStatusQueryResult>(GET_PLAN_STATUS, { id: planId });

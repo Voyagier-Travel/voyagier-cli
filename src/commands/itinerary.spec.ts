@@ -34,6 +34,17 @@ jest.unstable_mockModule("../utils.js", () => ({
   deriveBaseUrl: (api: string) => {
     try { const u = new URL(api); u.pathname = ""; return u.origin; } catch { return "https://travel.voyagier.com"; }
   },
+  resolvePlanId: (positional: string | undefined, opts: { plan?: string }, commandName: string): string => {
+    const flag = opts?.plan;
+    if (positional !== undefined && flag !== undefined && positional !== flag) {
+      throw new CliError(CliErrorCode.INVALID_INPUT, `Conflicting plan ids: positional ${positional} vs --plan ${flag}.`);
+    }
+    const resolved = positional ?? flag;
+    if (resolved === undefined) {
+      throw new CliError(CliErrorCode.INVALID_INPUT, `A plan id is required: pass it as the positional argument (voyagier ${commandName} <planId>) or with --plan <id>.`);
+    }
+    return resolved;
+  },
 }));
 
 jest.unstable_mockModule("../config.js", () => ({

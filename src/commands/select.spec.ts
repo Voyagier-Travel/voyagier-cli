@@ -62,6 +62,9 @@ jest.unstable_mockModule("../utils.js", () => ({
   deriveBaseUrl: jest.fn().mockReturnValue("https://app.voyagier.com"),
   formatPrice: jest.fn().mockImplementation((p: unknown) => `$${p}`),
   shellArg: jest.fn().mockImplementation((v: unknown) => String(v ?? "")),
+  // select.js imports plan-status.js (for buildPlanStatus/resolveHotelCodes),
+  // which now imports resolvePlanId — keep it exported so the mock links.
+  resolvePlanId: (positional: string | undefined, opts: { plan?: string }): string | undefined => positional ?? opts?.plan,
 }));
 
 jest.unstable_mockModule("../output.js", () => ({

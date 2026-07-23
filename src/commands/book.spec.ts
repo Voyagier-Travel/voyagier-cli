@@ -34,6 +34,19 @@ jest.unstable_mockModule("../utils.js", () => ({
     const s = String(v);
     return /^[A-Za-z0-9_.,:@/-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
   },
+  // Real semantics: the plan-id conflict/missing rules are under test in the
+  // command-level --plan specs below.
+  resolvePlanId: (positional: string | undefined, opts: { plan?: string }, commandName: string): string => {
+    const flag = opts?.plan;
+    if (positional !== undefined && flag !== undefined && positional !== flag) {
+      throw new CliError(CliErrorCode.INVALID_INPUT, `Conflicting plan ids: positional ${positional} vs --plan ${flag}.`);
+    }
+    const resolved = positional ?? flag;
+    if (resolved === undefined) {
+      throw new CliError(CliErrorCode.INVALID_INPUT, `A plan id is required: pass it as the positional argument (voyagier ${commandName} <planId>) or with --plan <id>.`);
+    }
+    return resolved;
+  },
 }));
 
 let registerBookCommands: (program: Command) => void;

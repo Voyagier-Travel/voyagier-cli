@@ -25,7 +25,7 @@ import { graphql } from "../api.js";
 import { jsonOutput, fatal } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { GET_TRIP_PLAN_EVENTS } from "../queries.js";
-import { validateDate, deriveBaseUrl } from "../utils.js";
+import { validateDate, deriveBaseUrl, resolvePlanId } from "../utils.js";
 import { getApiUrl } from "../config.js";
 
 export interface TripPlanEventLocation {
@@ -174,14 +174,16 @@ function formatEventLine(e: TripPlanEvent, planStart: string | null | undefined)
 
 export function registerItineraryCommand(program: Command): void {
   program
-    .command("itinerary <planId>")
+    .command("itinerary [planId]")
     .description("Show the computed itinerary for a trip plan (sourced from tripPlanEvents)")
     .option("--day <n>", "Filter to a specific day (1-indexed, relative to plan start)")
     .option("--from <date>", "Filter events on or after this date (YYYY-MM-DD)")
     .option("--to <date>", "Filter events on or before this date (YYYY-MM-DD)")
     .option("--type <type>", "Filter by event type (best-effort; reads event.metadata.{type,eventType,selectionType,kind})")
     .option("--json", "Output raw JSON")
-    .action(async (planId: string, opts) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (planIdInput: string | undefined, opts) => {
+      const planId = resolvePlanId(planIdInput, opts, "itinerary");
       // Validate flags
       let dayFilter: number | undefined;
       if (opts.day !== undefined) {

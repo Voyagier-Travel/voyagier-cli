@@ -2,7 +2,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../../api.js";
 import { getApiUrl } from "../../config.js";
-import { deriveBaseUrl, formatDateRange } from "../../utils.js";
+import { deriveBaseUrl, formatDateRange, resolvePlanId } from "../../utils.js";
 import { jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
 import {
@@ -18,13 +18,15 @@ import {
 
 export function registerSharingCommands(plans: Command): void {
   plans
-    .command("share <planId>")
+    .command("share [planId]")
     .description("Invite a collaborator to a trip plan")
     .option("--user <username>", "Username of the person to invite")
     .option("--email <email>", "Email address of the person to invite")
     .option("--role <role>", "Role: viewer, editor, agent", "viewer")
     .option("--json", "Output raw JSON")
-    .action(async (planId: string, opts) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (planIdInput: string | undefined, opts) => {
+      const planId = resolvePlanId(planIdInput, opts, "plans share");
       try {
         if (!opts.user && !opts.email) {
           throw new CliError(CliErrorCode.VALIDATION, "Either --user or --email is required.");
@@ -105,10 +107,12 @@ export function registerSharingCommands(plans: Command): void {
     });
 
   plans
-    .command("collaborators <planId>")
+    .command("collaborators [planId]")
     .description("List collaborators on a trip plan")
     .option("--json", "Output raw JSON")
-    .action(async (planId: string, opts) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (planIdInput: string | undefined, opts) => {
+      const planId = resolvePlanId(planIdInput, opts, "plans collaborators");
       try {
         const data = await graphql<{
           tripPlanCollaborators: Array<{
@@ -152,11 +156,13 @@ export function registerSharingCommands(plans: Command): void {
     });
 
   plans
-    .command("unshare <planId>")
+    .command("unshare [planId]")
     .description("Remove a collaborator from a trip plan")
     .requiredOption("--collaborator-id <id>", "Collaborator ID (from `plans collaborators`)")
     .option("--json", "Output raw JSON")
-    .action(async (planId: string, opts) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (planIdInput: string | undefined, opts) => {
+      const planId = resolvePlanId(planIdInput, opts, "plans unshare");
       try {
         await graphql<{ removeTripPlanCollaborator: boolean }>(
           REMOVE_COLLABORATOR,

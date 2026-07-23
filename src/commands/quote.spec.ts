@@ -202,6 +202,43 @@ describe("quote --json", () => {
   });
 });
 
+describe("quote --plan flag (plan-id harmonization)", () => {
+  it("flag-only invocation reaches the same code path as the positional (identical output)", async () => {
+    routeQuote();
+    await runQuote(["--plan", "plan-1", "--json"]);
+    const flagJson = lastJson();
+    expect(flagJson.ok).toBe(true);
+    expect(flagJson.data.plan.id).toBe("plan-1");
+    expect(flagJson.data.acceptance.command).toBe("voyagier book plan-1 --expect-total 339.10");
+    // The query is keyed on the resolved plan id, exactly as the positional form.
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars).toEqual({ id: "plan-1" });
+  });
+
+  it("positional and --plan agreeing → proceeds normally", async () => {
+    routeQuote();
+    await runQuote(["plan-1", "--plan", "plan-1", "--json"]);
+    expect(lastJson().data.plan.id).toBe("plan-1");
+  });
+
+  it("positional and --plan conflicting → INVALID_INPUT, no query issued", async () => {
+    routeQuote();
+    await expect(runQuote(["plan-a", "--plan", "plan-b", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.INVALID_INPUT,
+      message: "Conflicting plan ids: positional plan-a vs --plan plan-b.",
+    });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("neither positional nor --plan → INVALID_INPUT (plan id required)", async () => {
+    routeQuote();
+    await expect(runQuote(["--json"])).rejects.toMatchObject({
+      code: CliErrorCode.INVALID_INPUT,
+    });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+});
+
 describe("quote human/agent output", () => {
   it("human mode renders items, chargeable total, advisor footer, and both closes", async () => {
     routeQuote();

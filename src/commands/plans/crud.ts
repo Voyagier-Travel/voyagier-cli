@@ -2,7 +2,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../../api.js";
 import { printPlanFooter, getPlanSummary } from "../../plan-footer.js";
-import { validateDate, warnPastDate, formatPrice, formatDateRange, shellArg } from "../../utils.js";
+import { validateDate, warnPastDate, formatPrice, formatDateRange, shellArg, resolvePlanId } from "../../utils.js";
 import { fatal, jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
 import { resolveClient } from "../clients.js";
@@ -174,11 +174,13 @@ export function registerCrudCommands(plans: Command): void {
     });
 
   plans
-    .command("get <id>")
+    .command("get [id]")
     .description("Show trip plan details")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
-    .action(async (id: string, opts) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (idInput: string | undefined, opts) => {
+      const id = resolvePlanId(idInput, opts, "plans get");
       try {
         const data = await graphql<TripPlanDetail>(
           GET_TRIP_PLAN,
@@ -290,11 +292,13 @@ export function registerCrudCommands(plans: Command): void {
     });
 
   plans
-    .command("summary <id>")
+    .command("summary [id]")
     .description("Compact one-screen summary of a trip plan")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
-    .action(async (id: string, opts) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (idInput: string | undefined, opts) => {
+      const id = resolvePlanId(idInput, opts, "plans summary");
       try {
         const data = await graphql<TripPlanDetail>(
           GET_TRIP_PLAN_SUMMARY,
@@ -420,14 +424,16 @@ export function registerCrudCommands(plans: Command): void {
     });
 
   plans
-    .command("update <id>")
+    .command("update [id]")
     .description("Update a trip plan's title, dates, or description")
     .option("--title <title>", "New title")
     .option("--start <date>", "New start date (YYYY-MM-DD)")
     .option("--end <date>", "New end date (YYYY-MM-DD)")
     .option("--description <text>", "New description")
     .option("--json", "Output raw JSON")
-    .action(async (id: string, opts) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (idInput: string | undefined, opts) => {
+      const id = resolvePlanId(idInput, opts, "plans update");
       try {
         if (opts.start) {
           validateDate(opts.start, "--start");
@@ -480,11 +486,13 @@ export function registerCrudCommands(plans: Command): void {
     });
 
   plans
-    .command("delete <id>")
+    .command("delete [id]")
     .description("Delete a trip plan (use --force to confirm)")
     .option("--force", "Required to confirm deletion", false)
     .option("--json", "Output raw JSON")
-    .action(async (id: string, opts) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (idInput: string | undefined, opts) => {
+      const id = resolvePlanId(idInput, opts, "plans delete");
       try {
         // Same confirmation convention as goal-remove: destructive ops take
         // --force. Deleting a plan drops its goals/selections/cart with it.

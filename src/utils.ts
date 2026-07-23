@@ -350,6 +350,42 @@ export function shellArg(value: string | number | null | undefined): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
+// ── Plan-id resolution (v2.11.0) ──
+//
+// Every command that takes a trip plan id accepts it two ways: as the leading
+// positional argument (historical form — byte-identical behavior preserved) or
+// via `--plan <id>`. This single helper enforces the semantics uniformly so no
+// command grows its own copy:
+//   - positional only          → use positional
+//   - --plan only              → use --plan (positional is optional)
+//   - both, identical          → proceed
+//   - both, different          → INVALID_INPUT (conflict)
+//   - neither                  → INVALID_INPUT (required)
+//
+// Throws CliError(INVALID_INPUT); in --json mode index.ts renders the standard
+// error envelope { error, code, message }.
+export function resolvePlanId(
+  positional: string | undefined,
+  opts: { plan?: string },
+  commandName: string,
+): string {
+  const flag = opts.plan;
+  if (positional !== undefined && flag !== undefined && positional !== flag) {
+    throw new CliError(
+      CliErrorCode.INVALID_INPUT,
+      `Conflicting plan ids: positional ${positional} vs --plan ${flag}.`,
+    );
+  }
+  const resolved = positional ?? flag;
+  if (resolved === undefined) {
+    throw new CliError(
+      CliErrorCode.INVALID_INPUT,
+      `A plan id is required: pass it as the positional argument (voyagier ${commandName} <planId>) or with --plan <id>.`,
+    );
+  }
+  return resolved;
+}
+
 // ── Untrusted-content sanitization (VOY-1709) ──
 //
 // API responses carry third-party supplier content (hotel names, option
