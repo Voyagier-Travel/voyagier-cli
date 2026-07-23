@@ -345,11 +345,11 @@ describe("travellers update", () => {
 // ── loyalty programs (flights + hotels) ──────────────────────────────────────
 
 describe("traveller loyalty flags", () => {
-  it("add: parses repeatable --loyalty and --hotel-loyalty into the input", async () => {
+  it("add: parses repeatable --frequent-flyer and --hotel-loyalty into the input", async () => {
     mockGraphql.mockResolvedValueOnce({ createTripPlanTraveller: sampleTraveller });
     await run([
       "add", "--plan", "plan-1", "--first", "John", "--last", "Doe",
-      "--loyalty", "DL:1234567", "--loyalty", "b6:987654",
+      "--frequent-flyer", "DL:1234567", "--frequent-flyer", "b6:987654",
       "--hotel-loyalty", "hi:12345678",
       "--json",
     ]);
@@ -387,20 +387,20 @@ describe("traveller loyalty flags", () => {
     ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
     // air codes may be alphanumeric (B6, 9W) — but not 1-char or 3-char
     await expect(
-      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--loyalty", "DLX:123", "--json"])
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--frequent-flyer", "DLX:123", "--json"])
     ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
   });
 
   it("air member numbers are sent verbatim (airlines issue prefixed/alphanumeric ids)", async () => {
     mockGraphql.mockResolvedValueOnce({ createTripPlanTraveller: sampleTraveller });
-    await run(["add", "--plan", "p", "--first", "J", "--last", "D", "--loyalty", "DL:DL1234567", "--json"]);
+    await run(["add", "--plan", "p", "--first", "J", "--last", "D", "--frequent-flyer", "DL:DL1234567", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars.input.loyaltyPrograms).toEqual([{ airlineCode: "DL", membershipNumber: "DL1234567" }]);
   });
 
-  it("update: --loyalty replaces and --clear-hotel-loyalty sends []", async () => {
+  it("update: --frequent-flyer replaces and --clear-hotel-loyalty sends []", async () => {
     mockGraphql.mockResolvedValueOnce({ updateTripPlanTraveller: sampleTraveller });
-    await run(["update", "trv_01", "--loyalty", "UA:111222", "--clear-hotel-loyalty", "--json"]);
+    await run(["update", "trv_01", "--frequent-flyer", "UA:111222", "--clear-hotel-loyalty", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars.input).toEqual({
       loyaltyPrograms: [{ airlineCode: "UA", membershipNumber: "111222" }],
@@ -408,14 +408,14 @@ describe("traveller loyalty flags", () => {
     });
   });
 
-  it("update: --clear-loyalty sends [] and conflicts with --loyalty", async () => {
+  it("update: --clear-frequent-flyer sends [] and conflicts with --frequent-flyer", async () => {
     mockGraphql.mockResolvedValueOnce({ updateTripPlanTraveller: sampleTraveller });
-    await run(["update", "trv_01", "--clear-loyalty", "--json"]);
+    await run(["update", "trv_01", "--clear-frequent-flyer", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars.input).toEqual({ loyaltyPrograms: [] });
 
     await expect(
-      run(["update", "trv_01", "--loyalty", "DL:123", "--clear-loyalty", "--json"])
+      run(["update", "trv_01", "--frequent-flyer", "DL:123", "--clear-frequent-flyer", "--json"])
     ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
     await expect(
       run(["update", "trv_01", "--hotel-loyalty", "HI:123", "--clear-hotel-loyalty", "--json"])

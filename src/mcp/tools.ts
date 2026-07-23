@@ -115,9 +115,9 @@ export function buildPlanTripArgs(i: PlanTripInput): string[] {
   return args;
 }
 
-export function buildAddTravellerArgs(i: { plan_id: string; first: string; last: string; type?: string; loyalty?: string[]; hotel_loyalty?: string[] }): string[] {
+export function buildAddTravellerArgs(i: { plan_id: string; first: string; last: string; type?: string; frequent_flyer?: string[]; hotel_loyalty?: string[] }): string[] {
   const args = ["travellers", "add", "--plan", i.plan_id, "--first", i.first, "--last", i.last, "--type", i.type ?? "Adult"];
-  for (const p of i.loyalty ?? []) args.push("--loyalty", p);
+  for (const p of i.frequent_flyer ?? []) args.push("--frequent-flyer", p);
   for (const p of i.hotel_loyalty ?? []) args.push("--hotel-loyalty", p);
   args.push("--json");
   return args;
@@ -287,7 +287,7 @@ export const TOOLS: ToolDef[] = [
       first: z.string().describe("First name."),
       last: z.string().describe("Last name."),
       type: z.string().optional().describe("Traveller type: Adult | Child | Infant. Default Adult."),
-      loyalty: z.array(z.string()).optional().describe('Frequent-flyer programs as "AIRLINE:NUMBER", e.g. ["DL:1234567"]. Member number exactly as the airline issued it.'),
+      frequent_flyer: z.array(z.string()).optional().describe('Frequent-flyer programs as "AIRLINE:NUMBER", e.g. ["DL:1234567"]. Member number exactly as the airline issued it.'),
       hotel_loyalty: z.array(z.string()).optional().describe('Hotel loyalty programs as "CHAIN:NUMBER", e.g. ["HI:12345678"]. Member number is digits only — do NOT include the chain code prefix.'),
     },
     buildArgs: (i) => buildAddTravellerArgs(i),
