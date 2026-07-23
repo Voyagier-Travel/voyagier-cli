@@ -440,7 +440,8 @@ export const DELETE_TRAVELLER = `
 // gender + dateOfBirth are REQUIRED for flight checkout (TSA Secure Flight),
 // and passport data hard-gates international reserves. (VOY-1692)
 // NOTE: frequentFlyerPrograms/hotelLoyaltyPrograms selections require nest-api
-// PRs #519 + #520 to be deployed — the server never returns plaintext
+// PRs #519, #520 + #521 (frequentFlyerPrograms rename) to be deployed — the
+// server never returns plaintext
 // membership numbers, only the code + last4 (encrypted at rest server-side).
 export const UPDATE_TRAVELLER = `
   mutation UpdateTraveller($id: String!, $input: UpdateTripPlanTravellerInput!) {

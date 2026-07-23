@@ -40,7 +40,7 @@ function parseLoyalty(raw: string, kind: "air" | "hotel"): { code: string; membe
   const example = kind === "air" ? "DL:1234567" : "HI:12345678";
   const sep = raw.indexOf(":");
   if (sep === -1) {
-    throw new CliError(CliErrorCode.VALIDATION, `${label} expects CODE:NUMBER (e.g. ${example}), got: ${raw}`);
+    throw new CliError(CliErrorCode.VALIDATION, `${label} expects CODE:NUMBER (e.g. ${example}), got: "${raw}"`);
   }
   const code = raw.slice(0, sep).trim().toUpperCase();
   const membershipNumber = raw.slice(sep + 1).trim();
@@ -78,8 +78,8 @@ function toHotelLoyaltyInput(values: string[]): Array<{ chainCode: string; membe
 /** Masked one-line render of a traveller's loyalty programs (server only ever returns code + last4). */
 function loyaltySummary(t: Traveller): string | undefined {
   const bits: string[] = [];
-  for (const p of t.frequentFlyerPrograms ?? []) bits.push(`✈ ${p.airlineCode} ••••${p.last4 ?? ""}`);
-  for (const p of t.hotelLoyaltyPrograms ?? []) bits.push(`🏨 ${p.chainCode} ••••${p.last4 ?? ""}`);
+  for (const p of t.frequentFlyerPrograms ?? []) bits.push(`✈ ${p.airlineCode}${p.last4 ? ` ••••${p.last4}` : ""}`);
+  for (const p of t.hotelLoyaltyPrograms ?? []) bits.push(`🏨 ${p.chainCode}${p.last4 ? ` ••••${p.last4}` : ""}`);
   return bits.length > 0 ? bits.join("  ·  ") : undefined;
 }
 
@@ -424,7 +424,7 @@ export function registerTravellerCommands(program: Command): void {
         else if ((opts.hotelLoyalty as string[]).length > 0) input.hotelLoyaltyPrograms = toHotelLoyaltyInput(opts.hotelLoyalty);
 
         if (Object.keys(input).length === 0) {
-          fatal("Nothing to update. Provide at least one of: --first, --last, --email, --dob, --gender, --type, --phone, --passport-number, --frequent-flyer, --hotel-loyalty, --clear-frequent-flyer, --clear-hotel-loyalty");
+          fatal("Nothing to update. Provide at least one of: --first, --last, --email, --dob, --gender, --type, --phone, --passport-number, --passport-country, --passport-nationality, --passport-expiry, --frequent-flyer, --hotel-loyalty, --clear-frequent-flyer, --clear-hotel-loyalty");
         }
 
         const data = await graphql<{ updateTripPlanTraveller: Traveller }>(

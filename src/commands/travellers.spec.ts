@@ -435,4 +435,19 @@ describe("traveller loyalty flags", () => {
     expect(out).toContain("DL ••••4567");
     expect(out).toContain("HI ••••5678");
   });
+
+  it("list: omits the mask entirely when last4 is missing (no dangling ••••)", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellers: [{
+        ...sampleTraveller,
+        frequentFlyerPrograms: [{ airlineCode: "DL", last4: null }],
+        hotelLoyaltyPrograms: [{ chainCode: "HI" }],
+      }],
+    });
+    await run(["list", "--plan", "plan-1"]);
+    const out = logJoined();
+    expect(out).toContain("✈ DL");
+    expect(out).toContain("🏨 HI");
+    expect(out).not.toContain("••••");
+  });
 });
