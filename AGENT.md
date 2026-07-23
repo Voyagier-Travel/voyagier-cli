@@ -559,7 +559,7 @@ voyagier agent-docs                   # prints this file
 voyagier mcp                          # run as a Model Context Protocol (MCP) stdio server
 ```
 
-**MCP server.** The CLI is also an MCP stdio server (`voyagier mcp`): it exposes the agent surface — plan, search, selection-options, select, plan-status, quote, book — as MCP tools. Each tool call self-spawns the CLI with `--json` (except `agent_docs`, which returns this guide as plain markdown), so it's the SAME surface with the SAME error codes and the SAME price-gated `book` (still requires `expect_total`). In shell-less or MCP-native environments, prefer it over hand-rolling `child_process` calls. (`send` is intentionally not exposed — it emails a real client; close via `quote` → `book`.)
+**MCP server.** The CLI is also an MCP stdio server (`voyagier mcp`): it exposes the agent surface — plan, search, selection-options, select, plan-status, quote, book — as MCP tools. Each tool call self-spawns the CLI with `--json` (except `agent_docs`), so it's the SAME surface with the SAME error codes and the SAME price-gated `book` (still requires `expect_total`). Unlike the CLI's two payload styles, the MCP layer normalises every result into ONE canonical envelope: success `{ ok: true, data, planContext? }` (agent_docs markdown arrives as `data.content`), failure `{ ok: false, error: { code, message, details? } }` with `isError: true`. In shell-less or MCP-native environments, prefer it over hand-rolling `child_process` calls. (`send` is intentionally not exposed — it emails a real client; close via `quote` → `book`.)
 
 ---
 

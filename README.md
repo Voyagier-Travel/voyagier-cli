@@ -112,7 +112,7 @@ The CLI ships an [MCP](https://modelcontextprotocol.io) stdio server that expose
 voyagier mcp          # run the stdio server (JSON-RPC on stdout)
 ```
 
-It's a thin adapter: each tool call self-spawns the CLI as a subprocess with `--json` (the one exception is `agent_docs`, which returns the integration guide as plain markdown), so the tools inherit the exact same envelopes, uniform error codes, and price-gated checkout as the CLI itself — zero behaviour drift. Authentication flows through the environment (`VOYAGIER_TOKEN` / `VOYAGIER_API_URL`); the MCP layer never sees your token.
+It's a thin adapter: each tool call self-spawns the CLI as a subprocess with `--json` (the one exception is `agent_docs`, which runs without it), so the tools inherit the CLI's uniform error codes and price-gated checkout — zero behaviour drift. The MCP layer normalises every result into ONE canonical envelope: on success `{ ok: true, data: <object>, planContext? }` (agent_docs markdown arrives as `data.content`), and on failure `{ ok: false, error: { code, message, details? } }` with `isError: true`. Authentication flows through the environment (`VOYAGIER_TOKEN` / `VOYAGIER_API_URL`); the MCP layer never sees your token.
 
 **Claude Desktop** (`claude_desktop_config.json`):
 
