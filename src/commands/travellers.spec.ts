@@ -378,6 +378,38 @@ describe("traveller loyalty flags", () => {
     expect(mockGraphql).not.toHaveBeenCalled();
   });
 
+  it("validation errors never echo the full member number (masked to last 4)", async () => {
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--hotel-loyalty", "HI:HI12345678", "--json"])
+    ).rejects.toMatchObject({ message: expect.stringContaining('"••••5678"') });
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--frequent-flyer", "DL1234567", "--json"])
+    ).rejects.toMatchObject({ message: expect.stringContaining('"••••4567"') });
+    // Neither error may contain the raw input
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--hotel-loyalty", "HI:HI12345678", "--json"])
+    ).rejects.not.toMatchObject({ message: expect.stringContaining("HI12345678") });
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--frequent-flyer", "DL1234567", "--json"])
+    ).rejects.not.toMatchObject({ message: expect.stringContaining("DL1234567") });
+  });
+
+  it("add/update: passport metadata flags without --passport-number fail fast (no silent no-op)", async () => {
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--passport-country", "US", "--json"])
+    ).rejects.toMatchObject({
+      code: CliErrorCode.VALIDATION,
+      message: expect.stringContaining("--passport-country requires --passport-number"),
+    });
+    await expect(
+      run(["update", "trv_01", "--passport-nationality", "GB", "--passport-expiry", "2030-01", "--json"])
+    ).rejects.toMatchObject({
+      code: CliErrorCode.VALIDATION,
+      message: expect.stringContaining("--passport-nationality, --passport-expiry require --passport-number"),
+    });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
   it("rejects a value without a colon and a bad chain code", async () => {
     await expect(
       run(["add", "--plan", "p", "--first", "J", "--last", "D", "--hotel-loyalty", "HI12345678", "--json"])

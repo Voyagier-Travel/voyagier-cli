@@ -35,12 +35,41 @@ function collect(value: string, previous: string[]): string[] {
  * chainCode + memberNumber (/^[A-Z]{2}\d+$/), so a prefixed number would
  * produce "HIHI…" and the program would silently never apply.
  */
+/**
+ * Mask a potentially sensitive loyalty value for error output: member numbers
+ * are write-only everywhere else (server returns code + last4 only), so error
+ * messages must not echo the full value to terminals or agent transcripts.
+ */
+function maskLoyaltyValue(value: string): string {
+  return value.length > 4 ? `••••${value.slice(-4)}` : "••••";
+}
+
+/**
+ * Passport metadata is only sent inside the passport object, which is only
+ * built when --passport-number is present — without this guard the metadata
+ * flags would be silently dropped (accidental no-op).
+ */
+function requirePassportNumberWithMetadata(opts: Record<string, unknown>): void {
+  if (opts.passportNumber) return;
+  const provided = [
+    opts.passportCountry && "--passport-country",
+    opts.passportNationality && "--passport-nationality",
+    opts.passportExpiry && "--passport-expiry",
+  ].filter(Boolean);
+  if (provided.length > 0) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `${provided.join(", ")} require${provided.length === 1 ? "s" : ""} --passport-number — passport metadata is ignored without it`,
+    );
+  }
+}
+
 function parseLoyalty(raw: string, kind: "air" | "hotel"): { code: string; membershipNumber: string } {
   const label = kind === "air" ? "--frequent-flyer" : "--hotel-loyalty";
   const example = kind === "air" ? "DL:1234567" : "HI:12345678";
   const sep = raw.indexOf(":");
   if (sep === -1) {
-    throw new CliError(CliErrorCode.VALIDATION, `${label} expects CODE:NUMBER (e.g. ${example}), got: "${raw}"`);
+    throw new CliError(CliErrorCode.VALIDATION, `${label} expects CODE:NUMBER (e.g. ${example}), got: "${maskLoyaltyValue(raw)}"`);
   }
   const code = raw.slice(0, sep).trim().toUpperCase();
   const membershipNumber = raw.slice(sep + 1).trim();
@@ -56,7 +85,7 @@ function parseLoyalty(raw: string, kind: "air" | "hotel"): { code: string; membe
     const hint = membershipNumber.toUpperCase().startsWith(code)
       ? ` — do not include the chain code, checkout prefixes "${code}" automatically`
       : "";
-    throw new CliError(CliErrorCode.VALIDATION, `${label}: member number must be digits only${hint}, got: "${membershipNumber}"`);
+    throw new CliError(CliErrorCode.VALIDATION, `${label}: member number must be digits only${hint}, got: "${maskLoyaltyValue(membershipNumber)}"`);
   }
   return { code, membershipNumber };
 }
@@ -216,6 +245,7 @@ export function registerTravellerCommands(program: Command): void {
         }
 
         // Passport fields
+        requirePassportNumberWithMetadata(opts);
         if (opts.passportNumber) {
           const passportInput: Record<string, string> = {
             passportNumber: opts.passportNumber,
@@ -400,6 +430,7 @@ export function registerTravellerCommands(program: Command): void {
           input.contactNumbers = [{ useType: "H", phone: opts.phone }];
         }
 
+        requirePassportNumberWithMetadata(opts);
         if (opts.passportNumber) {
           const passportInput: Record<string, string> = {
             passportNumber: opts.passportNumber,
