@@ -186,7 +186,11 @@ function tryParseObject(text: string): Record<string, unknown> | undefined {
  *        failed doctor never reads as success and clients only ever see one
  *        failure envelope.
  *      · Any other object (Style B flat, incl. select's flat-with-`ok`) →
- *        wrapped LOSSLESS as `{ok:true, data:<parsed>}` — inner fields untouched.
+ *        wrapped LOSSLESS as `{ok:true, data:<parsed>}` — inner fields
+ *        untouched. A top-level `planContext` (select emits one via
+ *        jsonOutputWithPlan) is ALSO hoisted to the envelope top level so its
+ *        location is consistent with the documented contract; the copy inside
+ *        `data` stays (losslessness wins over de-duplication).
  *  - Non-JSON stdout:
  *      · exit 0 → `{ok:true, data:{content:<raw stdout>}}` (covers agent_docs
  *        markdown, the one tool that runs without `--json`).
@@ -230,8 +234,12 @@ export function toToolResult(result: CliResult): ToolResultPayload {
       };
     }
 
-    // Any other object (Style B flat) → lossless wrap.
-    return { text: JSON.stringify({ ok: true, data: parsed }), isError: false };
+    // Any other object (Style B flat) → lossless wrap. Hoist a top-level
+    // planContext when the CLI emitted one so clients find it in the
+    // documented envelope position regardless of the source style.
+    const envelope: OkEnvelope = { ok: true, data: parsed };
+    if (!Array.isArray(parsed) && parsed.planContext !== undefined) envelope.planContext = parsed.planContext;
+    return { text: JSON.stringify(envelope), isError: false };
   }
 
   // Non-JSON stdout. On success, fall back to stderr when stdout is empty —

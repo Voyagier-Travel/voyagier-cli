@@ -217,6 +217,13 @@ describe("toToolResult — canonical envelope normalisation", () => {
     expect(parse(r)).toEqual({ ok: true, data: { content: "wrote 3 warnings\n" } });
   });
 
+  it("Style B with top-level planContext (select via jsonOutputWithPlan): hoisted to envelope top level, data stays lossless", () => {
+    const cli = { success: true, type: "flight", planContext: { planId: "P9", title: "Kyoto" } };
+    const r = toToolResult({ stdout: JSON.stringify(cli), stderr: "", exitCode: 0 });
+    expect(r.isError).toBe(false);
+    expect(parse(r)).toEqual({ ok: true, data: cli, planContext: { planId: "P9", title: "Kyoto" } });
+  });
+
   it("JSON array stdout → lossless wrap under data", () => {
     const r = toToolResult({ stdout: '[{"id":1},{"id":2}]', stderr: "", exitCode: 0 });
     expect(r.isError).toBe(false);
