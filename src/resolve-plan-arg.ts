@@ -15,8 +15,8 @@ import { CliError, CliErrorCode } from "./errors.js";
 // Throws CliError(INVALID_INPUT); in --json mode index.ts renders the standard
 // error envelope { error, code, message }.
 //
-// Named resolvePlanArg (not resolvePlanArg) to avoid colliding with
-// search.ts's exported resolvePlanArg, which has different semantics
+// Named resolvePlanArg (not resolvePlanId) to avoid colliding with
+// search.ts's exported resolvePlanId, which has different semantics
 // (--plan with last-search fallback, VALIDATION errors).
 //
 // The flag value is trimmed; an empty/whitespace-only --plan is rejected
