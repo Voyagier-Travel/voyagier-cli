@@ -251,7 +251,7 @@ export const TOOLS: ToolDef[] = [
   defineTool({
     name: "plan_trip",
     description:
-      "Scaffold a trip plan_id: creates the plan + a default goal graph (a round-trip + hotel TEMPLATE) and returns { tripPlanId, travellerIds, nextSteps }. It does NOT search or select — follow nextSteps to compose. Prune goals the brief doesn't need with the shape flags: one_way (drops the Return Flights goal), flight_only (drops the hotel goal), hotel_only (drops ALL flight goals). Omitting return alone does NOT make a plan one-way. Pass travellers as a comma-separated names string to add them inline.",
+      "Scaffold a trip plan: creates the plan + a default goal graph (a round-trip + hotel TEMPLATE) and returns { tripPlanId, travellerIds, nextSteps }. It does NOT search or select — follow nextSteps to compose. Prune goals the brief doesn't need with the shape flags: one_way (drops the Return Flights goal), flight_only (drops the hotel goal), hotel_only (drops ALL flight goals). Omitting return alone does NOT make a plan one-way. Pass travellers as a comma-separated names string to add them inline.",
     timeoutMs: T.medium,
     inputSchema: {
       client: z.string().optional().describe("Client id, email, or name. Required when creating a plan UNLESS you have exactly one active client (auto-picked); pass it explicitly when in doubt."),
@@ -373,7 +373,7 @@ export const TOOLS: ToolDef[] = [
   defineTool({
     name: "quote",
     description:
-      "Produce the advisor offer snapshot for a plan_id: items, chargeableTotal, and a machine-readable acceptance block { command, itemIds, expectedTotal }. quote's chargeableTotal equals the book price gate, so the acceptance total can never fail its own gate on an unchanged cart.",
+      "Produce the advisor offer snapshot for a plan: items, chargeableTotal, and a machine-readable acceptance block { command, itemIds, expectedTotal }. quote's chargeableTotal equals the book price gate, so the acceptance total can never fail its own gate on an unchanged cart.",
     timeoutMs: T.medium,
     inputSchema: {
       plan_id: z.string().describe("Trip plan id."),
