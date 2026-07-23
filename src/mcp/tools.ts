@@ -91,7 +91,7 @@ export interface PlanTripInput {
   one_way?: boolean;
   flight_only?: boolean;
   hotel_only?: boolean;
-  plan?: string;
+  plan_id?: string;
 }
 
 export function buildPlanTripArgs(i: PlanTripInput): string[] {
@@ -110,28 +110,28 @@ export function buildPlanTripArgs(i: PlanTripInput): string[] {
   bool(args, "--one-way", i.one_way);
   bool(args, "--flight-only", i.flight_only);
   bool(args, "--hotel-only", i.hotel_only);
-  opt(args, "--plan", i.plan);
+  opt(args, "--plan", i.plan_id);
   args.push("--json");
   return args;
 }
 
-export function buildAddTravellerArgs(i: { plan: string; first: string; last: string; type?: string }): string[] {
-  return ["travellers", "add", "--plan", i.plan, "--first", i.first, "--last", i.last, "--type", i.type ?? "Adult", "--json"];
+export function buildAddTravellerArgs(i: { plan_id: string; first: string; last: string; type?: string }): string[] {
+  return ["travellers", "add", "--plan", i.plan_id, "--first", i.first, "--last", i.last, "--type", i.type ?? "Adult", "--json"];
 }
 
-export function buildSearchFlightsArgs(i: { plan: string; from: string; to: string; date: string; return?: string }): string[] {
-  const args = ["search", "flights", "--plan", i.plan, "--from", i.from, "--to", i.to, "--date", i.date];
+export function buildSearchFlightsArgs(i: { plan_id: string; from: string; to: string; date: string; return?: string }): string[] {
+  const args = ["search", "flights", "--plan", i.plan_id, "--from", i.from, "--to", i.to, "--date", i.date];
   opt(args, "--return", i.return);
   args.push("--json");
   return args;
 }
 
-export function buildSearchHotelsArgs(i: { plan: string; location: string; checkin: string; checkout: string }): string[] {
-  return ["search", "hotels", "--plan", i.plan, "--location", i.location, "--checkin", i.checkin, "--checkout", i.checkout, "--json"];
+export function buildSearchHotelsArgs(i: { plan_id: string; location: string; checkin: string; checkout: string }): string[] {
+  return ["search", "hotels", "--plan", i.plan_id, "--location", i.location, "--checkin", i.checkin, "--checkout", i.checkout, "--json"];
 }
 
-export function buildSearchActivitiesArgs(i: { plan: string; destination: string; date: string; query?: string }): string[] {
-  const args = ["search", "activities", "--plan", i.plan, "--destination", i.destination, "--date", i.date];
+export function buildSearchActivitiesArgs(i: { plan_id: string; destination: string; date: string; query?: string }): string[] {
+  const args = ["search", "activities", "--plan", i.plan_id, "--destination", i.destination, "--date", i.date];
   opt(args, "--query", i.query);
   args.push("--json");
   return args;
@@ -251,11 +251,11 @@ export const TOOLS: ToolDef[] = [
   defineTool({
     name: "plan_trip",
     description:
-      "Scaffold a trip plan: creates the plan + a default goal graph (a round-trip + hotel TEMPLATE) and returns { tripPlanId, travellerIds, nextSteps }. It does NOT search or select — follow nextSteps to compose. Prune goals the brief doesn't need with the shape flags: one_way (drops the Return Flights goal), flight_only (drops the hotel goal), hotel_only (drops ALL flight goals). Omitting return alone does NOT make a plan one-way. Pass travellers as a comma-separated names string to add them inline.",
+      "Scaffold a trip plan_id: creates the plan + a default goal graph (a round-trip + hotel TEMPLATE) and returns { tripPlanId, travellerIds, nextSteps }. It does NOT search or select — follow nextSteps to compose. Prune goals the brief doesn't need with the shape flags: one_way (drops the Return Flights goal), flight_only (drops the hotel goal), hotel_only (drops ALL flight goals). Omitting return alone does NOT make a plan one-way. Pass travellers as a comma-separated names string to add them inline.",
     timeoutMs: T.medium,
     inputSchema: {
       client: z.string().optional().describe("Client id, email, or name. Required when creating a plan UNLESS you have exactly one active client (auto-picked); pass it explicitly when in doubt."),
-      title: z.string().optional().describe("Trip plan title. Required when creating a plan; omit in add-to-existing mode (plan provided)."),
+      title: z.string().optional().describe("Trip plan title. Required when creating a plan; omit in add-to-existing mode (plan_id provided)."),
       from: z.string().optional().describe("Origin airport code or city (defaults to home airport)."),
       to: z.string().optional().describe("Destination airport code or city."),
       depart: z.string().optional().describe("Departure date (YYYY-MM-DD)."),
@@ -268,7 +268,7 @@ export const TOOLS: ToolDef[] = [
       one_way: z.boolean().optional().describe("Prune the default Return Flights goal (conflicts with return)."),
       flight_only: z.boolean().optional().describe("Prune the default hotel goal (conflicts with hotel)."),
       hotel_only: z.boolean().optional().describe("Prune ALL flight goals (conflicts with flight flags)."),
-      plan: z.string().optional().describe("Add to an existing plan id instead of creating a new one."),
+      plan_id: z.string().optional().describe("Add to an existing plan id instead of creating a new one."),
     },
     buildArgs: (i) => buildPlanTripArgs(i),
   }),
@@ -279,7 +279,7 @@ export const TOOLS: ToolDef[] = [
       "Add a traveller to a trip plan. Travellers are required before search. Gender and date of birth are required at flight checkout; passport data hard-gates international reservations (set those via the CLI travellers update later).",
     timeoutMs: T.short,
     inputSchema: {
-      plan: z.string().describe("Trip plan id."),
+      plan_id: z.string().describe("Trip plan id."),
       first: z.string().describe("First name."),
       last: z.string().describe("Last name."),
       type: z.string().optional().describe("Traveller type: Adult | Child | Infant. Default Adult."),
@@ -294,7 +294,7 @@ export const TOOLS: ToolDef[] = [
       INJECTION_NOTE,
     timeoutMs: T.search,
     inputSchema: {
-      plan: z.string().describe("Trip plan id."),
+      plan_id: z.string().describe("Trip plan id."),
       from: z.string().describe("Origin airport code or city."),
       to: z.string().describe("Destination airport code or city."),
       date: z.string().describe("Departure date (YYYY-MM-DD)."),
@@ -310,7 +310,7 @@ export const TOOLS: ToolDef[] = [
       INJECTION_NOTE,
     timeoutMs: T.search,
     inputSchema: {
-      plan: z.string().describe("Trip plan id."),
+      plan_id: z.string().describe("Trip plan id."),
       location: z.string().describe("Destination city name."),
       checkin: z.string().describe("Check-in date (YYYY-MM-DD)."),
       checkout: z.string().describe("Check-out date (YYYY-MM-DD). Ranges are INCLUSIVE of the end date."),
@@ -325,7 +325,7 @@ export const TOOLS: ToolDef[] = [
       INJECTION_NOTE,
     timeoutMs: T.search,
     inputSchema: {
-      plan: z.string().describe("Trip plan id."),
+      plan_id: z.string().describe("Trip plan id."),
       destination: z.string().describe("Destination city or region."),
       date: z.string().describe("Travel date (YYYY-MM-DD)."),
       query: z.string().optional().describe('Free-text query, e.g. "sushi tour".'),
@@ -373,7 +373,7 @@ export const TOOLS: ToolDef[] = [
   defineTool({
     name: "quote",
     description:
-      "Produce the advisor offer snapshot for a plan: items, chargeableTotal, and a machine-readable acceptance block { command, itemIds, expectedTotal }. quote's chargeableTotal equals the book price gate, so the acceptance total can never fail its own gate on an unchanged cart.",
+      "Produce the advisor offer snapshot for a plan_id: items, chargeableTotal, and a machine-readable acceptance block { command, itemIds, expectedTotal }. quote's chargeableTotal equals the book price gate, so the acceptance total can never fail its own gate on an unchanged cart.",
     timeoutMs: T.medium,
     inputSchema: {
       plan_id: z.string().describe("Trip plan id."),
