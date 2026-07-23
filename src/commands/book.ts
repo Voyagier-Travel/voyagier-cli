@@ -55,6 +55,7 @@ import { graphql } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
 import { formatPrice, openBrowser, deriveBaseUrl, shellArg, cents } from "../utils.js";
+import { resolvePlanArg } from "../resolve-plan-arg.js";
 import { hintCheckoutCreated, hintBookingConfirmed, hintBookingPending, hintDryRun } from "../hints.js";
 import { GET_CART_V2, CREATE_CHECKOUT, GET_PAYMENT_CHECKOUTS } from "../queries.js";
 import {
@@ -127,7 +128,7 @@ async function loadCheckoutSummary(planId: string): Promise<CheckoutSummary> {
 
 export function registerBookCommands(program: Command): void {
   program
-    .command("book <planId>")
+    .command("book [planId]")
     .description("Checkout and book the bookable items in a trip plan via Stripe")
     .option("--json", "Output structured JSON envelope")
     .option("--agent", "Output plain markdown for AI agents")
@@ -139,7 +140,8 @@ export function registerBookCommands(program: Command): void {
     .option("--types <list>", "Comma-separated CartItemType filter (Flight,Hotel,Activity,Restaurant,Other); passed server-side via itemIds")
     .option("--rebook", "Create a checkout even though a Paid checkout already exists for this plan")
     .option("--status", "Show payment + booking status for past checkouts on this plan")
-    .action(async (planId: string, opts: {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (planIdInput: string | undefined, opts: {
       json?: boolean;
       agent?: boolean;
       dryRun?: boolean;
@@ -150,7 +152,9 @@ export function registerBookCommands(program: Command): void {
       types?: string;
       rebook?: boolean;
       status?: boolean;
+      plan?: string;
     }) => {
+      const planId = resolvePlanArg(planIdInput, opts, "book");
       const baseUrl = deriveBaseUrl(getApiUrl());
       const planUrl = `${baseUrl}/plans/${planId}`;
 

@@ -292,6 +292,8 @@ There is no client-list cache file today; `voyagier clients list` always hits th
 
 ## Command Reference (v2 surface)
 
+Every command that takes a trip plan id as its leading positional argument also accepts it via `--plan <id>` — the two forms are interchangeable; supplying both with different values is an error. Two commands use `--plan` differently and take no positional plan id: `select` (cache assertion — asserts cached search results belong to that plan) and `plans remove-item` (scopes the bulk operation).
+
 ### Auth
 ```bash
 voyagier auth set-token <PAT>      # save Personal Access Token

@@ -62,6 +62,8 @@ jest.unstable_mockModule("../utils.js", () => ({
   deriveBaseUrl: jest.fn().mockReturnValue("https://app.voyagier.com"),
   formatPrice: jest.fn().mockImplementation((p: unknown) => `$${p}`),
   shellArg: jest.fn().mockImplementation((v: unknown) => String(v ?? "")),
+  // resolvePlanArg is not mocked: it lives in resolve-plan-arg.ts (own
+  // module) so the real contract is always in play here.
 }));
 
 jest.unstable_mockModule("../output.js", () => ({

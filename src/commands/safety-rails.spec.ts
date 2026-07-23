@@ -59,6 +59,8 @@ jest.unstable_mockModule("../utils.js", () => ({
   formatPrice: jest.fn().mockImplementation((p: unknown) => `$${p}`),
   shellArg: jest.fn().mockImplementation((v: unknown) => String(v ?? "")),
   subSelectionLabel: jest.fn().mockReturnValue("cabin class"),
+  // resolvePlanArg is not mocked: it lives in resolve-plan-arg.ts (own
+  // module) so the real contract is always in play here.
 }));
 
 // ── Dynamic imports after mocks ────────────────────────────────────────────

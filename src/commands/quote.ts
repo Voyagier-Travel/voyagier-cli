@@ -29,6 +29,7 @@ import { GET_QUOTE_DATA } from "../queries.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getUserContext } from "../config.js";
 import { formatPrice, shellArg, cents, formatDateRange } from "../utils.js";
+import { resolvePlanArg } from "../resolve-plan-arg.js";
 import {
   buildBookabilityIndex,
   enrichCartItems,
@@ -74,11 +75,13 @@ function itemLine(item: EnrichedCartItem): string {
 
 export function registerQuoteCommand(program: Command): void {
   program
-    .command("quote <planId>")
+    .command("quote [planId]")
     .description("Offer snapshot: itemized bookable items + the exact total a subsequent gated booking will enforce")
     .option("--json", "Output structured JSON (includes the machine-readable acceptance block)")
     .option("--agent", "Compact agent-friendly markdown")
-    .action(async (planId: string, opts: { json?: boolean; agent?: boolean }) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (planIdInput: string | undefined, opts: { json?: boolean; agent?: boolean; plan?: string }) => {
+      const planId = resolvePlanArg(planIdInput, opts, "quote");
       const planIdArg = shellArg(planId);
 
       let data: QuoteQueryResult;
