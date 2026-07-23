@@ -194,18 +194,27 @@ describe("toToolResult — canonical envelope normalisation", () => {
   });
 
   // ── isError correlation: true exactly when ok:false ──
-  // ── Style A with ok:false (doctor overall-FAIL) → lossless passthrough, isError true ──
-  it("Style A ok:false passthrough (doctor FAIL): data preserved, isError TRUE — never masked as success", () => {
-    const cli = { ok: false, data: { overall: "FAIL", checks: [{ name: "auth", status: "FAIL" }] } };
-    const r = toToolResult({ stdout: JSON.stringify(cli), stderr: "", exitCode: 1 });
+  // ── Style A with ok:false (doctor overall-FAIL) → the ONE failure shape ──
+  it("Style A ok:false (doctor FAIL): folded into {ok:false,error} — report lossless in details, isError TRUE", () => {
+    const report = { overall: "FAIL", checks: [{ name: "auth", status: "FAIL" }] };
+    const r = toToolResult({ stdout: JSON.stringify({ ok: false, data: report }), stderr: "", exitCode: 1 });
     expect(r.isError).toBe(true);
-    expect(parse(r)).toEqual(cli);
+    expect(parse(r)).toEqual({
+      ok: false,
+      error: { code: "COMMAND_FAILED", message: "Command reported failure.", details: report },
+    });
   });
 
   it("empty stdout with exit 0 → {ok:true, data:{content:\"\"}}", () => {
     const r = toToolResult({ stdout: "", stderr: "", exitCode: 0 });
     expect(r.isError).toBe(false);
     expect(parse(r)).toEqual({ ok: true, data: { content: "" } });
+  });
+
+  it("empty stdout with exit 0 but stderr present → stderr becomes the content (diagnostics kept)", () => {
+    const r = toToolResult({ stdout: "", stderr: "wrote 3 warnings\n", exitCode: 0 });
+    expect(r.isError).toBe(false);
+    expect(parse(r)).toEqual({ ok: true, data: { content: "wrote 3 warnings\n" } });
   });
 
   it("JSON array stdout → lossless wrap under data", () => {
@@ -231,7 +240,7 @@ describe("toToolResult — canonical envelope normalisation", () => {
   it("isError is true exactly when the envelope is ok:false", () => {
     const cases: CliResult[] = [
       { stdout: '{"ok":true,"data":{}}', stderr: "", exitCode: 0 },
-      { stdout: '{"ok":false,"data":{"overall":"FAIL"}}', stderr: "", exitCode: 1 },
+      { stdout: '{"ok":false,"data":{"overall":"FAIL"}}', stderr: "", exitCode: 1 }, // folded → ok:false error shape
       { stdout: '{"clients":[]}', stderr: "", exitCode: 0 },
       { stdout: "plain markdown", stderr: "", exitCode: 0 },
       { stdout: '{"error":true,"code":"X","message":"y"}', stderr: "", exitCode: 1 },

@@ -177,10 +177,14 @@ function tryParseObject(text: string): Record<string, unknown> | undefined {
  *  - JSON object stdout:
  *      · CLI error envelope (`error === true`, incl. the synthetic TIMEOUT from
  *        runCli) → `{ok:false, error:{code, message, details?}}`, isError:true.
- *      · Already canonical (boolean `ok` AND a `data` key, i.e. Style A) →
- *        passed through field-for-field (planContext preserved). `ok:false`
- *        passthrough (doctor's overall-FAIL report) keeps its data payload and
- *        sets isError — a failed doctor must not read as MCP success.
+ *      · Already canonical (`ok === true` AND a `data` key, i.e. Style A) →
+ *        passed through field-for-field (planContext preserved).
+ *      · Style A with `ok:false` (doctor's overall-FAIL report — the CLI's only
+ *        non-true `ok` emitter) → folded into the SINGLE failure shape:
+ *        `{ok:false, error:{code:"COMMAND_FAILED", message, details:<report>}}`,
+ *        isError:true. The full report survives lossless in error.details; a
+ *        failed doctor never reads as success and clients only ever see one
+ *        failure envelope.
  *      · Any other object (Style B flat, incl. select's flat-with-`ok`) →
  *        wrapped LOSSLESS as `{ok:true, data:<parsed>}` — inner fields untouched.
  *  - Non-JSON stdout:
@@ -208,20 +212,34 @@ export function toToolResult(result: CliResult): ToolResultPayload {
       return { text: JSON.stringify({ ok: false, error }), isError: true };
     }
 
-    // Already canonical Style A → pass through field-for-field. A boolean
-    // `ok:false` here (doctor's overall-FAIL report is the only CLI emitter)
-    // stays lossless but must flag isError — not read as success.
-    if (typeof parsed.ok === "boolean" && "data" in parsed) {
-      return { text: JSON.stringify(parsed), isError: parsed.ok === false };
+    // Already canonical Style A → pass through field-for-field.
+    if (parsed.ok === true && "data" in parsed) {
+      return { text: JSON.stringify(parsed), isError: false };
+    }
+
+    // Style A with ok:false (doctor's overall-FAIL report is the only CLI
+    // emitter) → fold into the one canonical failure shape. The report stays
+    // lossless under error.details; clients never see a second failure shape.
+    if (parsed.ok === false && "data" in parsed) {
+      return {
+        text: JSON.stringify({
+          ok: false,
+          error: { code: "COMMAND_FAILED", message: "Command reported failure.", details: parsed.data },
+        }),
+        isError: true,
+      };
     }
 
     // Any other object (Style B flat) → lossless wrap.
     return { text: JSON.stringify({ ok: true, data: parsed }), isError: false };
   }
 
-  // Non-JSON stdout.
+  // Non-JSON stdout. On success, fall back to stderr when stdout is empty —
+  // some child failures-of-convention emit diagnostics there, and an empty
+  // content envelope would discard them.
   if (exitCode === 0) {
-    return { text: JSON.stringify({ ok: true, data: { content: stdout } }), isError: false };
+    const content = trimmed.length > 0 ? stdout : stderr;
+    return { text: JSON.stringify({ ok: true, data: { content } }), isError: false };
   }
   const stderrTrimmed = stderr.trim();
   const message = trimmed.length > 0 ? trimmed : stderrTrimmed.length > 0 ? stderrTrimmed : "command failed";
