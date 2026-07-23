@@ -26,16 +26,6 @@ function collect(value: string, previous: string[]): string[] {
 }
 
 /**
- * Parse a repeatable loyalty flag value ("CODE:NUMBER").
- *
- * kind "air": frequent-flyer — the member number is sent to the airline
- * verbatim, so whatever shape the airline issued is correct here.
- * kind "hotel": the member number must be DIGITS ONLY and must NOT include
- * the chain code — checkout builds booking-api's loyaltyId as
- * chainCode + memberNumber (/^[A-Z]{2}\d+$/), so a prefixed number would
- * produce "HIHI…" and the program would silently never apply.
- */
-/**
  * Mask a potentially sensitive loyalty value for error output: member numbers
  * are write-only everywhere else (server returns code + last4 only), so error
  * messages must not echo the full value to terminals or agent transcripts.
@@ -64,6 +54,16 @@ function requirePassportNumberWithMetadata(opts: Record<string, unknown>): void 
   }
 }
 
+/**
+ * Parse a repeatable loyalty flag value ("CODE:NUMBER").
+ *
+ * kind "air": frequent-flyer — the member number is sent to the airline
+ * verbatim, so whatever shape the airline issued is correct here.
+ * kind "hotel": the member number must be DIGITS ONLY and must NOT include
+ * the chain code — checkout builds booking-api's loyaltyId as
+ * chainCode + memberNumber (/^[A-Z]{2}\d+$/), so a prefixed number would
+ * produce "HIHI…" and the program would silently never apply.
+ */
 function parseLoyalty(raw: string, kind: "air" | "hotel"): { code: string; membershipNumber: string } {
   const label = kind === "air" ? "--frequent-flyer" : "--hotel-loyalty";
   const example = kind === "air" ? "DL:1234567" : "HI:12345678";
