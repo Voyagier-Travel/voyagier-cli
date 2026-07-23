@@ -22,6 +22,9 @@ jest.unstable_mockModule("../output.js", () => ({
 }));
 
 // utils.validateDate is the real implementation; pass-through is fine.
+// resolvePlanArg is NOT mocked — it lives in its own module
+// (resolve-plan-arg.ts) precisely so suites that mock utils.js always
+// exercise the real contract (string or throw INVALID_INPUT).
 jest.unstable_mockModule("../utils.js", () => ({
   validateDate: jest.fn().mockImplementation((value: string, flagName: string) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {

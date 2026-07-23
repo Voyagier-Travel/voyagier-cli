@@ -34,6 +34,8 @@ jest.unstable_mockModule("../utils.js", () => ({
     const s = String(v);
     return /^[A-Za-z0-9_.,:@/-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
   },
+  // resolvePlanArg is not mocked: it lives in resolve-plan-arg.ts (own
+  // module) so the real contract is always in play here.
 }));
 
 let registerBookCommands: (program: Command) => void;

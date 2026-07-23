@@ -350,6 +350,15 @@ export function shellArg(value: string | number | null | undefined): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
+// ── Plan-id resolution ──
+//
+// Lives in its own module (resolve-plan-arg.ts) so test files that mock
+// utils.js never have to re-implement it — the real contract (string or
+// throw INVALID_INPUT) is always in play. Re-exported here for callers that
+// reach it through utils.
+export { resolvePlanArg } from "./resolve-plan-arg.js";
+
+
 // ── Untrusted-content sanitization (VOY-1709) ──
 //
 // API responses carry third-party supplier content (hotel names, option
