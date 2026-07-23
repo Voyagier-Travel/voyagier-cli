@@ -341,3 +341,98 @@ describe("travellers update", () => {
     });
   });
 });
+
+// ── loyalty programs (flights + hotels) ──────────────────────────────────────
+
+describe("traveller loyalty flags", () => {
+  it("add: parses repeatable --loyalty and --hotel-loyalty into the input", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlanTraveller: sampleTraveller });
+    await run([
+      "add", "--plan", "plan-1", "--first", "John", "--last", "Doe",
+      "--loyalty", "DL:1234567", "--loyalty", "b6:987654",
+      "--hotel-loyalty", "hi:12345678",
+      "--json",
+    ]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input.loyaltyPrograms).toEqual([
+      { airlineCode: "DL", membershipNumber: "1234567" },
+      { airlineCode: "B6", membershipNumber: "987654" },
+    ]);
+    expect(vars.input.hotelLoyaltyPrograms).toEqual([
+      { chainCode: "HI", membershipNumber: "12345678" },
+    ]);
+  });
+
+  it("add: omits loyalty keys entirely when the flags are not used", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlanTraveller: sampleTraveller });
+    await run(["add", "--plan", "plan-1", "--first", "John", "--last", "Doe", "--json"]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input).not.toHaveProperty("loyaltyPrograms");
+    expect(vars.input).not.toHaveProperty("hotelLoyaltyPrograms");
+  });
+
+  it("rejects a hotel member number that is not digits-only, with a chain-prefix hint", async () => {
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--hotel-loyalty", "HI:HI12345678", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("rejects a value without a colon and a bad chain code", async () => {
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--hotel-loyalty", "HI12345678", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--hotel-loyalty", "H1:12345678", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    // air codes may be alphanumeric (B6, 9W) — but not 1-char or 3-char
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--loyalty", "DLX:123", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("air member numbers are sent verbatim (airlines issue prefixed/alphanumeric ids)", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlanTraveller: sampleTraveller });
+    await run(["add", "--plan", "p", "--first", "J", "--last", "D", "--loyalty", "DL:DL1234567", "--json"]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input.loyaltyPrograms).toEqual([{ airlineCode: "DL", membershipNumber: "DL1234567" }]);
+  });
+
+  it("update: --loyalty replaces and --clear-hotel-loyalty sends []", async () => {
+    mockGraphql.mockResolvedValueOnce({ updateTripPlanTraveller: sampleTraveller });
+    await run(["update", "trv_01", "--loyalty", "UA:111222", "--clear-hotel-loyalty", "--json"]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input).toEqual({
+      loyaltyPrograms: [{ airlineCode: "UA", membershipNumber: "111222" }],
+      hotelLoyaltyPrograms: [],
+    });
+  });
+
+  it("update: --clear-loyalty sends [] and conflicts with --loyalty", async () => {
+    mockGraphql.mockResolvedValueOnce({ updateTripPlanTraveller: sampleTraveller });
+    await run(["update", "trv_01", "--clear-loyalty", "--json"]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input).toEqual({ loyaltyPrograms: [] });
+
+    await expect(
+      run(["update", "trv_01", "--loyalty", "DL:123", "--clear-loyalty", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    await expect(
+      run(["update", "trv_01", "--hotel-loyalty", "HI:123", "--clear-hotel-loyalty", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("list: renders masked loyalty (code + last4) and never any full number", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellers: [{
+        ...sampleTraveller,
+        loyaltyPrograms: [{ airlineCode: "DL", last4: "4567" }],
+        hotelLoyaltyPrograms: [{ chainCode: "HI", last4: "5678" }],
+      }],
+    });
+    await run(["list", "--plan", "plan-1"]);
+    const out = logJoined();
+    expect(out).toContain("DL ••••4567");
+    expect(out).toContain("HI ••••5678");
+  });
+});

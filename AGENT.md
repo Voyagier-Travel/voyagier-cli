@@ -165,6 +165,27 @@ early via `travellers add`/`travellers update` (`--gender`, `--dob`,
 `--passport-number`, `--passport-country`, `--passport-nationality`,
 `--passport-expiry`).
 
+### Loyalty programs (optional, best-effort at checkout)
+
+Travellers can carry loyalty programs; checkout applies them automatically.
+**A booking never fails or blocks because of loyalty** — if a program can't be
+applied it is silently skipped, so no error ≠ guaranteed credit.
+
+- **Frequent flyer:** `--loyalty AIRLINE:NUMBER` (repeatable, e.g.
+  `--loyalty DL:1234567`). The member number is sent to the airline **verbatim**
+  — pass it exactly as issued. Applied per matching passenger on flight checkout.
+- **Hotel:** `--hotel-loyalty CHAIN:NUMBER` (repeatable, e.g.
+  `--hotel-loyalty HI:12345678`). The member number is **digits only — do NOT
+  include the chain code prefix** (checkout builds the id as chain + number; a
+  prefixed number would double the chain and never apply). Applied for the
+  **primary guest only**, and only when the program's chain matches the booked
+  property's chain.
+- On `travellers update`: `--loyalty`/`--hotel-loyalty` **replace** the full
+  list; `--clear-loyalty`/`--clear-hotel-loyalty` remove all programs. Omitting
+  the flags leaves programs untouched.
+- Numbers are encrypted at rest server-side; reads only ever return the
+  code + `last4` — there is no way to read a stored number back.
+
 ---
 
 ## Output Conventions
@@ -400,8 +421,9 @@ Sourced from the `tripPlanEvents` resolver. Output:
 ### Travellers (Style B JSON)
 ```bash
 voyagier travellers add --plan <id> --first <f> --last <l> --type Adult|Child|Infant --json
+voyagier travellers add --plan <id> --first <f> --last <l> --loyalty DL:1234567 --hotel-loyalty HI:12345678 --json
 voyagier travellers list --plan <id> --json
-voyagier travellers update <travellerId> [...] --json
+voyagier travellers update <travellerId> [...] --json   # incl. --loyalty / --hotel-loyalty (replace) and --clear-loyalty / --clear-hotel-loyalty
 voyagier travellers remove <travellerId> --json
 ```
 

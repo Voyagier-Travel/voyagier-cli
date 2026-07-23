@@ -67,6 +67,8 @@ voyagier plan-trip --client "Smith Family" --title "Smith — Tokyo" --json
 
 # 3. Add travellers (required before search; gender/DOB required for flight checkout)
 voyagier travellers add --plan <PLAN_ID> --first John --last Smith --type Adult --json
+#    Optional loyalty (applied at checkout best-effort — never blocks a booking):
+#    --loyalty DL:1234567 (FF number verbatim) · --hotel-loyalty HI:12345678 (digits only, NO chain prefix)
 
 # 4. Search → select. search --json returns a COMPACT envelope:
 #    { selectionId, optionCount, topOptions[≤10] } (+ returnSelectionId for round trips).

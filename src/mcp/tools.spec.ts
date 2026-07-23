@@ -222,3 +222,16 @@ describe("--json discipline via the table (buildArgs on representative input)", 
     }
   });
 });
+
+  it("add_traveller forwards repeatable loyalty and hotel_loyalty flags", () => {
+    expect(buildAddTravellerArgs({
+      plan_id: "p", first: "Jane", last: "Doe",
+      loyalty: ["DL:1234567", "B6:987654"],
+      hotel_loyalty: ["HI:12345678"],
+    })).toEqual([
+      "travellers", "add", "--plan", "p", "--first", "Jane", "--last", "Doe", "--type", "Adult",
+      "--loyalty", "DL:1234567", "--loyalty", "B6:987654",
+      "--hotel-loyalty", "HI:12345678",
+      "--json",
+    ]);
+  });

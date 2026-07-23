@@ -115,8 +115,12 @@ export function buildPlanTripArgs(i: PlanTripInput): string[] {
   return args;
 }
 
-export function buildAddTravellerArgs(i: { plan_id: string; first: string; last: string; type?: string }): string[] {
-  return ["travellers", "add", "--plan", i.plan_id, "--first", i.first, "--last", i.last, "--type", i.type ?? "Adult", "--json"];
+export function buildAddTravellerArgs(i: { plan_id: string; first: string; last: string; type?: string; loyalty?: string[]; hotel_loyalty?: string[] }): string[] {
+  const args = ["travellers", "add", "--plan", i.plan_id, "--first", i.first, "--last", i.last, "--type", i.type ?? "Adult"];
+  for (const p of i.loyalty ?? []) args.push("--loyalty", p);
+  for (const p of i.hotel_loyalty ?? []) args.push("--hotel-loyalty", p);
+  args.push("--json");
+  return args;
 }
 
 export function buildSearchFlightsArgs(i: { plan_id: string; from: string; to: string; date: string; return?: string }): string[] {
@@ -276,13 +280,15 @@ export const TOOLS: ToolDef[] = [
   defineTool({
     name: "add_traveller",
     description:
-      "Add a traveller to a trip plan. Travellers are required before search. Gender and date of birth are required at flight checkout; passport data hard-gates international reservations (set those via the CLI travellers update later).",
+      "Add a traveller to a trip plan. Travellers are required before search. Gender and date of birth are required at flight checkout; passport data hard-gates international reservations (set those via the CLI travellers update later). Loyalty programs are applied at checkout best-effort — a booking never fails because of them.",
     timeoutMs: T.short,
     inputSchema: {
       plan_id: z.string().describe("Trip plan id."),
       first: z.string().describe("First name."),
       last: z.string().describe("Last name."),
       type: z.string().optional().describe("Traveller type: Adult | Child | Infant. Default Adult."),
+      loyalty: z.array(z.string()).optional().describe('Frequent-flyer programs as "AIRLINE:NUMBER", e.g. ["DL:1234567"]. Member number exactly as the airline issued it.'),
+      hotel_loyalty: z.array(z.string()).optional().describe('Hotel loyalty programs as "CHAIN:NUMBER", e.g. ["HI:12345678"]. Member number is digits only — do NOT include the chain code prefix.'),
     },
     buildArgs: (i) => buildAddTravellerArgs(i),
   }),

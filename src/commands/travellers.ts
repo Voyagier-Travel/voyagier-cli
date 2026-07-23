@@ -20,6 +20,69 @@ function toPascalCase(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
 
+/** Commander collector for repeatable options. */
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+/**
+ * Parse a repeatable loyalty flag value ("CODE:NUMBER").
+ *
+ * kind "air": frequent-flyer — the member number is sent to the airline
+ * verbatim, so whatever shape the airline issued is correct here.
+ * kind "hotel": the member number must be DIGITS ONLY and must NOT include
+ * the chain code — checkout builds booking-api's loyaltyId as
+ * chainCode + memberNumber (/^[A-Z]{2}\d+$/), so a prefixed number would
+ * produce "HIHI…" and the program would silently never apply.
+ */
+function parseLoyalty(raw: string, kind: "air" | "hotel"): { code: string; membershipNumber: string } {
+  const label = kind === "air" ? "--loyalty" : "--hotel-loyalty";
+  const example = kind === "air" ? "DL:1234567" : "HI:12345678";
+  const sep = raw.indexOf(":");
+  if (sep === -1) {
+    throw new CliError(CliErrorCode.VALIDATION, `${label} expects CODE:NUMBER (e.g. ${example}), got: ${raw}`);
+  }
+  const code = raw.slice(0, sep).trim().toUpperCase();
+  const membershipNumber = raw.slice(sep + 1).trim();
+  const codePattern = kind === "air" ? /^[A-Z0-9]{2}$/ : /^[A-Z]{2}$/;
+  if (!codePattern.test(code)) {
+    const kindWord = kind === "air" ? "airline code" : "chain code";
+    throw new CliError(CliErrorCode.VALIDATION, `${label}: ${kindWord} must be exactly 2 ${kind === "air" ? "characters" : "letters"} (e.g. ${example.split(":")[0]}), got: "${code}"`);
+  }
+  if (membershipNumber.length === 0) {
+    throw new CliError(CliErrorCode.VALIDATION, `${label}: missing member number after "${code}:"`);
+  }
+  if (kind === "hotel" && !/^\d+$/.test(membershipNumber)) {
+    const hint = membershipNumber.toUpperCase().startsWith(code)
+      ? ` — do not include the chain code, checkout prefixes "${code}" automatically`
+      : "";
+    throw new CliError(CliErrorCode.VALIDATION, `${label}: member number must be digits only${hint}, got: "${membershipNumber}"`);
+  }
+  return { code, membershipNumber };
+}
+
+function toAirLoyaltyInput(values: string[]): Array<{ airlineCode: string; membershipNumber: string }> {
+  return values.map((v) => {
+    const p = parseLoyalty(v, "air");
+    return { airlineCode: p.code, membershipNumber: p.membershipNumber };
+  });
+}
+
+function toHotelLoyaltyInput(values: string[]): Array<{ chainCode: string; membershipNumber: string }> {
+  return values.map((v) => {
+    const p = parseLoyalty(v, "hotel");
+    return { chainCode: p.code, membershipNumber: p.membershipNumber };
+  });
+}
+
+/** Masked one-line render of a traveller's loyalty programs (server only ever returns code + last4). */
+function loyaltySummary(t: Traveller): string | undefined {
+  const bits: string[] = [];
+  for (const p of t.loyaltyPrograms ?? []) bits.push(`✈ ${p.airlineCode} ••••${p.last4 ?? ""}`);
+  for (const p of t.hotelLoyaltyPrograms ?? []) bits.push(`🏨 ${p.chainCode} ••••${p.last4 ?? ""}`);
+  return bits.length > 0 ? bits.join("  ·  ") : undefined;
+}
+
 interface Traveller {
   id: string;
   firstName: string;
@@ -29,6 +92,8 @@ interface Traveller {
   gender?: string;
   declaredTravellerType?: string;
   passport?: { last4?: string; issueCountry?: string } | null;
+  loyaltyPrograms?: Array<{ airlineCode: string; last4?: string | null }> | null;
+  hotelLoyaltyPrograms?: Array<{ chainCode: string; last4?: string | null }> | null;
 }
 
 export function registerTravellerCommands(program: Command): void {
@@ -49,6 +114,8 @@ export function registerTravellerCommands(program: Command): void {
     .option("--passport-country <code>", "Passport issue country (e.g. US)")
     .option("--passport-nationality <code>", "Passport nationality country (e.g. US)")
     .option("--passport-expiry <date>", "Passport expiration (YYYY-MM)")
+    .option("--loyalty <program>", "Frequent-flyer program AIRLINE:NUMBER (repeatable, e.g. DL:1234567)", collect, [])
+    .option("--hotel-loyalty <program>", "Hotel loyalty program CHAIN:NUMBER — member number digits only, no chain prefix (repeatable, e.g. HI:12345678)", collect, [])
     .option("--self", "Auto-fill from your saved profile (voyagier auth setup)")
     .option("--json", "Output raw JSON")
     .action(async (opts) => {
@@ -159,6 +226,11 @@ export function registerTravellerCommands(program: Command): void {
           input.passport = passportInput;
         }
 
+        // Loyalty programs (validated client-side; encrypted server-side, only
+        // code + last4 ever come back)
+        if ((opts.loyalty as string[]).length > 0) input.loyaltyPrograms = toAirLoyaltyInput(opts.loyalty);
+        if ((opts.hotelLoyalty as string[]).length > 0) input.hotelLoyaltyPrograms = toHotelLoyaltyInput(opts.hotelLoyalty);
+
         const data = await graphql<{ createTripPlanTraveller: Traveller }>(
           CREATE_TRAVELLER,
           { tripPlanId: opts.plan, input }
@@ -179,6 +251,8 @@ export function registerTravellerCommands(program: Command): void {
         if (t.email) console.log(chalk.dim(`  Email: ${t.email}`));
         if (t.dateOfBirth) console.log(chalk.dim(`  DOB: ${t.dateOfBirth}`));
         if (t.gender) console.log(chalk.dim(`  Gender: ${t.gender}`));
+        const loyalty = loyaltySummary(t);
+        if (loyalty) console.log(chalk.dim(`  Loyalty: ${loyalty}`));
         await printPlanFooter(opts.plan as string);
       } catch (err) {
         if (err instanceof CliError) throw err;
@@ -243,6 +317,8 @@ export function registerTravellerCommands(program: Command): void {
           if (t.dateOfBirth) details.push(`DOB: ${t.dateOfBirth}`);
           if (t.gender) details.push(t.gender);
           console.log(chalk.dim(`      ${details.join("  ·  ")}`));
+          const loyalty = loyaltySummary(t);
+          if (loyalty) console.log(chalk.dim(`      Loyalty: ${loyalty}`));
 
           // Booking readiness check
           const missing: string[] = [];
@@ -298,6 +374,10 @@ export function registerTravellerCommands(program: Command): void {
     .option("--passport-country <code>", "Passport issue country (e.g. US)")
     .option("--passport-nationality <code>", "Passport nationality country")
     .option("--passport-expiry <date>", "Passport expiration (YYYY-MM)")
+    .option("--loyalty <program>", "Replace frequent-flyer programs with AIRLINE:NUMBER (repeatable, e.g. DL:1234567)", collect, [])
+    .option("--hotel-loyalty <program>", "Replace hotel loyalty programs with CHAIN:NUMBER — member number digits only, no chain prefix (repeatable, e.g. HI:12345678)", collect, [])
+    .option("--clear-loyalty", "Remove all frequent-flyer programs")
+    .option("--clear-hotel-loyalty", "Remove all hotel loyalty programs")
     .option("--json", "Output raw JSON")
     .action(async (id: string, opts) => {
       try {
@@ -330,8 +410,21 @@ export function registerTravellerCommands(program: Command): void {
           input.passport = passportInput;
         }
 
+        // Loyalty programs — server contract: explicit array replaces, [] clears,
+        // absent leaves untouched. --clear-* sends the explicit [].
+        if ((opts.loyalty as string[]).length > 0 && opts.clearLoyalty) {
+          throw new CliError(CliErrorCode.VALIDATION, "--loyalty and --clear-loyalty are mutually exclusive");
+        }
+        if ((opts.hotelLoyalty as string[]).length > 0 && opts.clearHotelLoyalty) {
+          throw new CliError(CliErrorCode.VALIDATION, "--hotel-loyalty and --clear-hotel-loyalty are mutually exclusive");
+        }
+        if (opts.clearLoyalty) input.loyaltyPrograms = [];
+        else if ((opts.loyalty as string[]).length > 0) input.loyaltyPrograms = toAirLoyaltyInput(opts.loyalty);
+        if (opts.clearHotelLoyalty) input.hotelLoyaltyPrograms = [];
+        else if ((opts.hotelLoyalty as string[]).length > 0) input.hotelLoyaltyPrograms = toHotelLoyaltyInput(opts.hotelLoyalty);
+
         if (Object.keys(input).length === 0) {
-          fatal("Nothing to update. Provide at least one of: --first, --last, --email, --dob, --gender, --type, --phone, --passport-number");
+          fatal("Nothing to update. Provide at least one of: --first, --last, --email, --dob, --gender, --type, --phone, --passport-number, --loyalty, --hotel-loyalty, --clear-loyalty, --clear-hotel-loyalty");
         }
 
         const data = await graphql<{ updateTripPlanTraveller: Traveller }>(
@@ -350,6 +443,8 @@ export function registerTravellerCommands(program: Command): void {
         console.log(chalk.dim(`  ID: ${t.id}`));
         console.log(chalk.dim(`  Type: ${t.declaredTravellerType ?? "ADULT"}`));
         if (t.email) console.log(chalk.dim(`  Email: ${t.email}`));
+        const loyalty = loyaltySummary(t);
+        if (loyalty) console.log(chalk.dim(`  Loyalty: ${loyalty}`));
       } catch (err) {
         if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
