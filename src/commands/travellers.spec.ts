@@ -354,7 +354,7 @@ describe("traveller loyalty flags", () => {
       "--json",
     ]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
-    expect(vars.input.loyaltyPrograms).toEqual([
+    expect(vars.input.frequentFlyerPrograms).toEqual([
       { airlineCode: "DL", membershipNumber: "1234567" },
       { airlineCode: "B6", membershipNumber: "987654" },
     ]);
@@ -367,7 +367,7 @@ describe("traveller loyalty flags", () => {
     mockGraphql.mockResolvedValueOnce({ createTripPlanTraveller: sampleTraveller });
     await run(["add", "--plan", "plan-1", "--first", "John", "--last", "Doe", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
-    expect(vars.input).not.toHaveProperty("loyaltyPrograms");
+    expect(vars.input).not.toHaveProperty("frequentFlyerPrograms");
     expect(vars.input).not.toHaveProperty("hotelLoyaltyPrograms");
   });
 
@@ -395,7 +395,7 @@ describe("traveller loyalty flags", () => {
     mockGraphql.mockResolvedValueOnce({ createTripPlanTraveller: sampleTraveller });
     await run(["add", "--plan", "p", "--first", "J", "--last", "D", "--frequent-flyer", "DL:DL1234567", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
-    expect(vars.input.loyaltyPrograms).toEqual([{ airlineCode: "DL", membershipNumber: "DL1234567" }]);
+    expect(vars.input.frequentFlyerPrograms).toEqual([{ airlineCode: "DL", membershipNumber: "DL1234567" }]);
   });
 
   it("update: --frequent-flyer replaces and --clear-hotel-loyalty sends []", async () => {
@@ -403,7 +403,7 @@ describe("traveller loyalty flags", () => {
     await run(["update", "trv_01", "--frequent-flyer", "UA:111222", "--clear-hotel-loyalty", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars.input).toEqual({
-      loyaltyPrograms: [{ airlineCode: "UA", membershipNumber: "111222" }],
+      frequentFlyerPrograms: [{ airlineCode: "UA", membershipNumber: "111222" }],
       hotelLoyaltyPrograms: [],
     });
   });
@@ -412,7 +412,7 @@ describe("traveller loyalty flags", () => {
     mockGraphql.mockResolvedValueOnce({ updateTripPlanTraveller: sampleTraveller });
     await run(["update", "trv_01", "--clear-frequent-flyer", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
-    expect(vars.input).toEqual({ loyaltyPrograms: [] });
+    expect(vars.input).toEqual({ frequentFlyerPrograms: [] });
 
     await expect(
       run(["update", "trv_01", "--frequent-flyer", "DL:123", "--clear-frequent-flyer", "--json"])
@@ -426,7 +426,7 @@ describe("traveller loyalty flags", () => {
     mockGraphql.mockResolvedValueOnce({
       tripPlanTravellers: [{
         ...sampleTraveller,
-        loyaltyPrograms: [{ airlineCode: "DL", last4: "4567" }],
+        frequentFlyerPrograms: [{ airlineCode: "DL", last4: "4567" }],
         hotelLoyaltyPrograms: [{ chainCode: "HI", last4: "5678" }],
       }],
     });

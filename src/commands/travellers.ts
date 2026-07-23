@@ -78,7 +78,7 @@ function toHotelLoyaltyInput(values: string[]): Array<{ chainCode: string; membe
 /** Masked one-line render of a traveller's loyalty programs (server only ever returns code + last4). */
 function loyaltySummary(t: Traveller): string | undefined {
   const bits: string[] = [];
-  for (const p of t.loyaltyPrograms ?? []) bits.push(`✈ ${p.airlineCode} ••••${p.last4 ?? ""}`);
+  for (const p of t.frequentFlyerPrograms ?? []) bits.push(`✈ ${p.airlineCode} ••••${p.last4 ?? ""}`);
   for (const p of t.hotelLoyaltyPrograms ?? []) bits.push(`🏨 ${p.chainCode} ••••${p.last4 ?? ""}`);
   return bits.length > 0 ? bits.join("  ·  ") : undefined;
 }
@@ -92,7 +92,7 @@ interface Traveller {
   gender?: string;
   declaredTravellerType?: string;
   passport?: { last4?: string; issueCountry?: string } | null;
-  loyaltyPrograms?: Array<{ airlineCode: string; last4?: string | null }> | null;
+  frequentFlyerPrograms?: Array<{ airlineCode: string; last4?: string | null }> | null;
   hotelLoyaltyPrograms?: Array<{ chainCode: string; last4?: string | null }> | null;
 }
 
@@ -228,7 +228,7 @@ export function registerTravellerCommands(program: Command): void {
 
         // Loyalty programs (validated client-side; encrypted server-side, only
         // code + last4 ever come back)
-        if ((opts.frequentFlyer as string[]).length > 0) input.loyaltyPrograms = toAirLoyaltyInput(opts.frequentFlyer);
+        if ((opts.frequentFlyer as string[]).length > 0) input.frequentFlyerPrograms = toAirLoyaltyInput(opts.frequentFlyer);
         if ((opts.hotelLoyalty as string[]).length > 0) input.hotelLoyaltyPrograms = toHotelLoyaltyInput(opts.hotelLoyalty);
 
         const data = await graphql<{ createTripPlanTraveller: Traveller }>(
@@ -418,8 +418,8 @@ export function registerTravellerCommands(program: Command): void {
         if ((opts.hotelLoyalty as string[]).length > 0 && opts.clearHotelLoyalty) {
           throw new CliError(CliErrorCode.VALIDATION, "--hotel-loyalty and --clear-hotel-loyalty are mutually exclusive");
         }
-        if (opts.clearFrequentFlyer) input.loyaltyPrograms = [];
-        else if ((opts.frequentFlyer as string[]).length > 0) input.loyaltyPrograms = toAirLoyaltyInput(opts.frequentFlyer);
+        if (opts.clearFrequentFlyer) input.frequentFlyerPrograms = [];
+        else if ((opts.frequentFlyer as string[]).length > 0) input.frequentFlyerPrograms = toAirLoyaltyInput(opts.frequentFlyer);
         if (opts.clearHotelLoyalty) input.hotelLoyaltyPrograms = [];
         else if ((opts.hotelLoyalty as string[]).length > 0) input.hotelLoyaltyPrograms = toHotelLoyaltyInput(opts.hotelLoyalty);
 

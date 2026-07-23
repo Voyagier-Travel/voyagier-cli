@@ -398,7 +398,7 @@ export const CREATE_TRAVELLER = `
   mutation CreateTraveller($tripPlanId: String!, $input: CreateTripPlanTravellerInput!) {
     createTripPlanTraveller(tripPlanId: $tripPlanId, input: $input) {
       id firstName lastName email dateOfBirth gender declaredTravellerType
-      loyaltyPrograms { airlineCode last4 }
+      frequentFlyerPrograms { airlineCode last4 }
       hotelLoyaltyPrograms { chainCode last4 }
     }
   }
@@ -417,7 +417,7 @@ export const GET_TRAVELLERS = `
     tripPlanTravellers(tripPlanId: $tripPlanId) {
       id firstName lastName email dateOfBirth gender declaredTravellerType
       passport { last4 issueCountry }
-      loyaltyPrograms { airlineCode last4 }
+      frequentFlyerPrograms { airlineCode last4 }
       hotelLoyaltyPrograms { chainCode last4 }
     }
   }
@@ -439,14 +439,14 @@ export const DELETE_TRAVELLER = `
 // in the July-2026 traveller requirements work (VOY-1395 era). Load-bearing:
 // gender + dateOfBirth are REQUIRED for flight checkout (TSA Secure Flight),
 // and passport data hard-gates international reserves. (VOY-1692)
-// NOTE: loyaltyPrograms/hotelLoyaltyPrograms selections require nest-api
+// NOTE: frequentFlyerPrograms/hotelLoyaltyPrograms selections require nest-api
 // PRs #519 + #520 to be deployed — the server never returns plaintext
 // membership numbers, only the code + last4 (encrypted at rest server-side).
 export const UPDATE_TRAVELLER = `
   mutation UpdateTraveller($id: String!, $input: UpdateTripPlanTravellerInput!) {
     updateTripPlanTraveller(id: $id, input: $input) {
       id firstName lastName email dateOfBirth gender declaredTravellerType
-      loyaltyPrograms { airlineCode last4 }
+      frequentFlyerPrograms { airlineCode last4 }
       hotelLoyaltyPrograms { chainCode last4 }
     }
   }
