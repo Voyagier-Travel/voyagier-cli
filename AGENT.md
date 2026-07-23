@@ -160,7 +160,7 @@ looks wrong after a settled pick, apply the tie-breaker: `book --dry-run`.
 ### Traveller requirements for flights
 
 **Gender and date of birth are required at flight checkout** (TSA Secure
-Flight), and **passport data hard-gates international reserves**. Set them
+Flight), and **passport data hard-gates international reservations**. Set them
 early via `travellers add`/`travellers update` (`--gender`, `--dob`,
 `--passport-number`, `--passport-country`, `--passport-nationality`,
 `--passport-expiry`).
@@ -554,7 +554,10 @@ voyagier chat                         # interactive AI assistant
 voyagier chat -m "<single prompt>"
 voyagier telemetry status|on|off
 voyagier agent-docs                   # prints this file
+voyagier mcp                          # run as a Model Context Protocol (MCP) stdio server
 ```
+
+**MCP server.** The CLI is also an MCP stdio server (`voyagier mcp`): it exposes the agent surface — plan, search, selection-options, select, plan-status, quote, book — as MCP tools. Each tool call self-spawns the CLI with `--json` (except `agent_docs`, which returns this guide as plain markdown), so it's the SAME surface with the SAME error codes and the SAME price-gated `book` (still requires `expect_total`). In shell-less or MCP-native environments, prefer it over hand-rolling `child_process` calls. (`send` is intentionally not exposed — it emails a real client; close via `quote` → `book`.)
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: voyagier-cli
-version: 2.9.0
+version: 2.10.0
 description: "Book real travel from your terminal — search flights, hotels & activities, plan trips, and check out with a price-gated booking. For AI agents and travel advisors."
 metadata:
   openclaw:
@@ -43,6 +43,8 @@ voyagier agent-docs    # prints AGENT.md: JSON shapes, error-code table, bookabi
 ```
 
 Read it once per session before non-trivial work. Everything below is a summary of that document.
+
+**MCP-native host?** The CLI doubles as a Model Context Protocol stdio server — `voyagier mcp` — exposing this same surface (plan → search → selection-options → select → plan-status → quote → book) as tools, with identical error codes and the same price-gated `book`. Prefer it over shelling out in shell-less environments. (`send` is intentionally not exposed.)
 
 ## The model (30 seconds)
 
