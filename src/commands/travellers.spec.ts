@@ -341,3 +341,145 @@ describe("travellers update", () => {
     });
   });
 });
+
+// ── loyalty programs (flights + hotels) ──────────────────────────────────────
+
+describe("traveller loyalty flags", () => {
+  it("add: parses repeatable --frequent-flyer and --hotel-loyalty into the input", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlanTraveller: sampleTraveller });
+    await run([
+      "add", "--plan", "plan-1", "--first", "John", "--last", "Doe",
+      "--frequent-flyer", "DL:1234567", "--frequent-flyer", "b6:987654",
+      "--hotel-loyalty", "hi:12345678",
+      "--json",
+    ]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input.frequentFlyerPrograms).toEqual([
+      { airlineCode: "DL", membershipNumber: "1234567" },
+      { airlineCode: "B6", membershipNumber: "987654" },
+    ]);
+    expect(vars.input.hotelLoyaltyPrograms).toEqual([
+      { chainCode: "HI", membershipNumber: "12345678" },
+    ]);
+  });
+
+  it("add: omits loyalty keys entirely when the flags are not used", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlanTraveller: sampleTraveller });
+    await run(["add", "--plan", "plan-1", "--first", "John", "--last", "Doe", "--json"]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input).not.toHaveProperty("frequentFlyerPrograms");
+    expect(vars.input).not.toHaveProperty("hotelLoyaltyPrograms");
+  });
+
+  it("rejects a hotel member number that is not digits-only, with a chain-prefix hint", async () => {
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--hotel-loyalty", "HI:HI12345678", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("validation errors never echo the full member number (masked to last 4)", async () => {
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--hotel-loyalty", "HI:HI12345678", "--json"])
+    ).rejects.toMatchObject({ message: expect.stringContaining('"••••5678"') });
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--frequent-flyer", "DL1234567", "--json"])
+    ).rejects.toMatchObject({ message: expect.stringContaining('"••••4567"') });
+    // Neither error may contain the raw input
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--hotel-loyalty", "HI:HI12345678", "--json"])
+    ).rejects.not.toMatchObject({ message: expect.stringContaining("HI12345678") });
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--frequent-flyer", "DL1234567", "--json"])
+    ).rejects.not.toMatchObject({ message: expect.stringContaining("DL1234567") });
+  });
+
+  it("add/update: passport metadata flags without --passport-number fail fast (no silent no-op)", async () => {
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--passport-country", "US", "--json"])
+    ).rejects.toMatchObject({
+      code: CliErrorCode.VALIDATION,
+      message: expect.stringContaining("--passport-country requires --passport-number"),
+    });
+    await expect(
+      run(["update", "trv_01", "--passport-nationality", "GB", "--passport-expiry", "2030-01", "--json"])
+    ).rejects.toMatchObject({
+      code: CliErrorCode.VALIDATION,
+      message: expect.stringContaining("--passport-nationality, --passport-expiry require --passport-number"),
+    });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("rejects a value without a colon and a bad chain code", async () => {
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--hotel-loyalty", "HI12345678", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--hotel-loyalty", "H1:12345678", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    // air codes may be alphanumeric (B6, 9W) — but not 1-char or 3-char
+    await expect(
+      run(["add", "--plan", "p", "--first", "J", "--last", "D", "--frequent-flyer", "DLX:123", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("air member numbers are sent verbatim (airlines issue prefixed/alphanumeric ids)", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlanTraveller: sampleTraveller });
+    await run(["add", "--plan", "p", "--first", "J", "--last", "D", "--frequent-flyer", "DL:DL1234567", "--json"]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input.frequentFlyerPrograms).toEqual([{ airlineCode: "DL", membershipNumber: "DL1234567" }]);
+  });
+
+  it("update: --frequent-flyer replaces and --clear-hotel-loyalty sends []", async () => {
+    mockGraphql.mockResolvedValueOnce({ updateTripPlanTraveller: sampleTraveller });
+    await run(["update", "trv_01", "--frequent-flyer", "UA:111222", "--clear-hotel-loyalty", "--json"]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input).toEqual({
+      frequentFlyerPrograms: [{ airlineCode: "UA", membershipNumber: "111222" }],
+      hotelLoyaltyPrograms: [],
+    });
+  });
+
+  it("update: --clear-frequent-flyer sends [] and conflicts with --frequent-flyer", async () => {
+    mockGraphql.mockResolvedValueOnce({ updateTripPlanTraveller: sampleTraveller });
+    await run(["update", "trv_01", "--clear-frequent-flyer", "--json"]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input).toEqual({ frequentFlyerPrograms: [] });
+
+    await expect(
+      run(["update", "trv_01", "--frequent-flyer", "DL:123", "--clear-frequent-flyer", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    await expect(
+      run(["update", "trv_01", "--hotel-loyalty", "HI:123", "--clear-hotel-loyalty", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("list: renders masked loyalty (code + last4) and never any full number", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellers: [{
+        ...sampleTraveller,
+        frequentFlyerPrograms: [{ airlineCode: "DL", last4: "4567" }],
+        hotelLoyaltyPrograms: [{ chainCode: "HI", last4: "5678" }],
+      }],
+    });
+    await run(["list", "--plan", "plan-1"]);
+    const out = logJoined();
+    expect(out).toContain("DL ••••4567");
+    expect(out).toContain("HI ••••5678");
+  });
+
+  it("list: omits the mask entirely when last4 is missing (no dangling ••••)", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanTravellers: [{
+        ...sampleTraveller,
+        frequentFlyerPrograms: [{ airlineCode: "DL", last4: null }],
+        hotelLoyaltyPrograms: [{ chainCode: "HI" }],
+      }],
+    });
+    await run(["list", "--plan", "plan-1"]);
+    const out = logJoined();
+    expect(out).toContain("✈ DL");
+    expect(out).toContain("🏨 HI");
+    expect(out).not.toContain("••••");
+  });
+});
