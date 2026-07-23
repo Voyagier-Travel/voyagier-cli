@@ -2,7 +2,8 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../../api.js";
 import { printPlanFooter, getPlanSummary } from "../../plan-footer.js";
-import { validateDate, warnPastDate, formatPrice, formatDateRange, shellArg, resolvePlanId } from "../../utils.js";
+import { validateDate, warnPastDate, formatPrice, formatDateRange, shellArg } from "../../utils.js";
+import { resolvePlanArg } from "../../resolve-plan-arg.js";
 import { fatal, jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
 import { resolveClient } from "../clients.js";
@@ -180,7 +181,7 @@ export function registerCrudCommands(plans: Command): void {
     .option("--agent", "Output plain markdown for AI agents")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (idInput: string | undefined, opts) => {
-      const id = resolvePlanId(idInput, opts, "plans get");
+      const id = resolvePlanArg(idInput, opts, "plans get");
       try {
         const data = await graphql<TripPlanDetail>(
           GET_TRIP_PLAN,
@@ -298,7 +299,7 @@ export function registerCrudCommands(plans: Command): void {
     .option("--agent", "Output plain markdown for AI agents")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (idInput: string | undefined, opts) => {
-      const id = resolvePlanId(idInput, opts, "plans summary");
+      const id = resolvePlanArg(idInput, opts, "plans summary");
       try {
         const data = await graphql<TripPlanDetail>(
           GET_TRIP_PLAN_SUMMARY,
@@ -433,7 +434,7 @@ export function registerCrudCommands(plans: Command): void {
     .option("--json", "Output raw JSON")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (idInput: string | undefined, opts) => {
-      const id = resolvePlanId(idInput, opts, "plans update");
+      const id = resolvePlanArg(idInput, opts, "plans update");
       try {
         if (opts.start) {
           validateDate(opts.start, "--start");
@@ -492,7 +493,7 @@ export function registerCrudCommands(plans: Command): void {
     .option("--json", "Output raw JSON")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (idInput: string | undefined, opts) => {
-      const id = resolvePlanId(idInput, opts, "plans delete");
+      const id = resolvePlanArg(idInput, opts, "plans delete");
       try {
         // Same confirmation convention as goal-remove: destructive ops take
         // --force. Deleting a plan drops its goals/selections/cart with it.

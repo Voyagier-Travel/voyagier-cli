@@ -22,7 +22,8 @@ import { createInterface } from "readline/promises";
 import { graphql } from "../api.js";
 import { GET_PLAN_CLIENT, SEND_TRIP_PLAN_TO_CLIENT } from "../queries.js";
 import { CliError, CliErrorCode } from "../errors.js";
-import { shellArg, resolvePlanId } from "../utils.js";
+import { shellArg } from "../utils.js";
+import { resolvePlanArg } from "../resolve-plan-arg.js";
 
 interface PlanClientCheck {
   tripPlan: {
@@ -52,7 +53,7 @@ export function registerSendCommand(program: Command): void {
     .option("--agent", "Compact agent-friendly output")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (planIdInput: string | undefined, opts: { note?: string; yes?: boolean; json?: boolean; agent?: boolean; plan?: string }) => {
-      const planId = resolvePlanId(planIdInput, opts, "send");
+      const planId = resolvePlanArg(planIdInput, opts, "send");
       const planIdArg = shellArg(planId);
 
       // Fail fast before any prompt or mutation (server caps at 2000).

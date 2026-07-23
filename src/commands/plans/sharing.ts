@@ -2,7 +2,8 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../../api.js";
 import { getApiUrl } from "../../config.js";
-import { deriveBaseUrl, formatDateRange, resolvePlanId } from "../../utils.js";
+import { deriveBaseUrl, formatDateRange } from "../../utils.js";
+import { resolvePlanArg } from "../../resolve-plan-arg.js";
 import { jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
 import {
@@ -26,7 +27,7 @@ export function registerSharingCommands(plans: Command): void {
     .option("--json", "Output raw JSON")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (planIdInput: string | undefined, opts) => {
-      const planId = resolvePlanId(planIdInput, opts, "plans share");
+      const planId = resolvePlanArg(planIdInput, opts, "plans share");
       try {
         if (!opts.user && !opts.email) {
           throw new CliError(CliErrorCode.VALIDATION, "Either --user or --email is required.");
@@ -112,7 +113,7 @@ export function registerSharingCommands(plans: Command): void {
     .option("--json", "Output raw JSON")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (planIdInput: string | undefined, opts) => {
-      const planId = resolvePlanId(planIdInput, opts, "plans collaborators");
+      const planId = resolvePlanArg(planIdInput, opts, "plans collaborators");
       try {
         const data = await graphql<{
           tripPlanCollaborators: Array<{
@@ -162,7 +163,9 @@ export function registerSharingCommands(plans: Command): void {
     .option("--json", "Output raw JSON")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (planIdInput: string | undefined, opts) => {
-      const planId = resolvePlanId(planIdInput, opts, "plans unshare");
+      // Validate the plan-id inputs (conflict/missing rules) even though the
+      // mutation itself only needs the collaborator id.
+      resolvePlanArg(planIdInput, opts, "plans unshare");
       try {
         await graphql<{ removeTripPlanCollaborator: boolean }>(
           REMOVE_COLLABORATOR,

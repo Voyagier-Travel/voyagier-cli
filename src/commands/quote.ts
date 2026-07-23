@@ -28,7 +28,8 @@ import { graphql } from "../api.js";
 import { GET_QUOTE_DATA } from "../queries.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getUserContext } from "../config.js";
-import { formatPrice, shellArg, cents, formatDateRange, resolvePlanId } from "../utils.js";
+import { formatPrice, shellArg, cents, formatDateRange } from "../utils.js";
+import { resolvePlanArg } from "../resolve-plan-arg.js";
 import {
   buildBookabilityIndex,
   enrichCartItems,
@@ -80,7 +81,7 @@ export function registerQuoteCommand(program: Command): void {
     .option("--agent", "Compact agent-friendly markdown")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (planIdInput: string | undefined, opts: { json?: boolean; agent?: boolean; plan?: string }) => {
-      const planId = resolvePlanId(planIdInput, opts, "quote");
+      const planId = resolvePlanArg(planIdInput, opts, "quote");
       const planIdArg = shellArg(planId);
 
       let data: QuoteQueryResult;

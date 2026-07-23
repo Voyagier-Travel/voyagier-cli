@@ -22,6 +22,9 @@ jest.unstable_mockModule("../output.js", () => ({
 }));
 
 // utils.validateDate is the real implementation; pass-through is fine.
+// resolvePlanArg is NOT mocked — it lives in its own module
+// (resolve-plan-arg.ts) precisely so suites that mock utils.js always
+// exercise the real contract (string or throw INVALID_INPUT).
 jest.unstable_mockModule("../utils.js", () => ({
   validateDate: jest.fn().mockImplementation((value: string, flagName: string) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -33,17 +36,6 @@ jest.unstable_mockModule("../utils.js", () => ({
   }),
   deriveBaseUrl: (api: string) => {
     try { const u = new URL(api); u.pathname = ""; return u.origin; } catch { return "https://travel.voyagier.com"; }
-  },
-  resolvePlanId: (positional: string | undefined, opts: { plan?: string }, commandName: string): string => {
-    const flag = opts?.plan;
-    if (positional !== undefined && flag !== undefined && positional !== flag) {
-      throw new CliError(CliErrorCode.INVALID_INPUT, `Conflicting plan ids: positional ${positional} vs --plan ${flag}.`);
-    }
-    const resolved = positional ?? flag;
-    if (resolved === undefined) {
-      throw new CliError(CliErrorCode.INVALID_INPUT, `A plan id is required: pass it as the positional argument (voyagier ${commandName} <planId>) or with --plan <id>.`);
-    }
-    return resolved;
   },
 }));
 

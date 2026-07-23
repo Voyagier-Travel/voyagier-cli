@@ -36,7 +36,8 @@ import chalk from "chalk";
 import { graphql } from "../../api.js";
 import { jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
-import { shellArg, resolvePlanId } from "../../utils.js";
+import { shellArg } from "../../utils.js";
+import { resolvePlanArg } from "../../resolve-plan-arg.js";
 import {
   LIST_TRIP_PLAN_GOALS,
   LIST_TRIP_PLAN_GOALS_DEEP,
@@ -332,7 +333,7 @@ export function registerGoalCommands(plans: Command): void {
     .option("--json", "Output raw JSON")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (planIdInput: string | undefined, opts) => {
-      const planId = resolvePlanId(planIdInput, opts, "plans goals");
+      const planId = resolvePlanArg(planIdInput, opts, "plans goals");
       try {
         const query = opts.tree ? LIST_TRIP_PLAN_GOALS_DEEP : LIST_TRIP_PLAN_GOALS;
         const data = await graphql<{ tripPlanGoals: TripPlanGoalDeep[] }>(query, { tripPlanId: planId });
@@ -471,7 +472,7 @@ export function registerGoalCommands(plans: Command): void {
     .option("--json", "Output raw JSON")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (planIdInput: string | undefined, opts) => {
-      const planId = resolvePlanId(planIdInput, opts, "plans goal-add");
+      const planId = resolvePlanArg(planIdInput, opts, "plans goal-add");
       try {
         const type = normalizeSelectionType(opts.type);
         // CreateTripPlanGoalInput.name is required by the schema; default if missing.
@@ -595,7 +596,7 @@ export function registerGoalCommands(plans: Command): void {
     .option("--json", "Output raw JSON")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (planIdInput: string | undefined, opts) => {
-      const planId = resolvePlanId(planIdInput, opts, "plans goal-add-with-selection");
+      const planId = resolvePlanArg(planIdInput, opts, "plans goal-add-with-selection");
       try {
         const type = normalizeSelectionType(opts.type);
         // --place-before, --place-after, and --sort-order are three different
@@ -953,7 +954,7 @@ export function registerGoalCommands(plans: Command): void {
     .option("--json", "Output raw JSON")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (planIdInput: string | undefined, opts) => {
-      const planId = resolvePlanId(planIdInput, opts, "plans goal-reorder");
+      const planId = resolvePlanArg(planIdInput, opts, "plans goal-reorder");
       try {
         // Order must preserve duplicates so we can detect them in computeReorderUpdates.
         const orderIds = parseCsvIds(opts.order, "--order", { dedupe: false });

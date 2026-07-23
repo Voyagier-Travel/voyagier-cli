@@ -25,7 +25,8 @@ import { graphql } from "../api.js";
 import { jsonOutput, fatal } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { GET_TRIP_PLAN_EVENTS } from "../queries.js";
-import { validateDate, deriveBaseUrl, resolvePlanId } from "../utils.js";
+import { validateDate, deriveBaseUrl } from "../utils.js";
+import { resolvePlanArg } from "../resolve-plan-arg.js";
 import { getApiUrl } from "../config.js";
 
 export interface TripPlanEventLocation {
@@ -183,7 +184,7 @@ export function registerItineraryCommand(program: Command): void {
     .option("--json", "Output raw JSON")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (planIdInput: string | undefined, opts) => {
-      const planId = resolvePlanId(planIdInput, opts, "itinerary");
+      const planId = resolvePlanArg(planIdInput, opts, "itinerary");
       // Validate flags
       let dayFilter: number | undefined;
       if (opts.day !== undefined) {

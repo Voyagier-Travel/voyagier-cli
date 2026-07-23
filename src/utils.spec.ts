@@ -18,27 +18,48 @@ import {
   parseFloatStrict,
   formatNullableBool,
   escapeMdTableCell,
-  resolvePlanId,
+  resolvePlanArg,
 } from "./utils.js";
 import { CliError, CliErrorCode } from "./errors.js";
 
-describe("resolvePlanId", () => {
+describe("resolvePlanArg", () => {
   it("positional only → returns the positional", () => {
-    expect(resolvePlanId("plan-1", {}, "plan-status")).toBe("plan-1");
+    expect(resolvePlanArg("plan-1", {}, "plan-status")).toBe("plan-1");
   });
 
   it("--plan only → returns the flag (positional optional)", () => {
-    expect(resolvePlanId(undefined, { plan: "plan-2" }, "plan-status")).toBe("plan-2");
+    expect(resolvePlanArg(undefined, { plan: "plan-2" }, "plan-status")).toBe("plan-2");
+  });
+
+  it("--plan is trimmed before use", () => {
+    expect(resolvePlanArg(undefined, { plan: "  plan-2\t" }, "plan-status")).toBe("plan-2");
+  });
+
+  it("empty/whitespace-only --plan → INVALID_INPUT locally (never reaches the API)", () => {
+    for (const bad of ["", "   ", "\t"]) {
+      try {
+        resolvePlanArg(undefined, { plan: bad }, "cart");
+        throw new Error("expected resolvePlanArg to throw");
+      } catch (err) {
+        expect(err).toBeInstanceOf(CliError);
+        expect((err as CliError).code).toBe(CliErrorCode.INVALID_INPUT);
+        expect((err as CliError).message).toBe("--plan requires a non-empty plan id.");
+      }
+    }
+  });
+
+  it("trimmed --plan matching the positional → proceeds (no false conflict)", () => {
+    expect(resolvePlanArg("plan-3", { plan: " plan-3 " }, "cart")).toBe("plan-3");
   });
 
   it("both provided and identical → proceeds, returns the shared value", () => {
-    expect(resolvePlanId("plan-3", { plan: "plan-3" }, "cart")).toBe("plan-3");
+    expect(resolvePlanArg("plan-3", { plan: "plan-3" }, "cart")).toBe("plan-3");
   });
 
   it("both provided and different → INVALID_INPUT with the exact conflict message", () => {
     try {
-      resolvePlanId("plan-a", { plan: "plan-b" }, "cart");
-      throw new Error("expected resolvePlanId to throw");
+      resolvePlanArg("plan-a", { plan: "plan-b" }, "cart");
+      throw new Error("expected resolvePlanArg to throw");
     } catch (err) {
       expect(err).toBeInstanceOf(CliError);
       expect((err as CliError).code).toBe(CliErrorCode.INVALID_INPUT);
@@ -48,8 +69,8 @@ describe("resolvePlanId", () => {
 
   it("neither provided → INVALID_INPUT naming both the positional and --plan forms", () => {
     try {
-      resolvePlanId(undefined, {}, "itinerary");
-      throw new Error("expected resolvePlanId to throw");
+      resolvePlanArg(undefined, {}, "itinerary");
+      throw new Error("expected resolvePlanArg to throw");
     } catch (err) {
       expect(err).toBeInstanceOf(CliError);
       expect((err as CliError).code).toBe(CliErrorCode.INVALID_INPUT);

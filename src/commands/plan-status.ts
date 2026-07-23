@@ -52,7 +52,8 @@ import { graphql } from "../api.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
-import { deriveBaseUrl, formatPrice, shellArg, resolvePlanId } from "../utils.js";
+import { deriveBaseUrl, formatPrice, shellArg } from "../utils.js";
+import { resolvePlanArg } from "../resolve-plan-arg.js";
 import { GET_PLAN_STATUS, GET_HOTEL_OPTION_DATA } from "../queries.js";
 import { classifySelection } from "../selection-status.js";
 import {
@@ -1132,7 +1133,7 @@ export function registerPlanStatusCommand(program: Command): void {
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .option("--verify", "Also run the book --dry-run checkout truth and append a verify section")
     .action(async (planIdInput: string | undefined, opts: { json?: boolean; agent?: boolean; verify?: boolean; plan?: string }) => {
-      const planId = resolvePlanId(planIdInput, opts, "plan-status");
+      const planId = resolvePlanArg(planIdInput, opts, "plan-status");
       let data: PlanStatusQueryResult;
       try {
         data = await graphql<PlanStatusQueryResult>(GET_PLAN_STATUS, { id: planId });

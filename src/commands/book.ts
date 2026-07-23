@@ -54,7 +54,8 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
-import { formatPrice, openBrowser, deriveBaseUrl, shellArg, cents, resolvePlanId } from "../utils.js";
+import { formatPrice, openBrowser, deriveBaseUrl, shellArg, cents } from "../utils.js";
+import { resolvePlanArg } from "../resolve-plan-arg.js";
 import { hintCheckoutCreated, hintBookingConfirmed, hintBookingPending, hintDryRun } from "../hints.js";
 import { GET_CART_V2, CREATE_CHECKOUT, GET_PAYMENT_CHECKOUTS } from "../queries.js";
 import {
@@ -153,7 +154,7 @@ export function registerBookCommands(program: Command): void {
       status?: boolean;
       plan?: string;
     }) => {
-      const planId = resolvePlanId(planIdInput, opts, "book");
+      const planId = resolvePlanArg(planIdInput, opts, "book");
       const baseUrl = deriveBaseUrl(getApiUrl());
       const planUrl = `${baseUrl}/plans/${planId}`;
 
