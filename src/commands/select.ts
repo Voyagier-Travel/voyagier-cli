@@ -50,7 +50,7 @@ interface ChoiceScopeOpts {
  * Normalize scope flags: a flag that was PASSED but empty/whitespace is a
  * hard error, never a silent fall-through to the for-all default — that
  * would overwrite every traveller's choice when the caller named one
- * traveller with a bad value. Same contract as resolvePlanId's --plan
+ * traveller with a bad value. Same contract as resolvePlanArg's --plan
  * handling (empty ≠ omitted). Mutual exclusion is computed on "was the flag
  * provided" (!== undefined), not truthiness, for the same reason.
  */

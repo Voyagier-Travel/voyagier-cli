@@ -143,6 +143,32 @@ describe("plans items", () => {
   });
 });
 
+describe("plans items --plan flag (plan-id harmonization)", () => {
+  it("flag-only invocation reaches the same code path as the positional", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlan: { id: "plan-1", title: "Paris", items: [flightItem] },
+    });
+    await run(["items", "--plan", "plan-1", "--json"]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars).toEqual({ id: "plan-1" });
+    expect(JSON.parse(writes.join("")).planId).toBe("plan-1");
+  });
+
+  it("positional and --plan conflicting → INVALID_INPUT, no query issued", async () => {
+    await expect(run(["items", "plan-a", "--plan", "plan-b", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.INVALID_INPUT,
+    });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("neither positional nor --plan → INVALID_INPUT", async () => {
+    await expect(run(["items", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.INVALID_INPUT,
+    });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+});
+
 // ── plans remove-item ─────────────────────────────────────────────────────────
 
 describe("plans remove-item", () => {

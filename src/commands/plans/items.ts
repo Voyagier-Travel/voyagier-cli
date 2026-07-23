@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { graphql } from "../../api.js";
 import { GET_PLAN_DEEP, DELETE_TRIP_PLAN_ITEM } from "../../queries.js";
 import { formatPrice } from "../../utils.js";
+import { resolvePlanArg } from "../../resolve-plan-arg.js";
 import { fatal, jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
 import { typeIcon, inferItemType, itemStatus, deepChosenOption, deepSubSelections, DeepItem } from "./types.js";
@@ -10,10 +11,12 @@ import { deriveChosen } from "../../choices.js";
 
 export function registerItemCommands(plans: Command): void {
   plans
-    .command("items <planId>")
+    .command("items [planId]")
     .description("List items in a trip plan with IDs and status")
     .option("--json", "Output raw JSON")
-    .action(async (planId: string, opts) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (planIdInput: string | undefined, opts) => {
+      const planId = resolvePlanArg(planIdInput, opts, "plans items");
       try {
         const data = await graphql<{ tripPlan: { id: string; title: string; items: DeepItem[] } }>(
           GET_PLAN_DEEP, { id: planId }

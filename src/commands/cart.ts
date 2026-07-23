@@ -15,6 +15,7 @@ import { graphql } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
 import { formatPrice, deriveBaseUrl, shellArg } from "../utils.js";
+import { resolvePlanArg } from "../resolve-plan-arg.js";
 import { GET_CART_V2 } from "../queries.js";
 import {
   buildBookabilityIndex,
@@ -26,11 +27,13 @@ import {
 
 export function registerCartCommands(program: Command): void {
   program
-    .command("cart <planId>")
+    .command("cart [planId]")
     .description("View the shopping cart for a trip plan")
     .option("--json", "Output structured JSON envelope")
     .option("--agent", "Output plain markdown for AI agents")
-    .action(async (planId: string, opts: { json?: boolean; agent?: boolean }) => {
+    .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
+    .action(async (planIdInput: string | undefined, opts: { json?: boolean; agent?: boolean; plan?: string }) => {
+      const planId = resolvePlanArg(planIdInput, opts, "cart");
       const baseUrl = deriveBaseUrl(getApiUrl());
       const planUrl = `${baseUrl}/plans/${planId}`;
 

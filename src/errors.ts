@@ -48,6 +48,10 @@ export enum CliErrorCode {
   // v2.5.0 — VOY-1212 (send + quote)
   /** Externally-visible action (e.g. emailing a client) needs explicit confirmation: interactive yes or --yes. */
   CONFIRMATION_REQUIRED = "CONFIRMATION_REQUIRED",
+
+  // v2.11.0 — plan-id harmonization (--plan accepted alongside the positional)
+  /** Conflicting or missing plan id (positional vs --plan), or other malformed input. */
+  INVALID_INPUT = "INVALID_INPUT",
 }
 
 export class CliError extends Error {
