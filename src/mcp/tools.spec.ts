@@ -85,8 +85,8 @@ describe("argv builders", () => {
     expect(args).not.toContain("--one-way");
   });
 
-  it("plan_trip supports add-to-existing mode: plan only, no client/title (CLI auto-pick + --plan contract)", () => {
-    const args = buildPlanTripArgs({ plan: "pl_42", hotel: "Kyoto", checkin: "2026-09-15", checkout: "2026-09-18" });
+  it("plan_trip supports add-to-existing mode: plan_id only, no client/title (maps to the CLI --plan flag)", () => {
+    const args = buildPlanTripArgs({ plan_id: "pl_42", hotel: "Kyoto", checkin: "2026-09-15", checkout: "2026-09-18" });
     expect(args).toEqual([
       "plan-trip", "--hotel", "Kyoto", "--checkin", "2026-09-15", "--checkout", "2026-09-18", "--plan", "pl_42", "--json",
     ]);
@@ -101,30 +101,30 @@ describe("argv builders", () => {
   });
 
   it("add_traveller defaults type to Adult", () => {
-    expect(buildAddTravellerArgs({ plan: "p", first: "Jane", last: "Doe" })).toEqual([
+    expect(buildAddTravellerArgs({ plan_id: "p", first: "Jane", last: "Doe" })).toEqual([
       "travellers", "add", "--plan", "p", "--first", "Jane", "--last", "Doe", "--type", "Adult", "--json",
     ]);
   });
 
   it("search_flights includes --return only when present", () => {
-    expect(buildSearchFlightsArgs({ plan: "p", from: "JFK", to: "NRT", date: "2026-09-15" })).toEqual([
+    expect(buildSearchFlightsArgs({ plan_id: "p", from: "JFK", to: "NRT", date: "2026-09-15" })).toEqual([
       "search", "flights", "--plan", "p", "--from", "JFK", "--to", "NRT", "--date", "2026-09-15", "--json",
     ]);
-    expect(buildSearchFlightsArgs({ plan: "p", from: "JFK", to: "NRT", date: "2026-09-15", return: "2026-09-22" }))
+    expect(buildSearchFlightsArgs({ plan_id: "p", from: "JFK", to: "NRT", date: "2026-09-15", return: "2026-09-22" }))
       .toContain("--return");
   });
 
   it("search_hotels", () => {
-    expect(buildSearchHotelsArgs({ plan: "p", location: "Paris", checkin: "2026-09-01", checkout: "2026-09-05" })).toEqual([
+    expect(buildSearchHotelsArgs({ plan_id: "p", location: "Paris", checkin: "2026-09-01", checkout: "2026-09-05" })).toEqual([
       "search", "hotels", "--plan", "p", "--location", "Paris", "--checkin", "2026-09-01", "--checkout", "2026-09-05", "--json",
     ]);
   });
 
   it("search_activities includes --query only when present", () => {
-    expect(buildSearchActivitiesArgs({ plan: "p", destination: "Tokyo", date: "2026-09-16" })).toEqual([
+    expect(buildSearchActivitiesArgs({ plan_id: "p", destination: "Tokyo", date: "2026-09-16" })).toEqual([
       "search", "activities", "--plan", "p", "--destination", "Tokyo", "--date", "2026-09-16", "--json",
     ]);
-    expect(buildSearchActivitiesArgs({ plan: "p", destination: "Tokyo", date: "2026-09-16", query: "sushi" }))
+    expect(buildSearchActivitiesArgs({ plan_id: "p", destination: "Tokyo", date: "2026-09-16", query: "sushi" }))
       .toEqual(expect.arrayContaining(["--query", "sushi"]));
   });
 
@@ -198,10 +198,10 @@ describe("--json discipline via the table (buildArgs on representative input)", 
     doctor: {},
     create_client: { email: "a@b.co", name: "n" },
     plan_trip: { client: "c", title: "t" },
-    add_traveller: { plan: "p", first: "f", last: "l" },
-    search_flights: { plan: "p", from: "A", to: "B", date: "d" },
-    search_hotels: { plan: "p", location: "L", checkin: "c", checkout: "o" },
-    search_activities: { plan: "p", destination: "D", date: "d" },
+    add_traveller: { plan_id: "p", first: "f", last: "l" },
+    search_flights: { plan_id: "p", from: "A", to: "B", date: "d" },
+    search_hotels: { plan_id: "p", location: "L", checkin: "c", checkout: "o" },
+    search_activities: { plan_id: "p", destination: "D", date: "d" },
     get_selection_options: { selection_id: "s" },
     select_option: { selection_id: "s", option_id: "o" },
     plan_status: { plan_id: "p" },
