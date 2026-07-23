@@ -183,7 +183,7 @@ describe("toToolResult — canonical envelope normalisation", () => {
     expect(r.isError).toBe(true);
     const env = parse(r);
     expect(env.ok).toBe(false);
-    expect(env.error).toEqual({ code: "UNKNOWN", message: "boom not json" });
+    expect(env.error).toEqual({ code: "UNKNOWN", message: "boom not json", details: { stderr: "at foo (x.js:1)" } });
   });
 
   it("non-JSON failure with empty stdout falls back to stderr, then to 'command failed'", () => {
@@ -194,9 +194,44 @@ describe("toToolResult — canonical envelope normalisation", () => {
   });
 
   // ── isError correlation: true exactly when ok:false ──
+  // ── Style A with ok:false (doctor overall-FAIL) → lossless passthrough, isError true ──
+  it("Style A ok:false passthrough (doctor FAIL): data preserved, isError TRUE — never masked as success", () => {
+    const cli = { ok: false, data: { overall: "FAIL", checks: [{ name: "auth", status: "FAIL" }] } };
+    const r = toToolResult({ stdout: JSON.stringify(cli), stderr: "", exitCode: 1 });
+    expect(r.isError).toBe(true);
+    expect(parse(r)).toEqual(cli);
+  });
+
+  it("empty stdout with exit 0 → {ok:true, data:{content:\"\"}}", () => {
+    const r = toToolResult({ stdout: "", stderr: "", exitCode: 0 });
+    expect(r.isError).toBe(false);
+    expect(parse(r)).toEqual({ ok: true, data: { content: "" } });
+  });
+
+  it("JSON array stdout → lossless wrap under data", () => {
+    const r = toToolResult({ stdout: '[{"id":1},{"id":2}]', stderr: "", exitCode: 0 });
+    expect(r.isError).toBe(false);
+    expect(parse(r)).toEqual({ ok: true, data: [{ id: 1 }, { id: 2 }] });
+  });
+
+  it("JSON scalar stdout (null / number / string) → treated as text content", () => {
+    for (const raw of ["null", "42", '"hi"']) {
+      const r = toToolResult({ stdout: raw, stderr: "", exitCode: 0 });
+      expect(r.isError).toBe(false);
+      expect(parse(r)).toEqual({ ok: true, data: { content: raw } });
+    }
+  });
+
+  it("non-JSON failure keeps stderr as error.details.stderr when message came from stdout", () => {
+    const r = toToolResult({ stdout: "boom", stderr: "stack trace here", exitCode: 2 });
+    expect(r.isError).toBe(true);
+    expect(parse(r).error).toEqual({ code: "UNKNOWN", message: "boom", details: { stderr: "stack trace here" } });
+  });
+
   it("isError is true exactly when the envelope is ok:false", () => {
     const cases: CliResult[] = [
       { stdout: '{"ok":true,"data":{}}', stderr: "", exitCode: 0 },
+      { stdout: '{"ok":false,"data":{"overall":"FAIL"}}', stderr: "", exitCode: 1 },
       { stdout: '{"clients":[]}', stderr: "", exitCode: 0 },
       { stdout: "plain markdown", stderr: "", exitCode: 0 },
       { stdout: '{"error":true,"code":"X","message":"y"}', stderr: "", exitCode: 1 },

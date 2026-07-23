@@ -177,8 +177,10 @@ function tryParseObject(text: string): Record<string, unknown> | undefined {
  *  - JSON object stdout:
  *      · CLI error envelope (`error === true`, incl. the synthetic TIMEOUT from
  *        runCli) → `{ok:false, error:{code, message, details?}}`, isError:true.
- *      · Already canonical (`ok === true` AND a `data` key, i.e. Style A) →
- *        passed through field-for-field (planContext preserved).
+ *      · Already canonical (boolean `ok` AND a `data` key, i.e. Style A) →
+ *        passed through field-for-field (planContext preserved). `ok:false`
+ *        passthrough (doctor's overall-FAIL report) keeps its data payload and
+ *        sets isError — a failed doctor must not read as MCP success.
  *      · Any other object (Style B flat, incl. select's flat-with-`ok`) →
  *        wrapped LOSSLESS as `{ok:true, data:<parsed>}` — inner fields untouched.
  *  - Non-JSON stdout:
@@ -206,9 +208,11 @@ export function toToolResult(result: CliResult): ToolResultPayload {
       return { text: JSON.stringify({ ok: false, error }), isError: true };
     }
 
-    // Already canonical Style A → pass through field-for-field.
-    if (parsed.ok === true && "data" in parsed) {
-      return { text: JSON.stringify(parsed), isError: false };
+    // Already canonical Style A → pass through field-for-field. A boolean
+    // `ok:false` here (doctor's overall-FAIL report is the only CLI emitter)
+    // stays lossless but must flag isError — not read as success.
+    if (typeof parsed.ok === "boolean" && "data" in parsed) {
+      return { text: JSON.stringify(parsed), isError: parsed.ok === false };
     }
 
     // Any other object (Style B flat) → lossless wrap.
@@ -221,5 +225,8 @@ export function toToolResult(result: CliResult): ToolResultPayload {
   }
   const stderrTrimmed = stderr.trim();
   const message = trimmed.length > 0 ? trimmed : stderrTrimmed.length > 0 ? stderrTrimmed : "command failed";
-  return { text: JSON.stringify({ ok: false, error: { code: "UNKNOWN", message } }), isError: true };
+  const error: ErrEnvelope["error"] = { code: "UNKNOWN", message };
+  // Keep stderr for diagnostics when it isn't already the message.
+  if (stderrTrimmed.length > 0 && message !== stderrTrimmed) error.details = { stderr: stderrTrimmed };
+  return { text: JSON.stringify({ ok: false, error }), isError: true };
 }
