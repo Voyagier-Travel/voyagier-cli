@@ -1,0 +1,44 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.voyagier/cli",
+  "title": "Voyagier",
+  "description": "Book real travel from your agent — flights, hotels & activities behind a price-gated checkout.",
+  "websiteUrl": "https://www.voyagier.com/agents",
+  "repository": {
+    "url": "https://github.com/Voyagier-Travel/voyagier-cli",
+    "source": "github"
+  },
+  "version": "2.12.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@voyagier/cli",
+      "version": "2.12.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "VOYAGIER_TOKEN",
+          "description": "Voyagier Personal Access Token (travel.voyagier.com → Settings → Personal Access Tokens). Access is by invitation — request at https://www.voyagier.com/agents.",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "VOYAGIER_API_URL",
+          "description": "Voyagier API base URL. Defaults to production; override only for non-production environments.",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
