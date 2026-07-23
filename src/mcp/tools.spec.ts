@@ -187,6 +187,19 @@ describe("argv builders", () => {
     });
   });
 
+  it("add_traveller forwards repeatable frequent_flyer and hotel_loyalty params", () => {
+    expect(buildAddTravellerArgs({
+      plan_id: "p", first: "Jane", last: "Doe",
+      frequent_flyer: ["DL:1234567", "B6:987654"],
+      hotel_loyalty: ["HI:12345678"],
+    })).toEqual([
+      "travellers", "add", "--plan", "p", "--first", "Jane", "--last", "Doe", "--type", "Adult",
+      "--frequent-flyer", "DL:1234567", "--frequent-flyer", "B6:987654",
+      "--hotel-loyalty", "HI:12345678",
+      "--json",
+    ]);
+  });
+
   it("agent_docs is the ONLY builder without --json", () => {
     expect(buildAgentDocsArgs()).toEqual(["agent-docs"]);
   });
@@ -222,3 +235,5 @@ describe("--json discipline via the table (buildArgs on representative input)", 
     }
   });
 });
+
+
