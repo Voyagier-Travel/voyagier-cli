@@ -6,6 +6,44 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ---
 
+## [2.11.0] — 2026-07-23
+
+### Added
+- **MCP stdio server (#100):** `voyagier mcp` exposes the agent surface — plan, search, selection-options, select, plan-status, quote, book, docs — as Model Context Protocol tools. A thin adapter: each tool call self-spawns the CLI with `--json`, so MCP inherits the same error codes and the same price-gated `book` (still requires `expect_total`). `send` is intentionally not exposed. Stdout in server mode is JSON-RPC only.
+- **`--plan <id>` on every plan-taking command (#102):** all 19 commands whose leading positional is a trip plan id (`book`, `cart`, `quote`, `plan-status`, `send`, `itinerary`, and the `plans` subcommands) now also accept the plan id via `--plan`. The two forms are interchangeable; both-with-different-values is an `INVALID_INPUT` error; empty/whitespace `--plan` is rejected locally. The positional form is unchanged. (`select`'s pre-existing `--plan` keeps its distinct cache-assertion semantics; `plans remove-item`'s keeps its bulk-op scoping.)
+
+### Changed
+- **MCP results use ONE canonical envelope (#103):** success `{ ok: true, data, planContext? }`, failure `{ ok: false, error: { code, message, details? } }` with `isError`. The CLI's two payload styles are normalised at the MCP layer only — the CLI surface is untouched. `agent_docs` markdown arrives as `data.content`; a failed `doctor` folds into the failure envelope (report lossless under `error.details`); a top-level `planContext` from flat payloads is hoisted to the envelope top level.
+- **All MCP tool inputs take `plan_id` (#101):** tool schemas standardised before first publish (mapped internally to the CLI).
+
+## [2.10.0] — 2026-07-22
+
+### Changed
+- **SKILL.md (#99):** generalised the processing-fee note, clearer description, lifestyle category, version sync.
+
+## [2.9.0] — 2026-07-22
+
+### Added
+- **TTY-aware loading spinner (#98)** for long operations (searches, `--wait` polls). Interactive terminals only — stderr, and only when it's a TTY: `--json` output, piped stdout, and non-TTY stderr remain byte-identical to before.
+
+### Fixed
+- **`plans delete --force` error text (#97)** now gives the full command path.
+
+## [2.8.2] — 2026-07-22
+
+### Fixed
+- **UX findings from the pre-publish end-to-end test (#95):** clearer auth/status guidance, safer defaults, and small output corrections across the compose loop.
+- **Type resolution under TypeScript 6 (#94):** explicit `types` field restored.
+
+## [2.8.1] — 2026-07-22
+
+### Security
+- **Security-audit hardening (#93):** telemetry privacy, HTTPS enforcement, stdin token entry (`voyagier auth set-token -` reads the PAT from stdin), tightened file permissions, URL/argument safety.
+
+### Changed
+- **Dependency refresh (#91, #92):** commander 15, graphql 17, dev-group updates; `engines` now `^22.12 || >=24`.
+- **Public-repo kit (#87):** LICENSE, CONTRIBUTING, SECURITY policy, issue templates, CI badges — groundwork for the public repository.
+
 ## [2.8.0] — 2026-07-22
 
 ### Added
