@@ -3,9 +3,11 @@
  *
  * The MCP server is a THIN adapter: every tool handler self-spawns the CLI as a
  * subprocess (`node <cliEntry> <args...> --json`), captures stdout, and returns
- * it as the tool result. The CLI's own `--json` agent surface IS the contract —
- * stable envelopes, uniform error codes, price gates — so calling it as a
- * subprocess guarantees zero behaviour drift and full process isolation.
+ * it as the tool result — normalised through `toToolResult` into one canonical
+ * `{ok,data}` / `{ok:false,error}` envelope. The CLI's own `--json` agent
+ * surface IS the contract — stable payloads, uniform error codes, price gates —
+ * so calling it as a subprocess guarantees zero behaviour drift and full
+ * process isolation; the MCP layer only reshapes the outermost wrapper.
  *
  * Two exported seams:
  *   - `runCli`      — spawn + capture + bounded timeout (SIGTERM → SIGKILL grace).
@@ -135,49 +137,89 @@ export function runCli(
   });
 }
 
+/** The canonical MCP success envelope: normalised across BOTH CLI payload styles. */
+export interface OkEnvelope {
+  ok: true;
+  data: unknown;
+  planContext?: unknown;
+}
+
+/** The canonical MCP failure envelope. */
+export interface ErrEnvelope {
+  ok: false;
+  error: { code: string; message: string; details?: unknown };
+}
+
 /**
- * Normalise a raw child result into the MCP tool-result payload.
+ * Parse a string as JSON, returning it only when it is a non-null object
+ * (arrays included — they carry no `ok`/`error`/`data` keys, so they flow to
+ * the lossless wrap). Scalars (`123`, `"x"`, `true`) and unparseable text
+ * return `undefined` so the caller falls through to the non-JSON branch.
+ */
+function tryParseObject(text: string): Record<string, unknown> | undefined {
+  if (text.length === 0) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed === "object" && parsed !== null) return parsed as Record<string, unknown>;
+  } catch {
+    /* not JSON */
+  }
+  return undefined;
+}
+
+/**
+ * Normalise a raw child result into ONE canonical MCP envelope. The CLI ships
+ * two payload styles (Style A wrapped `{ok,data,planContext}`, Style B flat
+ * domain shapes); this seam is the single place that collapses them so every
+ * MCP tool result looks the same to a client. The CLI surface is untouched.
  *
- * Rules:
- *  - Success (exit 0): pass stdout through VERBATIM. This covers both the
- *    CLI's JSON envelopes AND plain text (e.g. `agent-docs` markdown, the one
- *    tool that runs without `--json`). Falls back to stderr if stdout is empty.
- *  - Failure (exit ≠ 0) with a JSON body on stdout: pass the CLI's own error
- *    envelope through verbatim (uniform `{error,code,message,details?}`),
- *    isError = true.
- *  - Failure with NON-JSON / empty stdout (e.g. an unexpected exit-2 crash that
- *    put a stack on stderr): synthesise an API_ERROR envelope preserving the
- *    raw output so nothing is lost.
+ * Rules (content-driven for JSON; exit-code-driven only for non-JSON):
+ *  - JSON object stdout:
+ *      · CLI error envelope (`error === true`, incl. the synthetic TIMEOUT from
+ *        runCli) → `{ok:false, error:{code, message, details?}}`, isError:true.
+ *      · Already canonical (`ok === true` AND a `data` key, i.e. Style A) →
+ *        passed through field-for-field (planContext preserved).
+ *      · Any other object (Style B flat, incl. select's flat-with-`ok`) →
+ *        wrapped LOSSLESS as `{ok:true, data:<parsed>}` — inner fields untouched.
+ *  - Non-JSON stdout:
+ *      · exit 0 → `{ok:true, data:{content:<raw stdout>}}` (covers agent_docs
+ *        markdown, the one tool that runs without `--json`).
+ *      · exit ≠ 0 → `{ok:false, error:{code:"UNKNOWN", message:<stdout | stderr
+ *        | "command failed">}}`, isError:true.
+ *
+ * isError is true exactly when the envelope is `ok:false`. Output text is a
+ * COMPACT `JSON.stringify` of the envelope (no pretty-print).
  */
 export function toToolResult(result: CliResult): ToolResultPayload {
   const { stdout, stderr, exitCode } = result;
-  const isError = exitCode !== 0;
   const trimmed = stdout.trim();
 
-  if (!isError) {
-    const text = trimmed.length > 0 ? stdout : stderr;
-    return { text, isError: false };
-  }
-
-  // Error path — prefer the CLI's own JSON error envelope, verbatim.
-  if (trimmed.length > 0) {
-    try {
-      JSON.parse(trimmed);
-      return { text: stdout, isError: true };
-    } catch {
-      // Not JSON — fall through to synthetic wrap.
+  const parsed = tryParseObject(trimmed);
+  if (parsed) {
+    // CLI error envelope → canonical failure.
+    if (parsed.error === true) {
+      const error: ErrEnvelope["error"] = {
+        code: typeof parsed.code === "string" ? parsed.code : "UNKNOWN",
+        message: typeof parsed.message === "string" ? parsed.message : "command failed",
+      };
+      if (parsed.details !== undefined) error.details = parsed.details;
+      return { text: JSON.stringify({ ok: false, error }), isError: true };
     }
+
+    // Already canonical Style A → pass through field-for-field.
+    if (parsed.ok === true && "data" in parsed) {
+      return { text: JSON.stringify(parsed), isError: false };
+    }
+
+    // Any other object (Style B flat) → lossless wrap.
+    return { text: JSON.stringify({ ok: true, data: parsed }), isError: false };
   }
 
-  const raw = [stdout, stderr]
-    .map((s) => s.trimEnd())
-    .filter((s) => s.trim().length > 0)
-    .join("\n");
-  const synthetic = {
-    error: true,
-    code: "API_ERROR",
-    message: `voyagier CLI exited ${exitCode} without a JSON error envelope.`,
-    details: { exitCode, raw },
-  };
-  return { text: JSON.stringify(synthetic, null, 2), isError: true };
+  // Non-JSON stdout.
+  if (exitCode === 0) {
+    return { text: JSON.stringify({ ok: true, data: { content: stdout } }), isError: false };
+  }
+  const stderrTrimmed = stderr.trim();
+  const message = trimmed.length > 0 ? trimmed : stderrTrimmed.length > 0 ? stderrTrimmed : "command failed";
+  return { text: JSON.stringify({ ok: false, error: { code: "UNKNOWN", message } }), isError: true };
 }

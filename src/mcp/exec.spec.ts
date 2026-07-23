@@ -1,11 +1,10 @@
 /**
  * exec.ts seam — unit tests with an injected spawn fn (no real children).
  *
- * Covers the four outcomes the MCP layer relies on:
- *   1. success passthrough (exit 0, JSON stdout)
- *   2. non-zero exit → CLI error envelope passed through, isError:true
- *   3. timeout → SIGTERM (then SIGKILL) + synthetic TIMEOUT envelope
- *   4. non-JSON stdout on failure → synthetic API_ERROR wrap preserving raw text
+ * Covers runCli's spawn/timeout behaviour AND toToolResult's normalisation of
+ * BOTH CLI payload styles into the one canonical `{ok,data}` / `{ok:false,error}`
+ * MCP envelope (Style A passthrough, Style B wrap, error mapping, TIMEOUT,
+ * non-JSON success/failure, isError correlation).
  */
 import { describe, it, expect, jest, beforeEach, afterEach } from "@jest/globals";
 import { runCli, toToolResult, type ExecFileFn, type CliResult } from "./exec.js";
@@ -104,48 +103,113 @@ describe("runCli timeout", () => {
   });
 });
 
-describe("toToolResult", () => {
-  it("success passthrough: JSON stdout verbatim, isError false", () => {
-    const r = toToolResult({ stdout: '{"ok":true}\n', stderr: "", exitCode: 0 });
+describe("toToolResult — canonical envelope normalisation", () => {
+  interface OkText {
+    ok: boolean;
+    data?: unknown;
+    planContext?: unknown;
+    error?: { code: string; message: string; details?: unknown };
+  }
+  const parse = (r: { text: string }) => JSON.parse(r.text) as OkText;
+
+  // ── Style A: already-canonical `{ok,data,planContext}` → field-for-field ──
+  it("Style A passthrough: preserves ok/data/planContext, isError false", () => {
+    const cli = { ok: true, data: { overall: "PASS" }, planContext: { planId: "P1", title: "Rome" } };
+    const r = toToolResult({ stdout: JSON.stringify(cli, null, 2) + "\n", stderr: "", exitCode: 0 });
     expect(r.isError).toBe(false);
-    expect(r.text).toBe('{"ok":true}\n');
+    expect(parse(r)).toEqual(cli);
   });
 
-  it("success passthrough: plain-text (agent-docs markdown) verbatim", () => {
+  // ── Style B flat → lossless `{ok:true, data:<parsed>}` wrap ──
+  it("Style B wrap: clients-list flat shape nested under data, nothing stripped", () => {
+    const cli = { clients: [{ id: "c1", name: "Al" }], total: 12 };
+    const r = toToolResult({ stdout: JSON.stringify(cli), stderr: "", exitCode: 0 });
+    expect(r.isError).toBe(false);
+    const env = parse(r);
+    expect(env.ok).toBe(true);
+    expect(env.data).toEqual(cli);
+  });
+
+  it("Style B wrap: select flat-with-ok (no data key) is wrapped WHOLE, inner ok preserved", () => {
+    const cli = { ok: true, success: true, type: "option_selected", selectionId: "s1" };
+    const r = toToolResult({ stdout: JSON.stringify(cli), stderr: "", exitCode: 0 });
+    expect(r.isError).toBe(false);
+    const env = parse(r);
+    expect(env.ok).toBe(true);
+    // The CLI's own `ok:true` is nested, never mistaken for the canonical wrapper.
+    expect(env.data).toEqual(cli);
+  });
+
+  // ── CLI error envelope → canonical failure ──
+  it("error mapping without details: {error,code,message} → {ok:false,error:{code,message}}", () => {
+    const cli = { error: true, code: "PRICE_CHANGED", message: "drifted" };
+    const r = toToolResult({ stdout: JSON.stringify(cli, null, 2) + "\n", stderr: "", exitCode: 1 });
+    expect(r.isError).toBe(true);
+    const env = parse(r);
+    expect(env.ok).toBe(false);
+    expect(env.error).toEqual({ code: "PRICE_CHANGED", message: "drifted" });
+    expect(env.error && "details" in env.error).toBe(false);
+  });
+
+  it("error mapping with details: details carried through only when present", () => {
+    const cli = { error: true, code: "BOOKING_BLOCKED", message: "blocked", details: { blockers: ["passport"] } };
+    const r = toToolResult({ stdout: JSON.stringify(cli), stderr: "", exitCode: 1 });
+    expect(r.isError).toBe(true);
+    const env = parse(r);
+    expect(env.error).toEqual({ code: "BOOKING_BLOCKED", message: "blocked", details: { blockers: ["passport"] } });
+  });
+
+  it("TIMEOUT envelope (synthetic, from runCli) maps to canonical failure", () => {
+    const cli = { error: true, code: "TIMEOUT", message: "voyagier search flights timed out after 300000ms" };
+    const r = toToolResult({ stdout: JSON.stringify(cli), stderr: "", exitCode: 124 });
+    expect(r.isError).toBe(true);
+    const env = parse(r);
+    expect(env.ok).toBe(false);
+    expect(env.error?.code).toBe("TIMEOUT");
+  });
+
+  // ── Non-JSON stdout ──
+  it("non-JSON success (agent-docs markdown): wrapped as data.content, isError false", () => {
     const md = "# Voyagier CLI — Agent Reference\n\nhello\n";
     const r = toToolResult({ stdout: md, stderr: "", exitCode: 0 });
     expect(r.isError).toBe(false);
-    expect(r.text).toBe(md);
+    const env = parse(r);
+    expect(env.ok).toBe(true);
+    expect(env.data).toEqual({ content: md });
   });
 
-  it("success with empty stdout falls back to stderr", () => {
-    const r = toToolResult({ stdout: "", stderr: "note\n", exitCode: 0 });
-    expect(r.isError).toBe(false);
-    expect(r.text).toBe("note\n");
-  });
-
-  it("non-zero exit with JSON envelope: passed through verbatim, isError true", () => {
-    const envelope = '{\n  "error": true,\n  "code": "PRICE_CHANGED",\n  "message": "drifted"\n}\n';
-    const r = toToolResult({ stdout: envelope, stderr: "", exitCode: 1 });
+  it("non-JSON failure: {ok:false,error:{code:UNKNOWN,message:<stdout>}}, isError true", () => {
+    const r = toToolResult({ stdout: "boom not json\n", stderr: "at foo (x.js:1)\n", exitCode: 2 });
     expect(r.isError).toBe(true);
-    expect(r.text).toBe(envelope);
+    const env = parse(r);
+    expect(env.ok).toBe(false);
+    expect(env.error).toEqual({ code: "UNKNOWN", message: "boom not json" });
   });
 
-  it("non-zero exit with NON-JSON stdout: wrapped as synthetic API_ERROR preserving raw text", () => {
-    const r = toToolResult({ stdout: "boom not json", stderr: "at foo (x.js:1)\n", exitCode: 2 });
-    expect(r.isError).toBe(true);
-    const parsed = JSON.parse(r.text) as { error: boolean; code: string; details: { exitCode: number; raw: string } };
-    expect(parsed.error).toBe(true);
-    expect(parsed.code).toBe("API_ERROR");
-    expect(parsed.details.exitCode).toBe(2);
-    expect(parsed.details.raw).toContain("boom not json");
-    expect(parsed.details.raw).toContain("at foo");
+  it("non-JSON failure with empty stdout falls back to stderr, then to 'command failed'", () => {
+    const onStderr = toToolResult({ stdout: "", stderr: "stack trace\n", exitCode: 2 });
+    expect(parse(onStderr).error?.message).toBe("stack trace");
+    const empty = toToolResult({ stdout: "", stderr: "", exitCode: 2 });
+    expect(parse(empty).error?.message).toBe("command failed");
   });
 
-  it("timeout envelope (from runCli) round-trips through toToolResult as isError", () => {
-    const timeoutStdout = JSON.stringify({ error: true, code: "TIMEOUT", message: "x timed out" });
-    const r = toToolResult({ stdout: timeoutStdout, stderr: "", exitCode: 124 });
-    expect(r.isError).toBe(true);
-    expect(JSON.parse(r.text).code).toBe("TIMEOUT");
+  // ── isError correlation: true exactly when ok:false ──
+  it("isError is true exactly when the envelope is ok:false", () => {
+    const cases: CliResult[] = [
+      { stdout: '{"ok":true,"data":{}}', stderr: "", exitCode: 0 },
+      { stdout: '{"clients":[]}', stderr: "", exitCode: 0 },
+      { stdout: "plain markdown", stderr: "", exitCode: 0 },
+      { stdout: '{"error":true,"code":"X","message":"y"}', stderr: "", exitCode: 1 },
+      { stdout: "boom", stderr: "", exitCode: 2 },
+    ];
+    for (const c of cases) {
+      const r = toToolResult(c);
+      expect(r.isError).toBe(!parse(r).ok);
+    }
+  });
+
+  it("output text is compact (no pretty-print newlines/indentation)", () => {
+    const r = toToolResult({ stdout: JSON.stringify({ ok: true, data: { a: 1 } }, null, 2), stderr: "", exitCode: 0 });
+    expect(r.text).toBe('{"ok":true,"data":{"a":1}}');
   });
 });
