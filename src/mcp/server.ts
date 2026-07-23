@@ -3,8 +3,9 @@
  *
  * A thin adapter over the CLI's `--json` agent surface: it registers the 15
  * tools from tools.ts, and each handler self-spawns the CLI (via the exec seam)
- * and returns the child's stdout as the tool result. The server holds no
- * tokens, no network clients, and no shared state — that all lives in the child.
+ * and returns the child's output normalised into one canonical `{ok,data}` /
+ * `{ok:false,error}` envelope (see toToolResult). The server holds no tokens,
+ * no network clients, and no shared state — that all lives in the child.
  *
  * The exec seam is injectable (`deps.run`) so server.spec.ts can exercise the
  * real handshake + tool wiring without spawning a real child.
@@ -20,7 +21,7 @@ import { runCli, toToolResult, type CliResult } from "./exec.js";
  * and the prompt-injection rule.
  */
 export const INSTRUCTIONS = [
-  "Voyagier is an agent-ready travel platform. This server exposes the CLI's agent surface as tools; every tool returns the CLI's --json envelope verbatim (uniform { error, code, message, details? } on failure, isError=true) — except agent_docs, which returns the integration guide as plain markdown.",
+  "Voyagier is an agent-ready travel platform. This server exposes the CLI's agent surface as tools. Every tool returns ONE canonical JSON envelope: on success { ok: true, data: <object>, planContext?: <object> } (agent_docs arrives as data.content markdown); on failure { ok: false, error: { code, message, details? } } with isError=true.",
   "",
   "Compose loop: create_client → plan_trip → (add_traveller) → search_flights/search_hotels/search_activities → get_selection_options → select_option → plan_status → quote → book.",
   "",
