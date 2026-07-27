@@ -4,7 +4,7 @@ Thanks for your interest in the Voyagier CLI!
 
 ## Before you start
 
-This repository is **source-visible but proprietary** (see [LICENSE.md](LICENSE.md)). By submitting a pull request, you agree that your contribution is licensed to Voyagier, Inc. and may be distributed under the terms of the repository license.
+This repository is licensed under [Apache-2.0](LICENSE). By submitting a pull request, you agree that your contribution is licensed under Apache-2.0 (per Section 5 of the license), and you certify that you have the right to submit it.
 
 - **Bugs:** please open an issue with reproduction steps and `voyagier --version`.
 - **Security issues:** do NOT open an issue — see [SECURITY.md](SECURITY.md).
