@@ -73,5 +73,8 @@
   "bugs": {
     "url": "https://github.com/Voyagier-Travel/voyagier-cli/issues"
   },
-  "homepage": "https://github.com/Voyagier-Travel/voyagier-cli#readme"
+  "homepage": "https://github.com/Voyagier-Travel/voyagier-cli#readme",
+  "overrides": {
+    "@hono/node-server": "^2.0.12"
+  }
 }
