@@ -189,4 +189,4 @@ Voyagier is currently invite-based. Advisors and agent builders can request acce
 
 ## License
 
-Proprietary — Copyright (c) 2026 Voyagier, Inc. The source is public for transparency and auditability; the CLI is free to use with Voyagier services. You may not modify, redistribute, or sell it. See [LICENSE.md](LICENSE.md) and the [Voyagier Terms of Service](https://voyagier.com/terms).
+[Apache-2.0](LICENSE) — Copyright 2026 Voyagier, Inc. Use of Voyagier services through the CLI is subject to the [Voyagier Terms of Service](https://voyagier.com/terms). "Voyagier" and the Voyagier logo are trademarks of Voyagier, Inc.; the Apache-2.0 license does not grant trademark rights.
