@@ -62,7 +62,9 @@
     "dist",
     "skills",
     "README.md",
-    "AGENT.md"
+    "AGENT.md",
+    "NOTICE",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
