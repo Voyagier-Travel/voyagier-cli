@@ -1,0 +1,25 @@
+# Smithery configuration file: https://smithery.ai/docs/build/project-config
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required: [voyagierToken]
+    properties:
+      voyagierToken:
+        type: string
+        description: Voyagier personal access token (request access at https://www.voyagier.com/agents)
+      apiUrl:
+        type: string
+        description: "Optional API base URL override (defaults to production)"
+  commandFunction: |-
+    (config) => ({
+      command: 'npx',
+      args: ['-y', '@voyagier/cli', 'mcp'],
+      env: {
+        VOYAGIER_TOKEN: config.voyagierToken,
+        ...(config.apiUrl ? { VOYAGIER_API_URL: config.apiUrl } : {})
+      }
+    })
+  exampleConfig:
+    voyagierToken: voy_pat_example123
