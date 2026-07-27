@@ -54,10 +54,15 @@ jobs:
 
           BUMP=""
 
+          # Conventional Commits: BREAKING CHANGE appears in the body/footer, not the subject
+          if git log "$LATEST_TAG"..HEAD --format="%B" | grep -qE '^BREAKING[ -]CHANGE:'; then
+            BUMP="major"
+          fi
+
           while IFS= read -r subject; do
             if [ -z "$subject" ]; then continue; fi
 
-            if echo "$subject" | grep -qE '^[a-z]+(\(.+\))?!:|BREAKING CHANGE'; then
+            if echo "$subject" | grep -qE '^[a-z]+(\(.+\))?!:'; then
               BUMP="major"
               break
             fi
@@ -95,22 +100,21 @@ jobs:
           echo "New version: $NEW_VERSION"
 
       - name: Build
-        run: npm run build --if-present
+        run: npm run build
 
       - name: Publish to NPM
         run: npm publish --access public --provenance
 
-      - name: Commit and Push Version Update
+      - name: Commit, Tag, and Push Atomically
         run: |
+          VERSION_TAG="${{ steps.bump-version.outputs.new_version }}"
           git add package.json package-lock.json
-          git commit -m "chore: release ${{ steps.bump-version.outputs.new_version }}"
-          git push origin main
+          git commit -m "chore: release $VERSION_TAG"
+          git tag -a "$VERSION_TAG" -m "Release $VERSION_TAG"
+          git push --atomic origin main "$VERSION_TAG"
 
-      - name: Create Tag and GitHub Release
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION_TAG="${{ steps.bump-version.outputs.new_version }}"
-          git tag -a "$VERSION_TAG" -m "Release $VERSION_TAG"
-          git push origin "$VERSION_TAG"
-          gh release create "$VERSION_TAG" --generate-notes --latest
+          gh release create "${{ steps.bump-version.outputs.new_version }}" --generate-notes --latest
