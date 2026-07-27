@@ -1,5 +1,6 @@
 # @voyagier/cli
 
+[![CI](https://github.com/Voyagier-Travel/voyagier-cli/actions/workflows/tests-and-coverage.yaml/badge.svg?branch=main)](https://github.com/Voyagier-Travel/voyagier-cli/actions/workflows/tests-and-coverage.yaml)
 [![npm version](https://img.shields.io/npm/v/%40voyagier%2Fcli)](https://www.npmjs.com/package/@voyagier/cli)
 [![node](https://img.shields.io/node/v/%40voyagier%2Fcli)](https://www.npmjs.com/package/@voyagier/cli)
 [![MCP](https://img.shields.io/badge/MCP-stdio%20server-black)](https://github.com/Voyagier-Travel/voyagier-cli#mcp-server)

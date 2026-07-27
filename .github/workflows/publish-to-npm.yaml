@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
   id-token: write
 
 jobs:
@@ -32,6 +33,15 @@ jobs:
 
       - name: Install Dependencies
         run: npm ci --no-audit
+
+      - name: Verify No Pending Release PR
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          PKG_VERSION="v$(node -p "require('./package.json').version")"
+          if [ -n "$LATEST_TAG" ] && [ "$LATEST_TAG" != "$PKG_VERSION" ]; then
+            echo "::error::package.json ($PKG_VERSION) does not match latest tag ($LATEST_TAG) — merge the pending release PR before publishing again"
+            exit 1
+          fi
 
       - name: Determine Version Bump
         id: determine-bump
@@ -105,16 +115,27 @@ jobs:
       - name: Publish to NPM
         run: npm publish --access public --provenance
 
-      - name: Commit, Tag, and Push Atomically
+      # main is protected by the "Protect main (PRs only)" ruleset (no bypass actors),
+      # so the version-bump commit lands via a release PR instead of a direct push.
+      # The tag and GitHub release point at the release-branch commit, which becomes
+      # part of main's history when the PR merges.
+      - name: Commit, Tag, and Push Release Branch Atomically
         run: |
           VERSION_TAG="${{ steps.bump-version.outputs.new_version }}"
+          BRANCH="release/$VERSION_TAG"
+          git checkout -b "$BRANCH"
           git add package.json package-lock.json
           git commit -m "chore: release $VERSION_TAG"
           git tag -a "$VERSION_TAG" -m "Release $VERSION_TAG"
-          git push --atomic origin main "$VERSION_TAG"
+          git push --atomic origin "$BRANCH" "$VERSION_TAG"
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release and Release PR
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.bump-version.outputs.new_version }}" --generate-notes --latest
+          VERSION_TAG="${{ steps.bump-version.outputs.new_version }}"
+          gh release create "$VERSION_TAG" --generate-notes --latest
+          gh pr create \
+            --head "release/$VERSION_TAG" \
+            --title "chore: release $VERSION_TAG" \
+            --body "Automated release PR: version bump for $VERSION_TAG, already published to npm with provenance. Merge to sync main with the released version — the next publish dispatch is blocked until this lands."
