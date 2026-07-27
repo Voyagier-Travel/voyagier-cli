@@ -36,7 +36,10 @@ jobs:
 
       - name: Verify No Pending Release PR
         run: |
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          # Newest tag across ALL refs (fetch-depth 0 fetches every tag) — a pending
+          # release tag lives on an unmerged release/* branch, which `git describe`
+          # from main would never see.
+          LATEST_TAG=$(git tag --sort=-version:refname | head -n1)
           PKG_VERSION="v$(node -p "require('./package.json').version")"
           if [ -n "$LATEST_TAG" ] && [ "$LATEST_TAG" != "$PKG_VERSION" ]; then
             echo "::error::package.json ($PKG_VERSION) does not match latest tag ($LATEST_TAG) — merge the pending release PR before publishing again"
@@ -119,10 +122,17 @@ jobs:
       # so the version-bump commit lands via a release PR instead of a direct push.
       # The tag and GitHub release point at the release-branch commit, which becomes
       # part of main's history when the PR merges.
+      # Finalization steps are idempotent so a re-run after a partial failure
+      # (e.g. npm publish succeeded but a later step died) walks through completed
+      # steps as no-ops and finishes the missing ones.
       - name: Commit, Tag, and Push Release Branch Atomically
         run: |
           VERSION_TAG="${{ steps.bump-version.outputs.new_version }}"
           BRANCH="release/$VERSION_TAG"
+          if git ls-remote --tags --exit-code origin "refs/tags/$VERSION_TAG" >/dev/null 2>&1; then
+            echo "Tag $VERSION_TAG already on remote — skipping push (re-run recovery)"
+            exit 0
+          fi
           git checkout -b "$BRANCH"
           git add package.json package-lock.json
           git commit -m "chore: release $VERSION_TAG"
@@ -134,7 +144,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION_TAG="${{ steps.bump-version.outputs.new_version }}"
-          gh release create "$VERSION_TAG" --generate-notes --latest
+          if gh release view "$VERSION_TAG" >/dev/null 2>&1; then
+            echo "Release $VERSION_TAG already exists — skipping (re-run recovery)"
+          else
+            gh release create "$VERSION_TAG" --generate-notes --latest
+          fi
+          if [ -n "$(gh pr list --head "release/$VERSION_TAG" --state open --json number --jq '.[].number')" ]; then
+            echo "Release PR for $VERSION_TAG already open — skipping (re-run recovery)"
+            exit 0
+          fi
           gh pr create \
             --head "release/$VERSION_TAG" \
             --title "chore: release $VERSION_TAG" \
