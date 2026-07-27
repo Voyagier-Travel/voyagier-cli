@@ -1,6 +1,6 @@
 ---
 name: voyagier-cli
-version: 2.11.0
+version: 2.14.0
 description: "Book real travel from your terminal — search flights, hotels & activities, plan trips, and check out with a price-gated booking. For AI agents and travel advisors."
 metadata:
   openclaw:
