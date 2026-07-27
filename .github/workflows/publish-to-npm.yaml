@@ -111,8 +111,11 @@ jobs:
             fi
           done <<< "$COMMITS"
 
+          # No feat/fix/breaking since last tag (ci:/chore:/docs: only) → patch.
+          # Previous default of minor burned version slots on housekeeping releases
+          # (2.9.x→2.10.0, 2.13.x→2.14.0).
           if [ -z "$BUMP" ]; then
-            BUMP="minor"
+            BUMP="patch"
           fi
 
           echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
