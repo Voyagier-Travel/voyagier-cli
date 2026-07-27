@@ -34,22 +34,40 @@ jobs:
       - name: Install Dependencies
         run: npm ci --no-audit
 
-      - name: Verify No Pending Release PR
+      - name: Determine Publish Mode
+        id: mode
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # Newest tag across ALL refs (fetch-depth 0 fetches every tag) — a pending
           # release tag lives on an unmerged release/* branch, which `git describe`
           # from main would never see.
           LATEST_TAG=$(git tag --sort=-version:refname | head -n1)
           PKG_VERSION="v$(node -p "require('./package.json').version")"
-          if [ -n "$LATEST_TAG" ] && [ "$LATEST_TAG" != "$PKG_VERSION" ]; then
+          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "$PKG_VERSION" ]; then
+            echo "mode=publish" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # main is behind the newest tag: either a pending release PR (finalization
+          # complete — block until merged) or a partially-failed previous run (finish it).
+          RELEASE_EXISTS=no; PR_EXISTS=no
+          gh release view "$LATEST_TAG" >/dev/null 2>&1 && RELEASE_EXISTS=yes
+          [ -n "$(gh pr list --head "release/$LATEST_TAG" --state open --json number --jq '.[].number')" ] && PR_EXISTS=yes
+          if [ "$RELEASE_EXISTS" = "yes" ] && [ "$PR_EXISTS" = "yes" ]; then
             echo "::error::package.json ($PKG_VERSION) does not match latest tag ($LATEST_TAG) — merge the pending release PR before publishing again"
             exit 1
           fi
+          echo "Incomplete release $LATEST_TAG detected (release: $RELEASE_EXISTS, PR: $PR_EXISTS) — entering recovery"
+          echo "mode=recover" >> "$GITHUB_OUTPUT"
+          echo "recover_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Determine Version Bump
+        if: steps.mode.outputs.mode == 'publish'
         id: determine-bump
         run: |
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          # All-refs newest tag, not `git describe`: a squash-merged release PR leaves
+          # the tag's commit outside main's history, so describe would pick an older tag.
+          LATEST_TAG=$(git tag --sort=-version:refname | head -n1)
 
           if [ -z "$LATEST_TAG" ]; then
             echo "No previous tags found, defaulting to minor bump"
@@ -105,18 +123,30 @@ jobs:
           git config --global user.email "apis@voyagier.com"
           git config --global user.name "Voyagier Bot"
 
-      - name: Bump Version
+      - name: Resolve Version
         id: bump-version
         run: |
-          NEW_VERSION=$(npm --no-git-tag-version version ${{ steps.determine-bump.outputs.bump }})
+          if [ "${{ steps.mode.outputs.mode }}" = "recover" ]; then
+            # Finalize from the already-tagged release commit
+            NEW_VERSION="${{ steps.mode.outputs.recover_tag }}"
+            git checkout -q "$NEW_VERSION"
+          else
+            NEW_VERSION=$(npm --no-git-tag-version version ${{ steps.determine-bump.outputs.bump }})
+          fi
           echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          echo "New version: $NEW_VERSION"
+          echo "Version: $NEW_VERSION"
 
       - name: Build
         run: npm run build
 
       - name: Publish to NPM
-        run: npm publish --access public --provenance
+        run: |
+          VERSION="${{ steps.bump-version.outputs.new_version }}"
+          if npm view "@voyagier/cli@${VERSION#v}" version >/dev/null 2>&1; then
+            echo "${VERSION#v} already on npm — skipping publish (re-run recovery)"
+          else
+            npm publish --access public --provenance
+          fi
 
       # main is protected by the "Protect main (PRs only)" ruleset (no bypass actors),
       # so the version-bump commit lands via a release PR instead of a direct push.
@@ -130,7 +160,11 @@ jobs:
           VERSION_TAG="${{ steps.bump-version.outputs.new_version }}"
           BRANCH="release/$VERSION_TAG"
           if git ls-remote --tags --exit-code origin "refs/tags/$VERSION_TAG" >/dev/null 2>&1; then
-            echo "Tag $VERSION_TAG already on remote — skipping push (re-run recovery)"
+            echo "Tag $VERSION_TAG already on remote"
+            if ! git ls-remote --heads --exit-code origin "$BRANCH" >/dev/null 2>&1; then
+              echo "Release branch $BRANCH missing — recreating from tag (re-run recovery)"
+              git push origin "$(git rev-parse "$VERSION_TAG^{commit}")":"refs/heads/$BRANCH"
+            fi
             exit 0
           fi
           git checkout -b "$BRANCH"
