@@ -33,6 +33,7 @@ export interface UserContext {
   isAdmin?: boolean;
   isTravelAdvisor?: boolean;
   isTripPlanner?: boolean;
+  canMintPats?: boolean;
   passport?: {
     last4: string;
     issueCountry: string;

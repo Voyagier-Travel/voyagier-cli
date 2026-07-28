@@ -216,6 +216,30 @@ describe("whoami roles (VOY-1748)", () => {
     expect(humanOutput()).not.toMatch(/Role:/);
   });
 
+  it("shows 'API Access' when canMintPats is granted (standalone permission)", async () => {
+    mockGraphql.mockResolvedValue({
+      me: { ...ME, isAdmin: false, isTravelAdvisor: false, isTripPlanner: false, canMintPats: true },
+    });
+    await runWhoami([]);
+    expect(humanOutput()).toMatch(/Role:.*API Access/);
+  });
+
+  it("joins Trip Planner + API Access for a full CLI customer", async () => {
+    mockGraphql.mockResolvedValue({
+      me: { ...ME, isAdmin: false, isTravelAdvisor: false, isTripPlanner: true, canMintPats: true },
+    });
+    await runWhoami([]);
+    expect(humanOutput()).toMatch(/Role:.*Trip Planner \+ API Access/);
+  });
+
+  it("includes canMintPats in --json when known", async () => {
+    mockGraphql.mockResolvedValue({
+      me: { ...ME, isAdmin: false, isTravelAdvisor: false, isTripPlanner: true, canMintPats: false },
+    });
+    await runWhoami(["--json"]);
+    expect(jsonOutput()).toMatchObject({ isTripPlanner: true, canMintPats: false });
+  });
+
   it("falls back to the legacy me query and omits roles against an old backend", async () => {
     // Enriched query rejected (isTripPlanner unknown) → retry legacy (no roles).
     mockGraphql

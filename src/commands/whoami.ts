@@ -13,11 +13,11 @@ const CABIN_LABELS: Record<string, string> = {
 };
 
 // `me` query WITH the RBAC role flags (VOY-1748). isAdmin/isTravelAdvisor
-// already exist on prod's User type; isTripPlanner is the newly-added flag, so
-// this whole selection is retried against ME_QUERY_LEGACY when a not-yet-deployed
-// backend rejects it as an unknown field.
+// already exist on prod's User type; isTripPlanner and canMintPats are the
+// newly-added flags, so this whole selection is retried against ME_QUERY_LEGACY
+// when a not-yet-deployed backend rejects it as an unknown field.
 const ME_QUERY_WITH_ROLES =
-  `{ me { id firstName lastName email name dateOfBirth gender isAdmin isTravelAdvisor isTripPlanner passport { last4 issueCountry nationalityCountry expirationDate } } }`;
+  `{ me { id firstName lastName email name dateOfBirth gender isAdmin isTravelAdvisor isTripPlanner canMintPats passport { last4 issueCountry nationalityCountry expirationDate } } }`;
 
 // Legacy `me` query — the pre-role field set. On the fallback path the role
 // flags are simply absent, so whoami renders the identity with no Role line.
@@ -54,6 +54,7 @@ export function registerWhoamiCommand(program: Command): void {
           isAdmin?: boolean;
           isTravelAdvisor?: boolean;
           isTripPlanner?: boolean;
+          canMintPats?: boolean;
           passport?: { last4: string; issueCountry: string; nationalityCountry: string; expirationDate: string } | null;
         }
 
@@ -63,7 +64,7 @@ export function registerWhoamiCommand(program: Command): void {
           const data = await graphqlWithFieldFallback<{ me: MeData }>(
             ME_QUERY_WITH_ROLES,
             ME_QUERY_LEGACY,
-            /isTripPlanner|isAdmin|isTravelAdvisor/,
+            /isTripPlanner|canMintPats|isAdmin|isTravelAdvisor/,
           );
           me = data.me;
         } catch (err) {
@@ -109,6 +110,7 @@ export function registerWhoamiCommand(program: Command): void {
             ctx.isAdmin = me.isAdmin ?? undefined;
             ctx.isTravelAdvisor = me.isTravelAdvisor ?? undefined;
             ctx.isTripPlanner = me.isTripPlanner ?? undefined;
+            ctx.canMintPats = me.canMintPats ?? undefined;
           } else {
             // No cached context — create minimal one from API
             ctx = {
@@ -121,6 +123,7 @@ export function registerWhoamiCommand(program: Command): void {
               isAdmin: me.isAdmin ?? undefined,
               isTravelAdvisor: me.isTravelAdvisor ?? undefined,
               isTripPlanner: me.isTripPlanner ?? undefined,
+              canMintPats: me.canMintPats ?? undefined,
               homeAirports: [],
               preferredCabin: "economy",
             };
@@ -148,11 +151,15 @@ export function registerWhoamiCommand(program: Command): void {
       if (profile.isAdmin !== undefined) roleFlags.isAdmin = profile.isAdmin;
       if (profile.isTravelAdvisor !== undefined) roleFlags.isTravelAdvisor = profile.isTravelAdvisor;
       if (profile.isTripPlanner !== undefined) roleFlags.isTripPlanner = profile.isTripPlanner;
+      if (profile.canMintPats !== undefined) roleFlags.canMintPats = profile.canMintPats;
 
       const roleLabels: string[] = [];
       if (profile.isAdmin) roleLabels.push("Admin");
       if (profile.isTravelAdvisor) roleLabels.push("Travel Advisor");
       if (profile.isTripPlanner) roleLabels.push("Trip Planner");
+      // canMintPats is a permission, not a role — shown alongside so a customer
+      // can see at a glance whether token minting is enabled on their account.
+      if (profile.canMintPats) roleLabels.push("API Access");
 
       if (opts.json) {
         process.stdout.write(
