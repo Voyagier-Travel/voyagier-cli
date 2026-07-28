@@ -190,7 +190,7 @@ Voyagier access is granted, not open signup — **request access at [voyagier.co
 Once your account is granted API access, mint a personal access token at [voyagier.com/me/settings/tokens](https://voyagier.com/me/settings/tokens) and you're in. Two account tiers use the CLI today:
 
 - **Travel advisors** — manage a book of clients (`voyagier clients`); plans are created against a client (`--client`).
-- **Trip planners** — paying customers planning their own travel. No client bookkeeping needed: your account carries a built-in *self* client, so `voyagier plan-trip` works with no `--client` at all. `voyagier whoami` shows your tier.
+- **Trip planners** — paying customers planning their own travel. Just run `voyagier plan-trip` — no client setup, no `--client` flag. (`voyagier whoami` shows your tier.)
 
 Non-admin tokens expire (90 days max, 30 by default) — mint a fresh one when yours lapses.
 

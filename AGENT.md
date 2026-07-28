@@ -18,7 +18,7 @@ A trip plan is a **goal graph**. When you create a plan it ships with a default 
 - **`plans goals <planId>`** is your readiness view — it shows the goal graph and what still needs a decision. **`plans goal-remove <goalId> --force`** deletes a goal the brief doesn't need.
 - **Multi-source bookability.** The cart materializes only BOOKABLE options (fare/room-level items — e.g. a Fare & Cabin item for flights, generated once all legs are picked; a baseline room-rate for hotels, generated once a room is picked). Activities are bookable per slot. Every vertical is a [decision chain](#decision-chains): the bookable item is the leaf, never the parent. Check the cart's per-item `isBookable` (or `plan-status`'s `cart.bookableCount`) — don't assume by type. Cart items from live-rate suppliers may report `source: "OTHER"` — that's normal, not an error.
 - **Computed itinerary.** `voyagier itinerary <planId>` reads the platform's `tripPlanEvents` resolver.
-- **Advisor CRM.** `voyagier clients` manages clients; a plan requires a `clientId`. **Trip-planner accounts** (customers planning their own travel; access granted via [voyagier.com/agents](https://voyagier.com/agents)) carry a built-in *self* client — omit `--client` entirely and the CLI auto-resolves it (`clients list` marks it `(self)`; `whoami` shows the tier). Advisors with multiple active clients must still pass `--client`.
+- **Advisor CRM.** `voyagier clients` manages clients; a plan requires a `clientId`. **Exception — planning for the account owner themself** (trip-planner accounts; `whoami` shows the tier): skip client management entirely and omit `--client` — the CLI resolves the owner automatically. Don't `clients upsert` the owner's own email; that creates a redundant client record.
 - **Self-check.** `voyagier doctor` verifies auth, schema reachability, state, and version.
 
 > **Note on `--json` shapes:** the envelope is not uniform across every command. Newer surfaces (cart, book, bookable, itinerary, listings, places) emit `{ ok: true, data, planContext? }`; older surfaces (clients, plans, search, select) emit domain-specific shapes documented per-command below. When in doubt, pipe `--json` through `jq keys`.
@@ -49,7 +49,9 @@ The fastest grounded loop for an agent against the current release. (`--json` is
 # 0) Health check
 voyagier doctor --json
 
-# 1) Resolve a client (idempotent by email)
+# 1) Resolve a client (idempotent by email). SKIP this step when the trip is
+#    for the account owner themself (trip-planner accounts) — just omit
+#    --client in step 2 and the CLI resolves the owner automatically.
 voyagier clients upsert --email "smith@example.com" --name "Smith Family" --type Individual --json
 # Returns: { client: { id, name, ... }, ok: true, created: true|false }
 
