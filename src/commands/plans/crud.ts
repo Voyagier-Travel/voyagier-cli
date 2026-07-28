@@ -34,9 +34,10 @@ export function registerCrudCommands(plans: Command): void {
         // that silently does nothing is a trap for the agent consumer.
         const resolved = await resolveClient(opts.client);
         if (resolved.autoResolved) {
-          process.stderr.write(
-            chalk.dim(`auto-resolved client: ${resolved.name} (${resolved.id})\n`)
-          );
+          const note = resolved.isSelf
+            ? `auto-resolved client: you (${resolved.name}, self)\n`
+            : `auto-resolved client: ${resolved.name} (${resolved.id})\n`;
+          process.stderr.write(chalk.dim(note));
         }
 
         const input: Record<string, unknown> = {

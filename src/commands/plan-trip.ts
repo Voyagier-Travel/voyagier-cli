@@ -279,7 +279,10 @@ Examples:
         } else {
           const resolved = await resolveClient(opts.client);
           if (resolved.autoResolved) {
-            process.stderr.write(`auto-resolved client: ${resolved.name} (${resolved.id})\n`);
+            const note = resolved.isSelf
+              ? `auto-resolved client: you (${resolved.name}, self)\n`
+              : `auto-resolved client: ${resolved.name} (${resolved.id})\n`;
+            process.stderr.write(note);
           }
           if (!json && !agent) progress("Creating trip plan...");
           const planInput: Record<string, unknown> = { clientId: resolved.id, title: opts.title };

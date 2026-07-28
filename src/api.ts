@@ -120,6 +120,60 @@ export async function graphql<T = unknown>(
   return sanitizeExternalData(json.data);
 }
 
+/**
+ * Backward-compat wrapper for queries that select fields a not-yet-deployed
+ * backend won't recognize (VOY-1748: TripPlanClient.isSelf, User.isTripPlanner).
+ *
+ * The published CLI talks to prod, which validates every query against its
+ * schema — selecting an unknown field is a hard validation error, not a null.
+ * So this attempts the enriched query first; if the server rejects it with a
+ * field-validation error naming one of the new fields, it transparently
+ * retries the legacy query and lets the caller treat those fields as absent.
+ *
+ * Detection is strict: graphql() classifies GraphQL validation errors as
+ * CliError(SCHEMA_DRIFT) and preserves the original "Cannot query field …"
+ * phrasing, so we require BOTH the SCHEMA_DRIFT code and the caller-supplied
+ * field name in the message. Any other error (auth, network, a genuine
+ * server error — or drift on an unrelated, pre-existing field) propagates
+ * untouched.
+ *
+ * Once a query has fallen back, the downgrade is remembered for the rest of
+ * the process (a single CLI invocation): paginated callers like
+ * fetchAllClients would otherwise pay a doubled round-trip on every page
+ * against an old backend.
+ */
+const legacyModeQueries = new Set<string>();
+
+/** Test-only: reset the per-process fallback memory. */
+export function __resetFieldFallbackCache(): void {
+  legacyModeQueries.clear();
+}
+
+export async function graphqlWithFieldFallback<T = unknown>(
+  enrichedQuery: string,
+  legacyQuery: string,
+  fieldPattern: RegExp,
+  variables?: Record<string, unknown>,
+  options?: GraphQLOptions,
+): Promise<T> {
+  if (legacyModeQueries.has(enrichedQuery)) {
+    return await graphql<T>(legacyQuery, variables, options);
+  }
+  try {
+    return await graphql<T>(enrichedQuery, variables, options);
+  } catch (err) {
+    const isUnknownNewField =
+      err instanceof CliError &&
+      err.code === CliErrorCode.SCHEMA_DRIFT &&
+      fieldPattern.test(err.message);
+    if (isUnknownNewField) {
+      legacyModeQueries.add(enrichedQuery);
+      return await graphql<T>(legacyQuery, variables, options);
+    }
+    throw err;
+  }
+}
+
 export interface StreamCallbacks {
   onTextDelta(text: string): void;
   onToolCall?(toolName: string, args?: Record<string, unknown>): void;

@@ -14,8 +14,29 @@ const mockGraphql = jest.fn<(q: string) => Promise<unknown>>();
 const mockCredentialsExist = jest.fn<() => boolean>();
 const mockGetUserContext = jest.fn<() => Record<string, unknown> | null>();
 
+// Test double for the compat wrapper (VOY-1748) — delegates to mockGraphql,
+// reproducing the enriched→legacy retry on an unknown-field error so whoami's
+// role query is exercised through the same fallback as production. The real
+// detection is unit-tested in api.spec.ts.
+async function fallbackDouble(
+  enriched: string,
+  legacy: string,
+  pattern: RegExp,
+): Promise<unknown> {
+  try {
+    return await mockGraphql(enriched);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/Cannot query field|Unknown field/i.test(message) && pattern.test(message)) {
+      return await mockGraphql(legacy);
+    }
+    throw err;
+  }
+}
+
 jest.unstable_mockModule("../api.js", () => ({
   graphql: mockGraphql,
+  graphqlWithFieldFallback: fallbackDouble,
 }));
 
 jest.unstable_mockModule("../config.js", () => ({
@@ -51,6 +72,7 @@ const ME = {
 };
 
 let stdoutSpy: ReturnType<typeof jest.spyOn>;
+let consoleLogSpy: ReturnType<typeof jest.spyOn>;
 
 async function runWhoami(args: string[] = []): Promise<void> {
   const program = new Command();
@@ -64,8 +86,17 @@ beforeEach(() => {
   mockCredentialsExist.mockReturnValue(true);
   mockGetUserContext.mockReturnValue({ ...CACHED_CTX });
   stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation(() => true);
-  jest.spyOn(console, "log").mockImplementation(() => {});
+  consoleLogSpy = jest.spyOn(console, "log").mockImplementation(() => {});
 });
+
+function humanOutput(): string {
+  return consoleLogSpy.mock.calls.map((c) => String(c[0] ?? "")).join("\n");
+}
+
+function jsonOutput(): Record<string, unknown> {
+  const written = stdoutSpy.mock.calls.map((c) => String(c[0])).join("");
+  return JSON.parse(written) as Record<string, unknown>;
+}
 
 afterEach(() => {
   jest.restoreAllMocks();
@@ -141,5 +172,106 @@ describe("whoami live verification (VOY-1703)", () => {
     mockGraphql.mockResolvedValue({ me: ME });
     await runWhoami(["--cached", "--json"]);
     expect(mockGraphql).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── VOY-1748: RBAC roles in whoami ───────────────────────────────────────────
+
+describe("whoami roles (VOY-1748)", () => {
+  it("includes the raw role flags in --json when the backend returns them", async () => {
+    mockGraphql.mockResolvedValue({
+      me: { ...ME, isAdmin: true, isTravelAdvisor: true, isTripPlanner: false },
+    });
+    await runWhoami(["--json"]);
+    expect(jsonOutput()).toMatchObject({
+      isAdmin: true,
+      isTravelAdvisor: true,
+      isTripPlanner: false,
+    });
+  });
+
+  it("renders a single Role line joining multiple roles with ' + '", async () => {
+    mockGraphql.mockResolvedValue({
+      me: { ...ME, isAdmin: true, isTravelAdvisor: true, isTripPlanner: false },
+    });
+    await runWhoami([]);
+    expect(humanOutput()).toMatch(/Role:.*Admin \+ Travel Advisor/);
+  });
+
+  it("renders Trip Planner alone for a trip-planner-only user", async () => {
+    mockGraphql.mockResolvedValue({
+      me: { ...ME, isAdmin: false, isTravelAdvisor: false, isTripPlanner: true },
+    });
+    await runWhoami([]);
+    const out = humanOutput();
+    expect(out).toMatch(/Role:.*Trip Planner/);
+    expect(out).not.toMatch(/Admin/);
+  });
+
+  it("omits the Role line entirely when every flag is false (regular traveller)", async () => {
+    mockGraphql.mockResolvedValue({
+      me: { ...ME, isAdmin: false, isTravelAdvisor: false, isTripPlanner: false },
+    });
+    await runWhoami([]);
+    expect(humanOutput()).not.toMatch(/Role:/);
+  });
+
+  it("shows 'API Access' when canMintPats is granted (standalone permission)", async () => {
+    mockGraphql.mockResolvedValue({
+      me: { ...ME, isAdmin: false, isTravelAdvisor: false, isTripPlanner: false, canMintPats: true },
+    });
+    await runWhoami([]);
+    expect(humanOutput()).toMatch(/Role:.*API Access/);
+  });
+
+  it("joins Trip Planner + API Access for a full CLI customer", async () => {
+    mockGraphql.mockResolvedValue({
+      me: { ...ME, isAdmin: false, isTravelAdvisor: false, isTripPlanner: true, canMintPats: true },
+    });
+    await runWhoami([]);
+    expect(humanOutput()).toMatch(/Role:.*Trip Planner \+ API Access/);
+  });
+
+  it("includes canMintPats in --json when known", async () => {
+    mockGraphql.mockResolvedValue({
+      me: { ...ME, isAdmin: false, isTravelAdvisor: false, isTripPlanner: true, canMintPats: false },
+    });
+    await runWhoami(["--json"]);
+    expect(jsonOutput()).toMatchObject({ isTripPlanner: true, canMintPats: false });
+  });
+
+  it("falls back to the legacy me query and omits roles against an old backend", async () => {
+    // Enriched query rejected (isTripPlanner unknown) → retry legacy (no roles).
+    mockGraphql
+      .mockRejectedValueOnce(
+        new CliError(
+          CliErrorCode.SCHEMA_DRIFT,
+          'Schema drift detected: Cannot query field "isTripPlanner" on type "User".',
+        ),
+      )
+      .mockResolvedValueOnce({ me: ME });
+
+    await runWhoami([]);
+
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    expect(humanOutput()).not.toMatch(/Role:/);
+  });
+
+  it("omits role flags from --json against an old backend (fallback path)", async () => {
+    mockGraphql
+      .mockRejectedValueOnce(
+        new CliError(
+          CliErrorCode.SCHEMA_DRIFT,
+          'Schema drift detected: Cannot query field "isTripPlanner" on type "User".',
+        ),
+      )
+      .mockResolvedValueOnce({ me: ME });
+
+    await runWhoami(["--json"]);
+
+    const out = jsonOutput();
+    expect(out).not.toHaveProperty("isAdmin");
+    expect(out).not.toHaveProperty("isTravelAdvisor");
+    expect(out).not.toHaveProperty("isTripPlanner");
   });
 });
