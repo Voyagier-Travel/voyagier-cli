@@ -185,7 +185,14 @@ Thin client over Voyagier's GraphQL API — the same API the web app uses. Every
 
 ## Getting Access
 
-Voyagier is currently invite-based. Advisors and agent builders can request access at [voyagier.com](https://voyagier.com) — once invited, you can self-serve a personal access token from your account.
+Voyagier access is granted, not open signup — **request access at [voyagier.com/agents](https://voyagier.com/agents)**. That's the gate for advisors, trip-planner customers, and agent builders alike.
+
+Once your account is granted API access, mint a personal access token at [voyagier.com/me/settings/tokens](https://voyagier.com/me/settings/tokens) and you're in. Two account tiers use the CLI today:
+
+- **Travel advisors** — manage a book of clients (`voyagier clients`); plans are created against a client (`--client`).
+- **Trip planners** — paying customers planning their own travel. No client bookkeeping needed: your account carries a built-in *self* client, so `voyagier plan-trip` works with no `--client` at all. `voyagier whoami` shows your tier.
+
+Non-admin tokens expire (90 days max, 30 by default) — mint a fresh one when yours lapses.
 
 > **Tip:** prefer `voyagier login` (interactive prompt) over `voyagier auth set-token <token>` — it keeps your token out of shell history. For scripts, use the `VOYAGIER_TOKEN` env var.
 
