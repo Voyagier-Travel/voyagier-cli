@@ -3,7 +3,7 @@ import { existsSync, unlinkSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { CliError, CliErrorCode } from "./errors.js";
 import { saveCredentials, CONFIG_DIR } from "./config.js";
-import { graphql } from "./api.js";
+import { graphql, graphqlWithFieldFallback } from "./api.js";
 
 const credFile = join(CONFIG_DIR, "credentials.json");
 
@@ -210,6 +210,100 @@ describe("graphql", () => {
     stderrSpy.mockRestore();
   });
 
+
+  describe("graphqlWithFieldFallback (VOY-1748 backward compat)", () => {
+    it("retries the legacy query when the enriched field is rejected as unknown", async () => {
+      // Old backend: the isSelf-enriched query fails GraphQL validation. graphql()
+      // surfaces this as SCHEMA_DRIFT but preserves the "Cannot query field" text,
+      // so the helper's loose match fires and it retries the legacy field set.
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            errors: [{ message: 'Cannot query field "isSelf" on type "TripPlanClient".' }],
+          }),
+        } as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ data: { tripPlanClients: { items: [] } } }),
+        } as any);
+
+      const res = await graphqlWithFieldFallback(
+        "query WithSelf { tripPlanClients { items { id isSelf } } }",
+        "query Legacy { tripPlanClients { items { id } } }",
+        /isSelf/,
+      );
+
+      expect(res).toEqual({ tripPlanClients: { items: [] } });
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const body2 = JSON.parse((mockFetch.mock.calls[1][1] as any).body);
+      expect(body2.query).toContain("Legacy");
+      expect(body2.query).not.toContain("isSelf");
+    });
+
+    it("also matches the 'Unknown field' phrasing for isTripPlanner", async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ errors: [{ message: "Unknown field isTripPlanner on type User" }] }),
+        } as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ data: { me: { id: "u1" } } }),
+        } as any);
+
+      const res = await graphqlWithFieldFallback(
+        "{ me { id isTripPlanner } }",
+        "{ me { id } }",
+        /isTripPlanner|isAdmin|isTravelAdvisor/,
+      );
+
+      expect(res).toEqual({ me: { id: "u1" } });
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("propagates unrelated errors without a retry (no false fallback)", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ errors: [{ message: "Trip plan not found" }] }),
+      } as any);
+
+      await expect(
+        graphqlWithFieldFallback("query { x isSelf }", "query { x }", /isSelf/),
+      ).rejects.toThrow(/Trip plan not found/);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not fall back when a different field is the one rejected", async () => {
+      // "Cannot query field" but NOT one of ours — must propagate, not silently
+      // downgrade to the legacy query and swallow a genuine schema problem.
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ errors: [{ message: 'Cannot query field "someOtherField" on type "User".' }] }),
+      } as any);
+
+      await expect(
+        graphqlWithFieldFallback("{ me { someOtherField } }", "{ me { id } }", /isTripPlanner/),
+      ).rejects.toThrow(/Cannot query field/);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns the enriched result with no retry when the field is supported", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: { tripPlanClients: { items: [{ id: "c1", isSelf: true }] } } }),
+      } as any);
+
+      const res = await graphqlWithFieldFallback(
+        "query { tripPlanClients { items { id isSelf } } }",
+        "query { tripPlanClients { items { id } } }",
+        /isSelf/,
+      );
+
+      expect(res).toEqual({ tripPlanClients: { items: [{ id: "c1", isSelf: true }] } });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
 
   describe("streamChat", () => {
     // Import streamChat  

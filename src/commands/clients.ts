@@ -19,11 +19,12 @@
  */
 import { Command } from "commander";
 import chalk from "chalk";
-import { graphql } from "../api.js";
+import { graphql, graphqlWithFieldFallback } from "../api.js";
 import { jsonOutput, fatal } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import {
   LIST_TRIP_PLAN_CLIENTS,
+  LIST_TRIP_PLAN_CLIENTS_WITH_SELF,
   GET_TRIP_PLAN_CLIENT,
   CREATE_TRIP_PLAN_CLIENT,
   UPDATE_TRIP_PLAN_CLIENT,
@@ -39,6 +40,10 @@ export interface TripPlanClient {
   description?: string | null;
   clientType: "Individual" | "Company" | "Group";
   status: "Active" | "Archived";
+  // The auto-provisioned "self" client every trip-planner gets when granted the
+  // role (VOY-1748). Optional because a pre-isSelf backend omits it entirely —
+  // see fetchAllClients()'s compat fallback; treat absent as "not self".
+  isSelf?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -80,14 +85,19 @@ async function fetchAllClients(): Promise<TripPlanClient[]> {
   const out: TripPlanClient[] = [];
   let page = 1;
   while (page <= CLIENTS_MAX_PAGES) {
-    const data = await graphql<{
+    // Attempt the isSelf-enriched query; transparently fall back to the legacy
+    // field set against a backend that hasn't deployed isSelf yet (VOY-1748).
+    const data = await graphqlWithFieldFallback<{
       tripPlanClients: {
         items: TripPlanClient[];
         count: number;
         page: number;
         limit: number;
       };
-    }>(LIST_TRIP_PLAN_CLIENTS, { page, limit: CLIENTS_PAGE_SIZE });
+    }>(LIST_TRIP_PLAN_CLIENTS_WITH_SELF, LIST_TRIP_PLAN_CLIENTS, /isSelf/, {
+      page,
+      limit: CLIENTS_PAGE_SIZE,
+    });
     const items = data.tripPlanClients.items ?? [];
     out.push(...items);
     // Stop when the server returns a short page (last page) or when we've
@@ -111,14 +121,17 @@ function looksLikeClientId(s: string): boolean {
 function formatClientLine(c: TripPlanClient): string {
   const statusBadge = c.status === "Active" ? chalk.green("●") : chalk.dim("○");
   const typeLabel = chalk.cyan(`[${c.clientType}]`);
+  const selfMarker = c.isSelf ? " " + chalk.magenta("(self)") : "";
   const contact = c.email ? chalk.dim(` <${c.email}>`) : "";
-  return `${statusBadge} ${typeLabel} ${chalk.bold(c.name)}${contact}  ${chalk.dim(c.id)}`;
+  return `${statusBadge} ${typeLabel} ${chalk.bold(c.name)}${selfMarker}${contact}  ${chalk.dim(c.id)}`;
 }
 
 export interface ResolvedClient {
   id: string;
   name: string;
   autoResolved: boolean;
+  /** True when the resolved client is the caller's own "self" client (VOY-1748). */
+  isSelf?: boolean;
 }
 
 /**
@@ -189,14 +202,26 @@ export async function resolveClient(explicit?: string): Promise<ResolvedClient> 
       `No ACTIVE clients found on this account.\n  Fix: voyagier clients create --name "<n>" --type individual`
     );
   }
-  if (active.length > 1) {
-    const list = active.map((c) => `    ${c.id}  ${c.name}`).join("\n");
-    throw new CliError(
-      CliErrorCode.MULTIPLE_CLIENTS,
-      `Multiple ACTIVE clients found. Specify --client <id>:\n${list}\n  Fix: voyagier plan-trip --client <id>`
-    );
+  // Exactly one active client — pick it, unchanged from prior behavior.
+  if (active.length === 1) {
+    return { id: active[0].id, name: active[0].name, autoResolved: true, isSelf: active[0].isSelf === true };
   }
-  return { id: active[0].id, name: active[0].name, autoResolved: true };
+  // >1 active: if the backend marks exactly one as the "self" client
+  // (VOY-1748), that's the frictionless default — a trip-planner planning
+  // their own trip shouldn't need --client. (A pre-isSelf backend leaves the
+  // flag absent, so this collapses to the legacy ambiguity error below.)
+  const selfClients = active.filter((c) => c.isSelf === true);
+  if (selfClients.length === 1) {
+    return { id: selfClients[0].id, name: selfClients[0].name, autoResolved: true, isSelf: true };
+  }
+  const list = active.map((c) => `    ${c.id}  ${c.name}${c.isSelf ? "  (self)" : ""}`).join("\n");
+  const selfHint = selfClients.length > 0
+    ? "\n  Note: more than one client is flagged as your self client — pass --client <id> explicitly."
+    : "";
+  throw new CliError(
+    CliErrorCode.MULTIPLE_CLIENTS,
+    `Multiple ACTIVE clients found. Specify --client <id>:\n${list}${selfHint}\n  Fix: voyagier plan-trip --client <id>`
+  );
 }
 
 /**

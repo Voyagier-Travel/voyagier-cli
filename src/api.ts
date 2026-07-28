@@ -120,6 +120,43 @@ export async function graphql<T = unknown>(
   return sanitizeExternalData(json.data);
 }
 
+/**
+ * Backward-compat wrapper for queries that select fields a not-yet-deployed
+ * backend won't recognize (VOY-1748: TripPlanClient.isSelf, User.isTripPlanner).
+ *
+ * The published CLI talks to prod, which validates every query against its
+ * schema — selecting an unknown field is a hard validation error, not a null.
+ * So this attempts the enriched query first; if the server rejects it with a
+ * field-validation error naming one of the new fields, it transparently
+ * retries the legacy query and lets the caller treat those fields as absent.
+ *
+ * Detection is deliberately loose: graphql() wraps GraphQL validation errors
+ * as CliError(SCHEMA_DRIFT) but preserves the original "Cannot query field
+ * …" / "Unknown field …" phrasing in the message, so we match that phrasing
+ * AND the caller-supplied field name. Any other error (auth, network, a
+ * genuine server error) propagates untouched — we only ever fall back on the
+ * specific "this field doesn't exist yet" signal.
+ */
+export async function graphqlWithFieldFallback<T = unknown>(
+  enrichedQuery: string,
+  legacyQuery: string,
+  fieldPattern: RegExp,
+  variables?: Record<string, unknown>,
+  options?: GraphQLOptions,
+): Promise<T> {
+  try {
+    return await graphql<T>(enrichedQuery, variables, options);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isUnknownField =
+      /Cannot query field|Unknown field/i.test(message) && fieldPattern.test(message);
+    if (isUnknownField) {
+      return await graphql<T>(legacyQuery, variables, options);
+    }
+    throw err;
+  }
+}
+
 export interface StreamCallbacks {
   onTextDelta(text: string): void;
   onToolCall?(toolName: string, args?: Record<string, unknown>): void;

@@ -12,8 +12,38 @@ const mockFatal = jest.fn().mockImplementation((msg: string) => {
   throw new CliError(CliErrorCode.VALIDATION, msg);
 });
 
+// Test double for the compat wrapper (VOY-1748): delegates to mockGraphql so
+// every existing "mockGraphql.mockResolvedValueOnce" assertion keeps working,
+// while faithfully reproducing the enriched→legacy retry on an unknown-field
+// error. The real detection logic itself is unit-tested in api.spec.ts. Trailing
+// undefined args are trimmed so call-count/arg assertions match the historical
+// graphql() call shape.
+async function fallbackDouble(
+  enriched: string,
+  legacy: string,
+  pattern: RegExp,
+  variables?: Record<string, unknown>,
+  options?: unknown,
+): Promise<unknown> {
+  const invoke = (q: string): Promise<unknown> => {
+    const args: unknown[] = [q, variables, options];
+    while (args.length > 1 && args[args.length - 1] === undefined) args.pop();
+    return (mockGraphql as (...a: unknown[]) => Promise<unknown>)(...args);
+  };
+  try {
+    return await invoke(enriched);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/Cannot query field|Unknown field/i.test(message) && pattern.test(message)) {
+      return await invoke(legacy);
+    }
+    throw err;
+  }
+}
+
 jest.unstable_mockModule("../api.js", () => ({
   graphql: mockGraphql,
+  graphqlWithFieldFallback: fallbackDouble,
 }));
 
 jest.unstable_mockModule("../output.js", () => ({
@@ -25,11 +55,13 @@ jest.unstable_mockModule("../output.js", () => ({
 
 let registerClientsCommands: (program: Command) => void;
 let resolveClientId: (explicit?: string) => Promise<string>;
+let resolveClient: (explicit?: string) => Promise<{ id: string; name: string; autoResolved: boolean; isSelf?: boolean }>;
 
 beforeAll(async () => {
   const mod = await import("./clients.js");
   registerClientsCommands = mod.registerClientsCommands;
   resolveClientId = mod.resolveClientId;
+  resolveClient = mod.resolveClient;
 });
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
@@ -54,6 +86,17 @@ const archivedClient = {
   email: "old@example.com",
   clientType: "Company" as const,
   status: "Archived" as const,
+};
+
+// The auto-provisioned "self" client (VOY-1748).
+const selfClient = {
+  ...sampleClient,
+  id: "clt_SELF",
+  name: "Jane Planner",
+  email: "jane@example.com",
+  clientType: "Individual" as const,
+  status: "Active" as const,
+  isSelf: true,
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -403,6 +446,114 @@ describe("resolveClientId", () => {
     await expect(resolveClientId()).rejects.toMatchObject({
       code: CliErrorCode.MULTIPLE_CLIENTS,
     });
+  });
+
+  // ── VOY-1748: self-client auto-resolution ────────────────────────────────
+
+  it("auto-picks the single self client among multiple active clients", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: { items: [sampleClient, selfClient, { ...sampleClient, id: "clt_OTHER" }] },
+    });
+    const id = await resolveClientId();
+    expect(id).toBe("clt_SELF");
+  });
+
+  it("surfaces isSelf on the resolved self client with autoResolved", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: { items: [sampleClient, selfClient] },
+    });
+    const resolved = await resolveClient();
+    expect(resolved).toMatchObject({ id: "clt_SELF", autoResolved: true, isSelf: true });
+  });
+
+  it("still errors MULTIPLE_CLIENTS when >1 active and none is the self client", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: { items: [sampleClient, { ...sampleClient, id: "clt_OTHER" }] },
+    });
+    await expect(resolveClientId()).rejects.toMatchObject({
+      code: CliErrorCode.MULTIPLE_CLIENTS,
+    });
+  });
+
+  it("errors MULTIPLE_CLIENTS when more than one client is flagged isSelf (ambiguous)", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: {
+        items: [selfClient, { ...selfClient, id: "clt_SELF2" }],
+      },
+    });
+    await expect(resolveClientId()).rejects.toMatchObject({
+      code: CliErrorCode.MULTIPLE_CLIENTS,
+    });
+  });
+
+  it("explicit --client id is returned untouched, never overridden by a self client", async () => {
+    // No graphql call at all for a canonical id — the self default must not
+    // intercept an explicit reference.
+    const resolved = await resolveClient("clt_EXPLICIT");
+    expect(resolved).toMatchObject({ id: "clt_EXPLICIT", autoResolved: false });
+    expect(resolved.isSelf).toBeUndefined();
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("single active client is still picked (self flag absent — old backend)", async () => {
+    // fetchAllClients falls back to the legacy field set, so isSelf is undefined.
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient] } });
+    const resolved = await resolveClient();
+    expect(resolved).toMatchObject({ id: "clt_01HX", autoResolved: true, isSelf: false });
+  });
+});
+
+// ── VOY-1748: clients list marks the self client ─────────────────────────────
+
+describe("clients list — self marker", () => {
+  it("includes isSelf in --json output", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [selfClient, sampleClient] } });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "clients", "list", "--json"]);
+
+    expect(mockJsonOutput).toHaveBeenCalledWith({
+      clients: [selfClient, sampleClient],
+      total: 2,
+    });
+  });
+
+  it("appends a (self) marker in human/table output", async () => {
+    // Human/table rows are printed via console.log, not process.stdout.write.
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [selfClient, sampleClient] } });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "clients", "list"]);
+
+    const written = logSpy.mock.calls.map((c) => String(c[0] ?? "")).join("\n");
+    // Only the self client is marked.
+    expect(written).toMatch(/Jane Planner.*\(self\)/);
+    expect(written).not.toMatch(/Smith Family.*\(self\)/);
+    logSpy.mockRestore();
+  });
+});
+
+// ── VOY-1748: fetchAllClients compat fallback ────────────────────────────────
+
+describe("fetchAllClients isSelf compat fallback", () => {
+  it("retries the legacy query and treats isSelf as absent when the backend rejects it", async () => {
+    // First (enriched) call rejects with a field-validation error; the wrapper
+    // retries the legacy query, whose items carry no isSelf.
+    mockGraphql
+      .mockRejectedValueOnce(
+        new CliError(
+          CliErrorCode.SCHEMA_DRIFT,
+          'Schema drift detected: Cannot query field "isSelf" on type "TripPlanClient".',
+        ),
+      )
+      .mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient] } });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "clients", "list", "--json"]);
+
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    expect(mockJsonOutput).toHaveBeenCalledWith({ clients: [sampleClient], total: 1 });
   });
 });
 

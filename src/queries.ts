@@ -691,6 +691,10 @@ export const LIST_CHAT_SESSIONS = `
 
 // --- Clients (v2.0.0 — TripPlanClient surface) ---
 
+// Legacy clients-list query — the field set that predates
+// TripPlanClient.isSelf (VOY-1748). Kept as the fallback target for
+// LIST_TRIP_PLAN_CLIENTS_WITH_SELF so the published CLI degrades gracefully
+// against a prod backend that hasn't deployed the isSelf column yet.
 export const LIST_TRIP_PLAN_CLIENTS = `
   query TripPlanClients($page: Int!, $limit: Int!) {
     tripPlanClients(page: $page, limit: $limit) {
@@ -706,6 +710,36 @@ export const LIST_TRIP_PLAN_CLIENTS = `
         description
         clientType
         status
+        createdAt
+        updatedAt
+      }
+      count
+      page
+      limit
+    }
+  }
+`;
+
+// Enriched clients-list query — adds TripPlanClient.isSelf (VOY-1748), the
+// flag marking the auto-provisioned "self" client each trip-planner gets.
+// Attempt this first; graphqlWithFieldFallback() retries LIST_TRIP_PLAN_CLIENTS
+// when the backend rejects `isSelf` as an unknown field.
+export const LIST_TRIP_PLAN_CLIENTS_WITH_SELF = `
+  query TripPlanClients($page: Int!, $limit: Int!) {
+    tripPlanClients(page: $page, limit: $limit) {
+      count
+      page
+      limit
+      items {
+        id
+        name
+        email
+        phone
+        avatarUrl
+        description
+        clientType
+        status
+        isSelf
         createdAt
         updatedAt
       }

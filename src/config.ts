@@ -27,6 +27,12 @@ export interface UserContext {
   country?: string;
   homeAirports: string[];
   preferredCabin?: "economy" | "premium_economy" | "business" | "first";
+  // RBAC role flags mirrored from the `me` query (VOY-1748). Optional: an old
+  // backend (pre-isTripPlanner) omits them, and whoami leaves them undefined so
+  // downstream "regular traveller" rendering stays honest.
+  isAdmin?: boolean;
+  isTravelAdvisor?: boolean;
+  isTripPlanner?: boolean;
   passport?: {
     last4: string;
     issueCountry: string;

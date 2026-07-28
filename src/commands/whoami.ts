@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { credentialsExist, getUserContext, getApiUrl, saveUserContext } from "../config.js";
-import { graphql } from "../api.js";
+import { graphql, graphqlWithFieldFallback } from "../api.js";
 import { CliError, CliErrorCode, authFailedMessage } from "../errors.js";
 import { deriveBaseUrl, shellArg } from "../utils.js";
 
@@ -11,6 +11,18 @@ const CABIN_LABELS: Record<string, string> = {
   business: "Business",
   first: "First",
 };
+
+// `me` query WITH the RBAC role flags (VOY-1748). isAdmin/isTravelAdvisor
+// already exist on prod's User type; isTripPlanner is the newly-added flag, so
+// this whole selection is retried against ME_QUERY_LEGACY when a not-yet-deployed
+// backend rejects it as an unknown field.
+const ME_QUERY_WITH_ROLES =
+  `{ me { id firstName lastName email name dateOfBirth gender isAdmin isTravelAdvisor isTripPlanner passport { last4 issueCountry nationalityCountry expirationDate } } }`;
+
+// Legacy `me` query — the pre-role field set. On the fallback path the role
+// flags are simply absent, so whoami renders the identity with no Role line.
+const ME_QUERY_LEGACY =
+  `{ me { id firstName lastName email name dateOfBirth gender passport { last4 issueCountry nationalityCountry expirationDate } } }`;
 
 export function registerWhoamiCommand(program: Command): void {
   program
@@ -37,14 +49,21 @@ export function registerWhoamiCommand(program: Command): void {
           name?: string;
           dateOfBirth?: string | null;
           gender?: string | null;
+          // Absent (undefined) against a pre-isTripPlanner backend, per the
+          // ME_QUERY_LEGACY fallback below.
+          isAdmin?: boolean;
+          isTravelAdvisor?: boolean;
+          isTripPlanner?: boolean;
           passport?: { last4: string; issueCountry: string; nationalityCountry: string; expirationDate: string } | null;
         }
 
         let me: MeData | null = null;
 
         try {
-          const data = await graphql<{ me: MeData }>(
-            `{ me { id firstName lastName email name dateOfBirth gender passport { last4 issueCountry nationalityCountry expirationDate } } }`,
+          const data = await graphqlWithFieldFallback<{ me: MeData }>(
+            ME_QUERY_WITH_ROLES,
+            ME_QUERY_LEGACY,
+            /isTripPlanner|isAdmin|isTravelAdvisor/,
           );
           me = data.me;
         } catch (err) {
@@ -85,6 +104,11 @@ export function registerWhoamiCommand(program: Command): void {
             ctx.dateOfBirth = me.dateOfBirth ?? undefined;
             ctx.gender = me.gender ?? undefined;
             ctx.passport = me.passport ?? undefined;
+            // Mirror the role flags exactly as the other me-fields (VOY-1748):
+            // absent from the response (old backend) → undefined → no Role line.
+            ctx.isAdmin = me.isAdmin ?? undefined;
+            ctx.isTravelAdvisor = me.isTravelAdvisor ?? undefined;
+            ctx.isTripPlanner = me.isTripPlanner ?? undefined;
           } else {
             // No cached context — create minimal one from API
             ctx = {
@@ -94,6 +118,9 @@ export function registerWhoamiCommand(program: Command): void {
               dateOfBirth: me.dateOfBirth ?? undefined,
               gender: me.gender ?? undefined,
               passport: me.passport ?? undefined,
+              isAdmin: me.isAdmin ?? undefined,
+              isTravelAdvisor: me.isTravelAdvisor ?? undefined,
+              isTripPlanner: me.isTripPlanner ?? undefined,
               homeAirports: [],
               preferredCabin: "economy",
             };
@@ -114,6 +141,19 @@ export function registerWhoamiCommand(program: Command): void {
       const baseUrl = deriveBaseUrl(apiUrl);
       const env = baseUrl.includes("dev.") ? "dev" : baseUrl.includes("staging.") ? "staging" : "prod";
 
+      // RBAC roles (VOY-1748). Ordered admin → advisor → planner. Only flags
+      // that are known (true/false) surface; undefined = old backend / regular
+      // traveller and is omitted rather than reported as a lie.
+      const roleFlags: Record<string, boolean> = {};
+      if (profile.isAdmin !== undefined) roleFlags.isAdmin = profile.isAdmin;
+      if (profile.isTravelAdvisor !== undefined) roleFlags.isTravelAdvisor = profile.isTravelAdvisor;
+      if (profile.isTripPlanner !== undefined) roleFlags.isTripPlanner = profile.isTripPlanner;
+
+      const roleLabels: string[] = [];
+      if (profile.isAdmin) roleLabels.push("Admin");
+      if (profile.isTravelAdvisor) roleLabels.push("Travel Advisor");
+      if (profile.isTripPlanner) roleLabels.push("Trip Planner");
+
       if (opts.json) {
         process.stdout.write(
           JSON.stringify({
@@ -124,6 +164,7 @@ export function registerWhoamiCommand(program: Command): void {
             dateOfBirth: profile.dateOfBirth ?? null,
             gender: profile.gender ?? null,
             hasPassport: !!profile.passport,
+            ...roleFlags,
             apiUrl,
             environment: env,
           }, null, 2) + "\n",
@@ -140,6 +181,12 @@ export function registerWhoamiCommand(program: Command): void {
       infoParts.push(env === "prod" ? baseUrl.replace("https://", "") : chalk.yellow(env));
 
       console.log(chalk.dim(`  ${infoParts.join(" · ")}`));
+
+      // Role line (VOY-1748) — omitted entirely for a regular traveller or an
+      // old backend where every flag is false/absent.
+      if (roleLabels.length > 0) {
+        console.log(chalk.dim("  Role: ") + chalk.cyan(roleLabels.join(" + ")));
+      }
 
       // Traveller readiness
       const ready: string[] = [];

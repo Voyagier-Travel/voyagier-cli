@@ -5,8 +5,35 @@ import { Command } from "commander";
 
 const mockGraphql = jest.fn();
 
+// Compat-wrapper double (VOY-1748) delegating to mockGraphql, so resolveClient's
+// fetchAllClients still routes through mockGraphql (preserving call-count
+// assertions). Real fallback detection is unit-tested in api.spec.ts.
+async function graphqlWithFieldFallbackDouble(
+  enriched: string,
+  legacy: string,
+  pattern: RegExp,
+  variables?: Record<string, unknown>,
+  options?: unknown,
+): Promise<unknown> {
+  const invoke = (q: string): Promise<unknown> => {
+    const args: unknown[] = [q, variables, options];
+    while (args.length > 1 && args[args.length - 1] === undefined) args.pop();
+    return (mockGraphql as (...a: unknown[]) => Promise<unknown>)(...args);
+  };
+  try {
+    return await invoke(enriched);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/Cannot query field|Unknown field/i.test(message) && pattern.test(message)) {
+      return await invoke(legacy);
+    }
+    throw err;
+  }
+}
+
 jest.unstable_mockModule("../api.js", () => ({
   graphql: mockGraphql,
+  graphqlWithFieldFallback: graphqlWithFieldFallbackDouble,
   AuthError: class AuthError extends Error {
     constructor(message: string) {
       super(message);
