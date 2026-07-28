@@ -130,13 +130,25 @@ export async function graphql<T = unknown>(
  * field-validation error naming one of the new fields, it transparently
  * retries the legacy query and lets the caller treat those fields as absent.
  *
- * Detection is deliberately loose: graphql() wraps GraphQL validation errors
- * as CliError(SCHEMA_DRIFT) but preserves the original "Cannot query field
- * …" / "Unknown field …" phrasing in the message, so we match that phrasing
- * AND the caller-supplied field name. Any other error (auth, network, a
- * genuine server error) propagates untouched — we only ever fall back on the
- * specific "this field doesn't exist yet" signal.
+ * Detection is strict: graphql() classifies GraphQL validation errors as
+ * CliError(SCHEMA_DRIFT) and preserves the original "Cannot query field …"
+ * phrasing, so we require BOTH the SCHEMA_DRIFT code and the caller-supplied
+ * field name in the message. Any other error (auth, network, a genuine
+ * server error — or drift on an unrelated, pre-existing field) propagates
+ * untouched.
+ *
+ * Once a query has fallen back, the downgrade is remembered for the rest of
+ * the process (a single CLI invocation): paginated callers like
+ * fetchAllClients would otherwise pay a doubled round-trip on every page
+ * against an old backend.
  */
+const legacyModeQueries = new Set<string>();
+
+/** Test-only: reset the per-process fallback memory. */
+export function __resetFieldFallbackCache(): void {
+  legacyModeQueries.clear();
+}
+
 export async function graphqlWithFieldFallback<T = unknown>(
   enrichedQuery: string,
   legacyQuery: string,
@@ -144,13 +156,18 @@ export async function graphqlWithFieldFallback<T = unknown>(
   variables?: Record<string, unknown>,
   options?: GraphQLOptions,
 ): Promise<T> {
+  if (legacyModeQueries.has(enrichedQuery)) {
+    return await graphql<T>(legacyQuery, variables, options);
+  }
   try {
     return await graphql<T>(enrichedQuery, variables, options);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isUnknownField =
-      /Cannot query field|Unknown field/i.test(message) && fieldPattern.test(message);
-    if (isUnknownField) {
+    const isUnknownNewField =
+      err instanceof CliError &&
+      err.code === CliErrorCode.SCHEMA_DRIFT &&
+      fieldPattern.test(err.message);
+    if (isUnknownNewField) {
+      legacyModeQueries.add(enrichedQuery);
       return await graphql<T>(legacyQuery, variables, options);
     }
     throw err;

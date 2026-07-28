@@ -3,7 +3,7 @@ import { existsSync, unlinkSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { CliError, CliErrorCode } from "./errors.js";
 import { saveCredentials, CONFIG_DIR } from "./config.js";
-import { graphql, graphqlWithFieldFallback } from "./api.js";
+import { graphql, graphqlWithFieldFallback, __resetFieldFallbackCache } from "./api.js";
 
 const credFile = join(CONFIG_DIR, "credentials.json");
 
@@ -212,10 +212,15 @@ describe("graphql", () => {
 
 
   describe("graphqlWithFieldFallback (VOY-1748 backward compat)", () => {
+    beforeEach(() => {
+      __resetFieldFallbackCache();
+    });
+
     it("retries the legacy query when the enriched field is rejected as unknown", async () => {
       // Old backend: the isSelf-enriched query fails GraphQL validation. graphql()
-      // surfaces this as SCHEMA_DRIFT but preserves the "Cannot query field" text,
-      // so the helper's loose match fires and it retries the legacy field set.
+      // surfaces this as CliError(SCHEMA_DRIFT) preserving the "Cannot query field"
+      // text, so the helper's strict match (code + field pattern) fires and it
+      // retries the legacy field set.
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
@@ -255,11 +260,63 @@ describe("graphql", () => {
       const res = await graphqlWithFieldFallback(
         "{ me { id isTripPlanner } }",
         "{ me { id } }",
-        /isTripPlanner|isAdmin|isTravelAdvisor/,
+        /isTripPlanner|canMintPats/,
       );
 
       expect(res).toEqual({ me: { id: "u1" } });
       expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("remembers the downgrade: subsequent calls go straight to the legacy query", async () => {
+      // Paginated callers (fetchAllClients) must not pay a doubled round-trip
+      // on every page against an old backend — the first fallback is sticky
+      // for the rest of the process.
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            errors: [{ message: 'Cannot query field "isSelf" on type "TripPlanClient".' }],
+          }),
+        } as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ data: { tripPlanClients: { items: [], page: 1 } } }),
+        } as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ data: { tripPlanClients: { items: [], page: 2 } } }),
+        } as any);
+
+      const enriched = "query WithSelf { tripPlanClients { items { id isSelf } } }";
+      const legacy = "query Legacy { tripPlanClients { items { id } } }";
+
+      await graphqlWithFieldFallback(enriched, legacy, /isSelf/, { page: 1 });
+      const res2 = await graphqlWithFieldFallback(enriched, legacy, /isSelf/, { page: 2 });
+
+      expect(res2).toEqual({ tripPlanClients: { items: [], page: 2 } });
+      // 3 fetches total: enriched-fail + legacy (page 1), then legacy ONLY (page 2)
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      const body3 = JSON.parse((mockFetch.mock.calls[2][1] as any).body);
+      expect(body3.query).toContain("Legacy");
+      expect(body3.query).not.toContain("isSelf");
+    });
+
+    it("does not fall back on a non-SCHEMA_DRIFT error even if the message mentions the field", async () => {
+      // Strictness check: the fallback requires CliError(SCHEMA_DRIFT), not
+      // just suggestive phrasing in an arbitrary error. A server error that
+      // happens to name the field must propagate.
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+        json: async () => ({ error: 'resolver crashed while reading isSelf' }),
+        text: async () => 'resolver crashed while reading isSelf',
+      } as any);
+
+      await expect(
+        graphqlWithFieldFallback("query { x isSelf }", "query { x }", /isSelf/),
+      ).rejects.toThrow();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     it("propagates unrelated errors without a retry (no false fallback)", async () => {

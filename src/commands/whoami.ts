@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { credentialsExist, getUserContext, getApiUrl, saveUserContext } from "../config.js";
-import { graphql, graphqlWithFieldFallback } from "../api.js";
+import { graphqlWithFieldFallback } from "../api.js";
 import { CliError, CliErrorCode, authFailedMessage } from "../errors.js";
 import { deriveBaseUrl, shellArg } from "../utils.js";
 
@@ -64,7 +64,7 @@ export function registerWhoamiCommand(program: Command): void {
           const data = await graphqlWithFieldFallback<{ me: MeData }>(
             ME_QUERY_WITH_ROLES,
             ME_QUERY_LEGACY,
-            /isTripPlanner|canMintPats|isAdmin|isTravelAdvisor/,
+            /isTripPlanner|canMintPats/,
           );
           me = data.me;
         } catch (err) {
