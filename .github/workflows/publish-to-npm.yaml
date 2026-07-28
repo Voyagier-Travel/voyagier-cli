@@ -111,9 +111,10 @@ jobs:
             fi
           done <<< "$COMMITS"
 
-          # No feat/fix/breaking since last tag (ci:/chore:/docs: only) → patch.
+          # No feat/fix/breaking changes since last tag -> patch.
+          # (e.g., ci:/chore:/docs: and other conventional-commit types that don't imply a feature/fix.)
           # Previous default of minor burned version slots on housekeeping releases
-          # (2.9.x→2.10.0, 2.13.x→2.14.0).
+          # (2.9.x->2.10.0, 2.13.x->2.14.0).
           if [ -z "$BUMP" ]; then
             BUMP="patch"
           fi
