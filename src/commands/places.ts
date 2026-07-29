@@ -70,7 +70,6 @@ export interface TripPlanPlace {
   countryName?: string | null;
   description?: string | null;
   iataCode?: string | null;
-  image?: string | null;
   url?: string | null;
   placeTimezone?: string | null;
   location?: PlaceLocation | null;
@@ -92,6 +91,187 @@ export interface SearchLocationInput {
   latitude?: number;
   longitude?: number;
   radius?: number;
+}
+
+// ----- Raw GraphQL shapes + normalizers (VOY-1417 schema drift) -----
+//
+// The geo/place surface drifted: GeoPoint now exposes a GeoJSON
+// `coordinates: [lng, lat]` array instead of `latitude`/`longitude`;
+// SearchPlaceAddress renamed its fields (streetAddress/addressLocality/...);
+// ExternalPlace dropped `description`/`address`/`country`/`locality` and moved
+// coordinates onto `geocodes.main` and address parts onto its own
+// `ExternalPlaceLocation`; TripPlanPlace dropped `image` entirely.
+//
+// We fetch the new shapes from the API but normalize back to the CLI's stable
+// output shape (PlaceLocation {latitude, longitude}, PlaceAddress {city, ...})
+// so the JSON/TTY/agent contract that agents depend on is preserved. Fields
+// with no equivalent on the new schema (ExternalPlace.description,
+// TripPlanPlace.image) degrade to absent rather than being faked.
+
+/** GeoPoint post-drift: GeoJSON coordinates, `[longitude, latitude]`. */
+interface GeoPointRaw {
+  coordinates?: number[] | null;
+  type?: string | null;
+}
+
+interface SearchPlaceAddressRaw {
+  streetAddress?: string | null;
+  addressLocality?: string | null;
+  addressRegion?: string | null;
+  postalCode?: string | null;
+  addressCountry?: string | null;
+}
+
+interface SearchPlaceRaw {
+  id: string;
+  name?: string | null;
+  description?: string | null;
+  location?: GeoPointRaw | null;
+  address?: SearchPlaceAddressRaw | null;
+  country?: { id: string; name: string } | null;
+  locality?: { id: string; name: string } | null;
+}
+
+interface ExternalPlaceLocationRaw {
+  address?: string | null;
+  locality?: string | null;
+  region?: string | null;
+  postcode?: string | null;
+  country?: string | null;
+}
+
+interface ExternalPlaceRaw {
+  id: string;
+  name?: string | null;
+  geocodes?: { main?: { latitude?: number | null; longitude?: number | null } | null } | null;
+  location?: ExternalPlaceLocationRaw | null;
+}
+
+interface TripPlanPlaceRaw {
+  id: string;
+  name?: string | null;
+  placeId?: string | null;
+  tripPlanId?: string | null;
+  type?: string | null;
+  types?: string[] | null;
+  countryId?: string | null;
+  countryName?: string | null;
+  description?: string | null;
+  iataCode?: string | null;
+  url?: string | null;
+  placeTimezone?: string | null;
+  location?: GeoPointRaw | null;
+}
+
+interface HighlightedTripPlaceRaw {
+  id: string;
+  ranking?: number | null;
+  category?: string | null;
+  detectedPlace?: {
+    id: string;
+    name?: string | null;
+    placeId?: string | null;
+    location?: GeoPointRaw | null;
+  } | null;
+}
+
+/**
+ * Convert a GeoJSON GeoPoint (`coordinates: [lng, lat]`) to the CLI's stable
+ * `{ latitude, longitude }` shape. Returns null when coordinates are missing or
+ * malformed. Preserves 0 values (equator / prime meridian).
+ */
+function geoPointToLocation(g?: GeoPointRaw | null): PlaceLocation | null {
+  const c = g?.coordinates;
+  if (!Array.isArray(c) || c.length < 2) return null;
+  const [lng, lat] = c;
+  if (typeof lat !== "number" || typeof lng !== "number") return null;
+  return { latitude: lat, longitude: lng };
+}
+
+function normalizeSearchPlace(raw: SearchPlaceRaw): SearchPlace {
+  return {
+    id: raw.id,
+    name: raw.name ?? null,
+    description: raw.description ?? null,
+    location: geoPointToLocation(raw.location),
+    address: raw.address
+      ? {
+          street: raw.address.streetAddress ?? null,
+          city: raw.address.addressLocality ?? null,
+          state: raw.address.addressRegion ?? null,
+          postalCode: raw.address.postalCode ?? null,
+          country: raw.address.addressCountry ?? null,
+        }
+      : null,
+    country: raw.country ?? null,
+    locality: raw.locality ?? null,
+  };
+}
+
+function normalizeExternalPlace(raw: ExternalPlaceRaw): SearchPlace {
+  const main = raw.geocodes?.main;
+  const location =
+    main && (typeof main.latitude === "number" || typeof main.longitude === "number")
+      ? { latitude: main.latitude ?? null, longitude: main.longitude ?? null }
+      : null;
+  const loc = raw.location;
+  return {
+    id: raw.id,
+    name: raw.name ?? null,
+    // ExternalPlace.description was removed in the drift with no equivalent —
+    // degrade to null rather than fake it.
+    description: null,
+    location,
+    address: loc
+      ? {
+          street: loc.address ?? null,
+          city: loc.locality ?? null,
+          state: loc.region ?? null,
+          postalCode: loc.postcode ?? null,
+          country: loc.country ?? null,
+        }
+      : null,
+    // ExternalPlace no longer exposes structured country/locality objects; the
+    // string equivalents now live on `address` above.
+    country: null,
+    locality: null,
+  };
+}
+
+function normalizeTripPlanPlace(raw: TripPlanPlaceRaw): TripPlanPlace {
+  return {
+    id: raw.id,
+    name: raw.name ?? null,
+    placeId: raw.placeId ?? null,
+    tripPlanId: raw.tripPlanId ?? null,
+    type: raw.type ?? null,
+    types: raw.types ?? null,
+    countryId: raw.countryId ?? null,
+    countryName: raw.countryName ?? null,
+    description: raw.description ?? null,
+    iataCode: raw.iataCode ?? null,
+    url: raw.url ?? null,
+    placeTimezone: raw.placeTimezone ?? null,
+    location: geoPointToLocation(raw.location),
+  };
+}
+
+function normalizeHighlightedTripPlace(
+  raw: HighlightedTripPlaceRaw
+): DetectedTripHighlightedPlace {
+  return {
+    id: raw.id,
+    ranking: raw.ranking ?? null,
+    category: raw.category ?? null,
+    detectedPlace: raw.detectedPlace
+      ? {
+          id: raw.detectedPlace.id,
+          name: raw.detectedPlace.name ?? null,
+          placeId: raw.detectedPlace.placeId ?? null,
+          location: geoPointToLocation(raw.detectedPlace.location),
+        }
+      : null,
+  };
 }
 
 // ----- Enum normalization -----
@@ -253,7 +433,7 @@ export function registerPlacesCommands(program: Command): void {
       let total: number | undefined;
 
       if (source === "google") {
-        const data = await graphql<{ searchExternalPlaces: SearchPlace[] }>(
+        const data = await graphql<{ searchExternalPlaces: ExternalPlaceRaw[] }>(
           SEARCH_EXTERNAL_PLACES,
           {
             query: opts.query,
@@ -261,7 +441,7 @@ export function registerPlacesCommands(program: Command): void {
             location: location ?? null,
           }
         );
-        places = data.searchExternalPlaces ?? [];
+        places = (data.searchExternalPlaces ?? []).map(normalizeExternalPlace);
         total = places.length;
       } else {
         // Group A: Strict validation for --limit and --page
@@ -272,7 +452,7 @@ export function registerPlacesCommands(program: Command): void {
         // PascalCase; the CLI accepts lowercase / kebab / snake and translates.
         const normalizedType = opts.type ? normalizePlaceType(opts.type) : null;
         const data = await graphql<{
-          searchPlaces: { items: SearchPlace[]; count: number; page: number; limit: number };
+          searchPlaces: { items: SearchPlaceRaw[]; count: number; page: number; limit: number };
         }>(SEARCH_PLACES, {
           query: opts.query,
           countryId: opts.country ?? null,
@@ -281,7 +461,7 @@ export function registerPlacesCommands(program: Command): void {
           limit,
           page,
         });
-        places = data.searchPlaces?.items ?? [];
+        places = (data.searchPlaces?.items ?? []).map(normalizeSearchPlace);
         total = data.searchPlaces?.count ?? places.length;
       }
 
@@ -344,17 +524,17 @@ export function registerPlacesCommands(program: Command): void {
       let place: SearchPlace | null;
 
       if (opts.external) {
-        const data = await graphql<{ getPlaceByExternalId: SearchPlace | null }>(
+        const data = await graphql<{ getPlaceByExternalId: SearchPlaceRaw | null }>(
           GET_PLACE_BY_EXTERNAL_ID,
           { externalId: id }
         );
-        place = data.getPlaceByExternalId;
+        place = data.getPlaceByExternalId ? normalizeSearchPlace(data.getPlaceByExternalId) : null;
       } else {
-        const data = await graphql<{ getPlaceById: SearchPlace | null }>(
+        const data = await graphql<{ getPlaceById: SearchPlaceRaw | null }>(
           GET_PLACE_BY_ID,
           { id }
         );
-        place = data.getPlaceById;
+        place = data.getPlaceById ? normalizeSearchPlace(data.getPlaceById) : null;
       }
 
       if (!place) {
@@ -410,7 +590,7 @@ export function registerPlacesCommands(program: Command): void {
     .requiredOption("--place-id <id>", "Place ID")
     .option("--type <type>", "Place type (Hotel, Restaurant, City, Airport, etc.)")
     .option("--country-id <id>", "Country ID")
-    // Note: country name, description, image, and url are resolved server-side
+    // Note: country name, description, and url are resolved server-side
     // from the upstream Place entity (Google Places / Foursquare cache). Pass
     // `--place-id` only and let the resolver populate the rest — do not provide
     // overrides, which drift from the source record.
@@ -435,13 +615,13 @@ export function registerPlacesCommands(program: Command): void {
       }
       if (opts.placeTimezone) input.placeTimezone = opts.placeTimezone;
 
-      const data = await graphql<{ upsertTripPlanPlace: TripPlanPlace }>(
+      const data = await graphql<{ upsertTripPlanPlace: TripPlanPlaceRaw }>(
         UPSERT_TRIP_PLAN_PLACE,
         { input },
         { dryRun: opts.dryRun }
       );
 
-      const place = data.upsertTripPlanPlace;
+      const place = normalizeTripPlanPlace(data.upsertTripPlanPlace);
 
       if (opts.json) {
         // Echoed in JSON output for agent-side tracking; not yet enforced server-side
@@ -488,10 +668,12 @@ export function registerPlacesCommands(program: Command): void {
         }
         const category = normalizeHighlightCategory(opts.category);
         const data = await graphql<{
-          highlightedTripPlaces: DetectedTripHighlightedPlace[];
+          highlightedTripPlaces: HighlightedTripPlaceRaw[];
         }>(GET_HIGHLIGHTED_TRIP_PLACES, { tripId: planId, category });
 
-        const highlighted = data.highlightedTripPlaces ?? [];
+        const highlighted = (data.highlightedTripPlaces ?? []).map(
+          normalizeHighlightedTripPlace
+        );
 
         if (opts.json) {
           jsonOutput({
@@ -539,12 +721,12 @@ export function registerPlacesCommands(program: Command): void {
         return;
       }
 
-      const data = await graphql<{ getTripPlanPlaces: TripPlanPlace[] }>(
+      const data = await graphql<{ getTripPlanPlaces: TripPlanPlaceRaw[] }>(
         GET_TRIP_PLAN_PLACES,
         { tripPlanId: planId }
       );
 
-      const placesList = data.getTripPlanPlaces ?? [];
+      const placesList = (data.getTripPlanPlaces ?? []).map(normalizeTripPlanPlace);
 
       if (opts.json) {
         jsonOutput({

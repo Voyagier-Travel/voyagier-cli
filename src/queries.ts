@@ -1072,15 +1072,15 @@ export const SEARCH_PLACES = `
         name
         description
         location {
-          latitude
-          longitude
+          coordinates
+          type
         }
         address {
-          street
-          city
-          state
+          streetAddress
+          addressLocality
+          addressRegion
           postalCode
-          country
+          addressCountry
         }
         country {
           id
@@ -1103,25 +1103,18 @@ export const SEARCH_EXTERNAL_PLACES = `
     searchExternalPlaces(query: $query, countryCode: $countryCode, location: $location) {
       id
       name
-      description
+      geocodes {
+        main {
+          latitude
+          longitude
+        }
+      }
       location {
-        latitude
-        longitude
-      }
-      address {
-        street
-        city
-        state
-        postalCode
+        address
+        locality
+        region
+        postcode
         country
-      }
-      country {
-        id
-        name
-      }
-      locality {
-        id
-        name
       }
     }
   }
@@ -1134,15 +1127,15 @@ export const GET_PLACE_BY_ID = `
       name
       description
       location {
-        latitude
-        longitude
+        coordinates
+        type
       }
       address {
-        street
-        city
-        state
+        streetAddress
+        addressLocality
+        addressRegion
         postalCode
-        country
+        addressCountry
       }
       country {
         id
@@ -1163,15 +1156,15 @@ export const GET_PLACE_BY_EXTERNAL_ID = `
       name
       description
       location {
-        latitude
-        longitude
+        coordinates
+        type
       }
       address {
-        street
-        city
-        state
+        streetAddress
+        addressLocality
+        addressRegion
         postalCode
-        country
+        addressCountry
       }
       country {
         id
@@ -1198,12 +1191,11 @@ export const GET_TRIP_PLAN_PLACES = `
       countryName
       description
       iataCode
-      image
       url
       placeTimezone
       location {
-        latitude
-        longitude
+        coordinates
+        type
       }
     }
   }
@@ -1224,8 +1216,8 @@ export const GET_HIGHLIGHTED_TRIP_PLACES = `
         name
         placeId
         location {
-          latitude
-          longitude
+          coordinates
+          type
         }
       }
     }
@@ -1245,12 +1237,11 @@ export const UPSERT_TRIP_PLAN_PLACE = `
       countryName
       description
       iataCode
-      image
       url
       placeTimezone
       location {
-        latitude
-        longitude
+        coordinates
+        type
       }
     }
   }
