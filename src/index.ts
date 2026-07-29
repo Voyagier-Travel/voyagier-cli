@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { readFileSync } from "fs";
 import { buildProgram } from "./build-program.js";
 import { trackCommand, getTraceId, isTelemetryEnabled, telemetryErrorCode } from "./telemetry.js";
+import { gracefulExit } from "./exit.js";
 import { credentialsExist } from "./config.js";
 import { CliError } from "./errors.js";
 import chalk from "chalk";
@@ -56,7 +57,7 @@ if (userArgs.length === 0 && !credentialsExist()) {
   console.log(chalk.dim("  Scripting? Pipe a token via stdin (keeps it out of shell history):\n"));
   console.log(chalk.cyan('    echo "$VOYAGIER_PAT" | voyagier auth set-token -'));
   console.log();
-  process.exit(0);
+  await gracefulExit(0);
 }
 
 try {
@@ -74,10 +75,10 @@ try {
     if (process.argv.includes("--stacktrace") && err.stack) {
       process.stderr.write(err.stack + "\n");
     }
-    process.exit(1);
+    await gracefulExit(1);
   } else {
     const stack = err instanceof Error ? (err.stack ?? String(err)) : String(err);
     process.stderr.write(stack + "\n");
-    process.exit(2);
+    await gracefulExit(2);
   }
 }

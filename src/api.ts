@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import { getApiUrl, getToken } from "./config.js";
 import { getTraceId } from "./telemetry.js";
+import { gracefulExit } from "./exit.js";
 import { verbose } from "./verbose.js";
 import { CliError, CliErrorCode, authFailedMessage } from "./errors.js";
 import { sanitizeExternalData, sanitizeExternalText } from "./utils.js";
@@ -36,7 +37,7 @@ export async function graphql<T = unknown>(
     process.stderr.write(`Authorization: Bearer ${token.slice(0, 8)}••••\n\n`);
     process.stderr.write(JSON.stringify(body, null, 2) + "\n");
     process.stderr.write("--- END DRY RUN ---\n\n");
-    process.exit(0);
+    await gracefulExit(0);
   }
 
   let res: Response;
