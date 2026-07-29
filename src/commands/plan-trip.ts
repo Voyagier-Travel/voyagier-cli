@@ -199,6 +199,7 @@ Examples:
         let plan: TripPlan;
         let travellerIds: string[] = [];
         let prunedGoals: { id: string; name?: string; type: string }[] = [];
+        let addedGoals: { id: string; name?: string; type: string }[] = [];
         let pruneWarnings: string[] = [];
         if (opts.plan) {
           if (!json && !agent) progress("Fetching existing trip plan...");
@@ -221,6 +222,10 @@ Examples:
             title: opts.title as string,
             travellers: opts.travellers,
             shape,
+            // Always converge the goal graph: prunes the template's extras (as
+            // before) AND — on a post-1513 blank plan — adds the flight/hotel
+            // goal that plan-trip's own "next step: search" hint depends on.
+            ensureGoals: true,
             quiet: json || agent,
             interactive: isInteractive(opts),
             clientHintFlags: buildClientHintFlags(opts),
@@ -228,6 +233,7 @@ Examples:
           plan = scaffolded.plan;
           travellerIds = scaffolded.travellerIds;
           prunedGoals = scaffolded.prunedGoals;
+          addedGoals = scaffolded.addedGoals;
           pruneWarnings = scaffolded.pruneWarnings;
         }
 
@@ -297,9 +303,15 @@ Examples:
             ? {
                 shape: shapeLabels,
                 prunedGoals: prunedGoals.map(g => ({ id: g.id, name: g.name ?? null, type: g.type })),
-                ...(pruneWarnings.length > 0 ? { pruneWarnings } : {}),
               }
             : {}),
+          // Additive (absent in the template world, so back-compat holds): on a
+          // blank plan (VOY-1513) the ensure step ADDS goals — never be silent
+          // about that mutation, and surface any ensure warnings too.
+          ...(addedGoals.length > 0
+            ? { addedGoals: addedGoals.map(g => ({ id: g.id, name: g.name ?? null, type: g.type })) }
+            : {}),
+          ...(pruneWarnings.length > 0 ? { pruneWarnings } : {}),
           nextSteps,
         };
 

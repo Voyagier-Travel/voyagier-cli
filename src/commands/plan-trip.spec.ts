@@ -378,6 +378,7 @@ describe("plan-trip scaffold (VOY-1414)", () => {
   it("creates a plan and emits compose next-steps (JSON)", async () => {
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-1", title: "Paris Trip" } }) // CREATE_TRIP_PLAN (via scaffoldPlan)
+      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS }) // ensure-goals list (template → no adds/prunes)
       .mockResolvedValueOnce({ tripPlanTravellers: [] }); // GET_TRAVELLERS_BRIEF
 
     await runPlanTrip(["--client", "client-1", "--title", "Paris Trip", "--json"]);
@@ -386,8 +387,8 @@ describe("plan-trip scaffold (VOY-1414)", () => {
     expect(out).toBeTruthy();
     expect(out.tripPlanId).toBe("plan-1");
     expect(out.scaffolded).toBe(true);
-    // It must NOT auto-search/select; only create + travellers reads.
-    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    // It must NOT auto-search/select: only create + ensure-goals list + travellers.
+    expect(mockGraphql).toHaveBeenCalledTimes(3);
     expect(out.nextSteps.some((s: string) => s.includes("selection-options"))).toBe(true);
     expect(out.nextSteps.some((s: string) => s.includes("select --selection-id"))).toBe(true);
   });
@@ -397,6 +398,7 @@ describe("plan-trip scaffold (VOY-1414)", () => {
     mockPromptText.mockResolvedValue("Prompted Title");
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-i", title: "Prompted Title" } })
+      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
       .mockResolvedValueOnce({ tripPlanTravellers: [] });
     try {
       // No --json: the real isInteractive() gate disables prompting under
@@ -415,18 +417,20 @@ describe("plan-trip scaffold (VOY-1414)", () => {
   it("suggests a search flights next-step when --to/--depart given (but does not run it)", async () => {
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-2", title: "Trip" } })
+      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
       .mockResolvedValueOnce({ tripPlanTravellers: [{ id: "t1", firstName: "A", lastName: "B" }] });
 
     await runPlanTrip(["--client", "client-1", "--title", "Trip", "--to", "MCO", "--depart", "2026-09-01", "--json"]);
 
     const out = jsonOutputCalls();
-    expect(mockGraphql).toHaveBeenCalledTimes(2); // still only create + travellers
+    expect(mockGraphql).toHaveBeenCalledTimes(3); // create + ensure-goals list + travellers
     expect(out.nextSteps.some((s: string) => s.includes("search flights") && s.includes("--to MCO"))).toBe(true);
   });
 
   it("shell-quotes next-step values that contain spaces (thread 7)", async () => {
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-q", title: "Trip" } })
+      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
       .mockResolvedValueOnce({ tripPlanTravellers: [] });
 
     await runPlanTrip([
@@ -447,6 +451,7 @@ describe("plan-trip scaffold (VOY-1414)", () => {
   it("hotel next-step ALWAYS carries --checkin/--checkout, deriving checkout when missing (thread 8)", async () => {
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-h", title: "Trip" } })
+      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
       .mockResolvedValueOnce({ tripPlanTravellers: [] });
 
     // --hotel given with a depart date but NO checkout/return: command must still
@@ -461,6 +466,7 @@ describe("plan-trip scaffold (VOY-1414)", () => {
   it("hotel next-step uses placeholders when there is no date context at all (thread 8)", async () => {
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-h2", title: "Trip" } })
+      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
       .mockResolvedValueOnce({ tripPlanTravellers: [] });
 
     await runPlanTrip(["--client", "client-1", "--title", "Trip", "--hotel", "Marriott", "--json"]);
@@ -677,17 +683,24 @@ describe("plan-trip shape flags integration (VOY-1727)", () => {
     expect(out.pruneWarnings[0]).toContain("plans goal-remove g-ret --force");
   });
 
-  it("no shape flags: no goals fetch, no shape/prunedGoals fields (contract unchanged)", async () => {
+  // VOY-1761: no shape flags still CONVERGES the goal graph (ensure-goals fixes
+  // the latent 1513 break where a blank plan would have no flight goal), but on
+  // the template world it adds/prunes nothing, so the --json contract is
+  // unchanged: no shape/prunedGoals/addedGoals fields.
+  it("no shape flags: converges silently on a template plan (no shape/prunedGoals/addedGoals fields)", async () => {
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-p", title: "P" } })
+      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS }) // template already complete → no adds/prunes
       .mockResolvedValueOnce({ tripPlanTravellers: [] });
 
     await runPlanTrip(["--client", "client-1", "--title", "P", "--json"]);
 
     const out = lastJson();
-    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    // create + ensure-goals list + travellers (no deletes, no adds).
+    expect(mockGraphql).toHaveBeenCalledTimes(3);
     expect(out.shape).toBeUndefined();
     expect(out.prunedGoals).toBeUndefined();
+    expect(out.addedGoals).toBeUndefined();
   });
 
   it("--one-way with --return fails validation before any API call", async () => {

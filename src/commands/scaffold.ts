@@ -5,6 +5,7 @@ import {
   CREATE_TRAVELLER_BRIEF,
   LIST_TRIP_PLAN_GOALS,
   DELETE_TRIP_PLAN_GOAL,
+  CREATE_TRIP_PLAN_GOAL,
 } from "../queries.js";
 import { shellArg } from "../utils.js";
 import { progress, warn } from "../output.js";
@@ -80,6 +81,52 @@ export function selectGoalsToPrune(
   }
 
   return { prune: [...prune.values()], warnings };
+}
+
+/**
+ * The desired goal graph a trip shape should converge to, expressed as how many
+ * Flight and Hotel goals the plan must END UP with. This is the additive twin of
+ * {@link selectGoalsToPrune}: prune declares what to REMOVE from the server
+ * template; this declares the TARGET, so the ensure step can also ADD goals a
+ * blank plan is missing (VOY-1513: new plans will default to NO goals). Pure for
+ * testability.
+ *
+ * Same rules, viewed from the target side:
+ *  - Flights: an outbound Flight goal unless --hotel-only; a return Flight goal
+ *    unless --one-way (or --hotel-only).
+ *  - Hotel: one Hotel goal unless --flight-only.
+ */
+export function desiredGoalShape(shape: ShapeFlags): { flights: number; hotels: number } {
+  const wantOutbound = !shape.hotelOnly;
+  const wantReturn = !shape.hotelOnly && !shape.oneWay;
+  const wantHotel = !shape.flightOnly;
+  return { flights: (wantOutbound ? 1 : 0) + (wantReturn ? 1 : 0), hotels: wantHotel ? 1 : 0 };
+}
+
+// Template-parity names for goals the ensure step adds on a blank plan, so a
+// later prune (which matches the return leg by /return/i) still behaves and the
+// graph reads the same as the server template.
+const ADDED_FLIGHT_NAMES = ["Outbound Flights", "Return Flights"];
+const ADDED_HOTEL_NAME = "Accommodation";
+
+/**
+ * Create a single bare goal via the shared `createTripPlanGoal` mutation (the
+ * one behind `plans goal-add`). Reused by the ensure step so blank plans get the
+ * Flight/Hotel goal their trip shape needs — without duplicating the mutation.
+ */
+async function createGoal(
+  tripPlanId: string,
+  type: string,
+  name: string,
+  dryRun?: boolean,
+): Promise<{ id: string; name?: string; type: string }> {
+  const data = await graphql<{ createTripPlanGoal: { id: string; name?: string | null; type?: string | null } }>(
+    CREATE_TRIP_PLAN_GOAL,
+    { input: { tripPlanId, name, type } },
+    { dryRun },
+  );
+  const g = data.createTripPlanGoal;
+  return { id: g.id, name: g.name ?? name, type: g.type ?? type };
 }
 
 /**
@@ -175,6 +222,15 @@ export interface ScaffoldOptions {
   /** Comma-separated traveller names (parseTravellers format). */
   travellers?: string;
   shape?: { oneWay?: boolean; flightOnly?: boolean; hotelOnly?: boolean };
+  /**
+   * Run the ensure-goals convergence (prune extras + add what a blank plan is
+   * missing) so the created plan matches the trip shape in BOTH the template
+   * world (server attaches a round-trip + hotel graph today) and the post-1513
+   * blank world (new plans default to no goals). `plan-trip` and `search`'s
+   * auto-draft set this; `plans create` leaves it off to stay a bare create.
+   * A truthy shape flag also implies convergence, for back-compat.
+   */
+  ensureGoals?: boolean;
   /** Suppress progress output + the auto-resolved-client note (for --json callers). */
   quiet?: boolean;
   /**
@@ -244,7 +300,10 @@ export interface ScaffoldResult {
   client: { id: string; name: string; autoResolved: boolean; isSelf?: boolean };
   /** IDs of travellers ADDED during scaffold (empty when none were requested). */
   travellerIds: string[];
+  /** Goals removed to match the trip shape (server template → requested shape). */
   prunedGoals: { id: string; name?: string; type: string }[];
+  /** Goals ADDED to reach the trip shape (non-empty only on a blank plan; VOY-1513). */
+  addedGoals: { id: string; name?: string; type: string }[];
   pruneWarnings: string[];
 }
 
@@ -253,8 +312,11 @@ export interface ScaffoldResult {
  * create path shared by `plan-trip` (the canonical creation verb) and the
  * `plans create` alias — and will back `search`'s auto-draft (VOY-1761).
  *
- * Steps: resolve client → createTripPlan (server attaches the default goal
- * graph) → add any requested travellers → prune goals per shape flags.
+ * Steps: resolve client → createTripPlan → add any requested travellers →
+ * ensure the goal graph matches the trip shape (when `ensureGoals` or a shape
+ * flag is set): prune extras the server template added, then ADD any goal a
+ * blank plan is missing so the shape converges identically in both the template
+ * world (today) and the post-1513 blank world.
  *
  * The auto-resolved-client note and progress messages go to stderr and are
  * suppressed when `quiet` is set. Prune warnings are always surfaced via
@@ -290,27 +352,35 @@ export async function scaffoldPlan(opts: ScaffoldOptions): Promise<ScaffoldResul
     ? await addTravellers(plan.id, opts.travellers, { quiet: opts.quiet, progress: opts.progress })
     : [];
 
-  // Step 4: Trip-shape pruning (VOY-1727). The scaffold's default goal graph is
-  // a round-trip + hotel TEMPLATE. Un-pruned goals the brief doesn't need are
-  // not inert: an unpruned Return Flights goal blocks one-way inventory fetch
-  // AND fare carting; unpruned hotel/flight goals pin `plan-status` readiness
-  // at BLOCKED forever. Shape flags prune at scaffold time so partial-scope
-  // plans can genuinely reach READY_TO_BOOK.
+  // Step 4: Converge the goal graph to the trip shape (VOY-1727 + VOY-1761).
+  // Un-shaped goals are not inert: an unpruned Return Flights goal blocks one-way
+  // inventory fetch AND fare carting; unpruned hotel/flight goals pin
+  // `plan-status` readiness at BLOCKED forever. Conversely a BLANK plan (VOY-1513:
+  // goals become opt-in) has NO flight goal, so a flight search — or plan-trip's
+  // own "next step: search" hint — would fail with "No Flight goal on this plan".
+  // So this both PRUNES the template's extras AND ADDS what a blank plan lacks;
+  // the resulting shape is identical whether the server templated goals or not.
   const prunedGoals: ScaffoldResult["prunedGoals"] = [];
+  const addedGoals: ScaffoldResult["addedGoals"] = [];
   const pruneWarnings: string[] = [];
   const shape: ShapeFlags = {
     oneWay: !!opts.shape?.oneWay,
     flightOnly: !!opts.shape?.flightOnly,
     hotelOnly: !!opts.shape?.hotelOnly,
   };
-  if (shape.oneWay || shape.flightOnly || shape.hotelOnly) {
-    if (chatty && opts.progress !== false) progress("Pruning goals to match trip shape...");
+  const converge = opts.ensureGoals === true || shape.oneWay || shape.flightOnly || shape.hotelOnly;
+  if (converge) {
+    if (chatty && opts.progress !== false) progress("Ensuring goals match trip shape...");
     const goalsData = await graphql<{ tripPlanGoals: PrunableGoal[] }>(
       LIST_TRIP_PLAN_GOALS,
       { tripPlanId: plan.id },
     );
-    const { prune, warnings } = selectGoalsToPrune(goalsData.tripPlanGoals ?? [], shape);
+    const goals = goalsData.tripPlanGoals ?? [];
+
+    // 4a. Prune extras the template added that this shape doesn't want.
+    const { prune, warnings } = selectGoalsToPrune(goals, shape);
     pruneWarnings.push(...warnings);
+    const prunedIds = new Set<string>();
     for (const g of prune) {
       try {
         const del = await graphql<{ deleteTripPlanGoal: boolean }>(
@@ -319,6 +389,7 @@ export async function scaffoldPlan(opts: ScaffoldOptions): Promise<ScaffoldResul
         );
         if (del.deleteTripPlanGoal === true) {
           prunedGoals.push({ id: g.id, name: g.name ?? undefined, type: g.type });
+          prunedIds.add(g.id);
         } else {
           pruneWarnings.push(`Server declined to delete goal "${g.name ?? g.id}" (${g.type}). Remove it manually: voyagier plans goal-remove ${shellArg(g.id)} --force`);
         }
@@ -327,6 +398,33 @@ export async function scaffoldPlan(opts: ScaffoldOptions): Promise<ScaffoldResul
         pruneWarnings.push(`Failed to delete goal "${g.name ?? g.id}" (${g.type}): ${message}. Remove it manually: voyagier plans goal-remove ${shellArg(g.id)} --force`);
       }
     }
+
+    // 4b. Add what's still missing to reach the desired shape. On the template
+    // world nothing is missing (counts already meet the target), so this is a
+    // no-op; on a blank plan it creates the outbound/return Flight and/or Hotel
+    // goal the search will target.
+    const remaining = goals.filter(g => !prunedIds.has(g.id));
+    const desired = desiredGoalShape(shape);
+    let flightCount = remaining.filter(g => g.type === "Flight").length;
+    let hotelCount = remaining.filter(g => g.type === "Hotel").length;
+    for (; flightCount < desired.flights; flightCount++) {
+      const name = ADDED_FLIGHT_NAMES[flightCount] ?? `Flight goal ${flightCount + 1}`;
+      try {
+        addedGoals.push(await createGoal(plan.id, "Flight", name, opts.dryRun));
+      } catch (err) {
+        const message = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ");
+        pruneWarnings.push(`Failed to add a Flight goal to match the trip shape: ${message}. Add it manually: voyagier plans goal-add ${shellArg(plan.id)} --type Flight`);
+      }
+    }
+    for (; hotelCount < desired.hotels; hotelCount++) {
+      try {
+        addedGoals.push(await createGoal(plan.id, "Hotel", ADDED_HOTEL_NAME, opts.dryRun));
+      } catch (err) {
+        const message = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ");
+        pruneWarnings.push(`Failed to add a Hotel goal to match the trip shape: ${message}. Add it manually: voyagier plans goal-add ${shellArg(plan.id)} --type Hotel`);
+      }
+    }
+
     for (const w of pruneWarnings) warn(w);
   }
 
@@ -335,6 +433,7 @@ export async function scaffoldPlan(opts: ScaffoldOptions): Promise<ScaffoldResul
     client: { id: resolved.id, name: resolved.name, autoResolved: resolved.autoResolved, isSelf: resolved.isSelf },
     travellerIds,
     prunedGoals,
+    addedGoals,
     pruneWarnings,
   };
 }

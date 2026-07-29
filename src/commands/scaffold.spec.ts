@@ -28,11 +28,13 @@ jest.unstable_mockModule("./clients.js", () => ({
 
 let scaffoldPlan: typeof import("./scaffold.js").scaffoldPlan;
 let generateTripTitle: typeof import("./scaffold.js").generateTripTitle;
+let desiredGoalShape: typeof import("./scaffold.js").desiredGoalShape;
 
 beforeAll(async () => {
   const mod = await import("./scaffold.js");
   scaffoldPlan = mod.scaffoldPlan;
   generateTripTitle = mod.generateTripTitle;
+  desiredGoalShape = mod.desiredGoalShape;
 });
 
 // Default scaffold goal graph (mirrors the server template) for prune tests.
@@ -176,11 +178,149 @@ describe("scaffoldPlan — shape pruning", () => {
     expect(mockWarn).toHaveBeenCalledWith(expect.stringContaining("g-ret"));
   });
 
-  it("does not fetch goals when no shape flags are set", async () => {
+  it("does not fetch goals when neither a shape flag nor ensureGoals is set (plans-create path)", async () => {
     mockGraphql.mockResolvedValueOnce({ createTripPlan: { id: "plan-5", title: "P" } });
     const result = await scaffoldPlan({ client: "client-1", title: "P" });
     expect(mockGraphql).toHaveBeenCalledTimes(1);
     expect(result.prunedGoals).toEqual([]);
+    expect(result.addedGoals).toEqual([]);
+  });
+});
+
+// ── VOY-1761: desiredGoalShape (the additive twin of selectGoalsToPrune) ─────
+describe("desiredGoalShape", () => {
+  it("full round-trip + hotel when no flags (plan-trip default)", () => {
+    expect(desiredGoalShape({ oneWay: false, flightOnly: false, hotelOnly: false })).toEqual({ flights: 2, hotels: 1 });
+  });
+  it("one-way flight-only → exactly one Flight goal, no hotel (flight search, no --return)", () => {
+    expect(desiredGoalShape({ oneWay: true, flightOnly: true, hotelOnly: false })).toEqual({ flights: 1, hotels: 0 });
+  });
+  it("round-trip flight-only → two Flight goals, no hotel (flight search, --return)", () => {
+    expect(desiredGoalShape({ oneWay: false, flightOnly: true, hotelOnly: false })).toEqual({ flights: 2, hotels: 0 });
+  });
+  it("hotel-only → one Hotel goal, no flights (hotel search)", () => {
+    expect(desiredGoalShape({ oneWay: false, flightOnly: false, hotelOnly: true })).toEqual({ flights: 0, hotels: 1 });
+  });
+  it("one-way alone still keeps the hotel (a one-way trip can still lodge)", () => {
+    expect(desiredGoalShape({ oneWay: true, flightOnly: false, hotelOnly: false })).toEqual({ flights: 1, hotels: 1 });
+  });
+});
+
+// ── VOY-1761: ensure-goals converges identically in BOTH worlds ──────────────
+// (a) server returns the round-trip + hotel TEMPLATE (today), (b) server returns
+// ZERO goals (post-1513 blank plans). Same resulting goal shape either way.
+describe("scaffoldPlan — ensure-goals both worlds", () => {
+  it("one-way flight-only: TEMPLATE world prunes return + hotel, adds nothing", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-t1", title: "T" } })
+      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
+      .mockResolvedValueOnce({ deleteTripPlanGoal: true }) // return
+      .mockResolvedValueOnce({ deleteTripPlanGoal: true }); // hotel
+
+    const result = await scaffoldPlan({
+      client: "client-1", title: "T", ensureGoals: true,
+      shape: { oneWay: true, flightOnly: true },
+    });
+
+    expect(result.prunedGoals.map(g => g.id).sort()).toEqual(["g-hotel", "g-ret"]);
+    expect(result.addedGoals).toEqual([]);
+    // create + list + 2 deletes (no adds).
+    expect(mockGraphql).toHaveBeenCalledTimes(4);
+  });
+
+  it("one-way flight-only: BLANK world prunes nothing, adds one Flight goal — same shape", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-b1", title: "B" } })
+      .mockResolvedValueOnce({ tripPlanGoals: [] }) // blank plan (VOY-1513)
+      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-out", name: "Outbound Flights", type: "Flight" } });
+
+    const result = await scaffoldPlan({
+      client: "client-1", title: "B", ensureGoals: true,
+      shape: { oneWay: true, flightOnly: true },
+    });
+
+    expect(result.prunedGoals).toEqual([]);
+    expect(result.addedGoals).toEqual([{ id: "ng-out", name: "Outbound Flights", type: "Flight" }]);
+    // create + list + 1 add.
+    expect(mockGraphql).toHaveBeenCalledTimes(3);
+    const addCall = mockGraphql.mock.calls[2] as [string, any];
+    expect(addCall[1].input).toMatchObject({ tripPlanId: "plan-b1", type: "Flight" });
+  });
+
+  it("round-trip flight-only: BLANK world adds TWO Flight goals (outbound + return)", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-b2", title: "RT" } })
+      .mockResolvedValueOnce({ tripPlanGoals: [] })
+      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-out", name: "Outbound Flights", type: "Flight" } })
+      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-ret", name: "Return Flights", type: "Flight" } });
+
+    const result = await scaffoldPlan({
+      client: "client-1", title: "RT", ensureGoals: true,
+      shape: { oneWay: false, flightOnly: true },
+    });
+
+    expect(result.addedGoals.map(g => g.id)).toEqual(["ng-out", "ng-ret"]);
+    expect(result.prunedGoals).toEqual([]);
+  });
+
+  it("hotel-only: BLANK world adds one Hotel goal, no flights", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-b3", title: "H" } })
+      .mockResolvedValueOnce({ tripPlanGoals: [] })
+      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-hotel", name: "Accommodation", type: "Hotel" } });
+
+    const result = await scaffoldPlan({
+      client: "client-1", title: "H", ensureGoals: true,
+      shape: { hotelOnly: true },
+    });
+
+    expect(result.addedGoals).toEqual([{ id: "ng-hotel", name: "Accommodation", type: "Hotel" }]);
+    const addCall = mockGraphql.mock.calls[2] as [string, any];
+    expect(addCall[1].input).toMatchObject({ type: "Hotel" });
+  });
+
+  it("ensureGoals with no shape flags: TEMPLATE world already complete → no adds/prunes", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-t2", title: "D" } })
+      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS });
+
+    const result = await scaffoldPlan({ client: "client-1", title: "D", ensureGoals: true });
+
+    expect(result.prunedGoals).toEqual([]);
+    expect(result.addedGoals).toEqual([]);
+    // create + list only.
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+  });
+
+  it("ensureGoals with no shape flags: BLANK world adds the full default (2 flights + 1 hotel)", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-b4", title: "D" } })
+      .mockResolvedValueOnce({ tripPlanGoals: [] })
+      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-out", name: "Outbound Flights", type: "Flight" } })
+      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-ret", name: "Return Flights", type: "Flight" } })
+      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-hotel", name: "Accommodation", type: "Hotel" } });
+
+    const result = await scaffoldPlan({ client: "client-1", title: "D", ensureGoals: true });
+
+    expect(result.addedGoals.map(g => g.type)).toEqual(["Flight", "Flight", "Hotel"]);
+  });
+
+  it("surfaces a warning (not a throw) when adding a missing goal fails", async () => {
+    // No shape flags → no "nothing to prune" warnings, so the only warning is the
+    // add failure. The failed Flight add doesn't abort the remaining adds.
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-b5", title: "B" } })
+      .mockResolvedValueOnce({ tripPlanGoals: [] })
+      .mockRejectedValueOnce(new Error("server boom")) // outbound Flight add fails
+      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-ret", name: "Return Flights", type: "Flight" } })
+      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-hotel", name: "Accommodation", type: "Hotel" } });
+
+    const result = await scaffoldPlan({ client: "client-1", title: "B", ensureGoals: true });
+
+    expect(result.addedGoals.map(g => g.id)).toEqual(["ng-ret", "ng-hotel"]);
+    expect(result.pruneWarnings).toHaveLength(1);
+    expect(result.pruneWarnings[0]).toMatch(/Failed to add a Flight goal/);
+    expect(mockWarn).toHaveBeenCalledWith(expect.stringContaining("Failed to add a Flight goal"));
   });
 });
 
