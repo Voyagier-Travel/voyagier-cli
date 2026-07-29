@@ -147,7 +147,7 @@ export function resolvePlanId(opts: { plan?: string }): string {
     );
     return state.tripPlanId;
   }
-  throw new CliError(CliErrorCode.VALIDATION, '--plan <id> is required. Create one first:\n  voyagier plans create --title "My Trip"');
+  throw new CliError(CliErrorCode.VALIDATION, '--plan <id> is required. Create one first:\n  voyagier plan-trip --client <id|name|email> --title "My Trip"');
 }
 
 
