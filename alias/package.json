@@ -1,0 +1,39 @@
+{
+  "name": "voyagier",
+  "version": "1.0.0",
+  "description": "Book real travel from your terminal. Convenience alias for @voyagier/cli — search flights, hotels & activities, plan trips, and check out with a price-gated booking.",
+  "type": "module",
+  "bin": {
+    "voyagier": "./bin.js"
+  },
+  "engines": {
+    "node": "^22.12.0 || >=24.0.0"
+  },
+  "files": [
+    "bin.js",
+    "README.md"
+  ],
+  "dependencies": {
+    "@voyagier/cli": "^2"
+  },
+  "keywords": [
+    "travel",
+    "flights",
+    "hotels",
+    "booking",
+    "cli",
+    "voyagier",
+    "ai-agents",
+    "mcp"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Voyagier-Travel/voyagier-cli.git",
+    "directory": "alias"
+  },
+  "bugs": {
+    "url": "https://github.com/Voyagier-Travel/voyagier-cli/issues"
+  },
+  "homepage": "https://github.com/Voyagier-Travel/voyagier-cli#readme"
+}
