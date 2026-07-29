@@ -5,7 +5,7 @@ import { createInterface } from "readline/promises";
 import { stdin, stdout } from "process";
 import { graphql } from "../api.js";
 import { getApiUrl, getUserContext } from "../config.js";
-import { validateDate, deriveBaseUrl, shellArg } from "../utils.js";
+import { validateDate, deriveBaseUrl, shellArg, maskLoyaltyValue } from "../utils.js";
 import { jsonOutput, fatal, warn } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import {
@@ -23,15 +23,6 @@ function toPascalCase(value: string): string {
 /** Commander collector for repeatable options. */
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
-}
-
-/**
- * Mask a potentially sensitive loyalty value for error output: member numbers
- * are write-only everywhere else (server returns code + last4 only), so error
- * messages must not echo the full value to terminals or agent transcripts.
- */
-function maskLoyaltyValue(value: string): string {
-  return value.length > 4 ? `••••${value.slice(-4)}` : "••••";
 }
 
 /**
@@ -157,6 +148,7 @@ export function registerTravellerCommands(program: Command): void {
         let phone = opts.phone as string | undefined;
 
         // --self: auto-fill from saved profile
+        let selfHotelLoyalty: Array<{ chainCode: string; membershipNumber: string }> | undefined;
         if (opts.self) {
           const ctx = getUserContext();
           if (ctx) {
@@ -171,6 +163,18 @@ export function registerTravellerCommands(program: Command): void {
             if (ctx.email && !opts.email) filled.push("email");
             if (ctx.dateOfBirth && !opts.dob) filled.push("DOB");
             if (ctx.gender && !opts.gender) filled.push("gender");
+            // Hotel loyalty: apply the local profile default only when the user
+            // gave no explicit --hotel-loyalty flag (explicit flags always win).
+            // Frequent-flyer programs are intentionally NOT auto-applied — the
+            // server backfills them for linked users at booking time, so sending
+            // them here could duplicate entries.
+            if (ctx.hotelLoyaltyPrograms?.length && (opts.hotelLoyalty as string[]).length === 0) {
+              selfHotelLoyalty = ctx.hotelLoyaltyPrograms.map((p) => ({
+                chainCode: p.chainCode,
+                membershipNumber: p.membershipNumber,
+              }));
+              filled.push(`hotel loyalty (${selfHotelLoyalty.map((p) => p.chainCode).join(", ")})`);
+            }
             if (!opts.json && filled.length > 0) {
               console.log(chalk.dim(`  Auto-filled from profile: ${filled.join(", ")}`));
             }
@@ -260,6 +264,7 @@ export function registerTravellerCommands(program: Command): void {
         // code + last4 ever come back)
         if ((opts.frequentFlyer as string[]).length > 0) input.frequentFlyerPrograms = toAirLoyaltyInput(opts.frequentFlyer);
         if ((opts.hotelLoyalty as string[]).length > 0) input.hotelLoyaltyPrograms = toHotelLoyaltyInput(opts.hotelLoyalty);
+        else if (selfHotelLoyalty) input.hotelLoyaltyPrograms = selfHotelLoyalty;
 
         const data = await graphql<{ createTripPlanTraveller: Traveller }>(
           CREATE_TRAVELLER,

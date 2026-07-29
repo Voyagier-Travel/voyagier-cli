@@ -2,11 +2,12 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { createInterface } from "readline/promises";
 import { stdin, stdout } from "process";
-import { openBrowser } from "../utils.js";
+import { openBrowser, maskLoyaltyValue } from "../utils.js";
 
 import { saveCredentials, getToken, getApiUrl, clearCredentials, credentialsExist, saveUserContext, getUserContext } from "../config.js";
 import type { UserContext } from "../config.js";
 import { graphql } from "../api.js";
+import { UPDATE_MY_USER } from "../queries.js";
 import { CliError, CliErrorCode, authFailedMessage } from "../errors.js";
 
 // City → common airport suggestions
@@ -59,25 +60,88 @@ function validateIataCode(code: string): boolean {
   return /^[A-Z]{3}$/.test(code);
 }
 
-function maskNumber(num: string, showLast = 4): string {
-  if (num.length <= showLast) return num;
-  return "••••" + num.slice(-showLast);
-}
-
 /**
- * L3: frequent-flyer numbers are account-takeover-grade data for airline
- * programs and are only ever displayed (never sent back to the API). Store them
- * masked (last 4) so credentials.json never holds a full membership number.
+ * Render the masked passport shape the API returns (a full passport number can
+ * never round-trip — only the last 4 digits plus metadata are ever read back).
+ * The same one-line format is used on file, on confirmation, and in the summary.
  */
-function maskFFPrograms(
-  programs: Array<{ airlineCode: string; membershipNumber: string }>,
-): Array<{ airlineCode: string; membershipNumber: string }> {
-  return programs.map((ff) => ({ airlineCode: ff.airlineCode, membershipNumber: maskNumber(ff.membershipNumber) }));
+function formatPassport(p: { last4: string; issueCountry?: string; expirationDate?: string }): string {
+  const bits = [`••••${p.last4}`];
+  if (p.issueCountry) bits.push(p.issueCountry);
+  if (p.expirationDate) bits.push(`exp ${p.expirationDate}`);
+  return bits.join(" · ");
 }
 
 async function prompt(rl: ReturnType<typeof createInterface>, question: string): Promise<string> {
   const answer = await rl.question(question);
   return answer.trim();
+}
+
+/**
+ * Prompt with the typed characters suppressed (standard password-prompt
+ * technique: temporarily route the readline interface's output through a muted
+ * writer so keystrokes are never echoed to the terminal). Used for the passport
+ * number, which is sent to the profile but must never be displayed. Falls back
+ * to a plain question when the interface exposes no writable output (e.g. tests).
+ */
+async function promptMuted(rl: ReturnType<typeof createInterface>, question: string): Promise<string> {
+  const iface = rl as unknown as {
+    _writeToOutput?: (s: string) => void;
+    output?: { write: (s: string) => void };
+  };
+  const origWriteToOutput = iface._writeToOutput;
+  const canMute = typeof origWriteToOutput === "function" && !!iface.output;
+  let muted = false;
+  if (canMute) {
+    iface._writeToOutput = (stringToWrite: string) => {
+      // Echo the prompt itself (written before muting begins), then swallow
+      // every keystroke so the number never reaches the terminal.
+      if (!muted) iface.output!.write(stringToWrite);
+    };
+  }
+  try {
+    const pending = rl.question(question);
+    // The prompt is written synchronously by question(); mute what follows.
+    muted = true;
+    let answer = "";
+    try {
+      answer = await pending;
+    } catch {
+      // EOF (Ctrl-D) or an aborted line reads as an empty answer (skip),
+      // never a crash mid-setup.
+      answer = "";
+    }
+    return answer.trim();
+  } finally {
+    if (canMute) {
+      iface._writeToOutput = origWriteToOutput;
+      // The Enter keystroke was muted too — move to the next line ourselves.
+      iface.output!.write("\n");
+    }
+  }
+}
+
+/**
+ * Read a passport number under a muted prompt, validating it as 6–9 uppercase
+ * letters/digits. On invalid input it explains the format and re-prompts once
+ * (never a silent skip). Returns the validated number, or null when the user
+ * presses Enter or the retry also fails.
+ */
+async function readPassportNumber(
+  rl: ReturnType<typeof createInterface>,
+  promptText: string,
+): Promise<string | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const raw = (await promptMuted(rl, promptText)).toUpperCase();
+    if (!raw) return null;
+    if (/^[A-Z0-9]{6,9}$/.test(raw)) return raw;
+    if (attempt === 0) {
+      console.log(chalk.yellow("     ⚠ A passport number is 6–9 letters or digits. Let's try that again."));
+    } else {
+      console.log(chalk.yellow("     ⚠ That still isn't a valid passport number."));
+    }
+  }
+  return null;
 }
 
 /** Read all of stdin as UTF-8 (used by `set-token -`). */
@@ -109,6 +173,15 @@ interface MeResponse {
 }
 
 const ME_QUERY = `{ me { id firstName lastName email name dateOfBirth gender passport { last4 issueCountry nationalityCountry expirationDate } frequentFlyerPrograms { airlineCode membershipNumber } profile { location city { name } country { name } } } }`;
+
+interface UpdateMyUserResponse {
+  updateMyUser: {
+    // Masked read shape — a full passport number can never round-trip.
+    passport?: { last4: string; issueCountry: string; nationalityCountry: string; expirationDate: string } | null;
+    // Full frequent-flyer list (user-level read is NOT masked).
+    frequentFlyerPrograms?: Array<{ airlineCode: string; membershipNumber: string }> | null;
+  };
+}
 
 /**
  * Fetch the full user profile and build a UserContext with smart defaults.
@@ -147,14 +220,24 @@ async function fetchAndBuildContext(): Promise<{ ctx: UserContext; me: MeRespons
     preferredCabin: existingCtx?.preferredCabin ?? "economy",
   };
 
-  // Import passport if on profile
+  // Import passport if on profile (the API only ever returns the masked shape).
   if (me.passport) {
     ctx.passport = me.passport;
   }
 
-  // Import frequent flyer programs if on profile (stored masked — L3)
+  // Import frequent flyer programs if on profile. The user-level read returns
+  // full membership numbers, which we store and display as provided.
   if (me.frequentFlyerPrograms && me.frequentFlyerPrograms.length > 0) {
-    ctx.frequentFlyerPrograms = maskFFPrograms(me.frequentFlyerPrograms);
+    ctx.frequentFlyerPrograms = me.frequentFlyerPrograms.map((ff) => ({
+      airlineCode: ff.airlineCode,
+      membershipNumber: ff.membershipNumber,
+    }));
+  }
+
+  // Hotel loyalty lives only in the local profile — carry any existing
+  // defaults forward across re-runs.
+  if (existingCtx?.hotelLoyaltyPrograms && existingCtx.hotelLoyaltyPrograms.length > 0) {
+    ctx.hotelLoyaltyPrograms = existingCtx.hotelLoyaltyPrograms;
   }
 
   return { ctx, me };
@@ -189,10 +272,16 @@ function printProfileSummary(ctx: UserContext, me: MeResponse["me"]): void {
     parts.push(`  👤 ${travellerParts.join(" · ")}`);
   }
 
-  // Frequent flyer
+  // Frequent flyer (membership numbers masked to last-4 for display)
   if (me.frequentFlyerPrograms && me.frequentFlyerPrograms.length > 0) {
-    const ffs = me.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskNumber(ff.membershipNumber)}`).join(", ");
+    const ffs = me.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskLoyaltyValue(ff.membershipNumber)}`).join(", ");
     parts.push(`  ✈️  ${ffs}`);
+  }
+
+  // Hotel loyalty (local profile default, masked to last-4 for display)
+  if (ctx.hotelLoyaltyPrograms && ctx.hotelLoyaltyPrograms.length > 0) {
+    const hls = ctx.hotelLoyaltyPrograms.map(hl => `${hl.chainCode} ${maskLoyaltyValue(hl.membershipNumber)}`).join(", ");
+    parts.push(`  🏨 ${hls}`);
   }
 
   if (parts.length > 0) {
@@ -274,10 +363,12 @@ export function registerAuthCommands(program: Command): void {
           console.log(`  🛂 Passport:   ••••${ctx.passport.last4} (${ctx.passport.issueCountry}, exp ${ctx.passport.expirationDate})`);
         }
         if (ctx.frequentFlyerPrograms && ctx.frequentFlyerPrograms.length > 0) {
-          // Stored masked (L3); re-mask on display too (idempotent) so a
-          // credentials.json written by an older version is masked as well.
-          const ffs = ctx.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskNumber(ff.membershipNumber)}`).join(", ");
+          const ffs = ctx.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskLoyaltyValue(ff.membershipNumber)}`).join(", ");
           console.log(`  ✈️  FF:         ${ffs}`);
+        }
+        if (ctx.hotelLoyaltyPrograms && ctx.hotelLoyaltyPrograms.length > 0) {
+          const hls = ctx.hotelLoyaltyPrograms.map(hl => `${hl.chainCode} ${maskLoyaltyValue(hl.membershipNumber)}`).join(", ");
+          console.log(`  🏨 Hotel:      ${hls}`);
         }
       } else {
         console.log(chalk.dim("\n  No profile cached. Run: voyagier auth setup"));
@@ -360,7 +451,7 @@ export function registerAuthCommands(program: Command): void {
 
   auth
     .command("setup")
-    .description("Configure your traveller profile (airports, cabin, passport, frequent flyer)")
+    .description("Configure your traveller profile (airports, cabin, passport, frequent flyer, hotel loyalty)")
     .option("--airports <codes>", "Home airport(s), comma-separated (e.g. BWI,DCA,IAD)")
     .option("--cabin <class>", "Preferred cabin: economy, premium_economy, business, first")
     .option("--skip-passport", "Skip passport setup")
@@ -489,29 +580,49 @@ export function registerAuthCommands(program: Command): void {
           console.log(chalk.green(`     ✓ ${CABIN_LABELS[userCtx.preferredCabin]}\n`));
         }
 
+        // Collected below and synced to the profile in a single updateMyUser
+        // call at the end. Passport: captured in full ONCE, sent, and only the
+        // API-returned masked shape is ever stored. Frequent flyer: sent in
+        // full, stored from the response (also in full).
+        let passportToSync:
+          | { passportNumber: string; issueCountry: string; nationalityCountry: string; expirationDate?: string }
+          | undefined;
+        let ffToSync: Array<{ airlineCode: string; membershipNumber: string }> | undefined;
+
         // ── Passport ──
         if (!opts.skipPassport) {
           console.log(`  🛂 ${chalk.bold("Passport")}`);
-          if (me.passport) {
-            console.log(chalk.dim(`     On file: ••••${me.passport.last4} (${me.passport.issueCountry}, exp ${me.passport.expirationDate})`));
-            userCtx.passport = me.passport;
-            console.log(chalk.green("     ✓ Imported from profile\n"));
-          } else if (rl) {
-            const last4 = await prompt(rl, "     Passport number (last 4 digits, or Enter to skip): ");
-            if (last4 && /^\d{4}$/.test(last4)) {
-              const issueCountry = await prompt(rl, "     Issue country (e.g. US): ") || "US";
-              const nationality = await prompt(rl, "     Nationality (e.g. US): ") || issueCountry;
-              const expiration = await prompt(rl, "     Expiration (YYYY-MM): ");
-              userCtx.passport = {
-                last4,
-                issueCountry: issueCountry.toUpperCase(),
-                nationalityCountry: nationality.toUpperCase(),
-                expirationDate: expiration || "unknown",
-              };
-              console.log(chalk.green(`     ✓ ••••${last4} (${userCtx.passport.issueCountry}, exp ${userCtx.passport.expirationDate})\n`));
+          const onFile = me.passport;
+          if (onFile) {
+            console.log(chalk.dim(`     On file: ${formatPassport(onFile)}`));
+          }
+          if (rl) {
+            const promptText = onFile
+              ? "     Enter to keep, or type a new number to replace (never displayed): "
+              : "     Passport number (sent securely to your profile, never displayed — or Enter to skip): ";
+            const number = await readPassportNumber(rl, promptText);
+            if (number) {
+              const defIssue = onFile?.issueCountry ?? "US";
+              const defNat = onFile?.nationalityCountry;
+              const defExp = onFile?.expirationDate;
+              const issueCountry = ((await prompt(rl, `     Issue country (e.g. US) [${defIssue}]: `)) || defIssue).toUpperCase();
+              const nationality = ((await prompt(rl, `     Nationality (e.g. US)${defNat ? ` [${defNat}]` : ""}: `)) || defNat || issueCountry).toUpperCase();
+              const expiration = (await prompt(rl, `     Expiration (YYYY-MM)${defExp ? ` [${defExp}]` : ""}: `)) || defExp || "";
+              passportToSync = { passportNumber: number, issueCountry, nationalityCountry: nationality };
+              if (expiration) passportToSync.expirationDate = expiration;
+              // Confirm with the masked shape only (last 4 of the entered
+              // number); the full number is sent to the profile, never stored
+              // or displayed.
+              console.log(chalk.green(`     ✓ ${formatPassport({ last4: number.slice(-4), issueCountry, expirationDate: expiration || undefined })}\n`));
+            } else if (onFile) {
+              userCtx.passport = onFile;
+              console.log(chalk.dim("     Keeping the passport on file.\n"));
             } else {
               console.log(chalk.dim("     Skipped.\n"));
             }
+          } else if (onFile) {
+            userCtx.passport = onFile;
+            console.log(chalk.green("     ✓ Imported from profile\n"));
           } else {
             console.log(chalk.dim("     Skipped (non-interactive).\n"));
           }
@@ -521,8 +632,8 @@ export function registerAuthCommands(program: Command): void {
         if (!opts.skipFf) {
           console.log(`  ✈️  ${chalk.bold("Frequent Flyer Programs")}`);
           if (me.frequentFlyerPrograms && me.frequentFlyerPrograms.length > 0) {
-            userCtx.frequentFlyerPrograms = maskFFPrograms(me.frequentFlyerPrograms);
-            const display = me.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskNumber(ff.membershipNumber)}`).join(", ");
+            // Already on the profile; membership numbers are masked for display.
+            const display = me.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskLoyaltyValue(ff.membershipNumber)}`).join(", ");
             console.log(chalk.dim(`     On file: ${display}`));
             console.log(chalk.green("     ✓ Imported from profile\n"));
           } else if (rl) {
@@ -540,10 +651,8 @@ export function registerAuthCommands(program: Command): void {
                   const airline = parts[0].toUpperCase();
                   const number = parts.slice(1).join("");
                   if (/^[A-Z0-9]{2}$/.test(airline)) {
-                    // Store masked (L3) — the full number is never persisted
-                    // (the confirmation echo below is masked too).
-                    programs.push({ airlineCode: airline, membershipNumber: maskNumber(number) });
-                    console.log(chalk.green(`     ✓ ${airline} ${maskNumber(number)}`));
+                    programs.push({ airlineCode: airline, membershipNumber: number });
+                    console.log(chalk.green(`     ✓ ${airline} ${maskLoyaltyValue(number)}`));
                   } else {
                     console.log(chalk.yellow(`     ⚠ Invalid airline code "${airline}" (expected 2 characters)`));
                   }
@@ -553,11 +662,89 @@ export function registerAuthCommands(program: Command): void {
               }
             }
             if (programs.length > 0) {
-              userCtx.frequentFlyerPrograms = programs;
+              // Sent to the profile at the end; the stored value comes from the
+              // mutation response (server-side FF programs are copied onto
+              // travellers at booking time, so this is what credits miles).
+              ffToSync = programs;
             }
             console.log();
           } else {
             console.log(chalk.dim("     Skipped (non-interactive).\n"));
+          }
+        }
+
+        // ── Hotel Loyalty ──
+        // No server-side user field exists for hotel loyalty, so it is stored
+        // locally as a profile default and auto-applied to your own traveller.
+        console.log(`  🏨 ${chalk.bold("Hotel Loyalty")}`);
+        const existingHotel = userCtx.hotelLoyaltyPrograms ?? [];
+        if (existingHotel.length > 0) {
+          const display = existingHotel.map(hl => `${hl.chainCode} ${maskLoyaltyValue(hl.membershipNumber)}`).join(", ");
+          console.log(chalk.dim(`     On file: ${display}`));
+        }
+        if (rl) {
+          const programs: Array<{ chainCode: string; membershipNumber: string }> = [];
+          let adding = true;
+          while (adding) {
+            const hlInput = await prompt(rl, programs.length === 0
+              ? "     Add a program (e.g. HI 12345678, or Enter to skip): "
+              : "     Add another (or Enter to finish): ");
+            if (!hlInput) {
+              adding = false;
+            } else {
+              const parts = hlInput.split(/\s+/);
+              if (parts.length >= 2) {
+                const chain = parts[0].toUpperCase();
+                const number = parts.slice(1).join("");
+                if (!/^[A-Z]{2}$/.test(chain)) {
+                  console.log(chalk.yellow(`     ⚠ Invalid chain code "${chain}" (expected 2 letters)`));
+                } else if (!/^\d+$/.test(number)) {
+                  console.log(chalk.yellow("     ⚠ Member number must be digits only (the chain code is added at booking time)"));
+                } else {
+                  programs.push({ chainCode: chain, membershipNumber: number });
+                  console.log(chalk.green(`     ✓ ${chain} ${maskLoyaltyValue(number)}`));
+                }
+              } else {
+                console.log(chalk.yellow("     ⚠ Format: CHAIN NUMBER (e.g. HI 12345678)"));
+              }
+            }
+          }
+          if (programs.length > 0) {
+            // Local-only; a fresh set replaces any existing default.
+            userCtx.hotelLoyaltyPrograms = programs;
+          }
+          console.log();
+        } else if (existingHotel.length === 0) {
+          console.log(chalk.dim("     Skipped (non-interactive).\n"));
+        } else {
+          console.log();
+        }
+
+        // ── Sync to profile ──
+        // A single updateMyUser call carrying whatever new passport / FF data
+        // was entered; skipped entirely when there is nothing new. Hotel
+        // loyalty is never sent — there is no user-level field for it.
+        if (passportToSync || ffToSync) {
+          const updateInput: Record<string, unknown> = {};
+          if (passportToSync) updateInput.passport = passportToSync;
+          if (ffToSync) updateInput.frequentFlyerPrograms = ffToSync;
+          try {
+            const data = await graphql<UpdateMyUserResponse>(UPDATE_MY_USER, { input: updateInput });
+            const updated = data.updateMyUser;
+            // Persist only what the API returns: the masked passport shape and
+            // the full frequent-flyer list.
+            if (passportToSync) userCtx.passport = updated.passport ?? undefined;
+            if (ffToSync && updated.frequentFlyerPrograms) {
+              userCtx.frequentFlyerPrograms = updated.frequentFlyerPrograms.map(ff => ({
+                airlineCode: ff.airlineCode,
+                membershipNumber: ff.membershipNumber,
+              }));
+            }
+          } catch {
+            // Never echo the raw upstream error: its variables can include the
+            // full passport / membership numbers we just tried to sync.
+            console.log(chalk.red("     ✗ Profile sync failed — your local setup is saved."));
+            console.log(chalk.dim("     Run `voyagier auth setup` again later or check `voyagier doctor`.\n"));
           }
         }
 
@@ -572,11 +759,14 @@ export function registerAuthCommands(program: Command): void {
           console.log(`     Home:      ${display}`);
         }
         if (userCtx.preferredCabin) console.log(`     Cabin:     ${CABIN_LABELS[userCtx.preferredCabin]}`);
-        if (userCtx.passport) console.log(`     Passport:  ••••${userCtx.passport.last4} (${userCtx.passport.issueCountry}, exp ${userCtx.passport.expirationDate})`);
+        if (userCtx.passport) console.log(`     Passport:  ${formatPassport(userCtx.passport)}`);
         if (userCtx.frequentFlyerPrograms && userCtx.frequentFlyerPrograms.length > 0) {
-          // Stored masked (L3); re-mask on display (idempotent) for legacy files.
-          const ffs = userCtx.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskNumber(ff.membershipNumber)}`).join(", ");
+          const ffs = userCtx.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskLoyaltyValue(ff.membershipNumber)}`).join(", ");
           console.log(`     FF:        ${ffs}`);
+        }
+        if (userCtx.hotelLoyaltyPrograms && userCtx.hotelLoyaltyPrograms.length > 0) {
+          const hls = userCtx.hotelLoyaltyPrograms.map(hl => `${hl.chainCode} ${maskLoyaltyValue(hl.membershipNumber)}`).join(", ");
+          console.log(`     Hotel:     ${hls}`);
         }
         console.log(chalk.dim(`\n     Search flights: voyagier search flights --to SJU --date 2026-05-14\n`));
 

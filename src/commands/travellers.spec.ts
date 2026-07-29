@@ -178,6 +178,43 @@ describe("travellers add", () => {
     expect(mockWarn).toHaveBeenCalledWith(expect.stringContaining("Missing fields required for flight booking"));
   });
 
+  it("--self auto-applies the profile's hotel loyalty default when no flag is given", async () => {
+    mockGetUserContext.mockReturnValue({
+      email: "self@example.com",
+      hotelLoyaltyPrograms: [{ chainCode: "HI", membershipNumber: "12345678" }],
+    });
+    mockGraphql.mockResolvedValueOnce({ createTripPlanTraveller: sampleTraveller });
+    await run(["add", "--plan", "plan-1", "--first", "John", "--last", "Doe", "--self", "--json"]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input.hotelLoyaltyPrograms).toEqual([{ chainCode: "HI", membershipNumber: "12345678" }]);
+    // Frequent-flyer is NOT auto-applied (server backfills it for linked users).
+    expect(vars.input).not.toHaveProperty("frequentFlyerPrograms");
+  });
+
+  it("--self: an explicit --hotel-loyalty flag overrides the profile default", async () => {
+    mockGetUserContext.mockReturnValue({
+      email: "self@example.com",
+      hotelLoyaltyPrograms: [{ chainCode: "HI", membershipNumber: "12345678" }],
+    });
+    mockGraphql.mockResolvedValueOnce({ createTripPlanTraveller: sampleTraveller });
+    await run([
+      "add", "--plan", "plan-1", "--first", "John", "--last", "Doe",
+      "--self", "--hotel-loyalty", "MR:99887766", "--json",
+    ]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input.hotelLoyaltyPrograms).toEqual([{ chainCode: "MR", membershipNumber: "99887766" }]);
+  });
+
+  it("--self notes the auto-filled hotel loyalty in human mode", async () => {
+    mockGetUserContext.mockReturnValue({
+      email: "self@example.com",
+      hotelLoyaltyPrograms: [{ chainCode: "HI", membershipNumber: "12345678" }],
+    });
+    mockGraphql.mockResolvedValueOnce({ createTripPlanTraveller: sampleTraveller });
+    await run(["add", "--plan", "plan-1", "--first", "John", "--last", "Doe", "--self"]);
+    expect(logJoined()).toContain("hotel loyalty (HI)");
+  });
+
   it("--self logs which fields were auto-filled in human mode", async () => {
     mockGetUserContext.mockReturnValue({
       email: "self@example.com",

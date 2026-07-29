@@ -24,8 +24,10 @@ jest.unstable_mockModule("../api.js", () => ({
 }));
 
 jest.unstable_mockModule("../utils.js", () => ({
-  // openBrowser is the only util auth.ts imports; stub it so no browser launches.
+  // openBrowser is stubbed so no browser launches; maskLoyaltyValue keeps its
+  // real behaviour so the masked-output assertions exercise the shipping logic.
   openBrowser: mockOpenBrowser,
+  maskLoyaltyValue: (value: string) => (value.length > 4 ? `••••${value.slice(-4)}` : "••••"),
 }));
 
 // readline/promises drives the interactive prompt flows. The fake createInterface
@@ -238,7 +240,9 @@ describe("auth status", () => {
     expect(text).toMatch(/BOS \(primary\)/);
     expect(text).toMatch(/Business/);
     expect(text).toMatch(/••••6789/);
+    // Frequent-flyer membership numbers are masked to last-4 in terminal output.
     expect(text).toMatch(/DL ••••7890/);
+    expect(text).not.toContain("1234567890");
     // Token is masked, never printed in full.
     expect(text).not.toContain(TEST_TOKEN);
   });
@@ -380,8 +384,8 @@ describe("auth setup", () => {
     await buildProgram().parseAsync(["node", "v", "auth", "setup", "--airports", "BOS"]);
     const ctx = getUserContext();
     expect(ctx?.passport?.last4).toBe("4321");
-    // L3: frequent-flyer numbers are stored masked (last 4), never in full.
-    expect(ctx?.frequentFlyerPrograms).toEqual([{ airlineCode: "BA", membershipNumber: "••••8887" }]);
+    // Frequent-flyer numbers are imported and stored in full (used to credit miles).
+    expect(ctx?.frequentFlyerPrograms).toEqual([{ airlineCode: "BA", membershipNumber: "9998887" }]);
     expect(out()).toMatch(/Imported from profile/);
   });
 
@@ -397,45 +401,133 @@ describe("auth setup", () => {
     expect(out()).toMatch(/Skipped \(non-interactive\)/);
   });
 
-  it("interactive: walks the full airports/cabin/passport/FF prompt sequence", async () => {
+  it("interactive: walks airports/cabin/passport/FF/hotel, syncs, and stores only the masked passport", async () => {
     saveCredentials(TEST_TOKEN);
     setInteractive(true);
-    mockGraphql.mockResolvedValueOnce(meResponse());
-    // airports (with an invalid code to skip), cabin=3(Business),
-    // passport last4/issue/nationality(default)/expiration, then one FF + Enter.
-    scriptedAnswers = ["BWI, XX, DCA", "3", "1234", "US", "", "2030-05", "DL 1234567890", ""];
+    // Call #1: profile fetch. Call #2: updateMyUser — returns the masked
+    // passport shape + full FF list (the only things ever persisted for those).
+    mockGraphql
+      .mockResolvedValueOnce(meResponse())
+      .mockResolvedValueOnce({
+        updateMyUser: {
+          passport: { last4: "4567", issueCountry: "US", nationalityCountry: "US", expirationDate: "2030-05" },
+          frequentFlyerPrograms: [{ airlineCode: "DL", membershipNumber: "1234567890" }],
+        },
+      });
+    // airports (invalid XX dropped), cabin=3(Business), passport number (muted,
+    // 6–9 alnum), issue=US, nationality(default), expiration, one FF + Enter,
+    // one hotel + Enter.
+    scriptedAnswers = [
+      "BWI, XX, DCA", "3",
+      "X1234567", "US", "", "2030-05",
+      "DL 1234567890", "",
+      "HI 12345678", "",
+    ];
 
     await buildProgram().parseAsync(["node", "v", "auth", "setup"]);
 
     const ctx = getUserContext();
     expect(ctx?.homeAirports).toEqual(["BWI", "DCA"]); // XX dropped as invalid
     expect(ctx?.preferredCabin).toBe("business");
+    // Only the masked shape from the mutation response is stored.
     expect(ctx?.passport).toEqual({
-      last4: "1234",
+      last4: "4567",
       issueCountry: "US",
-      nationalityCountry: "US", // defaulted from issue country on empty input
+      nationalityCountry: "US",
       expirationDate: "2030-05",
     });
-    // L3: stored masked (last 4), never in full.
-    expect(ctx?.frequentFlyerPrograms).toEqual([{ airlineCode: "DL", membershipNumber: "••••7890" }]);
+    // FF stored in full (from the response); hotel loyalty stored in full locally.
+    expect(ctx?.frequentFlyerPrograms).toEqual([{ airlineCode: "DL", membershipNumber: "1234567890" }]);
+    expect(ctx?.hotelLoyaltyPrograms).toEqual([{ chainCode: "HI", membershipNumber: "12345678" }]);
+
+    // updateMyUser (call #2) carries the FULL passport number + FF; hotel loyalty is never sent.
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    const [, vars] = mockGraphql.mock.calls[1] as [string, any];
+    expect(vars.input.passport).toEqual({
+      passportNumber: "X1234567",
+      issueCountry: "US",
+      nationalityCountry: "US",
+      expirationDate: "2030-05",
+    });
+    expect(vars.input.frequentFlyerPrograms).toEqual([{ airlineCode: "DL", membershipNumber: "1234567890" }]);
+    expect(vars.input).not.toHaveProperty("hotelLoyaltyPrograms");
+
+    // The full passport number must never reach stdout or credentials.json.
+    expect(out()).not.toContain("X1234567");
+    expect(JSON.stringify(loadCredentials())).not.toContain("X1234567");
+    // Loyalty numbers are masked to last-4 in terminal output (but stored/synced in full).
+    expect(out()).toMatch(/DL ••••7890/);
+    expect(out()).not.toContain("1234567890");
+    expect(out()).not.toContain("12345678");
     expect(out()).toMatch(/Setup complete/);
   });
 
-  it("interactive: handles skipped passport and malformed FF input gracefully", async () => {
+  it("interactive: a profile-sync failure never echoes the raw upstream error", async () => {
+    saveCredentials(TEST_TOKEN);
+    setInteractive(true);
+    // Call #1: profile fetch (no FF on file). Call #2: updateMyUser rejects with
+    // an error whose text mimics a leaked request variable (the passport number).
+    mockGraphql
+      .mockResolvedValueOnce(meResponse())
+      .mockRejectedValueOnce(new Error('Bad request: passportNumber="X1234567" rejected'));
+    // airports=Enter (keep BOS), cabin=Enter, passport=Enter (skip),
+    // one FF + Enter (so there is something to sync), hotel=Enter.
+    scriptedAnswers = ["", "", "", "DL 1234567890", "", ""];
+
+    await buildProgram().parseAsync(["node", "v", "auth", "setup"]);
+
+    const text = out();
+    // Generic, reassuring message — never the raw GraphQL error or its variables.
+    expect(text).toMatch(/Profile sync failed/);
+    expect(text).not.toContain("X1234567");
+    expect(text).not.toContain("Bad request");
+    expect(text).not.toContain("rejected");
+    // The sync was attempted (profile fetch + updateMyUser).
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+  });
+
+  it("interactive: invalid passport re-prompts with an explanation, then skips without syncing", async () => {
     saveCredentials(TEST_TOKEN);
     setInteractive(true);
     mockGraphql.mockResolvedValueOnce(meResponse());
-    // airports=Enter (keep auto-detected BOS), cabin=Enter (economy),
-    // passport last4="12" (invalid → skip), FF: "X 1" (bad airline), "oneword" (bad format), Enter.
-    scriptedAnswers = ["", "", "12", "X 1", "oneword", ""];
+    // airports=Enter (keep BOS), cabin=Enter (economy), passport "12" then "abc"
+    // (both invalid → skip), FF "X 1"/"oneword" rejected then Enter, hotel Enter.
+    scriptedAnswers = ["", "", "12", "abc", "X 1", "oneword", "", ""];
 
     await buildProgram().parseAsync(["node", "v", "auth", "setup"]);
 
     const ctx = getUserContext();
-    expect(ctx?.homeAirports).toEqual(["BOS"]); // kept auto-detected
+    expect(ctx?.homeAirports).toEqual(["BOS"]);
     expect(ctx?.preferredCabin).toBe("economy");
-    expect(ctx?.passport).toBeUndefined(); // invalid last4 → not saved
-    expect(ctx?.frequentFlyerPrograms).toBeUndefined(); // both FF inputs rejected
+    expect(ctx?.passport).toBeUndefined(); // invalid → not saved
+    expect(ctx?.frequentFlyerPrograms).toBeUndefined();
+    // Explains the format and re-prompts (never a silent skip).
+    expect(out()).toMatch(/6–9 letters or digits/);
     expect(out()).toMatch(/Invalid airline code "X"/);
+    // Nothing new entered → no updateMyUser sync.
+    expect(mockGraphql).toHaveBeenCalledTimes(1);
+  });
+
+  it("interactive: Enter keeps an on-file passport without revealing it and without a sync call", async () => {
+    saveCredentials(TEST_TOKEN);
+    setInteractive(true);
+    mockGraphql.mockResolvedValueOnce(
+      meResponse({
+        passport: { last4: "6789", issueCountry: "US", nationalityCountry: "US", expirationDate: "2031-05" },
+        frequentFlyerPrograms: [{ airlineCode: "DL", membershipNumber: "1234567890" }],
+      }),
+    );
+    // airports=Enter (keep BOS), cabin=Enter, passport=Enter (keep), hotel=Enter.
+    scriptedAnswers = ["", "", "", ""];
+
+    await buildProgram().parseAsync(["node", "v", "auth", "setup"]);
+
+    const ctx = getUserContext();
+    expect(ctx?.passport?.last4).toBe("6789");
+    expect(ctx?.frequentFlyerPrograms).toEqual([{ airlineCode: "DL", membershipNumber: "1234567890" }]);
+    expect(out()).toMatch(/Keeping the passport on file/);
+    expect(out()).toMatch(/••••6789/);
+    // Nothing changed → no updateMyUser call.
+    expect(mockGraphql).toHaveBeenCalledTimes(1);
   });
 });
