@@ -15,6 +15,10 @@ import { flushTelemetry } from "./telemetry.js";
  * execution continue).
  */
 export async function gracefulExit(code: number): Promise<never> {
+  // Set exitCode up-front: if the event loop drains during the flush await
+  // (unref'd cap timer; a pending send that holds no live handles), Node exits
+  // naturally — this keeps the exit code deterministic in that edge case.
+  process.exitCode = code;
   await flushTelemetry(250);
   process.exit(code);
 }
