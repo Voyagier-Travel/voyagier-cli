@@ -58,6 +58,9 @@ export function registerSocialCommands(plans: Command): void {
 
         // List mode
         const limit = parseInt(opts.limit, 10);
+        if (!Number.isInteger(limit) || limit < 1) {
+          throw new CliError(CliErrorCode.VALIDATION, "--limit must be a positive integer.");
+        }
         const data = await graphql<{
           tripPlanItemComments: {
             count: number;

@@ -110,6 +110,13 @@ describe("plans comments", () => {
     expect(out.comments).toHaveLength(1);
   });
 
+  it("rejects a non-numeric --limit before calling the API", async () => {
+    await expect(run(["comments", "item-1", "--limit", "abc", "--json"])).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
   it("human mode renders authors, comment text, and replies", async () => {
     const items = [
       {
