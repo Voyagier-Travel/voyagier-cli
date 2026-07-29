@@ -34,7 +34,9 @@ import { deriveHotelStay } from "../hotel-format.js";
 import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 import { CliError, CliErrorCode } from "../errors.js";
-import { startSpinner } from "../spinner.js";
+import { waitForSelectionOptions } from "../selection-wait.js";
+import type { SelectionStatusResult } from "../selection-status.js";
+import { startSpinner, spinnerAnimates } from "../spinner.js";
 import { isInteractive, promptText } from "../prompt.js";
 import { scaffoldPlan, generateTripTitle } from "./scaffold.js";
 import type { ShapeFlags } from "./scaffold.js";
@@ -346,6 +348,86 @@ function searchJsonBody(
   };
 }
 
+/** Hard cap on how long a search waits inline for async inventory (VOY-1780). */
+const SEARCH_WAIT_TIMEOUT_MS = 90_000;
+
+/**
+ * Re-read a decision selection's FULL options (including provider `bookingData`)
+ * once the inline wait reports READY. The wait itself reads only the lean
+ * monitor query (no bookingData), so we re-fetch through the same query the
+ * immediate-results path uses and feed the result into the identical render
+ * pipeline (VOY-1780).
+ */
+async function refetchDecisionOptions(selectionId: string): Promise<SelectOption[]> {
+  const data = await graphql<{ getTripPlanSelection: { options?: SelectOption[] } | null }>(
+    GET_DECISION_SELECTION_OPTIONS,
+    { tripPlanSelectionId: selectionId },
+  );
+  return data.getTripPlanSelection?.options ?? [];
+}
+
+/**
+ * Human/TTY inline-wait gate (VOY-1780): wait for async options only at an
+ * interactive stderr, when the user hasn't asked for the machine surfaces
+ * (--json/--agent) or opted out with --no-wait. Everywhere else the old
+ * fire-and-return + poll-pointer behaviour is preserved.
+ */
+function shouldWaitInline(opts: { json?: boolean; agent?: boolean; wait?: boolean }): boolean {
+  return (
+    !opts.json &&
+    !opts.agent &&
+    opts.wait !== false &&
+    process.stderr.isTTY === true
+  );
+}
+
+/**
+ * Copy-safe poll hint (VOY-1780): the label and the command live on SEPARATE
+ * lines so copying the command line runs the command — not `Poll:`. Written to
+ * stderr (stdout stays clean for redirection).
+ */
+function writePollHint(selectionId: string): void {
+  process.stderr.write(chalk.dim("Poll for results with:\n"));
+  process.stderr.write(chalk.dim(`  voyagier selection-options ${shellArg(selectionId)} --wait\n`));
+}
+
+/**
+ * After an inline wait ends without READY options, explain WHY in plain English
+ * (never a generic "no options") and, for the transient statuses, hand back a
+ * copy-safe resume command. Exit code stays 0 — a slow/emptied fetch is not a
+ * CLI failure. Returns nothing; the caller returns after this.
+ */
+function reportWaitStop(result: SelectionStatusResult, selectionId: string): void {
+  switch (result.status) {
+    case "FETCHING":
+      // Timed out still fetching — the search is fine, inventory is just slow.
+      process.stderr.write(
+        chalk.yellow("Inventory is still loading on our side — your results will be ready shortly.\n"),
+      );
+      writePollHint(selectionId);
+      break;
+    case "FETCH_ERROR":
+      process.stderr.write(
+        chalk.yellow(
+          `The inventory search hit an error while fetching${result.fetchError ? `: ${result.fetchError}` : "."}\n`,
+        ),
+      );
+      writePollHint(selectionId);
+      break;
+    case "AWAITING_INPUT":
+      process.stderr.write(
+        chalk.yellow(
+          "The search is missing a required input, so no inventory could be fetched. Check the owning goal: voyagier plans goal <goalId>\n",
+        ),
+      );
+      break;
+    case "NO_RESULTS":
+    default:
+      // Handled by callers that add domain-specific suggestions (hotels).
+      break;
+  }
+}
+
 export function registerSearchCommands(program: Command): void {
   const search = program.command("search").description("Search flights, hotels, and activities");
 
@@ -404,6 +486,7 @@ export function registerSearchCommands(program: Command): void {
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL query without executing")
+    .option("--no-wait", "Return immediately instead of waiting inline for async inventory (human/TTY mode)")
     .option("--no-input", "Never prompt for missing input; fail instead (for scripts, agents, CI)")
     .action(async (opts, command) => {
       // Resolve --date FIRST (VOY-1762): it used to be a commander
@@ -548,6 +631,40 @@ export function registerSearchCommands(program: Command): void {
           searchSpinner?.stop();
         }
 
+        // Human/TTY: wait inline for async inventory rather than handing the user
+        // a poll command (VOY-1780). Kick a refresh + poll to completion, then
+        // re-fetch the full options and fall through to the SAME render path as
+        // the immediate-results case. --no-wait / --json / --agent / non-TTY skip
+        // this and keep the fire-and-return behaviour below.
+        if (fetchedOptions.length === 0 && shouldWaitInline(opts)) {
+          const label = `Searching ${origin} → ${destination}`;
+          const waitSpinner = spinnerAnimates() ? startSpinner(`${label}… fetching inventory`) : null;
+          let snap;
+          try {
+            snap = await waitForSelectionOptions(
+              selectionId,
+              { timeoutMs: SEARCH_WAIT_TIMEOUT_MS },
+              {
+                heartbeat: ({ elapsedMs }) =>
+                  waitSpinner?.update(`${label}… fetching inventory (${Math.round(elapsedMs / 1000)}s)`),
+              },
+            );
+          } finally {
+            waitSpinner?.stop();
+          }
+          if (snap.result.status === "READY") {
+            fetchedOptions = await refetchDecisionOptions(selectionId);
+          } else if (snap.result.status === "NO_RESULTS") {
+            process.stderr.write(
+              chalk.yellow(`No flights matched ${origin} → ${destination} on these dates.\n`),
+            );
+            return;
+          } else {
+            reportWaitStop(snap.result, selectionId);
+            return;
+          }
+        }
+
         const sortBy = (opts.sort ?? "default") as SortField;
         // --max-stops is a client-side presentation filter over the options the
         // backend returned (same layer as --sort), not a goal-input constraint.
@@ -635,8 +752,10 @@ export function registerSearchCommands(program: Command): void {
         }
 
         if (options.length === 0) {
+          // Reached only when the inline wait was skipped (--no-wait / non-TTY);
+          // hand back a copy-safe poll hint (VOY-1780).
           process.stderr.write(chalk.dim("No options yet — the search is still fetching inventory.\n"));
-          process.stderr.write(chalk.dim(`  Poll: voyagier selection-options ${shellArg(selectionId)} --wait\n`));
+          writePollHint(selectionId);
           return;
         }
 
@@ -671,6 +790,7 @@ export function registerSearchCommands(program: Command): void {
     .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL query without executing")
     .option("--verbose", "Show request details sent to the API")
+    .option("--no-wait", "Return immediately instead of waiting inline for async inventory (human/TTY mode)")
     .option("--no-input", "Never prompt for missing input; fail instead (for scripts, agents, CI)")
     .action(async (opts) => {
       try {
@@ -807,6 +927,36 @@ export function registerSearchCommands(program: Command): void {
           searchSpinner?.stop();
         }
 
+        // Human/TTY: wait inline for async inventory (VOY-1780). Same shape as
+        // flights — poll to completion, re-fetch full options, then render
+        // through the immediate-results path below. NO_RESULTS keeps the
+        // location-specific suggestions the empty branch already prints.
+        if (fetchedOptions.length === 0 && shouldWaitInline(opts)) {
+          const label = `Searching hotels in ${opts.location}`;
+          const waitSpinner = spinnerAnimates() ? startSpinner(`${label}… fetching inventory`) : null;
+          let snap;
+          try {
+            snap = await waitForSelectionOptions(
+              selectionId,
+              { timeoutMs: SEARCH_WAIT_TIMEOUT_MS },
+              {
+                heartbeat: ({ elapsedMs }) =>
+                  waitSpinner?.update(`${label}… fetching inventory (${Math.round(elapsedMs / 1000)}s)`),
+              },
+            );
+          } finally {
+            waitSpinner?.stop();
+          }
+          if (snap.result.status === "READY") {
+            fetchedOptions = await refetchDecisionOptions(selectionId);
+          } else if (snap.result.status !== "NO_RESULTS") {
+            reportWaitStop(snap.result, selectionId);
+            return;
+          }
+          // NO_RESULTS falls through to the empty branch below, which prints the
+          // location-specific "no hotels matched" suggestions.
+        }
+
         const sortBy = (opts.sort ?? "default") as SortField;
         const options = sortBy === "price"
           ? [...fetchedOptions].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity))
@@ -885,8 +1035,8 @@ export function registerSearchCommands(program: Command): void {
         if (options.length === 0) {
           const loc = opts.location as string;
           process.stderr.write(chalk.dim(`No options yet — the search may still be fetching inventory.\n`));
-          process.stderr.write(chalk.dim(`  Poll: voyagier selection-options ${shellArg(selectionId)} --wait\n\n`));
-          process.stderr.write(chalk.yellow(`If it stays empty, no hotels matched "${loc}" on these dates.\n\n`));
+          writePollHint(selectionId);
+          process.stderr.write(chalk.yellow(`\nIf it stays empty, no hotels matched "${loc}" on these dates.\n\n`));
           process.stderr.write(chalk.dim("Suggestions:\n"));
           if (looksLikeAirportCode(loc)) {
             process.stderr.write(chalk.dim(`  • "${loc.toUpperCase()}" looks like an airport code — the API needs a city name\n`));
