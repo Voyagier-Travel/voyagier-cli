@@ -210,9 +210,11 @@ function normalizeSearchPlace(raw: SearchPlaceRaw): SearchPlace {
 
 function normalizeExternalPlace(raw: ExternalPlaceRaw): SearchPlace {
   const main = raw.geocodes?.main;
+  // All-or-nothing, matching geoPointToLocation: a half-populated coordinate
+  // pair is malformed — never leak { latitude: null, longitude: 2.29 }.
   const location =
-    main && (typeof main.latitude === "number" || typeof main.longitude === "number")
-      ? { latitude: main.latitude ?? null, longitude: main.longitude ?? null }
+    main && typeof main.latitude === "number" && typeof main.longitude === "number"
+      ? { latitude: main.latitude, longitude: main.longitude }
       : null;
   const loc = raw.location;
   return {

@@ -325,6 +325,27 @@ describe("places search", () => {
     });
   });
 
+  it("drops half-populated external coordinates instead of leaking a null half (Copilot, PR #133)", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      searchExternalPlaces: [
+        { ...sampleExternalPlace, geocodes: { main: { latitude: null, longitude: 2.2945 } } },
+      ],
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "search",
+      "--query", "Eiffel",
+      "--source", "google",
+      "--json",
+    ]);
+
+    expect(mockJsonOutput).toHaveBeenCalledWith({
+      ok: true,
+      data: { places: [{ ...sampleExternalPlaceOut, location: null }], total: 1, source: "google" },
+    });
+  });
+
   it("uses searchExternalPlaces with --source google", async () => {
     mockGraphql.mockResolvedValueOnce({
       searchExternalPlaces: [sampleExternalPlace],
