@@ -37,16 +37,58 @@ beforeAll(async () => {
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
+// Post-drift (VOY-1417) the API returns GeoJSON GeoPoint coordinates and the
+// renamed SearchPlaceAddress fields. The CLI normalizes these back to its
+// stable output shape, so each fixture comes in two halves: the RAW shape the
+// mocked API returns, and the *Out shape the CLI is expected to emit.
+
 const sampleSearchPlace = {
   id: "place_01HX",
   name: "Eiffel Tower",
   description: "Iconic iron lattice tower",
-  location: { latitude: 48.8584, longitude: 2.2945 },
-  address: { city: "Paris", country: "France" },
+  location: { coordinates: [2.2945, 48.8584], type: "Point" },
+  address: {
+    streetAddress: null,
+    addressLocality: "Paris",
+    addressRegion: null,
+    postalCode: null,
+    addressCountry: "France",
+  },
   country: { id: "FR", name: "France" },
   locality: { id: "paris", name: "Paris" },
 };
 
+const sampleSearchPlaceOut = {
+  id: "place_01HX",
+  name: "Eiffel Tower",
+  description: "Iconic iron lattice tower",
+  location: { latitude: 48.8584, longitude: 2.2945 },
+  address: { street: null, city: "Paris", state: null, postalCode: null, country: "France" },
+  country: { id: "FR", name: "France" },
+  locality: { id: "paris", name: "Paris" },
+};
+
+// searchExternalPlaces returns ExternalPlace, a different shape: coordinates
+// live on geocodes.main and address parts on the ExternalPlaceLocation.
+const sampleExternalPlace = {
+  id: "place_01HX",
+  name: "Eiffel Tower",
+  geocodes: { main: { latitude: 48.8584, longitude: 2.2945 } },
+  location: { address: null, locality: "Paris", region: null, postcode: null, country: "France" },
+};
+
+const sampleExternalPlaceOut = {
+  id: "place_01HX",
+  name: "Eiffel Tower",
+  // ExternalPlace.description was removed in the drift — degrades to null.
+  description: null,
+  location: { latitude: 48.8584, longitude: 2.2945 },
+  address: { street: null, city: "Paris", state: null, postalCode: null, country: "France" },
+  country: null,
+  locality: null,
+};
+
+// TripPlanPlace.image was removed in the drift; the CLI no longer emits it.
 const sampleTripPlanPlace = {
   id: "tpp_01HX",
   name: "Hotel Le Bristol",
@@ -58,12 +100,29 @@ const sampleTripPlanPlace = {
   countryName: "France",
   description: "Luxury hotel",
   iataCode: null,
-  image: "https://example.com/hotel.jpg",
+  url: "https://lebristolparis.com",
+  placeTimezone: "Europe/Paris",
+  location: { coordinates: [2.3161, 48.8706], type: "Point" },
+};
+
+const sampleTripPlanPlaceOut = {
+  id: "tpp_01HX",
+  name: "Hotel Le Bristol",
+  placeId: "place_02HX",
+  tripPlanId: "plan_01HX",
+  type: "Hotel",
+  types: ["lodging", "establishment"],
+  countryId: "FR",
+  countryName: "France",
+  description: "Luxury hotel",
+  iataCode: null,
   url: "https://lebristolparis.com",
   placeTimezone: "Europe/Paris",
   location: { latitude: 48.8706, longitude: 2.3161 },
 };
 
+// getHighlightedTripPlaces fetches detectedPlace.location (GeoPoint), so it is
+// normalized on the way out.
 const sampleHighlightedPlace = {
   id: "hp_01HX",
   ranking: 1,
@@ -72,7 +131,32 @@ const sampleHighlightedPlace = {
     id: "dp_01HX",
     name: "Hotel Le Bristol",
     placeId: "place_02HX",
+    location: { coordinates: [2.3161, 48.8706], type: "Point" },
+  },
+};
+
+const sampleHighlightedOut = {
+  id: "hp_01HX",
+  ranking: 1,
+  category: "Hotel",
+  detectedPlace: {
+    id: "dp_01HX",
+    name: "Hotel Le Bristol",
+    placeId: "place_02HX",
     location: { latitude: 48.8706, longitude: 2.3161 },
+  },
+};
+
+// The highlightTripPlace mutation does not select location, so its payload
+// passes through unchanged (no normalization).
+const sampleHighlightMutation = {
+  id: "hp_01HX",
+  ranking: 1,
+  category: "Hotel",
+  detectedPlace: {
+    id: "dp_01HX",
+    name: "Hotel Le Bristol",
+    placeId: "place_02HX",
   },
 };
 
@@ -237,13 +321,34 @@ describe("places search", () => {
     );
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { places: [sampleSearchPlace], total: 1, source: "internal" },
+      data: { places: [sampleSearchPlaceOut], total: 1, source: "internal" },
+    });
+  });
+
+  it("drops half-populated external coordinates instead of leaking a null half (Copilot, PR #133)", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      searchExternalPlaces: [
+        { ...sampleExternalPlace, geocodes: { main: { latitude: null, longitude: 2.2945 } } },
+      ],
+    });
+
+    const p = buildProgram();
+    await p.parseAsync([
+      "node", "test", "places", "search",
+      "--query", "Eiffel",
+      "--source", "google",
+      "--json",
+    ]);
+
+    expect(mockJsonOutput).toHaveBeenCalledWith({
+      ok: true,
+      data: { places: [{ ...sampleExternalPlaceOut, location: null }], total: 1, source: "google" },
     });
   });
 
   it("uses searchExternalPlaces with --source google", async () => {
     mockGraphql.mockResolvedValueOnce({
-      searchExternalPlaces: [sampleSearchPlace],
+      searchExternalPlaces: [sampleExternalPlace],
     });
 
     const p = buildProgram();
@@ -260,7 +365,7 @@ describe("places search", () => {
     );
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { places: [sampleSearchPlace], total: 1, source: "google" },
+      data: { places: [sampleExternalPlaceOut], total: 1, source: "google" },
     });
   });
 
@@ -360,7 +465,7 @@ describe("places get", () => {
     );
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { place: sampleSearchPlace },
+      data: { place: sampleSearchPlaceOut },
     });
   });
 
@@ -414,7 +519,7 @@ describe("places attach", () => {
     );
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { place: sampleTripPlanPlace, idempotencyKey: null },
+      data: { place: sampleTripPlanPlaceOut, idempotencyKey: null },
       planContext: { planId: "plan_01HX" },
     });
   });
@@ -490,7 +595,7 @@ describe("places list", () => {
     );
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { places: [sampleTripPlanPlace], total: 1 },
+      data: { places: [sampleTripPlanPlaceOut], total: 1 },
       planContext: { planId: "plan_01HX" },
     });
   });
@@ -513,7 +618,7 @@ describe("places list", () => {
     );
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { highlighted: [sampleHighlightedPlace], total: 1, category: "Hotel" },
+      data: { highlighted: [sampleHighlightedOut], total: 1, category: "Hotel" },
       planContext: { planId: "plan_01HX" },
     });
   });
@@ -537,7 +642,7 @@ describe("places list", () => {
 
 describe("places highlight", () => {
   it("highlights a place with required fields", async () => {
-    mockGraphql.mockResolvedValueOnce({ highlightTripPlace: sampleHighlightedPlace });
+    mockGraphql.mockResolvedValueOnce({ highlightTripPlace: sampleHighlightMutation });
 
     const p = buildProgram();
     await p.parseAsync([
@@ -560,13 +665,13 @@ describe("places highlight", () => {
     );
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { highlighted: sampleHighlightedPlace, idempotencyKey: null },
+      data: { highlighted: sampleHighlightMutation, idempotencyKey: null },
       planContext: { planId: "plan_01HX" },
     });
   });
 
   it("includes --ranking when provided", async () => {
-    mockGraphql.mockResolvedValueOnce({ highlightTripPlace: { ...sampleHighlightedPlace, ranking: 3 } });
+    mockGraphql.mockResolvedValueOnce({ highlightTripPlace: { ...sampleHighlightMutation, ranking: 3 } });
 
     const p = buildProgram();
     await p.parseAsync([
@@ -821,7 +926,7 @@ describe("places highlight — strict --ranking validation", () => {
   });
 
   it("accepts --ranking 0 (non-negative)", async () => {
-    mockGraphql.mockResolvedValueOnce({ highlightTripPlace: { ...sampleHighlightedPlace, ranking: 0 } });
+    mockGraphql.mockResolvedValueOnce({ highlightTripPlace: { ...sampleHighlightMutation, ranking: 0 } });
 
     const p = buildProgram();
     await p.parseAsync([
@@ -844,25 +949,31 @@ describe("places highlight — strict --ranking validation", () => {
 // ── Group B: Preserve zero-valued coordinates ─────────────────────────────
 
 describe("places get — zero-valued coordinates", () => {
-  const placeAtEquatorPrimeMeridian = {
+  // Equator/prime meridian: coordinates [0, 0] must survive the GeoJSON →
+  // {latitude, longitude} normalization without being dropped as falsy.
+  const placeAtEquatorRaw = {
     ...sampleSearchPlace,
+    location: { coordinates: [0, 0], type: "Point" },
+  };
+  const placeAtEquatorOut = {
+    ...sampleSearchPlaceOut,
     location: { latitude: 0, longitude: 0 },
   };
 
   it("renders lat=0, lng=0 in JSON output", async () => {
-    mockGraphql.mockResolvedValueOnce({ getPlaceById: placeAtEquatorPrimeMeridian });
+    mockGraphql.mockResolvedValueOnce({ getPlaceById: placeAtEquatorRaw });
 
     const p = buildProgram();
     await p.parseAsync(["node", "test", "places", "get", "place_01HX", "--json"]);
 
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
-      data: { place: placeAtEquatorPrimeMeridian },
+      data: { place: placeAtEquatorOut },
     });
   });
 
   it("renders lat=0, lng=0 in --agent output", async () => {
-    mockGraphql.mockResolvedValueOnce({ getPlaceById: placeAtEquatorPrimeMeridian });
+    mockGraphql.mockResolvedValueOnce({ getPlaceById: placeAtEquatorRaw });
     const consoleSpy = jest.spyOn(console, "log").mockImplementation(() => {});
 
     const p = buildProgram();
@@ -874,7 +985,7 @@ describe("places get — zero-valued coordinates", () => {
   });
 
   it("renders lat=0, lng=0 in TTY output", async () => {
-    mockGraphql.mockResolvedValueOnce({ getPlaceById: placeAtEquatorPrimeMeridian });
+    mockGraphql.mockResolvedValueOnce({ getPlaceById: placeAtEquatorRaw });
     const consoleSpy = jest.spyOn(console, "log").mockImplementation(() => {});
 
     const p = buildProgram();
@@ -931,7 +1042,7 @@ describe("places attach — idempotency-key echo", () => {
 
 describe("places highlight — idempotency-key echo", () => {
   it("echoes --idempotency-key in JSON output", async () => {
-    mockGraphql.mockResolvedValueOnce({ highlightTripPlace: sampleHighlightedPlace });
+    mockGraphql.mockResolvedValueOnce({ highlightTripPlace: sampleHighlightMutation });
 
     const p = buildProgram();
     await p.parseAsync([
@@ -1054,8 +1165,14 @@ describe("places search — markdown escaping (--agent)", () => {
       id: "place_evil",
       name: "Hotel | Wreckage `cafe`",
       description: "Pipes | and backticks `everywhere`",
-      location: { latitude: 1, longitude: 1 },
-      address: { city: "Paris | Center", country: "France" },
+      location: { coordinates: [1, 1], type: "Point" },
+      address: {
+        streetAddress: null,
+        addressLocality: "Paris | Center",
+        addressRegion: null,
+        postalCode: null,
+        addressCountry: "France",
+      },
       country: { id: "FR", name: "France" },
       locality: { id: "paris", name: "Paris" },
     };
@@ -1092,7 +1209,7 @@ describe("places — formatPlaceLine location fallback (TTY)", () => {
       id: "place_loc",
       name: "Test Place",
       description: null,
-      location: { latitude: 0, longitude: 0 },
+      location: { coordinates: [0, 0], type: "Point" },
       address: null,
       country: { id: "FR", name: "France" },
       locality: { id: "lyo", name: "Lyon" },
@@ -1123,7 +1240,7 @@ describe("places — formatPlaceLine location fallback (TTY)", () => {
       id: "place_country",
       name: "Test Place",
       description: null,
-      location: { latitude: 0, longitude: 0 },
+      location: { coordinates: [0, 0], type: "Point" },
       address: null,
       country: { id: "FR", name: "France" },
       locality: null,
@@ -1212,7 +1329,7 @@ describe("places list --highlighted --agent — markdown escaping", () => {
         id: "dp_ev|il",
         name: "Hotel | `Le Mauvais`",
         placeId: "place_evil",
-        location: { latitude: 1, longitude: 1 },
+        location: { coordinates: [1, 1], type: "Point" },
       },
     };
 
@@ -1253,10 +1370,9 @@ describe("places list (TripPlanPlaces) --agent — markdown escaping", () => {
       countryName: "France",
       description: null,
       iataCode: null,
-      image: null,
       url: null,
       placeTimezone: null,
-      location: { latitude: 1, longitude: 1 },
+      location: { coordinates: [1, 1], type: "Point" },
     };
 
     mockGraphql.mockResolvedValueOnce({ getTripPlanPlaces: [evilPlace] });
