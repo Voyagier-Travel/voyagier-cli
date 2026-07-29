@@ -35,6 +35,8 @@ import { findMetroArea } from "../data/metro-areas.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { startSpinner } from "../spinner.js";
 import { isInteractive, promptText } from "../prompt.js";
+import { scaffoldPlan, generateTripTitle } from "./scaffold.js";
+import type { ShapeFlags } from "./scaffold.js";
 
 /**
  * Resolve a date flag that used to be a commander `requiredOption` (VOY-1762):
@@ -181,6 +183,46 @@ export function resolvePlanId(opts: { plan?: string }): string {
     return state.tripPlanId;
   }
   throw new CliError(CliErrorCode.VALIDATION, '--plan <id> is required. Create one first:\n  voyagier plan-trip --client <id|name|email> --title "My Trip"');
+}
+
+/**
+ * Resolve the plan a search runs against — OR auto-scaffold a draft one when the
+ * user gave neither `--plan` nor has a last-search fallback (VOY-1761).
+ *
+ * The first two branches are the exact pre-1761 behavior, owned by resolvePlanId
+ * (VOY-1437): an explicit `--plan` (empty → error) or a last-search fallback.
+ * Only when BOTH are absent — the "first command a new user types" case that used
+ * to hard-error `--plan is required` — do we create a draft plan from the search
+ * args and proceed as if it had been passed. `--dry-run` must not mutate, so it
+ * keeps the old error there. Agents (--json/--agent/--no-input/non-TTY) never
+ * prompt but DO still scaffold once the client resolves non-interactively — they
+ * are the primary beneficiaries of this ticket.
+ */
+async function resolvePlanForSearch(
+  opts: { plan?: string; client?: string; json?: boolean; agent?: boolean; noInput?: boolean; input?: boolean; dryRun?: boolean },
+  scaffold: { title: string; shape: ShapeFlags },
+  quiet: boolean,
+): Promise<{ tripPlanId: string; scaffolded: boolean }> {
+  if (opts.plan !== undefined || loadSearchState()?.tripPlanId) {
+    return { tripPlanId: resolvePlanId(opts), scaffolded: false };
+  }
+  if (opts.dryRun) {
+    // Preserve the pre-1761 hard error under --dry-run (scaffolding would create
+    // a real plan, violating dry-run's no-mutation contract).
+    return { tripPlanId: resolvePlanId(opts), scaffolded: false };
+  }
+  const result = await scaffoldPlan({
+    client: opts.client,
+    title: scaffold.title,
+    shape: scaffold.shape,
+    ensureGoals: true,
+    quiet,
+    interactive: isInteractive(opts),
+  });
+  if (!quiet) {
+    process.stderr.write(chalk.cyan(`No plan given — created draft plan ${result.plan.title} (${result.plan.id})\n`));
+  }
+  return { tripPlanId: result.plan.id, scaffolded: true };
 }
 
 
@@ -344,6 +386,7 @@ export function registerSearchCommands(program: Command): void {
     .command("flights")
     .description("Search for flights")
     .option("--plan <id>", "Trip plan ID (or auto-resolved from last search)")
+    .option("--client <ref>", "Client id, email, or name for the auto-created draft plan when no --plan is given (same semantics as plan-trip)")
     .option("--goal <goalId>", "Target Flight goal (defaults to the first Flight goal on the plan)")
     .option("--from <code>", "Origin airport code (e.g., LAX)")
     .requiredOption("--to <code>", "Destination airport code (e.g., NRT)")
@@ -393,7 +436,16 @@ export function registerSearchCommands(program: Command): void {
           warnPastDate(opts.return, "--return");
         }
 
-        const tripPlanId = resolvePlanId(opts);
+        // Auto-scaffold a draft plan when no --plan/last-search exists (VOY-1761).
+        // Shape: flight-only (no hotel), and one-way unless --return is given.
+        const { tripPlanId, scaffolded } = await resolvePlanForSearch(
+          opts,
+          {
+            title: generateTripTitle({ to: destination, depart: opts.date }),
+            shape: { oneWay: !opts.return, flightOnly: true, hotelOnly: false },
+          },
+          quiet,
+        );
         const dryRun = !!opts.dryRun;
         const showProgress = !dryRun && !opts.json && !opts.agent;
 
@@ -404,7 +456,11 @@ export function registerSearchCommands(program: Command): void {
         } finally {
           travellerSpinner?.stop();
         }
-        if (!dryRun && travellerIds.length === 0) {
+        // A freshly auto-scaffolded plan is traveller-less by design (VOY-1761:
+        // traveller checkout blockers are out of scope, and the backend accepts a
+        // flight search with zero travellers). Only require travellers on a plan
+        // the caller pointed us at.
+        if (!dryRun && travellerIds.length === 0 && !scaffolded) {
           throw new CliError(CliErrorCode.VALIDATION, `No travellers on this plan. Add one first:\n  voyagier travellers add --plan ${shellArg(tripPlanId)} --first <name> --last <name> --type ADULT`);
         }
 
@@ -525,6 +581,7 @@ export function registerSearchCommands(program: Command): void {
           process.stdout.write(JSON.stringify(searchJsonBody(
             {
               tripPlanId,
+              ...(scaffolded ? { scaffolded: true } : {}),
               selectionId,
               ...(returnSelectionId ? { returnSelectionId } : {}),
               isRoundTrip,
@@ -542,6 +599,7 @@ export function registerSearchCommands(program: Command): void {
           const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`;
           const lines: string[] = [];
           lines.push(`### Flights (${origin} → ${destination})`);
+          if (scaffolded) lines.push(`_No plan given — created draft plan \`${tripPlanId}\`._`);
           if (options.length === 0) {
             // Options are produced asynchronously by the monitor once the goal's
             // inputs are sufficient. Empty here usually means "still fetching",
@@ -593,6 +651,7 @@ export function registerSearchCommands(program: Command): void {
     .command("hotels")
     .description("Search for hotels")
     .option("--plan <id>", "Trip plan ID (or auto-resolved from last search)")
+    .option("--client <ref>", "Client id, email, or name for the auto-created draft plan when no --plan is given (same semantics as plan-trip)")
     .option("--goal <goalId>", "Target Hotel goal (defaults to the first Hotel goal on the plan)")
     .requiredOption("--location <place>", "Destination (city name)")
     .requiredOption("--checkin <date>", "Check-in date (YYYY-MM-DD)")
@@ -606,6 +665,7 @@ export function registerSearchCommands(program: Command): void {
     .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL query without executing")
     .option("--verbose", "Show request details sent to the API")
+    .option("--no-input", "Never prompt for missing input; fail instead (for scripts, agents, CI)")
     .action(async (opts) => {
       try {
         validateDate(opts.checkin, "--checkin");
@@ -615,7 +675,16 @@ export function registerSearchCommands(program: Command): void {
         warnPastDate(opts.checkout, "--checkout");
         warnPastDate(opts.checkout, "--checkout");
 
-        const tripPlanId = resolvePlanId(opts);
+        const quietHotel = !!(opts.json || opts.agent);
+        // Auto-scaffold a hotel-only draft plan when no --plan/last-search exists.
+        const { tripPlanId, scaffolded } = await resolvePlanForSearch(
+          opts,
+          {
+            title: generateTripTitle({ hotel: opts.location, checkin: opts.checkin }),
+            shape: { oneWay: false, flightOnly: false, hotelOnly: true },
+          },
+          quietHotel,
+        );
         const dryRun = !!opts.dryRun;
         const showProgress = !dryRun && !opts.json && !opts.agent;
 
@@ -626,7 +695,9 @@ export function registerSearchCommands(program: Command): void {
         } finally {
           travellerSpinner?.stop();
         }
-        if (!dryRun && travellerIds.length === 0) {
+        // Auto-scaffolded plans are traveller-less by design (VOY-1761); only
+        // require travellers on a plan the caller pointed us at.
+        if (!dryRun && travellerIds.length === 0 && !scaffolded) {
           throw new CliError(CliErrorCode.VALIDATION, `No travellers on this plan. Add one first:\n  voyagier travellers add --plan ${shellArg(tripPlanId)} --first <name> --last <name> --type ADULT`);
         }
 
@@ -767,6 +838,7 @@ export function registerSearchCommands(program: Command): void {
           process.stdout.write(JSON.stringify(searchJsonBody(
             {
               tripPlanId: tripPlanId,
+              ...(scaffolded ? { scaffolded: true } : {}),
               selectionId: selectionId,
               url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
             },
@@ -782,6 +854,7 @@ export function registerSearchCommands(program: Command): void {
           const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`;
           const lines: string[] = [];
           lines.push(`### Hotels (${opts.location})`);
+          if (scaffolded) lines.push(`_No plan given — created draft plan \`${tripPlanId}\`._`);
           if (options.length === 0) {
             // Empty immediately after create usually means the monitor is still
             // fetching, not that there are no hotels — poll first (VOY-1421).
