@@ -185,6 +185,58 @@ export interface ScaffoldOptions {
   progress?: boolean;
   /** Print the createTripPlan mutation instead of executing (mirrors --dry-run). */
   dryRun?: boolean;
+  /**
+   * When true, resolveClient shows an interactive picker on MULTIPLE_CLIENTS
+   * instead of throwing (VOY-1762). Callers pass the result of isInteractive()
+   * here — never a global guess.
+   */
+  interactive?: boolean;
+  /**
+   * Flags the caller already typed, carried forward into the MULTIPLE_CLIENTS
+   * retry hint (e.g. `--title 'Paris'`). Surfaces only in the non-interactive
+   * error text.
+   */
+  clientHintFlags?: string;
+}
+
+/** Three-letter month abbreviations for generated titles. */
+const MONTH_ABBR = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/**
+ * Format a `YYYY-MM-DD` string (or, absent/unparseable, `now`) as `Mon YYYY`
+ * — e.g. "Aug 2026". `now` is injectable purely so the fallback is testable.
+ */
+function formatMonthYear(dateStr: string | undefined, now: Date): string {
+  let d: Date | null = null;
+  const m = dateStr ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim()) : null;
+  if (m) {
+    const [y, mo, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    const parsed = new Date(y, mo - 1, day);
+    // Reject calendar overflow (e.g. 2026-02-31 silently becomes Mar 2026):
+    // only accept dates that round-trip to the same Y/M/D.
+    if (parsed.getFullYear() === y && parsed.getMonth() === mo - 1 && parsed.getDate() === day) d = parsed;
+  }
+  if (!d) d = now;
+  return `${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/**
+ * Generate a sensible default trip title for the interactive `--title` prompt
+ * (VOY-1762): `<destination> · <Mon YYYY>` when a destination/date is derivable
+ * from the args the caller already typed, else `Trip · <Mon YYYY>`.
+ *
+ * `now` is injectable for deterministic tests; production passes the real clock.
+ */
+export function generateTripTitle(
+  args: { to?: string; hotel?: string; depart?: string; checkin?: string },
+  now: Date = new Date(),
+): string {
+  const destination = (args.to || args.hotel)?.trim();
+  const monYear = formatMonthYear(args.depart || args.checkin, now);
+  return `${destination || "Trip"} · ${monYear}`;
 }
 
 export interface ScaffoldResult {
@@ -212,7 +264,10 @@ export async function scaffoldPlan(opts: ScaffoldOptions): Promise<ScaffoldResul
   const chatty = !opts.quiet;
 
   // Step 1: Resolve the client.
-  const resolved = await resolveClient(opts.client);
+  const resolved = await resolveClient(opts.client, {
+    interactive: opts.interactive,
+    carryFlags: opts.clientHintFlags,
+  });
   if (resolved.autoResolved && chatty) {
     const note = resolved.isSelf
       ? `auto-resolved client: you (${resolved.name}, self)\n`

@@ -22,6 +22,7 @@ import chalk from "chalk";
 import { graphql, graphqlWithFieldFallback } from "../api.js";
 import { jsonOutput, fatal } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
+import { promptPick } from "../prompt.js";
 import {
   LIST_TRIP_PLAN_CLIENTS,
   LIST_TRIP_PLAN_CLIENTS_WITH_SELF,
@@ -135,6 +136,28 @@ export interface ResolvedClient {
 }
 
 /**
+ * Interactivity signal for resolveClient (VOY-1762).
+ *
+ * The signal is passed in EXPLICITLY, never guessed from a global — resolveClient
+ * has many callers, and only the ones that opt in (a human at a TTY) should ever
+ * see a picker. Non-interactive callers keep the exact CliError-throwing behavior
+ * their specs assert.
+ */
+export interface ResolveClientOptions {
+  /**
+   * When true and multiple ACTIVE clients match, show a numbered picker instead
+   * of throwing MULTIPLE_CLIENTS. Only ever set this for a human at a TTY.
+   */
+  interactive?: boolean;
+  /**
+   * Flags the caller already typed, carried forward into the MULTIPLE_CLIENTS
+   * retry hint so the suggested command doesn't silently drop them (e.g.
+   * `--title 'Paris'`). Only surfaces in the non-interactive error text.
+   */
+  carryFlags?: string;
+}
+
+/**
  * Resolve the active client when a command needs one.
  * Returns id, display name, and an autoResolved flag for callers that want to
  * surface "we picked this for you" feedback.
@@ -145,7 +168,10 @@ export interface ResolvedClient {
  *   - canonical id — UUID or `clt_…` prefix → returned directly, no lookup
  *   - any other string            → looked up as case-insensitive name match (Active only)
  */
-export async function resolveClient(explicit?: string): Promise<ResolvedClient> {
+export async function resolveClient(
+  explicit?: string,
+  options: ResolveClientOptions = {},
+): Promise<ResolvedClient> {
   if (explicit === "") {
     throw new CliError(
       CliErrorCode.CLIENT_REQUIRED,
@@ -184,10 +210,20 @@ export async function resolveClient(explicit?: string): Promise<ResolvedClient> 
     }
     if (matches.length > 1) {
       const list = matches.map((c) => `    ${c.id}  ${c.name}`).join("\n");
-      throw new CliError(
+      const ambiguous = new CliError(
         CliErrorCode.MULTIPLE_CLIENTS,
         `Multiple ACTIVE clients matched "${explicit}". Specify --client <id|email>:\n${list}\n  Tip: an email or id is unambiguous.`
       );
+      if (options.interactive) {
+        const chosen = await promptPick(
+          `Multiple ACTIVE clients matched "${explicit}". Which one?`,
+          matches,
+          (c) => `${c.name}${c.email ? ` <${c.email}>` : ""}`,
+          ambiguous,
+        );
+        return { id: chosen.id, name: chosen.name, autoResolved: false };
+      }
+      throw ambiguous;
     }
     return { id: matches[0].id, name: matches[0].name, autoResolved: false };
   }
@@ -219,18 +255,34 @@ export async function resolveClient(explicit?: string): Promise<ResolvedClient> 
     ? "\n  Note: more than one client is flagged as your self client — pass --client <id> explicitly."
     : "";
   const exampleName = shellArg(active[0].name || "Client Name");
-  throw new CliError(
+  // Carry forward the flags the caller already typed so the retry command is
+  // copy-pasteable (VOY-1762) — previously the hint dropped e.g. --title.
+  const carry = options.carryFlags ? ` ${options.carryFlags}` : "";
+  const ambiguous = new CliError(
     CliErrorCode.MULTIPLE_CLIENTS,
-    `Multiple ACTIVE clients found. Specify --client <id|name|email>:\n${list}${selfHint}\n  Fix: voyagier plan-trip --client ${exampleName}  (--client accepts an id, name, or email)`
+    `Multiple ACTIVE clients found. Specify --client <id|name|email>:\n${list}${selfHint}\n  Fix: voyagier plan-trip --client ${exampleName}${carry}  (--client accepts an id, name, or email)`
   );
+  if (options.interactive) {
+    const chosen = await promptPick(
+      "Multiple ACTIVE clients found. Which one?",
+      active,
+      (c) => `${c.name}${c.isSelf ? " (self)" : ""}${c.email ? ` <${c.email}>` : ""}`,
+      ambiguous,
+    );
+    return { id: chosen.id, name: chosen.name, autoResolved: false };
+  }
+  throw ambiguous;
 }
 
 /**
  * Thin wrapper around resolveClient — returns just the id.
  * Kept for backward compatibility with existing callers that don't need name/autoResolved.
  */
-export async function resolveClientId(explicit?: string): Promise<string> {
-  return (await resolveClient(explicit)).id;
+export async function resolveClientId(
+  explicit?: string,
+  options?: ResolveClientOptions,
+): Promise<string> {
+  return (await resolveClient(explicit, options)).id;
 }
 
 export function registerClientsCommands(program: Command): void {

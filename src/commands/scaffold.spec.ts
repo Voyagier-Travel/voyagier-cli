@@ -27,10 +27,12 @@ jest.unstable_mockModule("./clients.js", () => ({
 // ── Dynamic import after mocks ─────────────────────────────────────────────
 
 let scaffoldPlan: typeof import("./scaffold.js").scaffoldPlan;
+let generateTripTitle: typeof import("./scaffold.js").generateTripTitle;
 
 beforeAll(async () => {
   const mod = await import("./scaffold.js");
   scaffoldPlan = mod.scaffoldPlan;
+  generateTripTitle = mod.generateTripTitle;
 });
 
 // Default scaffold goal graph (mirrors the server template) for prune tests.
@@ -76,6 +78,46 @@ describe("scaffoldPlan — happy path", () => {
     await scaffoldPlan({ client: "client-1", title: "Dry", dryRun: true });
     const [, , options] = mockGraphql.mock.calls[0] as [string, any, any];
     expect(options).toEqual({ dryRun: true });
+  });
+
+  // VOY-1762: the interactivity signal + hint carry-forward flags must be
+  // forwarded to resolveClient explicitly (never guessed globally).
+  it("forwards interactive + clientHintFlags to resolveClient", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlan: { id: "plan-1", title: "T" } });
+    await scaffoldPlan({ client: "Smith", title: "T", interactive: true, clientHintFlags: "--title 'T'" });
+    expect(mockResolveClient).toHaveBeenCalledWith("Smith", { interactive: true, carryFlags: "--title 'T'" });
+  });
+
+  it("defaults to non-interactive resolveClient when no signal is passed", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlan: { id: "plan-1", title: "T" } });
+    await scaffoldPlan({ client: "client-1", title: "T" });
+    expect(mockResolveClient).toHaveBeenCalledWith("client-1", { interactive: undefined, carryFlags: undefined });
+  });
+});
+
+// ── VOY-1762: generated default title for the interactive --title prompt ──────
+describe("generateTripTitle", () => {
+  const now = new Date(2026, 6, 15); // 2026-07-15 (deterministic clock)
+
+  it("uses destination + Mon YYYY from --to and --depart", () => {
+    expect(generateTripTitle({ to: "CDG", depart: "2026-09-03" }, now)).toBe("CDG · Sep 2026");
+  });
+
+  it("rejects calendar-overflow dates instead of silently rolling them (Copilot, PR #131)", () => {
+    // 2026-02-31 would overflow to Mar 2026 via new Date(); fall back to `now` instead.
+    expect(generateTripTitle({ to: "CDG", depart: "2026-02-31" }, now)).toBe("CDG · Jul 2026");
+  });
+
+  it("falls back to --hotel for destination and --checkin for the date", () => {
+    expect(generateTripTitle({ hotel: "Paris", checkin: "2026-12-20" }, now)).toBe("Paris · Dec 2026");
+  });
+
+  it("uses `Trip` + the current Mon YYYY when nothing is derivable", () => {
+    expect(generateTripTitle({}, now)).toBe("Trip · Jul 2026");
+  });
+
+  it("uses the current month when the date is unparseable but a destination exists", () => {
+    expect(generateTripTitle({ to: "Rome", depart: "soon" }, now)).toBe("Rome · Jul 2026");
   });
 });
 

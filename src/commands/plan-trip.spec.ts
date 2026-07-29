@@ -100,6 +100,16 @@ jest.unstable_mockModule("./clients.js", () => ({
   resolveClient: jest.fn().mockResolvedValue({ id: "client-1", name: "Test Client", autoResolved: false }),
 }));
 
+// VOY-1762: default non-interactive so every existing test keeps its exact
+// non-TTY behavior; individual tests flip mockIsInteractive to exercise prompts.
+const mockIsInteractive = jest.fn(() => false);
+const mockPromptText = jest.fn<() => Promise<string>>();
+jest.unstable_mockModule("../prompt.js", () => ({
+  isInteractive: mockIsInteractive,
+  promptText: mockPromptText,
+  promptPick: jest.fn(),
+}));
+
 jest.unstable_mockModule("../agent-output.js", () => ({
   agentFlightOptions: jest.fn().mockReturnValue("1. AA · 10h · $500"),
   agentHotelOptions: jest.fn().mockReturnValue("1. Grand Hotel · $200/night"),
@@ -380,6 +390,26 @@ describe("plan-trip scaffold (VOY-1414)", () => {
     expect(mockGraphql).toHaveBeenCalledTimes(2);
     expect(out.nextSteps.some((s: string) => s.includes("selection-options"))).toBe(true);
     expect(out.nextSteps.some((s: string) => s.includes("select --selection-id"))).toBe(true);
+  });
+
+  it("prompts for --title with a generated default when interactive and none given (VOY-1762)", async () => {
+    mockIsInteractive.mockReturnValue(true);
+    mockPromptText.mockResolvedValue("Prompted Title");
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-i", title: "Prompted Title" } })
+      .mockResolvedValueOnce({ tripPlanTravellers: [] });
+    try {
+      // No --json: the real isInteractive() gate disables prompting under
+      // --json, so exercising the prompt path with it would be unreachable
+      // in production (Copilot review, PR #131).
+      await runPlanTrip(["--client", "client-1"]);
+      const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+      expect(vars.input.title).toBe("Prompted Title");
+      // A generated `<...> · <Mon YYYY>` default is offered to the prompt.
+      expect(mockPromptText).toHaveBeenCalledWith("Trip title: ", { default: expect.stringContaining("·") });
+    } finally {
+      mockIsInteractive.mockReturnValue(false);
+    }
   });
 
   it("suggests a search flights next-step when --to/--depart given (but does not run it)", async () => {

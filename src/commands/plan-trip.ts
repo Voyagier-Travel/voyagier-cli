@@ -9,7 +9,8 @@ import {
 import { validateDate, warnPastDate, validateIata, deriveBaseUrl, shellArg } from "../utils.js";
 import { progress, warn, fatal, jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
-import { scaffoldPlan, addTravellers, validateShapeFlags, selectGoalsToPrune } from "./scaffold.js";
+import { scaffoldPlan, addTravellers, validateShapeFlags, selectGoalsToPrune, generateTripTitle } from "./scaffold.js";
+import { isInteractive, promptText } from "../prompt.js";
 import type { PrunableGoal, ShapeFlags } from "./scaffold.js";
 
 // Re-exported so existing specs (which import them from ./plan-trip) keep
@@ -22,6 +23,37 @@ interface TripPlan {
   title: string;
   startDate?: string;
   endDate?: string;
+}
+
+/**
+ * Assemble the flags the user already typed into a copy-pasteable snippet, so
+ * the MULTIPLE_CLIENTS retry hint carries them forward instead of dropping them
+ * (VOY-1762). Values are shell-quoted; boolean shape flags are emitted bare.
+ */
+export function buildClientHintFlags(opts: {
+  title?: string;
+  from?: string;
+  to?: string;
+  depart?: string;
+  return?: string;
+  hotel?: string;
+  travellers?: string;
+  oneWay?: boolean;
+  flightOnly?: boolean;
+  hotelOnly?: boolean;
+}): string {
+  const parts: string[] = [];
+  if (opts.title) parts.push(`--title ${shellArg(opts.title)}`);
+  if (opts.from) parts.push(`--from ${shellArg(opts.from)}`);
+  if (opts.to) parts.push(`--to ${shellArg(opts.to)}`);
+  if (opts.depart) parts.push(`--depart ${shellArg(opts.depart)}`);
+  if (opts.return) parts.push(`--return ${shellArg(opts.return)}`);
+  if (opts.hotel) parts.push(`--hotel ${shellArg(opts.hotel)}`);
+  if (opts.travellers) parts.push(`--travellers ${shellArg(opts.travellers)}`);
+  if (opts.oneWay) parts.push("--one-way");
+  if (opts.flightOnly) parts.push("--flight-only");
+  if (opts.hotelOnly) parts.push("--hotel-only");
+  return parts.join(" ");
 }
 
 interface Traveller {
@@ -106,14 +138,22 @@ Examples:
     .option("--hotel-only", "Lodging only: prune ALL flight goals from the scaffold (conflicts with flight flags)")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
+    .option("--no-input", "Never prompt for missing input; fail instead (for scripts, agents, CI)")
     .action(async (opts) => {
       const json = !!opts.json;
       const agent = !!opts.agent;
 
       try {
-        // Validate --plan / --title
+        // Validate --plan / --title. When creating a new plan and no title was
+        // given, ask for one at an interactive TTY with a generated default
+        // (VOY-1762); non-interactively keep the exact hard failure.
         if (!opts.plan && !opts.title) {
-          fatal("--title is required when --plan is not provided.");
+          if (isInteractive(opts)) {
+            opts.title = await promptText("Trip title: ", { default: generateTripTitle(opts) });
+          }
+          if (!opts.title) {
+            fatal("--title is required when --plan is not provided.");
+          }
         }
 
         // Validate trip-shape flag combinations early (cheap, no API calls).
@@ -182,6 +222,8 @@ Examples:
             travellers: opts.travellers,
             shape,
             quiet: json || agent,
+            interactive: isInteractive(opts),
+            clientHintFlags: buildClientHintFlags(opts),
           });
           plan = scaffolded.plan;
           travellerIds = scaffolded.travellerIds;

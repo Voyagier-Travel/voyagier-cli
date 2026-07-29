@@ -570,6 +570,48 @@ describe("registerSearchCommands", () => {
         code: CliErrorCode.API_ERROR,
       });
     });
+
+    // VOY-1762: --date became an .option() (so a TTY can be prompted), but a
+    // missing --date must STILL hard-fail non-interactively (jest is non-TTY)
+    // reproducing commander's original `.requiredOption` failure BYTE-FOR-BYTE:
+    // the exact string on stderr, an empty stdout, and exit code 1.
+    it("missing --date hard-fails non-interactively, byte-matching commander's required-option failure", async () => {
+      const err = await buildProgram()
+        .parseAsync(["node", "v", "search", "flights", "--plan", "plan-1", "--from", "LAX", "--to", "NRT"])
+        .catch((e) => e as { code?: string; exitCode?: number; message?: string });
+      // Exact commander bytes: `error: ` prefix, no trailing period, no added hint.
+      expect(err.message).toBe("error: required option '--date <date>' not specified");
+      // Commander's own exit semantics (throws under exitOverride).
+      expect(err.code).toBe("commander.missingMandatoryOptionValue");
+      expect(err.exitCode).toBe(1);
+      // stderr carries the message; stdout stays empty.
+      expect(stderrWrites.join("")).toBe("error: required option '--date <date>' not specified\n");
+      expect(stdout()).toBe("");
+    });
+
+    // The date error must preempt origin resolution: `--to` set, no `--date` and
+    // no origin — commander used to report the missing --date at parse time,
+    // BEFORE any action code ran. Assert we still fail on --date, not origin.
+    it("missing --date preempts the 'No origin specified' error", async () => {
+      mockGetHomeAirports.mockReturnValue([]);
+      const err = await buildProgram()
+        .parseAsync(["node", "v", "search", "flights", "--plan", "plan-1", "--to", "NRT"])
+        .catch((e) => e as { message?: string });
+      expect(err.message).toBe("error: required option '--date <date>' not specified");
+    });
+
+    // --json is a non-interactive machine mode: same commander failure, and
+    // stdout MUST stay empty (no JSON error envelope) exactly as when the parser
+    // rejected the missing required option.
+    it("missing --date under --json: commander bytes on stderr, empty stdout", async () => {
+      const err = await buildProgram()
+        .parseAsync(["node", "v", "search", "flights", "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--json"])
+        .catch((e) => e as { message?: string; exitCode?: number });
+      expect(err.message).toBe("error: required option '--date <date>' not specified");
+      expect(err.exitCode).toBe(1);
+      expect(stderrWrites.join("")).toBe("error: required option '--date <date>' not specified\n");
+      expect(stdout()).toBe("");
+    });
   });
 
   // ── hotels ──────────────────────────────────────────────────────────────────
@@ -660,6 +702,19 @@ describe("registerSearchCommands", () => {
       expect(out.topOptions).toHaveLength(1);
       expect(out.topOptions[0].summary).toContain("Snorkel tour");
       expect(mockGraphql.mock.calls.some(c => String(c[0]).includes("addTripPlanDateOption"))).toBe(true);
+    });
+
+    // VOY-1762 regression: missing --date still hard-fails non-interactively,
+    // byte-matching commander's original `.requiredOption` failure.
+    it("missing --date hard-fails non-interactively, byte-matching commander's required-option failure", async () => {
+      const err = await buildProgram()
+        .parseAsync(["node", "v", "search", "activities", "--plan", "plan-1", "--destination", "Bali"])
+        .catch((e) => e as { code?: string; exitCode?: number; message?: string });
+      expect(err.message).toBe("error: required option '--date <date>' not specified");
+      expect(err.code).toBe("commander.missingMandatoryOptionValue");
+      expect(err.exitCode).toBe(1);
+      expect(stderrWrites.join("")).toBe("error: required option '--date <date>' not specified\n");
+      expect(stdout()).toBe("");
     });
 
     it("agent mode reports 'no activities found' on empty options", async () => {
