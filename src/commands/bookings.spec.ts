@@ -41,7 +41,8 @@ const flightBooking = {
   travelEndDate: "2026-09-22T00:00:00Z",
   tripPlanId: "plan-1",
   tripPlan: { id: "plan-1", title: "Paris Trip" },
-  tripPlanItem: { id: "item-1", title: "Flight to Paris" },
+  // Flights link to a product, not a place (VOY-1418 schema split).
+  tripPlanProduct: { id: "prod-1", name: "Flight to Paris" },
   travellers: [{ firstName: "John", lastName: "Doe" }],
 };
 
@@ -51,6 +52,8 @@ const hotelBooking = {
   status: "Pending",
   amount: 15000,
   providerReference: "HREF-2",
+  // Hotels link to a place (VOY-1418 schema split).
+  tripPlanPlace: { id: "place-1", name: "Hôtel de Paris" },
 };
 
 let writes: string[];
@@ -195,16 +198,18 @@ describe("bookings get", () => {
     expect(out).toContain("JetBlue");
     expect(out).toContain("$268.00");
     expect(out).toContain("Paris Trip");
+    // Item line now sourced from the product link (VOY-1418).
     expect(out).toContain("Flight to Paris");
     expect(out).toContain("John Doe");
   });
 
-  it("human mode renders a minimal hotel record without optional fields", async () => {
+  it("renders the item from the place link for a hotel booking", async () => {
     mockGraphql.mockResolvedValueOnce({ getBookingRecord: hotelBooking });
     await run(["get", "bkg_2"]);
     const out = logJoined();
     expect(out).toContain("Booking: Hotel");
     expect(out).toContain("pending");
+    expect(out).toContain("Hôtel de Paris");
   });
 
   it("wraps a graphql failure as API_ERROR", async () => {

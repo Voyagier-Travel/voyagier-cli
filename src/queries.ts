@@ -628,7 +628,8 @@ export const GET_BOOKING_RECORDS = `
       id type status pnr providerName providerReference amount currency
       issueDate travelStartDate travelEndDate tripPlanId
       tripPlan { id title }
-      tripPlanItem { id title }
+      tripPlanPlace { id name }
+      tripPlanProduct { id name }
     }
   }
 `;
@@ -637,7 +638,8 @@ export const GET_BOOKING_RECORDS_BY_USER = `{ getBookingRecordsByUser {
     id type status pnr providerName providerReference amount currency
     issueDate travelStartDate travelEndDate tripPlanId
     tripPlan { id title }
-    tripPlanItem { id title }
+    tripPlanPlace { id name }
+    tripPlanProduct { id name }
   } }`;
 
 export const REFRESH_BOOKING_RECORD = `
@@ -652,7 +654,8 @@ export const GET_BOOKING_RECORD = `
       id type status pnr providerName providerReference amount currency
       issueDate travelStartDate travelEndDate tripPlanId
       tripPlan { id title }
-      tripPlanItem { id title }
+      tripPlanPlace { id name }
+      tripPlanProduct { id name }
       travellers { firstName lastName }
     }
   }

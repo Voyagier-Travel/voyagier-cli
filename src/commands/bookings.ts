@@ -26,7 +26,11 @@ interface BookingRecord {
   travelEndDate?: string;
   tripPlanId?: string;
   tripPlan?: { id: string; title: string };
-  tripPlanItem?: { id: string; title: string };
+  // Backend split the old `tripPlanItem` relation into concrete place/product
+  // links (VOY-1418). A booking carries whichever matches its type — a place
+  // for hotels, a product for flights/activities.
+  tripPlanPlace?: { id: string; name: string };
+  tripPlanProduct?: { id: string; name: string };
   travellers?: Array<{ firstName: string; lastName: string }>;
 }
 
@@ -186,7 +190,8 @@ export function registerBookingsCommands(program: Command): void {
           console.log(`  Plan:       ${r.tripPlan.title}`);
           console.log(chalk.dim(`              ${baseUrl}/plans/${r.tripPlan.id}`));
         }
-        if (r.tripPlanItem) console.log(`  Item:       ${r.tripPlanItem.title}`);
+        const item = r.tripPlanPlace ?? r.tripPlanProduct;
+        if (item) console.log(`  Item:       ${item.name}`);
         if (r.travellers && r.travellers.length > 0) {
           const names = r.travellers.map(t => `${t.firstName} ${t.lastName}`).join(", ");
           console.log(`  Travellers: ${names}`);
