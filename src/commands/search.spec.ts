@@ -1,6 +1,6 @@
 import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals";
 import { Command } from "commander";
-import { CliErrorCode } from "../errors.js";
+import { CliError, CliErrorCode } from "../errors.js";
 import type { SearchState } from "../state.js";
 
 /**
@@ -40,6 +40,14 @@ jest.unstable_mockModule("../config.js", () => ({
   // state.ts (fully mocked) is the only other config consumer in this graph;
   // plan-footer.ts uses getApiUrl above. CONFIG_DIR kept for completeness.
   CONFIG_DIR: "/tmp/voyagier-search-spec-config",
+}));
+
+// VOY-1761: the auto-scaffold path (no --plan, no last-search) delegates client
+// resolution to scaffold.ts → resolveClient. Mock it so the scaffold flow never
+// hits the real clients query (search.spec's api mock has no fieldFallback).
+const mockResolveClient = jest.fn<(explicit?: string, opts?: unknown) => Promise<unknown>>();
+jest.unstable_mockModule("./clients.js", () => ({
+  resolveClient: mockResolveClient,
 }));
 
 let resolvePlanId: (opts: { plan?: string }) => string;
@@ -202,6 +210,8 @@ describe("registerSearchCommands", () => {
     goals?: unknown[];
     options?: unknown[];
     items?: Array<{ id: string; title: string; selections?: Array<{ type: string }> }>;
+    /** Goals the scaffold's ensure step sees (VOY-1761). Default: template graph. */
+    scaffoldGoals?: unknown[];
   }
 
   function installRouter(cfg: RouterOpts = {}): void {
@@ -212,6 +222,13 @@ describe("registerSearchCommands", () => {
     mockGraphql.mockImplementation(async (query: string) => {
       if (query.includes("tripPlanTravellers")) return { tripPlanTravellers: travellers };
       if (query.includes("GoalsForSearch")) return { tripPlanGoals: goals };
+      // VOY-1761 auto-scaffold ops (only exercised by the scaffold tests). Match
+      // the plan-create mutation by its exact "(" so it never captures the
+      // createTripPlanGoal mutation, whose name extends past "CreateTripPlan".
+      if (query.includes("mutation CreateTripPlan(")) return { createTripPlan: { id: "scaffold-plan", title: "MCO · Sep 2026" } };
+      if (query.includes("query TripPlanGoals")) return { tripPlanGoals: cfg.scaffoldGoals ?? [] };
+      if (query.includes("createTripPlanGoal")) return { createTripPlanGoal: { id: "ng-scaffold", name: "Outbound Flights", type: "Flight" } };
+      if (query.includes("deleteTripPlanGoal")) return { deleteTripPlanGoal: true };
       if (query.includes("getTripPlanSelection")) {
         return { getTripPlanSelection: { id: "sel-reused", options } };
       }
@@ -301,6 +318,8 @@ describe("registerSearchCommands", () => {
     mockLoadSearchState.mockReset();
     mockGetHomeAirports.mockReset();
     mockGetHomeAirports.mockReturnValue([]);
+    mockResolveClient.mockReset();
+    mockResolveClient.mockResolvedValue({ id: "client-1", name: "Blog Tester", autoResolved: false });
     stdoutWrites = [];
     stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
       stdoutWrites.push(typeof chunk === "string" ? chunk : String(chunk));
@@ -495,16 +514,6 @@ describe("registerSearchCommands", () => {
       expect(mockGraphql).not.toHaveBeenCalled();
     });
 
-    it("falls back to VALIDATION when --plan omitted and no last-search state", async () => {
-      mockLoadSearchState.mockReturnValue(null);
-      await expect(
-        buildProgram().parseAsync([
-          "node", "v", "search", "flights",
-          "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--json",
-        ]),
-      ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
-    });
-
     it("throws when the plan has no travellers", async () => {
       installRouter({ travellers: [] });
       await expect(
@@ -513,6 +522,113 @@ describe("registerSearchCommands", () => {
           "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--json",
         ]),
       ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    });
+  });
+
+  // ── VOY-1761: auto-scaffold a draft plan when no --plan and no last-search ──
+  describe("search flights auto-scaffold (VOY-1761)", () => {
+    it("no --plan + no last-search: scaffolds a draft plan and runs the search", async () => {
+      mockLoadSearchState.mockReturnValue(null);
+      installRouter({ travellers: [] }); // draft plan is traveller-less by design
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--from", "LAX", "--to", "NRT", "--date", "2026-08-01",
+        "--client", "blog.tester@example.com", "--no-input", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.scaffolded).toBe(true);
+      expect(out.tripPlanId).toBe("scaffold-plan");
+      expect(out.url).toBe("https://dev.voyagier.com/plans/scaffold-plan");
+      // The search still ran against the drafted plan (selection resolved).
+      expect(out.selectionId).toBe("sel-fdec");
+      // Client resolution was delegated with the explicit --client ref.
+      expect(mockResolveClient).toHaveBeenCalledWith("blog.tester@example.com", expect.anything());
+      // The draft plan is created via the shared scaffold mutation.
+      expect(mockGraphql.mock.calls.some(c => String(c[0]).includes("mutation CreateTripPlan("))).toBe(true);
+    });
+
+    it("does NOT throw the no-travellers error on a scaffolded (traveller-less) plan", async () => {
+      mockLoadSearchState.mockReturnValue(null);
+      installRouter({ travellers: [] });
+      // Would previously reject with VALIDATION on 0 travellers; now proceeds.
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--from", "LAX", "--to", "NRT", "--date", "2026-08-01",
+        "--client", "blog.tester@example.com", "--no-input", "--json",
+      ]);
+      expect(JSON.parse(stdout()).scaffolded).toBe(true);
+    });
+
+    it("--return scaffolds a round-trip draft (isRoundTrip true)", async () => {
+      mockLoadSearchState.mockReturnValue(null);
+      installRouter({ goals: buildFlightGoals(true), travellers: [] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--return", "2026-08-10",
+        "--client", "blog.tester@example.com", "--no-input", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.scaffolded).toBe(true);
+      expect(out.isRoundTrip).toBe(true);
+    });
+
+    it("non-interactive (jest is non-TTY) never prompts; surfaces the client error instead", async () => {
+      mockLoadSearchState.mockReturnValue(null);
+      installRouter({ travellers: [] });
+      mockResolveClient.mockRejectedValue(
+        new CliError(CliErrorCode.MULTIPLE_CLIENTS, "Multiple ACTIVE clients found. Specify --client"),
+      );
+      await expect(
+        buildProgram().parseAsync([
+          "node", "v", "search", "flights",
+          "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--no-input", "--json",
+        ]),
+      ).rejects.toMatchObject({ code: CliErrorCode.MULTIPLE_CLIENTS });
+      // resolveClient was asked NOT to run an interactive picker.
+      const call = mockResolveClient.mock.calls[0];
+      expect((call[1] as { interactive?: boolean }).interactive).toBe(false);
+    });
+
+    it("still hard-errors (no scaffold) under --dry-run when no plan/state", async () => {
+      mockLoadSearchState.mockReturnValue(null);
+      installRouter({ travellers: [] });
+      await expect(
+        buildProgram().parseAsync([
+          "node", "v", "search", "flights",
+          "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--dry-run",
+        ]),
+      ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+      // No plan was created.
+      expect(mockGraphql.mock.calls.some(c => String(c[0]).includes("mutation CreateTripPlan("))).toBe(false);
+    });
+
+    it("with --plan given: no scaffold, no 'scaffolded' key (byte-compatible)", async () => {
+      installRouter();
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect("scaffolded" in out).toBe(false);
+      expect(mockResolveClient).not.toHaveBeenCalled();
+      expect(mockGraphql.mock.calls.some(c => String(c[0]).includes("mutation CreateTripPlan("))).toBe(false);
+      // --plan path never touches the last-search state file (loadSearchState
+      // has side effects on corrupted files — must stay unread here).
+      expect(mockLoadSearchState).not.toHaveBeenCalled();
+    });
+
+    it("reads the last-search state exactly once on the fallback path (no scaffold)", async () => {
+      mockLoadSearchState.mockReturnValue(state("last-search-plan"));
+      installRouter();
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--json",
+      ]);
+      expect(mockLoadSearchState).toHaveBeenCalledTimes(1);
+      const out = JSON.parse(stdout());
+      expect(out.tripPlanId).toBe("last-search-plan");
+      expect("scaffolded" in out).toBe(false);
+      expect(mockGraphql.mock.calls.some(c => String(c[0]).includes("mutation CreateTripPlan("))).toBe(false);
     });
   });
 
@@ -1007,6 +1123,22 @@ describe("registerSearchCommands", () => {
           "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-08-01", "--checkout", "2026-08-05", "--json",
         ]),
       ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    });
+
+    // VOY-1761: hotels get the same auto-scaffold treatment (hotel-only shape).
+    it("auto-scaffolds a hotel-only draft when no --plan/last-search", async () => {
+      mockLoadSearchState.mockReturnValue(null);
+      installRouter({ goals: buildHotelGoals(), travellers: [] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--location", "Paris", "--checkin", "2026-08-01", "--checkout", "2026-08-05",
+        "--client", "blog.tester@example.com", "--no-input", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.scaffolded).toBe(true);
+      expect(out.tripPlanId).toBe("scaffold-plan");
+      expect(out.selectionId).toBe("sel-hdec");
+      expect(mockResolveClient).toHaveBeenCalledWith("blog.tester@example.com", expect.anything());
     });
   });
 
