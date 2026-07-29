@@ -46,7 +46,8 @@ export interface UserContext {
   }>;
   // Hotel loyalty has no server-side profile storage — it is kept locally as a
   // profile default and auto-applied to the user's own traveller at booking
-  // time. Member numbers are stored as provided (chain code + digits).
+  // time. The chain code is stored separately in chainCode; the member number
+  // is stored digits-only (the chain code is prepended at booking time).
   hotelLoyaltyPrograms?: Array<{
     chainCode: string;
     membershipNumber: string;

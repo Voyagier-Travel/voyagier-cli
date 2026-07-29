@@ -2,7 +2,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { createInterface } from "readline/promises";
 import { stdin, stdout } from "process";
-import { openBrowser } from "../utils.js";
+import { openBrowser, maskLoyaltyValue } from "../utils.js";
 
 import { saveCredentials, getToken, getApiUrl, clearCredentials, credentialsExist, saveUserContext, getUserContext } from "../config.js";
 import type { UserContext } from "../config.js";
@@ -272,15 +272,15 @@ function printProfileSummary(ctx: UserContext, me: MeResponse["me"]): void {
     parts.push(`  👤 ${travellerParts.join(" · ")}`);
   }
 
-  // Frequent flyer (membership numbers shown as provided)
+  // Frequent flyer (membership numbers masked to last-4 for display)
   if (me.frequentFlyerPrograms && me.frequentFlyerPrograms.length > 0) {
-    const ffs = me.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${ff.membershipNumber}`).join(", ");
+    const ffs = me.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskLoyaltyValue(ff.membershipNumber)}`).join(", ");
     parts.push(`  ✈️  ${ffs}`);
   }
 
-  // Hotel loyalty (local profile default, shown as provided)
+  // Hotel loyalty (local profile default, masked to last-4 for display)
   if (ctx.hotelLoyaltyPrograms && ctx.hotelLoyaltyPrograms.length > 0) {
-    const hls = ctx.hotelLoyaltyPrograms.map(hl => `${hl.chainCode} ${hl.membershipNumber}`).join(", ");
+    const hls = ctx.hotelLoyaltyPrograms.map(hl => `${hl.chainCode} ${maskLoyaltyValue(hl.membershipNumber)}`).join(", ");
     parts.push(`  🏨 ${hls}`);
   }
 
@@ -363,11 +363,11 @@ export function registerAuthCommands(program: Command): void {
           console.log(`  🛂 Passport:   ••••${ctx.passport.last4} (${ctx.passport.issueCountry}, exp ${ctx.passport.expirationDate})`);
         }
         if (ctx.frequentFlyerPrograms && ctx.frequentFlyerPrograms.length > 0) {
-          const ffs = ctx.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${ff.membershipNumber}`).join(", ");
+          const ffs = ctx.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskLoyaltyValue(ff.membershipNumber)}`).join(", ");
           console.log(`  ✈️  FF:         ${ffs}`);
         }
         if (ctx.hotelLoyaltyPrograms && ctx.hotelLoyaltyPrograms.length > 0) {
-          const hls = ctx.hotelLoyaltyPrograms.map(hl => `${hl.chainCode} ${hl.membershipNumber}`).join(", ");
+          const hls = ctx.hotelLoyaltyPrograms.map(hl => `${hl.chainCode} ${maskLoyaltyValue(hl.membershipNumber)}`).join(", ");
           console.log(`  🏨 Hotel:      ${hls}`);
         }
       } else {
@@ -632,8 +632,8 @@ export function registerAuthCommands(program: Command): void {
         if (!opts.skipFf) {
           console.log(`  ✈️  ${chalk.bold("Frequent Flyer Programs")}`);
           if (me.frequentFlyerPrograms && me.frequentFlyerPrograms.length > 0) {
-            // Already on the profile; membership numbers are shown as provided.
-            const display = me.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${ff.membershipNumber}`).join(", ");
+            // Already on the profile; membership numbers are masked for display.
+            const display = me.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskLoyaltyValue(ff.membershipNumber)}`).join(", ");
             console.log(chalk.dim(`     On file: ${display}`));
             console.log(chalk.green("     ✓ Imported from profile\n"));
           } else if (rl) {
@@ -652,7 +652,7 @@ export function registerAuthCommands(program: Command): void {
                   const number = parts.slice(1).join("");
                   if (/^[A-Z0-9]{2}$/.test(airline)) {
                     programs.push({ airlineCode: airline, membershipNumber: number });
-                    console.log(chalk.green(`     ✓ ${airline} ${number}`));
+                    console.log(chalk.green(`     ✓ ${airline} ${maskLoyaltyValue(number)}`));
                   } else {
                     console.log(chalk.yellow(`     ⚠ Invalid airline code "${airline}" (expected 2 characters)`));
                   }
@@ -679,7 +679,7 @@ export function registerAuthCommands(program: Command): void {
         console.log(`  🏨 ${chalk.bold("Hotel Loyalty")}`);
         const existingHotel = userCtx.hotelLoyaltyPrograms ?? [];
         if (existingHotel.length > 0) {
-          const display = existingHotel.map(hl => `${hl.chainCode} ${hl.membershipNumber}`).join(", ");
+          const display = existingHotel.map(hl => `${hl.chainCode} ${maskLoyaltyValue(hl.membershipNumber)}`).join(", ");
           console.log(chalk.dim(`     On file: ${display}`));
         }
         if (rl) {
@@ -702,7 +702,7 @@ export function registerAuthCommands(program: Command): void {
                   console.log(chalk.yellow("     ⚠ Member number must be digits only (the chain code is added at booking time)"));
                 } else {
                   programs.push({ chainCode: chain, membershipNumber: number });
-                  console.log(chalk.green(`     ✓ ${chain} ${number}`));
+                  console.log(chalk.green(`     ✓ ${chain} ${maskLoyaltyValue(number)}`));
                 }
               } else {
                 console.log(chalk.yellow("     ⚠ Format: CHAIN NUMBER (e.g. HI 12345678)"));
@@ -740,10 +740,11 @@ export function registerAuthCommands(program: Command): void {
                 membershipNumber: ff.membershipNumber,
               }));
             }
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            console.log(chalk.red(`     ✗ Couldn't sync to your profile: ${message}`));
-            console.log(chalk.dim("     Your passport / frequent-flyer changes were not saved.\n"));
+          } catch {
+            // Never echo the raw upstream error: its variables can include the
+            // full passport / membership numbers we just tried to sync.
+            console.log(chalk.red("     ✗ Profile sync failed — your local setup is saved."));
+            console.log(chalk.dim("     Run `voyagier auth setup` again later or check `voyagier doctor`.\n"));
           }
         }
 
@@ -760,11 +761,11 @@ export function registerAuthCommands(program: Command): void {
         if (userCtx.preferredCabin) console.log(`     Cabin:     ${CABIN_LABELS[userCtx.preferredCabin]}`);
         if (userCtx.passport) console.log(`     Passport:  ${formatPassport(userCtx.passport)}`);
         if (userCtx.frequentFlyerPrograms && userCtx.frequentFlyerPrograms.length > 0) {
-          const ffs = userCtx.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${ff.membershipNumber}`).join(", ");
+          const ffs = userCtx.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskLoyaltyValue(ff.membershipNumber)}`).join(", ");
           console.log(`     FF:        ${ffs}`);
         }
         if (userCtx.hotelLoyaltyPrograms && userCtx.hotelLoyaltyPrograms.length > 0) {
-          const hls = userCtx.hotelLoyaltyPrograms.map(hl => `${hl.chainCode} ${hl.membershipNumber}`).join(", ");
+          const hls = userCtx.hotelLoyaltyPrograms.map(hl => `${hl.chainCode} ${maskLoyaltyValue(hl.membershipNumber)}`).join(", ");
           console.log(`     Hotel:     ${hls}`);
         }
         console.log(chalk.dim(`\n     Search flights: voyagier search flights --to SJU --date 2026-05-14\n`));

@@ -24,8 +24,10 @@ jest.unstable_mockModule("../api.js", () => ({
 }));
 
 jest.unstable_mockModule("../utils.js", () => ({
-  // openBrowser is the only util auth.ts imports; stub it so no browser launches.
+  // openBrowser is stubbed so no browser launches; maskLoyaltyValue keeps its
+  // real behaviour so the masked-output assertions exercise the shipping logic.
   openBrowser: mockOpenBrowser,
+  maskLoyaltyValue: (value: string) => (value.length > 4 ? `••••${value.slice(-4)}` : "••••"),
 }));
 
 // readline/promises drives the interactive prompt flows. The fake createInterface
@@ -238,8 +240,9 @@ describe("auth status", () => {
     expect(text).toMatch(/BOS \(primary\)/);
     expect(text).toMatch(/Business/);
     expect(text).toMatch(/••••6789/);
-    // Frequent-flyer numbers are shown as provided (not masked).
-    expect(text).toMatch(/DL 1234567890/);
+    // Frequent-flyer membership numbers are masked to last-4 in terminal output.
+    expect(text).toMatch(/DL ••••7890/);
+    expect(text).not.toContain("1234567890");
     // Token is masked, never printed in full.
     expect(text).not.toContain(TEST_TOKEN);
   });
@@ -452,7 +455,35 @@ describe("auth setup", () => {
     // The full passport number must never reach stdout or credentials.json.
     expect(out()).not.toContain("X1234567");
     expect(JSON.stringify(loadCredentials())).not.toContain("X1234567");
+    // Loyalty numbers are masked to last-4 in terminal output (but stored/synced in full).
+    expect(out()).toMatch(/DL ••••7890/);
+    expect(out()).not.toContain("1234567890");
+    expect(out()).not.toContain("12345678");
     expect(out()).toMatch(/Setup complete/);
+  });
+
+  it("interactive: a profile-sync failure never echoes the raw upstream error", async () => {
+    saveCredentials(TEST_TOKEN);
+    setInteractive(true);
+    // Call #1: profile fetch (no FF on file). Call #2: updateMyUser rejects with
+    // an error whose text mimics a leaked request variable (the passport number).
+    mockGraphql
+      .mockResolvedValueOnce(meResponse())
+      .mockRejectedValueOnce(new Error('Bad request: passportNumber="X1234567" rejected'));
+    // airports=Enter (keep BOS), cabin=Enter, passport=Enter (skip),
+    // one FF + Enter (so there is something to sync), hotel=Enter.
+    scriptedAnswers = ["", "", "", "DL 1234567890", "", ""];
+
+    await buildProgram().parseAsync(["node", "v", "auth", "setup"]);
+
+    const text = out();
+    // Generic, reassuring message — never the raw GraphQL error or its variables.
+    expect(text).toMatch(/Profile sync failed/);
+    expect(text).not.toContain("X1234567");
+    expect(text).not.toContain("Bad request");
+    expect(text).not.toContain("rejected");
+    // The sync was attempted (profile fetch + updateMyUser).
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
   });
 
   it("interactive: invalid passport re-prompts with an explanation, then skips without syncing", async () => {

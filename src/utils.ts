@@ -10,6 +10,16 @@ import { hotelStayLabel } from "./hotel-format.js";
 export { formatPrice, cents } from "./format.js";
 
 /**
+ * Mask a potentially sensitive loyalty value for terminal output: member
+ * numbers are write-only everywhere else (server returns code + last4 only),
+ * so human-readable renders and error messages must not echo the full value to
+ * terminals or agent transcripts. Storage and API sync keep the full value.
+ */
+export function maskLoyaltyValue(value: string): string {
+  return value.length > 4 ? `••••${value.slice(-4)}` : "••••";
+}
+
+/**
  * Extract a flight token from a booking data JSONB blob.
  * Checks multiple paths since GDS data structure varies.
  */

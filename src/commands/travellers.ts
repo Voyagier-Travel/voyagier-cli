@@ -5,7 +5,7 @@ import { createInterface } from "readline/promises";
 import { stdin, stdout } from "process";
 import { graphql } from "../api.js";
 import { getApiUrl, getUserContext } from "../config.js";
-import { validateDate, deriveBaseUrl, shellArg } from "../utils.js";
+import { validateDate, deriveBaseUrl, shellArg, maskLoyaltyValue } from "../utils.js";
 import { jsonOutput, fatal, warn } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import {
@@ -23,15 +23,6 @@ function toPascalCase(value: string): string {
 /** Commander collector for repeatable options. */
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
-}
-
-/**
- * Mask a potentially sensitive loyalty value for error output: member numbers
- * are write-only everywhere else (server returns code + last4 only), so error
- * messages must not echo the full value to terminals or agent transcripts.
- */
-function maskLoyaltyValue(value: string): string {
-  return value.length > 4 ? `••••${value.slice(-4)}` : "••••";
 }
 
 /**
