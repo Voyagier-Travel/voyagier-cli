@@ -34,6 +34,30 @@ import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { startSpinner } from "../spinner.js";
+import { isInteractive, promptText } from "../prompt.js";
+
+/**
+ * Resolve a date flag that used to be a commander `requiredOption` (VOY-1762):
+ * return it if present, prompt for it at an interactive TTY, otherwise throw the
+ * same hard failure commander raised for a missing `--date` (non-zero exit, a
+ * message naming `--date <date>`). Agents / CI / --json / --agent / --no-input
+ * all fall through to the throw — exact prior behavior.
+ */
+async function resolveDateOpt(
+  current: string | undefined,
+  opts: { json?: boolean; agent?: boolean; input?: boolean; noInput?: boolean },
+  question: string,
+): Promise<string> {
+  if (current) return current;
+  if (isInteractive(opts)) {
+    const answer = await promptText(question);
+    if (answer) return answer;
+  }
+  throw new CliError(
+    CliErrorCode.VALIDATION,
+    "required option '--date <date>' not specified. Pass --date <YYYY-MM-DD>.",
+  );
+}
 
 interface SelectOption {
   id: string;
@@ -314,7 +338,7 @@ export function registerSearchCommands(program: Command): void {
     .option("--goal <goalId>", "Target Flight goal (defaults to the first Flight goal on the plan)")
     .option("--from <code>", "Origin airport code (e.g., LAX)")
     .requiredOption("--to <code>", "Destination airport code (e.g., NRT)")
-    .requiredOption("--date <date>", "Departure date (YYYY-MM-DD)")
+    .option("--date <date>", "Departure date (YYYY-MM-DD); prompted when omitted at a TTY")
     .option("--return <date>", "Return date (YYYY-MM-DD) for round-trip")
     .option("--max-stops <n>", "Maximum number of stops")
     .option("--sort <field>", "Sort by: price, duration, stops, default", "default")
@@ -322,6 +346,7 @@ export function registerSearchCommands(program: Command): void {
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL query without executing")
+    .option("--no-input", "Never prompt for missing input; fail instead (for scripts, agents, CI)")
     .action(async (opts) => {
       try {
         // Resolve origin: explicit --from, or home airport default
@@ -341,6 +366,7 @@ export function registerSearchCommands(program: Command): void {
         }
 
         const destination = resolveAirportInput(opts.to, "--to", quiet);
+        opts.date = await resolveDateOpt(opts.date, opts, "Departure date (YYYY-MM-DD): ");
         validateDate(opts.date, "--date");
         warnPastDate(opts.date, "--date");
         warnPastDate(opts.date, "--date");
@@ -794,7 +820,7 @@ export function registerSearchCommands(program: Command): void {
     .option("--plan <id>", "Trip plan ID (or auto-resolved from last search)")
     .option("--goal <goalId>", "Target Activity goal (defaults to the first Activity goal on the plan)")
     .requiredOption("--destination <place>", "Destination name (city or region)")
-    .requiredOption("--date <date>", "Travel date (YYYY-MM-DD)")
+    .option("--date <date>", "Travel date (YYYY-MM-DD); prompted when omitted at a TTY")
     .option("--query <text>", "Free text search (e.g. 'snorkeling')")
     .option("--currency <code>", "Currency code", "USD")
     .option("--sort <field>", "Sort by: price, default", "default")
@@ -804,8 +830,10 @@ export function registerSearchCommands(program: Command): void {
     .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL query without executing")
     .option("--verbose", "Show request details sent to the API")
+    .option("--no-input", "Never prompt for missing input; fail instead (for scripts, agents, CI)")
     .action(async (opts) => {
       try {
+        opts.date = await resolveDateOpt(opts.date, opts, "Travel date (YYYY-MM-DD): ");
         validateDate(opts.date, "--date");
         warnPastDate(opts.date, "--date");
 

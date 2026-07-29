@@ -6,7 +6,8 @@ import { validateDate, warnPastDate, formatPrice, formatDateRange, shellArg } fr
 import { resolvePlanArg } from "../../resolve-plan-arg.js";
 import { fatal, jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
-import { scaffoldPlan } from "../scaffold.js";
+import { scaffoldPlan, generateTripTitle } from "../scaffold.js";
+import { isInteractive, promptText } from "../../prompt.js";
 import { planUrl, typeIcon, chosenOption, TripPlan, TripPlanDetail, PaginatedTripPlans } from "./types.js";
 import {
   GET_TRIP_PLANS,
@@ -21,12 +22,27 @@ export function registerCrudCommands(plans: Command): void {
   plans
     .command("create")
     .description("Create a new trip plan (alias of `plan-trip` — the full trip starter)")
-    .requiredOption("--title <title>", "Trip plan title")
+    .option("--title <title>", "Trip plan title; prompted when omitted at a TTY")
     .option("--client <ref>", "Client id, email, or name. Omit to auto-resolve when exactly one ACTIVE client exists.")
     .option("--json", "Output raw JSON")
     .option("--dry-run", "Show the GraphQL query without executing")
+    .option("--no-input", "Never prompt for missing input; fail instead (for scripts, agents, CI)")
     .action(async (opts) => {
       try {
+        // Title was a commander requiredOption; now optional so a human at a TTY
+        // can be prompted (VOY-1762). Non-interactively, reproduce commander's
+        // missing-required-option failure exactly.
+        if (!opts.title) {
+          if (isInteractive(opts)) {
+            opts.title = await promptText("Trip title: ", { default: generateTripTitle({}) });
+          }
+          if (!opts.title) {
+            throw new CliError(
+              CliErrorCode.VALIDATION,
+              "required option '--title <title>' not specified.",
+            );
+          }
+        }
         // `plans create` is a thin alias over the shared scaffold helper — the
         // same create path `plan-trip` (the canonical creation verb) uses. It
         // keeps its minimal surface (no travellers, no shape flags): create
@@ -37,6 +53,8 @@ export function registerCrudCommands(plans: Command): void {
           client: opts.client,
           title: opts.title,
           dryRun: opts.dryRun,
+          interactive: isInteractive(opts),
+          clientHintFlags: opts.title ? `--title ${shellArg(opts.title)}` : undefined,
           // Pre-VOY-1763 contract: `plans create` always wrote the
           // auto-resolved-client note to stderr (even under --json) but never
           // emitted progress lines. progress:false preserves exactly that.

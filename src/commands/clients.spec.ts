@@ -51,11 +51,21 @@ jest.unstable_mockModule("../output.js", () => ({
   fatal: mockFatal,
 }));
 
+// VOY-1762: resolveClient delegates to promptPick when interactive. Stub it so
+// the picker path is exercised deterministically (no real readline / TTY).
+const mockPromptPick = jest.fn();
+jest.unstable_mockModule("../prompt.js", () => ({
+  promptPick: mockPromptPick,
+  promptText: jest.fn(),
+  isInteractive: jest.fn(() => false),
+}));
+
 // ── Dynamic imports ────────────────────────────────────────────────────────
 
 let registerClientsCommands: (program: Command) => void;
-let resolveClientId: (explicit?: string) => Promise<string>;
-let resolveClient: (explicit?: string) => Promise<{ id: string; name: string; autoResolved: boolean; isSelf?: boolean }>;
+type ResolveOpts = { interactive?: boolean; carryFlags?: string };
+let resolveClientId: (explicit?: string, options?: ResolveOpts) => Promise<string>;
+let resolveClient: (explicit?: string, options?: ResolveOpts) => Promise<{ id: string; name: string; autoResolved: boolean; isSelf?: boolean }>;
 
 beforeAll(async () => {
   const mod = await import("./clients.js");
@@ -116,6 +126,7 @@ beforeEach(() => {
   mockGraphql.mockReset();
   mockJsonOutput.mockClear();
   mockFatal.mockClear();
+  mockPromptPick.mockReset();
   stdoutOut = [];
   stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((b: string | Uint8Array) => {
     stdoutOut.push(typeof b === "string" ? b : Buffer.from(b).toString());
@@ -545,6 +556,49 @@ describe("resolveClientId", () => {
     mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient] } });
     const resolved = await resolveClient();
     expect(resolved).toMatchObject({ id: "clt_01HX", autoResolved: true, isSelf: false });
+  });
+
+  // ── VOY-1762: interactive picker + hint carry-forward ──────────────────────
+
+  it("interactive auto-resolve shows a picker and returns the chosen client", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: { items: [sampleClient, { ...sampleClient, id: "clt_OTHER", name: "Other Co" }] },
+    });
+    mockPromptPick.mockResolvedValueOnce({ id: "clt_OTHER", name: "Other Co" });
+    const resolved = await resolveClient(undefined, { interactive: true });
+    expect(mockPromptPick).toHaveBeenCalledTimes(1);
+    expect(resolved).toMatchObject({ id: "clt_OTHER", name: "Other Co", autoResolved: false });
+  });
+
+  it("interactive explicit-name-matches-many shows a picker and returns the chosen client", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: {
+        items: [sampleClient, { ...sampleClient, id: "clt_TWIN", email: "twin@example.com" }],
+      },
+    });
+    mockPromptPick.mockResolvedValueOnce({ id: "clt_TWIN", name: sampleClient.name });
+    const resolved = await resolveClient(sampleClient.name, { interactive: true });
+    expect(mockPromptPick).toHaveBeenCalledTimes(1);
+    expect(resolved.id).toBe("clt_TWIN");
+  });
+
+  it("NON-interactive still throws MULTIPLE_CLIENTS (picker never engaged)", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: { items: [sampleClient, { ...sampleClient, id: "clt_OTHER" }] },
+    });
+    await expect(resolveClient()).rejects.toMatchObject({ code: CliErrorCode.MULTIPLE_CLIENTS });
+    expect(mockPromptPick).not.toHaveBeenCalled();
+  });
+
+  it("carries the caller's flags forward into the MULTIPLE_CLIENTS retry hint", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: { items: [sampleClient, { ...sampleClient, id: "clt_OTHER", name: "Other Co" }] },
+    });
+    const err = await resolveClient(undefined, { carryFlags: "--title 'Paris'" }).catch((e) => e as CliError);
+    expect(err.code).toBe(CliErrorCode.MULTIPLE_CLIENTS);
+    expect(err.message).toContain("--title 'Paris'");
+    // The retry command still names --client and the concrete example.
+    expect(err.message).toContain(`--client '${sampleClient.name}'`);
   });
 });
 

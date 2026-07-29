@@ -570,6 +570,17 @@ describe("registerSearchCommands", () => {
         code: CliErrorCode.API_ERROR,
       });
     });
+
+    // VOY-1762: --date became an .option() (so a TTY can be prompted), but a
+    // missing --date must STILL hard-fail non-interactively (jest is non-TTY)
+    // with the same required-option semantics commander used to enforce.
+    it("missing --date hard-fails non-interactively with --date <date> required semantics", async () => {
+      const err = await buildProgram()
+        .parseAsync(["node", "v", "search", "flights", "--plan", "plan-1", "--from", "LAX", "--to", "NRT"])
+        .catch((e) => e as { code?: CliErrorCode; message?: string });
+      expect(err.code).toBe(CliErrorCode.VALIDATION);
+      expect(err.message).toContain("--date <date>");
+    });
   });
 
   // ── hotels ──────────────────────────────────────────────────────────────────
@@ -660,6 +671,15 @@ describe("registerSearchCommands", () => {
       expect(out.topOptions).toHaveLength(1);
       expect(out.topOptions[0].summary).toContain("Snorkel tour");
       expect(mockGraphql.mock.calls.some(c => String(c[0]).includes("addTripPlanDateOption"))).toBe(true);
+    });
+
+    // VOY-1762 regression: missing --date still hard-fails non-interactively.
+    it("missing --date hard-fails non-interactively with --date <date> required semantics", async () => {
+      const err = await buildProgram()
+        .parseAsync(["node", "v", "search", "activities", "--plan", "plan-1", "--destination", "Bali"])
+        .catch((e) => e as { code?: CliErrorCode; message?: string });
+      expect(err.code).toBe(CliErrorCode.VALIDATION);
+      expect(err.message).toContain("--date <date>");
     });
 
     it("agent mode reports 'no activities found' on empty options", async () => {
