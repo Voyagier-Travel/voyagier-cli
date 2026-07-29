@@ -1,103 +1,21 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
-import {
-  GET_SELECTION_WITH_MONITOR,
-  GET_BLUEPRINT_MONITOR,
-  REFRESH_SELECTION_OPTIONS,
-  GET_HOTEL_OPTION_DATA,
-} from "../queries.js";
+import { GET_HOTEL_OPTION_DATA } from "../queries.js";
 import { deriveRoomStay, type RoomStay } from "../hotel-format.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
+import { isTerminal, type SelectionStatusResult } from "../selection-status.js";
+import { deriveChosen, deriveBlockedOn } from "../choices.js";
 import {
-  classifySelection,
-  isTerminal,
-  type SelectionState,
-  type SelectionStatusResult,
-} from "../selection-status.js";
-import { deriveChosen, deriveBlockedOn, type RawTravellerChoice, type RawSelectionInput } from "../choices.js";
+  loadSelectionState,
+  pollSelectionOptions,
+  DEFAULT_RETRY_AFTER_MS,
+} from "../selection-wait.js";
 import { spinnerAnimates, startSpinner } from "../spinner.js";
 
 // Re-exported so downstream consumers (and specs) keep one import site.
 export { deriveChosen, deriveBlockedOn };
-
-interface RawOption {
-  id: string;
-  name: string;
-  price?: number | null;
-  time?: string | null;
-  airline?: string | null;
-  duration?: string | null;
-  sortOrder?: number | null;
-}
-
-interface RawSelection {
-  __typename: string;
-  id: string;
-  type?: string | null;
-  blueprintMonitorId?: string | null;
-  parentOptionId?: string | null;
-  travellerOptionChoices?: RawTravellerChoice[] | null;
-  inputs?: RawSelectionInput[] | null;
-  options?: RawOption[] | null;
-}
-
-interface RawMonitor {
-  id: string;
-  type?: string | null;
-  queryVersion?: number | null;
-  fetchedAt?: string | null;
-  lastFetchAttempt?: string | null;
-  lastFetchError?: string | null;
-}
-
-/** Fetch a selection + (if it has one) its monitor, then classify. Pure I/O + classify. */
-async function loadSelectionState(
-  selectionId: string,
-  retryAfterMs: number,
-): Promise<{ raw: RawSelection; result: SelectionStatusResult }> {
-  const data = await graphql<{ getTripPlanSelection: RawSelection | null }>(
-    GET_SELECTION_WITH_MONITOR,
-    { tripPlanSelectionId: selectionId },
-  );
-  const raw = data.getTripPlanSelection;
-  if (!raw || !raw.id) {
-    throw new CliError(CliErrorCode.NOT_FOUND, `Selection ${selectionId} not found.`);
-  }
-
-  let monitor: RawMonitor | null = null;
-  if (raw.blueprintMonitorId) {
-    try {
-      const m = await graphql<{ blueprintMonitor: RawMonitor | null }>(GET_BLUEPRINT_MONITOR, {
-        id: raw.blueprintMonitorId,
-      });
-      monitor = m.blueprintMonitor;
-    } catch {
-      // Monitor read is best-effort; absence just means we can't refine FETCHING vs NO_RESULTS.
-      monitor = null;
-    }
-  }
-
-  const state: SelectionState = {
-    id: raw.id,
-    type: raw.type,
-    blueprintMonitorId: raw.blueprintMonitorId,
-    optionCount: (raw.options ?? []).length,
-    monitor: monitor
-      ? {
-          id: monitor.id,
-          fetchedAt: monitor.fetchedAt,
-          lastFetchAttempt: monitor.lastFetchAttempt,
-          lastFetchError: monitor.lastFetchError,
-        }
-      : null,
-  };
-
-  return { raw, result: classifySelection(state, { retryAfterMs }) };
-}
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
  * VOY-1724: room/rate options carry a nightly rate breakdown + check-in/out
@@ -134,7 +52,7 @@ export function registerSelectionOptionsCommands(program: Command): void {
     .option("--timeout <seconds>", "Max seconds to wait when --wait is set (default 30)", "30")
     .option("--human", "Force human-readable output")
     .action(async (selectionId: string, opts) => {
-      const retryAfterMs = 2000;
+      const retryAfterMs = DEFAULT_RETRY_AFTER_MS;
       // Parse THEN clamp: an explicit `--timeout 0` must clamp to 1s (consistent
       // with the Math.max floor), not silently revert to the 30s default via `|| 30`.
       const parsedTimeout = parseInt(opts.timeout, 10);
@@ -146,50 +64,36 @@ export function registerSelectionOptionsCommands(program: Command): void {
         let { raw, result } = await loadSelectionState(selectionId, retryAfterMs);
 
         if (opts.wait && !isTerminal(result.status)) {
-          // Kick a refresh (no-op server-side if not auto-fetchable), then poll.
-          try {
-            await graphql(REFRESH_SELECTION_OPTIONS, { selectionId });
-          } catch {
-            // Refresh failure isn't fatal — polling will reflect real monitor state.
-          }
-
-          const startedAt = Date.now();
-          const deadline = startedAt + timeoutMs;
-          let delay = retryAfterMs;
           // Heartbeat to stderr so the poll loop is never a silent black box,
           // while --json stdout stays clean (VOY-1437). On an interactive TTY
           // the heartbeat is a live in-place spinner; everywhere else (pipes,
           // CI, agents) it stays byte-identical to the pre-spinner per-poll
           // `polling…` lines so downstream log tooling never sees a new format.
-          let attempt = 0;
           const spinner = spinnerAnimates() ? startSpinner("Fetching options...") : null;
           try {
-            while (!isTerminal(result.status) && Date.now() < deadline) {
-              const remaining = deadline - Date.now();
-              await sleep(Math.min(delay, Math.max(0, remaining)));
-              ({ raw, result } = await loadSelectionState(selectionId, retryAfterMs));
-              attempt++;
-              const elapsed = Math.round((Date.now() - startedAt) / 1000);
-              if (spinner) {
-                spinner.update(
-                  `Fetching options... (attempt ${attempt}, status=${result.status}, options=${result.optionCount}, ${elapsed}s)`,
-                );
-              } else {
-                process.stderr.write(
-                  chalk.dim(
-                    `  polling… status=${result.status} options=${result.optionCount} elapsed=${elapsed}s\n`,
-                  ),
-                );
-              }
-              delay = Math.min(delay * 1.5, 8000); // exponential backoff, capped
-            }
+            ({ raw, result } = await pollSelectionOptions(
+              selectionId,
+              { raw, result },
+              { timeoutMs, retryAfterMs },
+              {
+                heartbeat: ({ attempt, status, optionCount, elapsedMs }) => {
+                  const elapsed = Math.round(elapsedMs / 1000);
+                  if (spinner) {
+                    spinner.update(
+                      `Fetching options... (attempt ${attempt}, status=${status}, options=${optionCount}, ${elapsed}s)`,
+                    );
+                  } else {
+                    process.stderr.write(
+                      chalk.dim(
+                        `  polling… status=${status} options=${optionCount} elapsed=${elapsed}s\n`,
+                      ),
+                    );
+                  }
+                },
+              },
+            ));
           } finally {
             spinner?.stop();
-          }
-
-          if (!isTerminal(result.status)) {
-            // Ran out of time still FETCHING — report honestly, never hang or lie-empty.
-            result = { ...result, status: "FETCHING", retryAfterMs };
           }
         }
 

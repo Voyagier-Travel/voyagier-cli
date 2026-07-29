@@ -33,6 +33,17 @@ jest.unstable_mockModule("../api.js", () => ({
   graphql: mockGraphql,
 }));
 
+// VOY-1780: the human/TTY inline wait delegates the poll loop to
+// selection-wait.waitForSelectionOptions (unit-tested in its own spec). Mock it
+// here so the command-level tests drive the post-wait branches (render on
+// READY, descriptive stops on FETCHING/NO_RESULTS/FETCH_ERROR/AWAITING_INPUT)
+// deterministically without real timers.
+const mockWaitForSelectionOptions =
+  jest.fn<(...args: unknown[]) => Promise<{ raw: unknown; result: Record<string, unknown> }>>();
+jest.unstable_mockModule("../selection-wait.js", () => ({
+  waitForSelectionOptions: mockWaitForSelectionOptions,
+}));
+
 const mockGetHomeAirports = jest.fn<() => string[]>(() => []);
 jest.unstable_mockModule("../config.js", () => ({
   getApiUrl: jest.fn(() => "https://dev.voyagier.com/api"),
@@ -212,6 +223,10 @@ describe("registerSearchCommands", () => {
     items?: Array<{ id: string; title: string; selections?: Array<{ type: string }> }>;
     /** Goals the scaffold's ensure step sees (VOY-1761). Default: template graph. */
     scaffoldGoals?: unknown[];
+    /** Options the getTripPlanSelection read returns; defaults to `options`.
+     *  VOY-1780: lets the inline-wait re-fetch return a DIFFERENT (non-empty)
+     *  set than the create mutation's initial (empty) options. */
+    decisionOptions?: unknown[];
   }
 
   function installRouter(cfg: RouterOpts = {}): void {
@@ -230,7 +245,7 @@ describe("registerSearchCommands", () => {
       if (query.includes("createTripPlanGoal")) return { createTripPlanGoal: { id: "ng-scaffold", name: "Outbound Flights", type: "Flight" } };
       if (query.includes("deleteTripPlanGoal")) return { deleteTripPlanGoal: true };
       if (query.includes("getTripPlanSelection")) {
-        return { getTripPlanSelection: { id: "sel-reused", options } };
+        return { getTripPlanSelection: { id: "sel-reused", options: cfg.decisionOptions ?? options } };
       }
       if (query.includes("createTripPlanFlightSelection")) {
         return { createTripPlanFlightSelection: { item: { id: "i", title: "t", tripPlanId: "plan-1" }, selection: { id: "sel-new" }, options } };
@@ -320,6 +335,7 @@ describe("registerSearchCommands", () => {
     mockGetHomeAirports.mockReturnValue([]);
     mockResolveClient.mockReset();
     mockResolveClient.mockResolvedValue({ id: "client-1", name: "Blog Tester", autoResolved: false });
+    mockWaitForSelectionOptions.mockReset();
     stdoutWrites = [];
     stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
       stdoutWrites.push(typeof chunk === "string" ? chunk : String(chunk));
@@ -872,6 +888,19 @@ describe("registerSearchCommands", () => {
     ];
   }
 
+  function hotelGoalsNoDecision() {
+    // A Hotel goal with a mirror list but NO existing decision selection →
+    // resolveOrCreateDecisionSelection takes the create branch (VOY-1780 lets
+    // the inline-wait re-fetch differ from the create mutation's options).
+    return [
+      sharedGoal(),
+      {
+        id: "g-hotel", name: "Hotel", type: "Hotel", sortOrder: 1,
+        items: [{ selections: [{ id: "sel-hlist", type: "HotelList" }] }],
+      },
+    ];
+  }
+
   describe("decision-selection create path", () => {
     it("creates a new Flight selection when the goal has none", async () => {
       installRouter({ goals: flightGoalsNoDecision() });
@@ -1013,6 +1042,10 @@ describe("registerSearchCommands", () => {
       ]);
       expect(stderrWrites.join("")).toMatch(/No options yet/);
       expect(stderrWrites.join("")).toMatch(/selection-options sel-fdec --wait/);
+      // Non-TTY never enters the inline wait, so no heartbeat lines either
+      // (the "(Ns)" elapsed suffix is unique to a heartbeat).
+      expect(mockWaitForSelectionOptions).not.toHaveBeenCalled();
+      expect(stderrWrites.join("")).not.toMatch(/fetching inventory \(\d+s\)/);
     });
 
     it("human round trip prints the outbound-then-return note", async () => {
@@ -1023,6 +1056,241 @@ describe("registerSearchCommands", () => {
         "--date", "2026-08-01", "--return", "2026-08-10",
       ]);
       expect(stdout()).toMatch(/Select the outbound leg first/);
+    });
+  });
+
+  // ── inline wait for async inventory (VOY-1780) ──────────────────────────────
+  describe("inline wait (VOY-1780)", () => {
+    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+    let realIsTTY: boolean | undefined;
+    let realCI: string | undefined;
+
+    beforeEach(() => {
+      // Force the human/TTY gate on; suppress the animated spinner via CI so
+      // stderr assertions see only the message writes (the wait gate keys off
+      // isTTY only, not CI, so it still fires).
+      realIsTTY = process.stderr.isTTY;
+      realCI = process.env.CI;
+      Object.defineProperty(process.stderr, "isTTY", { value: true, configurable: true });
+      process.env.CI = "1";
+    });
+    afterEach(() => {
+      Object.defineProperty(process.stderr, "isTTY", { value: realIsTTY, configurable: true });
+      if (realCI === undefined) delete process.env.CI;
+      else process.env.CI = realCI;
+    });
+
+    const snap = (result: Record<string, unknown>) => ({ raw: { id: "sel-new" }, result });
+
+    it("flights: waits, then renders full results through the immediate-results path when READY", async () => {
+      // Create path (no existing decision selection): the create mutation returns
+      // EMPTY options → the wait fires; the READY re-fetch returns the real set.
+      installRouter({ goals: flightGoalsNoDecision(), options: [], decisionOptions: sampleFlightOptions() });
+      mockWaitForSelectionOptions.mockResolvedValue(snap({ status: "READY", optionCount: 2 }));
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01",
+      ]);
+      expect(mockWaitForSelectionOptions).toHaveBeenCalledTimes(1);
+      // Rendered the real options, not a poll pointer.
+      expect(stdout()).toMatch(/2 flight options found/);
+      expect(stdout()).toMatch(/voyagier select <number>/);
+      expect(stderrWrites.join("")).not.toMatch(/still fetching inventory/);
+    });
+
+    // Drive the real heartbeat sink the command hands to waitForSelectionOptions
+    // with synthetic per-poll beats at chosen elapsed times. The spinner is
+    // suppressed (CI=1) so this exercises the plain-stderr fallback (VOY-1780).
+    const withHeartbeats = (
+      beats: number[],
+      final: Record<string, unknown>,
+    ) => mockWaitForSelectionOptions.mockImplementation(async (...args: unknown[]) => {
+      const deps = args[2] as { heartbeat?: (h: Record<string, unknown>) => void };
+      beats.forEach((elapsedMs, i) =>
+        deps.heartbeat?.({ attempt: i + 1, status: "FETCHING", optionCount: 0, elapsedMs }),
+      );
+      return snap(final);
+    });
+
+    it("flights: no-spinner TTY (CI) falls back to plain stderr heartbeats at ~10s cadence", async () => {
+      installRouter({ goals: flightGoalsNoDecision(), options: [], decisionOptions: sampleFlightOptions() });
+      // Five polls, elapsed 2s/9s/11s/15s/21s → lines only when a new 10s window
+      // is crossed (11s and 21s); the sub-10s polls stay silent (not every poll).
+      withHeartbeats([2000, 9000, 11000, 15000, 21000], { status: "READY", optionCount: 2 });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01",
+      ]);
+      const err = stripAnsi(stderrWrites.join(""));
+      // Exactly two heartbeat lines emitted, and at the window boundaries only.
+      expect((err.match(/fetching inventory/g) ?? [])).toHaveLength(2);
+      expect(err).toMatch(/Searching LAX → NRT… fetching inventory \(11s\)/);
+      expect(err).toMatch(/Searching LAX → NRT… fetching inventory \(21s\)/);
+      // Sub-window polls did NOT print — cadence respected, not one-per-poll.
+      expect(err).not.toMatch(/\(2s\)/);
+      expect(err).not.toMatch(/\(9s\)/);
+      expect(err).not.toMatch(/\(15s\)/);
+      // Still rendered the real results through the immediate-results path.
+      expect(stdout()).toMatch(/2 flight options found/);
+    });
+
+    it("hotels: no-spinner TTY (CI) emits a plain stderr heartbeat past the 10s window", async () => {
+      installRouter({
+        goals: hotelGoalsNoDecision(),
+        options: [],
+        decisionOptions: [{ id: "h-1", name: "Ritz", price: 900, sortOrder: 1 }],
+      });
+      withHeartbeats([5000, 12000], { status: "READY", optionCount: 1 });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-08-01", "--checkout", "2026-08-05",
+      ]);
+      const err = stripAnsi(stderrWrites.join(""));
+      expect((err.match(/fetching inventory/g) ?? [])).toHaveLength(1);
+      expect(err).toMatch(/Searching hotels in Paris… fetching inventory \(12s\)/);
+      expect(err).not.toMatch(/\(5s\)/);
+    });
+
+    it("flights: timeout (still FETCHING) → plain-English line + bare resume command, exit 0", async () => {
+      installRouter({ goals: flightGoalsNoDecision(), options: [] });
+      mockWaitForSelectionOptions.mockResolvedValue(snap({ status: "FETCHING", optionCount: 0, retryAfterMs: 2000 }));
+      // Resolves (exit 0) — never throws.
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01",
+      ]);
+      const err = stripAnsi(stderrWrites.join(""));
+      expect(err).toMatch(/still loading on our side/);
+      // Copy-safe: the command is alone on its own line, no `Poll:`/label prefix.
+      expect(err).toMatch(/^ {2}voyagier selection-options sel-new --wait$/m);
+      expect(err).not.toMatch(/Poll: voyagier/);
+    });
+
+    it("flights: NO_RESULTS → descriptive 'no flights matched' (not a generic message)", async () => {
+      installRouter({ goals: flightGoalsNoDecision(), options: [] });
+      mockWaitForSelectionOptions.mockResolvedValue(snap({ status: "NO_RESULTS", optionCount: 0 }));
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01",
+      ]);
+      expect(stripAnsi(stderrWrites.join(""))).toMatch(/No flights matched LAX → NRT on these dates/);
+    });
+
+    it("flights: FETCH_ERROR → surfaces the fetch error, not a bare empty", async () => {
+      installRouter({ goals: flightGoalsNoDecision(), options: [] });
+      mockWaitForSelectionOptions.mockResolvedValue(
+        snap({ status: "FETCH_ERROR", optionCount: 0, fetchError: "provider timeout" }),
+      );
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01",
+      ]);
+      const err = stripAnsi(stderrWrites.join(""));
+      expect(err).toMatch(/hit an error while fetching: provider timeout/);
+    });
+
+    it("flights: AWAITING_INPUT → names the missing-input situation", async () => {
+      installRouter({ goals: flightGoalsNoDecision(), options: [] });
+      mockWaitForSelectionOptions.mockResolvedValue(snap({ status: "AWAITING_INPUT", optionCount: 0 }));
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01",
+      ]);
+      expect(stripAnsi(stderrWrites.join(""))).toMatch(/missing a required input/);
+    });
+
+    it("flights: --no-wait skips polling and prints the copy-safe hint", async () => {
+      installRouter({ goals: flightGoalsNoDecision(), options: [] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--no-wait",
+      ]);
+      expect(mockWaitForSelectionOptions).not.toHaveBeenCalled();
+      const err = stripAnsi(stderrWrites.join(""));
+      expect(err).toMatch(/No options yet/);
+      expect(err).toMatch(/^ {2}voyagier selection-options sel-new --wait$/m);
+      expect(err).not.toMatch(/Poll: voyagier/);
+    });
+
+    it("flights: --json never polls (immediate return + poll pointer)", async () => {
+      installRouter({ goals: flightGoalsNoDecision(), options: [] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--json",
+      ]);
+      expect(mockWaitForSelectionOptions).not.toHaveBeenCalled();
+      expect(JSON.parse(stdout()).selectionId).toBe("sel-new");
+    });
+
+    it("flights: --agent never polls", async () => {
+      installRouter({ goals: flightGoalsNoDecision(), options: [] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--agent",
+      ]);
+      expect(mockWaitForSelectionOptions).not.toHaveBeenCalled();
+      expect(stdout()).toMatch(/selection-options sel-new --wait --json/);
+    });
+
+    it("hotels: waits, then renders full results when READY", async () => {
+      installRouter({
+        goals: hotelGoalsNoDecision(),
+        options: [],
+        decisionOptions: [{ id: "h-1", name: "Ritz", price: 900, sortOrder: 1 }],
+      });
+      mockWaitForSelectionOptions.mockResolvedValue(snap({ status: "READY", optionCount: 1 }));
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-08-01", "--checkout", "2026-08-05",
+      ]);
+      expect(mockWaitForSelectionOptions).toHaveBeenCalledTimes(1);
+      expect(stdout()).toMatch(/1 hotel option found/);
+    });
+
+    it("hotels: NO_RESULTS falls through to the location-specific suggestions", async () => {
+      installRouter({ goals: buildHotelGoals(), options: [] });
+      mockWaitForSelectionOptions.mockResolvedValue(snap({ status: "NO_RESULTS", optionCount: 0 }));
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "BKI", "--checkin", "2026-08-01", "--checkout", "2026-08-05",
+      ]);
+      const err = stripAnsi(stderrWrites.join(""));
+      expect(err).toMatch(/no hotels matched "BKI"/);
+      expect(err).toMatch(/looks like an airport code/);
+    });
+
+    it("hotels: timeout (FETCHING) → plain-English line + bare resume command", async () => {
+      installRouter({ goals: hotelGoalsNoDecision(), options: [] });
+      mockWaitForSelectionOptions.mockResolvedValue(snap({ status: "FETCHING", optionCount: 0, retryAfterMs: 2000 }));
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-08-01", "--checkout", "2026-08-05",
+      ]);
+      const err = stripAnsi(stderrWrites.join(""));
+      expect(err).toMatch(/still loading on our side/);
+      expect(err).toMatch(/^ {2}voyagier selection-options sel-new --wait$/m);
+    });
+
+    it("hotels: --no-wait skips polling with a copy-safe hint", async () => {
+      installRouter({ goals: hotelGoalsNoDecision(), options: [] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-08-01", "--checkout", "2026-08-05", "--no-wait",
+      ]);
+      expect(mockWaitForSelectionOptions).not.toHaveBeenCalled();
+      expect(stripAnsi(stderrWrites.join(""))).toMatch(/^ {2}voyagier selection-options sel-new --wait$/m);
+    });
+  });
+
+  describe("non-TTY never polls (VOY-1780)", () => {
+    it("flights: no inline wait when stderr is not a TTY", async () => {
+      installRouter({ goals: flightGoalsNoDecision(), options: [] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01",
+      ]);
+      expect(mockWaitForSelectionOptions).not.toHaveBeenCalled();
+      expect(stderrWrites.join("")).toMatch(/No options yet/);
     });
   });
 
