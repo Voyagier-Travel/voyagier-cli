@@ -392,6 +392,22 @@ export const GET_PLAN_STATUS = `
   }
 `;
 
+// --- User profile ---
+
+// Sync the signed-in user's own profile. UpdateUserInput accepts a full
+// passport number and frequent-flyer programs; the User read type returns the
+// passport only in masked form (last4 + metadata — the full number cannot
+// round-trip by API contract), while frequent-flyer programs come back in full.
+// There is no user-level hotel loyalty field, so it is never sent here.
+export const UPDATE_MY_USER = `
+  mutation UpdateMyUser($input: UpdateUserInput!) {
+    updateMyUser(input: $input) {
+      passport { last4 issueCountry nationalityCountry expirationDate }
+      frequentFlyerPrograms { airlineCode membershipNumber }
+    }
+  }
+`;
+
 // --- Travellers ---
 
 export const CREATE_TRAVELLER = `

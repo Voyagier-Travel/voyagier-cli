@@ -157,6 +157,7 @@ export function registerTravellerCommands(program: Command): void {
         let phone = opts.phone as string | undefined;
 
         // --self: auto-fill from saved profile
+        let selfHotelLoyalty: Array<{ chainCode: string; membershipNumber: string }> | undefined;
         if (opts.self) {
           const ctx = getUserContext();
           if (ctx) {
@@ -171,6 +172,18 @@ export function registerTravellerCommands(program: Command): void {
             if (ctx.email && !opts.email) filled.push("email");
             if (ctx.dateOfBirth && !opts.dob) filled.push("DOB");
             if (ctx.gender && !opts.gender) filled.push("gender");
+            // Hotel loyalty: apply the local profile default only when the user
+            // gave no explicit --hotel-loyalty flag (explicit flags always win).
+            // Frequent-flyer programs are intentionally NOT auto-applied — the
+            // server backfills them for linked users at booking time, so sending
+            // them here could duplicate entries.
+            if (ctx.hotelLoyaltyPrograms?.length && (opts.hotelLoyalty as string[]).length === 0) {
+              selfHotelLoyalty = ctx.hotelLoyaltyPrograms.map((p) => ({
+                chainCode: p.chainCode,
+                membershipNumber: p.membershipNumber,
+              }));
+              filled.push(`hotel loyalty (${selfHotelLoyalty.map((p) => p.chainCode).join(", ")})`);
+            }
             if (!opts.json && filled.length > 0) {
               console.log(chalk.dim(`  Auto-filled from profile: ${filled.join(", ")}`));
             }
@@ -260,6 +273,7 @@ export function registerTravellerCommands(program: Command): void {
         // code + last4 ever come back)
         if ((opts.frequentFlyer as string[]).length > 0) input.frequentFlyerPrograms = toAirLoyaltyInput(opts.frequentFlyer);
         if ((opts.hotelLoyalty as string[]).length > 0) input.hotelLoyaltyPrograms = toHotelLoyaltyInput(opts.hotelLoyalty);
+        else if (selfHotelLoyalty) input.hotelLoyaltyPrograms = selfHotelLoyalty;
 
         const data = await graphql<{ createTripPlanTraveller: Traveller }>(
           CREATE_TRAVELLER,
