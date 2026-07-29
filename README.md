@@ -9,10 +9,12 @@
 Search flights, book activities, manage trip plans — from your terminal. Everything syncs to [voyagier.com](https://voyagier.com).
 
 ```bash
-npm install -g @voyagier/cli
+npm install -g voyagier        # or the canonical package: @voyagier/cli
 voyagier auth set-token <your-token>
 voyagier doctor   # confirm auth + schema reachability
 ```
+
+`voyagier` is a convenience alias that always tracks the latest `@voyagier/cli`. Pinning an exact version? Use the canonical package: `npm install -g @voyagier/cli@<version>`.
 
 No install permissions (sandboxed agent, CI)? Every command works zero-install via `npx`:
 
