@@ -4,7 +4,7 @@
   "description": "Book real travel from your terminal. Convenience alias for @voyagier/cli — search flights, hotels & activities, plan trips, and check out with a price-gated booking.",
   "type": "module",
   "bin": {
-    "voyagier": "./bin.js"
+    "voyagier": "bin.js"
   },
   "engines": {
     "node": "^22.12.0 || >=24.0.0"
