@@ -301,14 +301,14 @@ export function registerAuthCommands(program: Command): void {
       if (!isInteractive) {
         // Non-interactive: just show instructions
         console.log("  Generate a Personal Access Token at:\n");
-        console.log(chalk.cyan(`    ${webUrl}/settings\n`));
+        console.log(chalk.cyan(`    ${webUrl}/me/settings/tokens\n`));
         console.log("  Then run:\n");
         console.log(chalk.cyan("    voyagier auth set-token <your-token>\n"));
         return;
       }
 
       // Interactive: open browser + prompt for token
-      const settingsUrl = `${webUrl}/settings`;
+      const settingsUrl = `${webUrl}/me/settings/tokens`;
       console.log(`  1. Go to ${chalk.cyan(settingsUrl)}`);
       console.log(`  2. Generate a Personal Access Token`);
       console.log(`  3. Paste it below\n`);

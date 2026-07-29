@@ -272,7 +272,7 @@ describe("auth login", () => {
     setInteractive(false);
     await buildProgram().parseAsync(["node", "v", "auth", "login", "--url", "https://dev.voyagier.com/api"]);
     expect(out()).toMatch(/Generate a Personal Access Token/);
-    expect(out()).toMatch(/dev\.voyagier\.com\/settings/);
+    expect(out()).toMatch(/dev\.voyagier\.com\/me\/settings\/tokens/);
     expect(credentialsExist()).toBe(false);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
@@ -284,7 +284,7 @@ describe("auth login", () => {
 
     await buildProgram().parseAsync(["node", "v", "auth", "login", "--url", "https://dev.voyagier.com/api"]);
 
-    expect(mockOpenBrowser).toHaveBeenCalledWith("https://dev.voyagier.com/settings");
+    expect(mockOpenBrowser).toHaveBeenCalledWith("https://dev.voyagier.com/me/settings/tokens");
     expect(credentialsExist()).toBe(true);
     // fetchAndBuildContext auto-detected BOS from the Boston profile city.
     expect(getUserContext()?.homeAirports).toEqual(["BOS"]);
