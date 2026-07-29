@@ -6,7 +6,7 @@
  * without real timers. The behaviour is the exact core `selection-options
  * --wait` used before extraction, now shared with `search flights`/`hotels`.
  */
-import { describe, it, expect, jest } from "@jest/globals";
+import { describe, it, expect } from "@jest/globals";
 import { CliError } from "./errors.js";
 import {
   loadSelectionState,

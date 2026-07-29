@@ -1042,6 +1042,10 @@ describe("registerSearchCommands", () => {
       ]);
       expect(stderrWrites.join("")).toMatch(/No options yet/);
       expect(stderrWrites.join("")).toMatch(/selection-options sel-fdec --wait/);
+      // Non-TTY never enters the inline wait, so no heartbeat lines either
+      // (the "(Ns)" elapsed suffix is unique to a heartbeat).
+      expect(mockWaitForSelectionOptions).not.toHaveBeenCalled();
+      expect(stderrWrites.join("")).not.toMatch(/fetching inventory \(\d+s\)/);
     });
 
     it("human round trip prints the outbound-then-return note", async () => {
@@ -1092,6 +1096,59 @@ describe("registerSearchCommands", () => {
       expect(stdout()).toMatch(/2 flight options found/);
       expect(stdout()).toMatch(/voyagier select <number>/);
       expect(stderrWrites.join("")).not.toMatch(/still fetching inventory/);
+    });
+
+    // Drive the real heartbeat sink the command hands to waitForSelectionOptions
+    // with synthetic per-poll beats at chosen elapsed times. The spinner is
+    // suppressed (CI=1) so this exercises the plain-stderr fallback (VOY-1780).
+    const withHeartbeats = (
+      beats: number[],
+      final: Record<string, unknown>,
+    ) => mockWaitForSelectionOptions.mockImplementation(async (...args: unknown[]) => {
+      const deps = args[2] as { heartbeat?: (h: Record<string, unknown>) => void };
+      beats.forEach((elapsedMs, i) =>
+        deps.heartbeat?.({ attempt: i + 1, status: "FETCHING", optionCount: 0, elapsedMs }),
+      );
+      return snap(final);
+    });
+
+    it("flights: no-spinner TTY (CI) falls back to plain stderr heartbeats at ~10s cadence", async () => {
+      installRouter({ goals: flightGoalsNoDecision(), options: [], decisionOptions: sampleFlightOptions() });
+      // Five polls, elapsed 2s/9s/11s/15s/21s → lines only when a new 10s window
+      // is crossed (11s and 21s); the sub-10s polls stay silent (not every poll).
+      withHeartbeats([2000, 9000, 11000, 15000, 21000], { status: "READY", optionCount: 2 });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01",
+      ]);
+      const err = stripAnsi(stderrWrites.join(""));
+      // Exactly two heartbeat lines emitted, and at the window boundaries only.
+      expect((err.match(/fetching inventory/g) ?? [])).toHaveLength(2);
+      expect(err).toMatch(/Searching LAX → NRT… fetching inventory \(11s\)/);
+      expect(err).toMatch(/Searching LAX → NRT… fetching inventory \(21s\)/);
+      // Sub-window polls did NOT print — cadence respected, not one-per-poll.
+      expect(err).not.toMatch(/\(2s\)/);
+      expect(err).not.toMatch(/\(9s\)/);
+      expect(err).not.toMatch(/\(15s\)/);
+      // Still rendered the real results through the immediate-results path.
+      expect(stdout()).toMatch(/2 flight options found/);
+    });
+
+    it("hotels: no-spinner TTY (CI) emits a plain stderr heartbeat past the 10s window", async () => {
+      installRouter({
+        goals: hotelGoalsNoDecision(),
+        options: [],
+        decisionOptions: [{ id: "h-1", name: "Ritz", price: 900, sortOrder: 1 }],
+      });
+      withHeartbeats([5000, 12000], { status: "READY", optionCount: 1 });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-08-01", "--checkout", "2026-08-05",
+      ]);
+      const err = stripAnsi(stderrWrites.join(""));
+      expect((err.match(/fetching inventory/g) ?? [])).toHaveLength(1);
+      expect(err).toMatch(/Searching hotels in Paris… fetching inventory \(12s\)/);
+      expect(err).not.toMatch(/\(5s\)/);
     });
 
     it("flights: timeout (still FETCHING) → plain-English line + bare resume command, exit 0", async () => {

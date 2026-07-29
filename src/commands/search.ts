@@ -35,8 +35,10 @@ import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { waitForSelectionOptions } from "../selection-wait.js";
+import type { OptionsHeartbeat } from "../selection-wait.js";
 import type { SelectionStatusResult } from "../selection-status.js";
 import { startSpinner, spinnerAnimates } from "../spinner.js";
+import type { SpinnerHandle } from "../spinner.js";
 import { isInteractive, promptText } from "../prompt.js";
 import { scaffoldPlan, generateTripTitle } from "./scaffold.js";
 import type { ShapeFlags } from "./scaffold.js";
@@ -351,6 +353,40 @@ function searchJsonBody(
 /** Hard cap on how long a search waits inline for async inventory (VOY-1780). */
 const SEARCH_WAIT_TIMEOUT_MS = 90_000;
 
+/** Cadence for plain-stderr wait heartbeats when the spinner cannot animate. */
+const WAIT_HEARTBEAT_MS = 10_000;
+
+/**
+ * Build the per-poll heartbeat sink for the inline wait (VOY-1780).
+ *
+ * When the spinner animates, it updates the spinner label in place. When it
+ * cannot — e.g. CI set at an otherwise interactive stderr, so `spinnerAnimates`
+ * is false but `shouldWaitInline` still holds — the wait would otherwise be
+ * completely silent and the CLI would look hung. In that case fall back to a
+ * plain dim stderr line every ~10s (never every poll) so there is visible
+ * progress. --json/--agent/non-TTY never reach the inline-wait path
+ * (`shouldWaitInline` gates it), so their output stays byte-identical.
+ */
+function makeWaitHeartbeat(
+  label: string,
+  waitSpinner: SpinnerHandle | null,
+): (h: OptionsHeartbeat) => void {
+  let lastBucket = 0;
+  return ({ elapsedMs }) => {
+    const line = `${label}… fetching inventory (${Math.round(elapsedMs / 1000)}s)`;
+    if (waitSpinner) {
+      waitSpinner.update(line);
+      return;
+    }
+    // No animation: emit one line per elapsed ~10s window, not per poll.
+    const bucket = Math.floor(elapsedMs / WAIT_HEARTBEAT_MS);
+    if (bucket > lastBucket) {
+      lastBucket = bucket;
+      process.stderr.write(chalk.dim(line + "\n"));
+    }
+  };
+}
+
 /**
  * Re-read a decision selection's FULL options (including provider `bookingData`)
  * once the inline wait reports READY. The wait itself reads only the lean
@@ -644,10 +680,7 @@ export function registerSearchCommands(program: Command): void {
             snap = await waitForSelectionOptions(
               selectionId,
               { timeoutMs: SEARCH_WAIT_TIMEOUT_MS },
-              {
-                heartbeat: ({ elapsedMs }) =>
-                  waitSpinner?.update(`${label}… fetching inventory (${Math.round(elapsedMs / 1000)}s)`),
-              },
+              { heartbeat: makeWaitHeartbeat(label, waitSpinner) },
             );
           } finally {
             waitSpinner?.stop();
@@ -939,10 +972,7 @@ export function registerSearchCommands(program: Command): void {
             snap = await waitForSelectionOptions(
               selectionId,
               { timeoutMs: SEARCH_WAIT_TIMEOUT_MS },
-              {
-                heartbeat: ({ elapsedMs }) =>
-                  waitSpinner?.update(`${label}… fetching inventory (${Math.round(elapsedMs / 1000)}s)`),
-              },
+              { heartbeat: makeWaitHeartbeat(label, waitSpinner) },
             );
           } finally {
             waitSpinner?.stop();
