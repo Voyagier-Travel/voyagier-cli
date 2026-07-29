@@ -279,7 +279,9 @@ describe("chat interactive REPL", () => {
 
   it("ends the session and exits on close", async () => {
     await startRepl();
-    rlHandlers.close();
+    // The close handler is async now (it drains telemetry via gracefulExit
+    // before exit, VOY-1765), so await it before asserting the exit happened.
+    await rlHandlers.close();
     expect(logs.join("\n")).toMatch(/Session ended/);
     expect(exitSpy).toHaveBeenCalledWith(0);
   });

@@ -2,6 +2,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { createInterface } from "readline";
 import { graphql, streamChat } from "../api.js";
+import { gracefulExit } from "../exit.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { CREATE_CHAT_SESSION, LIST_CHAT_SESSIONS } from "../queries.js";
 
@@ -104,7 +105,7 @@ async function chatSingleTurn(sessionId: string, message: string): Promise<void>
       },
     });
     process.stdout.write("\n");
-    process.exit(0);
+    await gracefulExit(0);
   } catch (err) {
     if (err instanceof CliError) throw err;
     throw new CliError(CliErrorCode.API_ERROR, `Error: ${err}`);
@@ -161,9 +162,9 @@ async function chatRepl(sessionId: string): Promise<void> {
     rl.prompt();
   });
 
-  rl.on("close", () => {
+  rl.on("close", async () => {
     console.log(chalk.dim("\nSession ended."));
-    process.exit(0);
+    await gracefulExit(0);
   });
 }
 

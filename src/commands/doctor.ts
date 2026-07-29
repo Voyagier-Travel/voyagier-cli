@@ -30,6 +30,7 @@ import {
   type GraphQLSchema,
 } from "graphql";
 import { graphql, AuthError } from "../api.js";
+import { gracefulExit } from "../exit.js";
 import { CONFIG_DIR, credentialsExist, getApiUrl, getUserContext } from "../config.js";
 import { sanitizeExternalText } from "../utils.js";
 import { jsonOutput } from "../output.js";
@@ -508,7 +509,7 @@ export function registerDoctorCommand(program: Command, currentVersion: string):
 
       if (opts.json) {
         jsonOutput({ ok: overall !== "FAIL", data: report });
-        if (overall === "FAIL") process.exit(1);
+        if (overall === "FAIL") await gracefulExit(1);
         return;
       }
 
@@ -533,6 +534,6 @@ export function registerDoctorCommand(program: Command, currentVersion: string):
         chalk.red("One or more checks failed.");
       console.log(`\n  ${summaryLabel}\n`);
 
-      if (overall === "FAIL") process.exit(1);
+      if (overall === "FAIL") await gracefulExit(1);
     });
 }

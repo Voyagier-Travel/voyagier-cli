@@ -83,6 +83,41 @@ export function getTelemetryStatus(): { enabled: boolean; hasApiKey: boolean } {
   };
 }
 
+// ── In-flight telemetry sends (VOY-1765) ──
+// Every telemetry send is fire-and-forget; on a failing command the CLI then
+// hard-exits microseconds later. On Windows, exiting while the pending fetch's
+// libuv async handle is still live trips an assertion (src\win\async.c:76). We
+// track each in-flight send here so gracefulExit() (via flushTelemetry) can
+// drain them before process.exit.
+const pendingSends = new Set<Promise<unknown>>();
+
+/** Test-only: forget any tracked in-flight sends (e.g. never-settling mocks). */
+export function __resetPendingSends(): void {
+  pendingSends.clear();
+}
+
+/**
+ * Drain in-flight telemetry sends before the process exits (VOY-1765).
+ *
+ * Awaits settlement of every pending send, capped at `timeoutMs` so telemetry
+ * can never stall the exit. Resolves immediately when nothing is in flight.
+ * Never throws — telemetry must never break the CLI.
+ */
+export async function flushTelemetry(timeoutMs = 250): Promise<void> {
+  if (pendingSends.size === 0) return;
+  const drained = Promise.allSettled([...pendingSends]).then(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const capped = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+    timer.unref?.(); // never hold the loop open just for the flush cap
+  });
+  try {
+    await Promise.race([drained, capped]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 // ── Track command ──
 
 export function trackCommand(event: CommandEvent): void {
@@ -111,8 +146,10 @@ export function trackCommand(event: CommandEvent): void {
     cli_version: getCLIVersion(),
   };
 
-  // Fire and forget — non-blocking, never fails the command
-  fetch("https://http-intake.logs.datadoghq.com/api/v2/logs", {
+  // Fire and forget — non-blocking, never fails the command. The send is
+  // tracked in `pendingSends` (settled or not) so gracefulExit() can drain it
+  // before a hard process.exit (VOY-1765).
+  const send = fetch("https://http-intake.logs.datadoghq.com/api/v2/logs", {
     method: "POST",
     headers: {
       "DD-API-KEY": apiKey,
@@ -120,8 +157,15 @@ export function trackCommand(event: CommandEvent): void {
     },
     body: JSON.stringify([logEntry]),
     signal: AbortSignal.timeout(3000), // Don't hang CLI for telemetry
-  }).catch(() => {
-    // Silently ignore — telemetry should never break CLI
+  }).then(
+    () => undefined,
+    () => {
+      // Silently ignore — telemetry should never break CLI
+    },
+  );
+  pendingSends.add(send);
+  void send.finally(() => {
+    pendingSends.delete(send);
   });
 }
 

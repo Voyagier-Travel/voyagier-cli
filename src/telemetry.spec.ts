@@ -1,7 +1,7 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync, chmodSync, rmSync } from "fs";
 import { join } from "path";
-import { trackCommand, telemetryErrorCode, setTelemetryEnabled } from "./telemetry.js";
+import { trackCommand, telemetryErrorCode, setTelemetryEnabled, flushTelemetry, __resetPendingSends } from "./telemetry.js";
 import { CONFIG_DIR } from "./config.js";
 import { CliError, CliErrorCode } from "./errors.js";
 
@@ -118,6 +118,59 @@ describe("telemetry", () => {
 
       trackCommand({ command: "search", durationMs: 10, success: true });
       expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("flushTelemetry (VOY-1765)", () => {
+    // Each test drives the module-level pending-sends set; a never-settling
+    // mock from one test must not leak into the next.
+    beforeEach(() => {
+      __resetPendingSends();
+    });
+
+    it("resolves immediately when no sends are pending", async () => {
+      // No telemetry fired → nothing to drain.
+      await expect(flushTelemetry()).resolves.toBeUndefined();
+    });
+
+    it("resolves within the timeout even if a send never settles", async () => {
+      process.env.DD_API_KEY = "dd-test-key";
+      setTelemetryEnabled(true);
+      // A fetch that never resolves — mirrors a socket that hangs on exit.
+      jest.spyOn(global, "fetch").mockImplementation(() => new Promise<Response>(() => {}));
+
+      trackCommand({ command: "search", durationMs: 10, success: true, traceId: "t" });
+
+      const start = Date.now();
+      // Cap well below the 3s AbortSignal so the test stays fast; the point is
+      // that flushTelemetry returns on the cap rather than waiting forever.
+      await expect(flushTelemetry(50)).resolves.toBeUndefined();
+      const elapsed = Date.now() - start;
+      expect(elapsed).toBeGreaterThanOrEqual(40); // waited ~the cap
+      expect(elapsed).toBeLessThan(1500); // but nowhere near forever
+    });
+
+    it("resolves once a pending send settles before the timeout", async () => {
+      process.env.DD_API_KEY = "dd-test-key";
+      setTelemetryEnabled(true);
+      jest.spyOn(global, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
+
+      trackCommand({ command: "search", durationMs: 10, success: true, traceId: "t" });
+
+      // Generous cap; the send resolves fast, so flush should return well under it.
+      const start = Date.now();
+      await expect(flushTelemetry(2000)).resolves.toBeUndefined();
+      expect(Date.now() - start).toBeLessThan(1000);
+    });
+
+    it("never rejects even when the underlying send rejects", async () => {
+      process.env.DD_API_KEY = "dd-test-key";
+      setTelemetryEnabled(true);
+      jest.spyOn(global, "fetch").mockRejectedValue(new Error("network down"));
+
+      trackCommand({ command: "search", durationMs: 10, success: false, traceId: "t" });
+
+      await expect(flushTelemetry(500)).resolves.toBeUndefined();
     });
   });
 

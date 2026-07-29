@@ -11,6 +11,7 @@ import { Command } from "commander";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "../mcp/server.js";
 import { TOOLS } from "../mcp/tools.js";
+import { gracefulExit } from "../exit.js";
 
 export function registerMcpCommand(program: Command): void {
   program
@@ -34,8 +35,9 @@ export function registerMcpCommand(program: Command): void {
         process.exitCode = 0;
         // Failsafe: if something keeps the loop alive (leaked handle), force
         // the exit after a grace period. unref() so the timer itself never
-        // holds the process open.
-        setTimeout(() => process.exit(0), 2000).unref();
+        // holds the process open. gracefulExit drains in-flight telemetry
+        // first (VOY-1765).
+        setTimeout(() => void gracefulExit(0), 2000).unref();
       };
 
       process.on("SIGINT", () => void shutdown());
