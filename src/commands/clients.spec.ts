@@ -469,6 +469,16 @@ describe("resolveClientId", () => {
     expect(err.message).toContain("--client <id|name|email>");
   });
 
+  it("NOT_FOUND (explicit email) hint mentions passing an id, name, or email (VOY-1764)", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient] } });
+    const err = await resolveClientId("nobody@example.com").catch((e) => e as CliError);
+    expect(err).toBeInstanceOf(CliError);
+    expect(err.code).toBe(CliErrorCode.NOT_FOUND);
+    expect(err.message).toContain("--client <id|name|email>");
+    // Still offers the create-client fallback with the searched email.
+    expect(err.message).toContain('--email "nobody@example.com"');
+  });
+
   it("MULTIPLE_CLIENTS (explicit name matched >1) hint says email or id disambiguates (VOY-1764)", async () => {
     // Two active clients share the same name; an explicit name value matches both.
     mockGraphql.mockResolvedValueOnce({
