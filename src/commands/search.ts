@@ -38,25 +38,34 @@ import { isInteractive, promptText } from "../prompt.js";
 
 /**
  * Resolve a date flag that used to be a commander `requiredOption` (VOY-1762):
- * return it if present, prompt for it at an interactive TTY, otherwise throw the
- * same hard failure commander raised for a missing `--date` (non-zero exit, a
- * message naming `--date <date>`). Agents / CI / --json / --agent / --no-input
- * all fall through to the throw — exact prior behavior.
+ * return it if present, prompt for it at an interactive TTY, otherwise reproduce
+ * commander's original missing-required-option failure BYTE-FOR-BYTE. Agents /
+ * CI / --json / --agent / --no-input all fall through to that failure.
+ *
+ * Byte-identity matters: a missing `--date` used to be caught by commander's
+ * parser (`.requiredOption`), which writes `error: required option '--date
+ * <date>' not specified` to stderr, leaves stdout empty (even under --json — the
+ * parser never reaches our JSON error envelope), and exits 1. We reproduce that
+ * exactly via `command.error(...)` so agents/CI parsing the old string, and
+ * pipelines relying on an empty stdout, keep working. In production (no
+ * exitOverride) commander's own `_exit` terminates the process; under test
+ * (exitOverride) it throws a CommanderError — same path commander always used.
  */
 async function resolveDateOpt(
   current: string | undefined,
   opts: { json?: boolean; agent?: boolean; input?: boolean; noInput?: boolean },
   question: string,
+  command: Command,
 ): Promise<string> {
   if (current) return current;
   if (isInteractive(opts)) {
     const answer = await promptText(question);
     if (answer) return answer;
   }
-  throw new CliError(
-    CliErrorCode.VALIDATION,
-    "required option '--date <date>' not specified. Pass --date <YYYY-MM-DD>.",
-  );
+  command.error("error: required option '--date <date>' not specified", {
+    exitCode: 1,
+    code: "commander.missingMandatoryOptionValue",
+  });
 }
 
 interface SelectOption {
@@ -347,10 +356,20 @@ export function registerSearchCommands(program: Command): void {
     .option("--agent", "Output plain markdown for AI agents")
     .option("--dry-run", "Show the GraphQL query without executing")
     .option("--no-input", "Never prompt for missing input; fail instead (for scripts, agents, CI)")
-    .action(async (opts) => {
+    .action(async (opts, command) => {
+      // Resolve --date FIRST (VOY-1762): it used to be a commander
+      // `requiredOption`, so a missing --date failed at PARSE time — before any
+      // action code, including origin/--from resolution — ran. Keeping the date
+      // check ahead of origin resolution preserves that error precedence, so
+      // `search flights --to X` (no --date, no origin) still reports the missing
+      // --date rather than the "No origin specified" error. It also sits OUTSIDE
+      // the try below so the CommanderError `command.error` throws (under
+      // exitOverride, in tests) is not swallowed and re-wrapped by
+      // handleSearchError — it must surface with commander's exact bytes/code.
+      opts.date = await resolveDateOpt(opts.date, opts, "Departure date (YYYY-MM-DD): ", command);
       try {
-        // Resolve origin: explicit --from, or home airport default
         const quiet = !!(opts.json || opts.agent);
+        // Resolve origin: explicit --from, or home airport default
         let origin: string;
         if (opts.from) {
           origin = resolveAirportInput(opts.from, "--from", quiet);
@@ -366,7 +385,6 @@ export function registerSearchCommands(program: Command): void {
         }
 
         const destination = resolveAirportInput(opts.to, "--to", quiet);
-        opts.date = await resolveDateOpt(opts.date, opts, "Departure date (YYYY-MM-DD): ");
         validateDate(opts.date, "--date");
         warnPastDate(opts.date, "--date");
         warnPastDate(opts.date, "--date");
@@ -831,9 +849,12 @@ export function registerSearchCommands(program: Command): void {
     .option("--dry-run", "Show the GraphQL query without executing")
     .option("--verbose", "Show request details sent to the API")
     .option("--no-input", "Never prompt for missing input; fail instead (for scripts, agents, CI)")
-    .action(async (opts) => {
+    .action(async (opts, command) => {
+      // Resolve --date FIRST and OUTSIDE the try (VOY-1762): a missing --date was
+      // a commander `requiredOption` parse failure; reproduce it byte-for-byte
+      // without letting the CommanderError get re-wrapped by handleSearchError.
+      opts.date = await resolveDateOpt(opts.date, opts, "Travel date (YYYY-MM-DD): ", command);
       try {
-        opts.date = await resolveDateOpt(opts.date, opts, "Travel date (YYYY-MM-DD): ");
         validateDate(opts.date, "--date");
         warnPastDate(opts.date, "--date");
 

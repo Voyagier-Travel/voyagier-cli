@@ -27,22 +27,28 @@ export function registerCrudCommands(plans: Command): void {
     .option("--json", "Output raw JSON")
     .option("--dry-run", "Show the GraphQL query without executing")
     .option("--no-input", "Never prompt for missing input; fail instead (for scripts, agents, CI)")
-    .action(async (opts) => {
-      try {
-        // Title was a commander requiredOption; now optional so a human at a TTY
-        // can be prompted (VOY-1762). Non-interactively, reproduce commander's
-        // missing-required-option failure exactly.
-        if (!opts.title) {
-          if (isInteractive(opts)) {
-            opts.title = await promptText("Trip title: ", { default: generateTripTitle({}) });
-          }
-          if (!opts.title) {
-            throw new CliError(
-              CliErrorCode.VALIDATION,
-              "required option '--title <title>' not specified.",
-            );
-          }
+    .action(async (opts, command) => {
+      // Title was a commander requiredOption; now optional so a human at a TTY
+      // can be prompted (VOY-1762). Non-interactively, reproduce commander's
+      // missing-required-option failure BYTE-FOR-BYTE: `error: required option
+      // '--title <title>' not specified` on stderr, empty stdout (even under
+      // --json — the old parse failure never reached the JSON error envelope),
+      // exit 1. `command.error(...)` is commander's own mechanism, so this is
+      // the exact path the parser used to take. Resolved BEFORE the try below so
+      // the thrown CommanderError (under exitOverride, in tests) is not caught
+      // and re-wrapped as an API_ERROR.
+      if (!opts.title) {
+        if (isInteractive(opts)) {
+          opts.title = await promptText("Trip title: ", { default: generateTripTitle({}) });
         }
+        if (!opts.title) {
+          command.error("error: required option '--title <title>' not specified", {
+            exitCode: 1,
+            code: "commander.missingMandatoryOptionValue",
+          });
+        }
+      }
+      try {
         // `plans create` is a thin alias over the shared scaffold helper — the
         // same create path `plan-trip` (the canonical creation verb) uses. It
         // keeps its minimal surface (no travellers, no shape flags): create

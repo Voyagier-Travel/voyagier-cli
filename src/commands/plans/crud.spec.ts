@@ -240,6 +240,45 @@ describe("plans create — client wiring", () => {
     // --json stays stderr-silent (old crud never emitted progress; quiet passthrough).
     expect(stderrWrites.join("")).not.toContain("Creating trip plan");
   });
+
+  // VOY-1762: --title became an .option() (so a TTY can be prompted), but a
+  // missing --title must STILL hard-fail non-interactively (jest is non-TTY),
+  // reproducing commander's original `.requiredOption` failure BYTE-FOR-BYTE.
+  it("missing --title hard-fails non-interactively, byte-matching commander's required-option failure", async () => {
+    const err = await runPlansCreate([]).catch(
+      (e) => e as { code?: string; exitCode?: number; message?: string },
+    );
+    // Exact commander bytes: `error: ` prefix, no trailing period, no added hint.
+    expect(err.message).toBe("error: required option '--title <title>' not specified");
+    expect(err.code).toBe("commander.missingMandatoryOptionValue");
+    expect(err.exitCode).toBe(1);
+    // stderr carries the message; stdout stays empty — no plan was created.
+    expect(stderrWrites.join("")).toBe("error: required option '--title <title>' not specified\n");
+    expect(writes.join("")).toBe("");
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  // --json is a non-interactive machine mode: same commander failure, and
+  // stdout MUST stay empty (no JSON error envelope), exactly as when the parser
+  // rejected the missing required option.
+  it("missing --title under --json: commander bytes on stderr, empty stdout", async () => {
+    const err = await runPlansCreate(["--json"]).catch(
+      (e) => e as { exitCode?: number; message?: string },
+    );
+    expect(err.message).toBe("error: required option '--title <title>' not specified");
+    expect(err.exitCode).toBe(1);
+    expect(stderrWrites.join("")).toBe("error: required option '--title <title>' not specified\n");
+    expect(writes.join("")).toBe("");
+  });
+
+  // --no-input is the explicit escape hatch: even if a TTY were present, it must
+  // take the non-interactive failure path with the same commander bytes.
+  it("missing --title with --no-input hard-fails with commander bytes", async () => {
+    const err = await runPlansCreate(["--no-input"]).catch(
+      (e) => e as { message?: string },
+    );
+    expect(err.message).toBe("error: required option '--title <title>' not specified");
+  });
 });
 
 // --- VOY-1407 regression: plans get / summary must use the live TripPlanItem schema ---
