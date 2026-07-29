@@ -6,10 +6,9 @@ import { validateDate, warnPastDate, formatPrice, formatDateRange, shellArg } fr
 import { resolvePlanArg } from "../../resolve-plan-arg.js";
 import { fatal, jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
-import { resolveClient } from "../clients.js";
+import { scaffoldPlan } from "../scaffold.js";
 import { planUrl, typeIcon, chosenOption, TripPlan, TripPlanDetail, PaginatedTripPlans } from "./types.js";
 import {
-  CREATE_TRIP_PLAN,
   GET_TRIP_PLANS,
   GET_TRIP_PLAN,
   GET_TRIP_PLAN_SUMMARY,
@@ -21,37 +20,24 @@ import {
 export function registerCrudCommands(plans: Command): void {
   plans
     .command("create")
-    .description("Create a new trip plan")
+    .description("Create a new trip plan (alias of `plan-trip` — the full trip starter)")
     .requiredOption("--title <title>", "Trip plan title")
     .option("--client <ref>", "Client id, email, or name. Omit to auto-resolve when exactly one ACTIVE client exists.")
     .option("--json", "Output raw JSON")
     .option("--dry-run", "Show the GraphQL query without executing")
     .action(async (opts) => {
       try {
-        // create accepts only { clientId, title }. Dates/description are set
-        // separately via `plans update` (which DOES wire them through). We do
-        // not expose no-op --start/--end/--description flags on create: a flag
-        // that silently does nothing is a trap for the agent consumer.
-        const resolved = await resolveClient(opts.client);
-        if (resolved.autoResolved) {
-          const note = resolved.isSelf
-            ? `auto-resolved client: you (${resolved.name}, self)\n`
-            : `auto-resolved client: ${resolved.name} (${resolved.id})\n`;
-          process.stderr.write(chalk.dim(note));
-        }
-
-        const input: Record<string, unknown> = {
-          clientId: resolved.id,
+        // `plans create` is a thin alias over the shared scaffold helper — the
+        // same create path `plan-trip` (the canonical creation verb) uses. It
+        // keeps its minimal surface (no travellers, no shape flags): create
+        // accepts only { clientId, title }; dates/description are set via
+        // `plans update`. The server attaches the default goal graph either
+        // way, so delegating does not change what gets created.
+        const { plan } = await scaffoldPlan({
+          client: opts.client,
           title: opts.title,
-        };
-
-        const data = await graphql<{ createTripPlan: TripPlan }>(
-          CREATE_TRIP_PLAN,
-          { input },
-          { dryRun: opts.dryRun }
-        );
-
-        const plan = data.createTripPlan;
+          dryRun: opts.dryRun,
+        });
 
         if (opts.json) {
           const planSummary = await getPlanSummary(plan.id);
@@ -66,7 +52,8 @@ export function registerCrudCommands(plans: Command): void {
           const dateRange = formatDateRange(plan.startDate, plan.endDate);
           if (dateRange) console.log(chalk.dim(`  Dates: ${dateRange}`));
         }
-        console.log(chalk.dim(`\n  Next: voyagier travellers add --plan ${shellArg(plan.id)} --first <name> --last <name> --type ADULT`));
+        console.log(chalk.dim(`\n  Tip: voyagier plan-trip is the full trip starter (travellers, trip shape, first searches).`));
+        console.log(chalk.dim(`  Next: voyagier travellers add --plan ${shellArg(plan.id)} --first <name> --last <name> --type ADULT`));
         await printPlanFooter(plan.id);
       } catch (err) {
         if (err instanceof CliError) throw err;

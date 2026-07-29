@@ -220,6 +220,24 @@ describe("plans create — client wiring", () => {
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars.input).toEqual({ clientId: sampleClient.id, title: "Test plan" });
   });
+
+  // Regression guard for the VOY-1763 delegation to scaffoldPlan: `plans create`
+  // is now a thin alias, but its --json output contract must NOT change or
+  // existing agents break. Keys: the raw plan fields + url + planSummary.
+  it("--json output keys are unchanged after delegating to scaffoldPlan", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlan: samplePlan });
+    await runPlansCreate(["--client", sampleClient.id, "--title", "Test plan", "--json"]);
+    const out = JSON.parse(writes.join(""));
+    expect(out.id).toBe(samplePlan.id);
+    expect(out.title).toBe(samplePlan.title);
+    expect(out.url).toContain("/plans/plan-1");
+    // planSummary is embedded (getPlanSummary stub returns counts).
+    expect(out.planSummary).toEqual({ travellerCount: 0, itemCount: 0 });
+    // The raw plan fields still pass through (id/title/startDate/endDate/description).
+    expect(Object.keys(out).sort()).toEqual(
+      ["description", "endDate", "id", "planSummary", "startDate", "title", "url"].sort(),
+    );
+  });
 });
 
 // --- VOY-1407 regression: plans get / summary must use the live TripPlanItem schema ---
@@ -467,6 +485,8 @@ describe("plans create — human output", () => {
     expect(out).toContain(samplePlan.id);
     expect(out).toContain("/plans/plan-1");
     expect(out).toContain("travellers add");
+    // The dim discoverability nudge toward the canonical creation verb (VOY-1763).
+    expect(out).toContain("voyagier plan-trip is the full trip starter");
   });
 
   it("wraps a graphql failure as API_ERROR", async () => {

@@ -367,7 +367,7 @@ describe("plan-trip scaffold (VOY-1414)", () => {
 
   it("creates a plan and emits compose next-steps (JSON)", async () => {
     mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-1", title: "Paris Trip" } }) // CREATE_TRIP_PLAN_BASIC
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-1", title: "Paris Trip" } }) // CREATE_TRIP_PLAN (via scaffoldPlan)
       .mockResolvedValueOnce({ tripPlanTravellers: [] }); // GET_TRAVELLERS_BRIEF
 
     await runPlanTrip(["--client", "client-1", "--title", "Paris Trip", "--json"]);
@@ -450,6 +450,20 @@ describe("plan-trip scaffold (VOY-1414)", () => {
 
     const out = jsonOutputCalls();
     expect(out.tripPlanId).toBe("plan-X");
+  });
+
+  it("--plan with --travellers adds them to the existing plan (no fallback fetch)", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ tripPlan: { id: "plan-X", title: "Existing" } }) // GET_TRIP_PLAN_BASIC
+      .mockResolvedValueOnce({ createTripPlanTraveller: { id: "t1", firstName: "Ann", lastName: "Lee" } }); // add
+
+    await runPlanTrip(["--plan", "plan-X", "--travellers", "Ann Lee", "--json"]);
+
+    const out = jsonOutputCalls();
+    expect(out.tripPlanId).toBe("plan-X");
+    expect(out.travellerIds).toEqual(["t1"]);
+    // fetch + add only — the fallback traveller fetch is skipped when we added some.
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -588,12 +602,15 @@ describe("plan-trip shape flags integration (VOY-1727)", () => {
   });
 
   it("--one-way --flight-only: fetches goals, deletes return + hotel, reports prunedGoals", async () => {
+    // Call order: scaffoldPlan runs create → prune (list + deletes); plan-trip
+    // then does its own traveller-fetch fallback (scaffold only returns the IDs
+    // it added, and none were added here).
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-ow", title: "OW" } }) // CREATE
-      .mockResolvedValueOnce({ tripPlanTravellers: [{ id: "t1", firstName: "A", lastName: "B" }] }) // TRAVELLERS
       .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS }) // LIST goals
       .mockResolvedValueOnce({ deleteTripPlanGoal: true }) // delete return
-      .mockResolvedValueOnce({ deleteTripPlanGoal: true }); // delete hotel
+      .mockResolvedValueOnce({ deleteTripPlanGoal: true }) // delete hotel
+      .mockResolvedValueOnce({ tripPlanTravellers: [{ id: "t1", firstName: "A", lastName: "B" }] }); // TRAVELLERS fallback
 
     await runPlanTrip([
       "--client", "client-1", "--title", "OW",
@@ -617,9 +634,9 @@ describe("plan-trip shape flags integration (VOY-1727)", () => {
   it("delete failure is a warning, not a fatal — surfaces manual goal-remove fallback", async () => {
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-f", title: "F" } })
-      .mockResolvedValueOnce({ tripPlanTravellers: [] })
       .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
-      .mockResolvedValueOnce({ deleteTripPlanGoal: false }); // server declines
+      .mockResolvedValueOnce({ deleteTripPlanGoal: false }) // server declines
+      .mockResolvedValueOnce({ tripPlanTravellers: [] }); // TRAVELLERS fallback
 
     await runPlanTrip(["--client", "client-1", "--title", "F", "--one-way", "--json"]);
 

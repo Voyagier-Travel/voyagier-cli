@@ -4,16 +4,18 @@ import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
 import {
   GET_TRIP_PLAN_BASIC,
-  CREATE_TRIP_PLAN_BASIC,
-  CREATE_TRAVELLER_BRIEF,
   GET_TRAVELLERS_BRIEF,
-  LIST_TRIP_PLAN_GOALS,
-  DELETE_TRIP_PLAN_GOAL,
 } from "../queries.js";
 import { validateDate, warnPastDate, validateIata, deriveBaseUrl, shellArg } from "../utils.js";
 import { progress, warn, fatal, jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
-import { resolveClient } from "./clients.js";
+import { scaffoldPlan, addTravellers, validateShapeFlags, selectGoalsToPrune } from "./scaffold.js";
+import type { PrunableGoal, ShapeFlags } from "./scaffold.js";
+
+// Re-exported so existing specs (which import them from ./plan-trip) keep
+// working after these pruning/shape helpers moved to scaffold.ts.
+export { validateShapeFlags, selectGoalsToPrune };
+export type { PrunableGoal, ShapeFlags };
 
 interface TripPlan {
   id: string;
@@ -56,133 +58,6 @@ export function parseStops(bookingData?: Record<string, unknown>): number {
   const segments = bookingData.segments as unknown[] | undefined;
   if (segments) return Math.max(0, segments.length - 1);
   return Infinity;
-}
-
-/** Minimal goal shape needed for shape-flag pruning. */
-export interface PrunableGoal {
-  id: string;
-  name?: string | null;
-  type: string;
-}
-
-export interface ShapeFlags {
-  oneWay: boolean;
-  flightOnly: boolean;
-  hotelOnly: boolean;
-}
-
-/**
- * Given the default scaffold goal graph and the requested trip shape, compute
- * which goals to prune. Pure function for testability.
- *
- * Rules:
- *  - --one-way    → the return-leg Flight goal (type Flight, name matching
- *                   /return/i). The scaffold names it "Return Flights".
- *  - --flight-only   → every Hotel-type goal (scaffold: "Secure Lodging").
- *  - --hotel-only → every Flight-type AND FlightJourney-type goal
- *                   (scaffold: "Outbound Flights", "Return Flights",
- *                   "Flight Booking Details") — plus nothing else.
- *
- * Returns the goals to delete and any warnings (e.g. a shape flag that
- * matched nothing — server scaffold may have changed; agent should inspect
- * `plans goals` and prune manually with `plans goal-remove`).
- */
-export function selectGoalsToPrune(
-  goals: PrunableGoal[],
-  shape: ShapeFlags,
-): { prune: PrunableGoal[]; warnings: string[] } {
-  const prune = new Map<string, PrunableGoal>();
-  const warnings: string[] = [];
-
-  if (shape.oneWay) {
-    const returnGoals = goals.filter(
-      g => g.type === "Flight" && /return/i.test(g.name ?? ""),
-    );
-    if (returnGoals.length === 0) {
-      warnings.push(
-        "--one-way: no return-flight goal found to prune (scaffold may have changed). Inspect `plans goals <planId>` and remove it with `plans goal-remove <goalId> --force`.",
-      );
-    }
-    for (const g of returnGoals) prune.set(g.id, g);
-  }
-
-  if (shape.flightOnly) {
-    const hotelGoals = goals.filter(g => g.type === "Hotel");
-    if (hotelGoals.length === 0) {
-      warnings.push(
-        "--flight-only: no Hotel goal found to prune (scaffold may have changed). Inspect `plans goals <planId>`.",
-      );
-    }
-    for (const g of hotelGoals) prune.set(g.id, g);
-  }
-
-  if (shape.hotelOnly) {
-    const flightish = goals.filter(g => g.type === "Flight" || g.type === "FlightJourney");
-    if (flightish.length === 0) {
-      warnings.push(
-        "--hotel-only: no Flight/FlightJourney goals found to prune (scaffold may have changed). Inspect `plans goals <planId>`.",
-      );
-    }
-    for (const g of flightish) prune.set(g.id, g);
-  }
-
-  return { prune: [...prune.values()], warnings };
-}
-
-/**
- * Validate shape-flag combinations against the other plan-trip options.
- * Throws VALIDATION on conflicts. Pure for testability.
- */
-export function validateShapeFlags(opts: {
-  oneWay?: boolean;
-  flightOnly?: boolean;
-  hotelOnly?: boolean;
-  plan?: string;
-  return?: string;
-  hotel?: string;
-  checkin?: string;
-  checkout?: string;
-  to?: string;
-  from?: string;
-  depart?: string;
-}): void {
-  const anyShape = !!(opts.oneWay || opts.flightOnly || opts.hotelOnly);
-  if (!anyShape) return;
-  if (opts.plan) {
-    throw new CliError(
-      CliErrorCode.VALIDATION,
-      "Shape flags (--one-way/--flight-only/--hotel-only) only apply when scaffolding a NEW plan. For an existing plan, prune goals directly: `voyagier plans goals <planId>` then `voyagier plans goal-remove <goalId> --force`.",
-    );
-  }
-  if (opts.oneWay && opts.return) {
-    throw new CliError(CliErrorCode.VALIDATION, "--one-way conflicts with --return. Drop one.");
-  }
-  if (opts.hotelOnly && opts.flightOnly) {
-    throw new CliError(CliErrorCode.VALIDATION, "--hotel-only conflicts with --flight-only. Pick one.");
-  }
-  if (opts.hotelOnly && opts.oneWay) {
-    throw new CliError(CliErrorCode.VALIDATION, "--hotel-only conflicts with --one-way (a hotel-only plan has no flights).");
-  }
-  if (opts.hotelOnly && (opts.to || opts.from || opts.depart || opts.return)) {
-    throw new CliError(
-      CliErrorCode.VALIDATION,
-      "--hotel-only conflicts with flight flags (--from/--to/--depart/--return). A hotel-only plan has no flights.",
-    );
-  }
-  if (opts.flightOnly && (opts.hotel || opts.checkin || opts.checkout)) {
-    throw new CliError(CliErrorCode.VALIDATION, "--flight-only conflicts with hotel flags (--hotel/--checkin/--checkout). Drop one.");
-  }
-}
-
-function parseTravellers(names: string): Array<{ firstName: string; lastName: string }> {
-  return names.split(",")
-    .map(name => name.trim())
-    .filter(Boolean)
-    .map(name => {
-      const parts = name.split(/\s+/);
-      if (parts.length === 1) return { firstName: parts[0], lastName: parts[0] };
-      return { firstName: parts.slice(0, -1).join(" "), lastName: parts[parts.length - 1] };
-    });
 }
 
 export function registerPlanTripCommand(program: Command): void {
@@ -267,8 +142,24 @@ Examples:
           validateIata(opts.from, "--from");
         }
 
-        // Step 1: Create or fetch plan
+        // ── Trip shape (VOY-1727) ───────────────────────────────────────
+        // The scaffold's default goal graph is a round-trip + hotel TEMPLATE.
+        // Un-pruned goals the brief doesn't need are not inert: an unpruned
+        // Return Flights goal blocks one-way inventory fetch AND fare carting;
+        // unpruned hotel/flight goals pin `plan-status` readiness at BLOCKED
+        // forever. Shape flags prune at scaffold time so partial-scope plans
+        // can genuinely reach READY_TO_BOOK.
+        const shape: ShapeFlags = {
+          oneWay: !!opts.oneWay,
+          flightOnly: !!opts.flightOnly,
+          hotelOnly: !!opts.hotelOnly,
+        };
+
+        // Step 1: Create (via the shared scaffold) or fetch an existing plan.
         let plan: TripPlan;
+        let travellerIds: string[] = [];
+        let prunedGoals: { id: string; name?: string; type: string }[] = [];
+        let pruneWarnings: string[] = [];
         if (opts.plan) {
           if (!json && !agent) progress("Fetching existing trip plan...");
           const planData = await graphql<{ tripPlan: TripPlan }>(
@@ -276,42 +167,31 @@ Examples:
             { id: opts.plan }
           );
           plan = planData.tripPlan;
+          // Adding to an existing plan can still bring travellers along.
+          if (opts.travellers) {
+            travellerIds = await addTravellers(plan.id, opts.travellers, { quiet: json || agent });
+          }
         } else {
-          const resolved = await resolveClient(opts.client);
-          if (resolved.autoResolved) {
-            const note = resolved.isSelf
-              ? `auto-resolved client: you (${resolved.name}, self)\n`
-              : `auto-resolved client: ${resolved.name} (${resolved.id})\n`;
-            process.stderr.write(note);
-          }
-          if (!json && !agent) progress("Creating trip plan...");
-          const planInput: Record<string, unknown> = { clientId: resolved.id, title: opts.title };
-
-          const planData = await graphql<{ createTripPlan: TripPlan }>(
-            CREATE_TRIP_PLAN_BASIC,
-            { input: planInput }
-          );
-          plan = planData.createTripPlan;
+          // The create path — client resolve → createTripPlan → add travellers
+          // → shape pruning — lives in scaffoldPlan, shared with `plans create`
+          // (and search's auto-draft, VOY-1761). Progress + the auto-resolved
+          // note are suppressed for --json/--agent consumers via `quiet`.
+          const scaffolded = await scaffoldPlan({
+            client: opts.client,
+            title: opts.title as string,
+            travellers: opts.travellers,
+            shape,
+            quiet: json || agent,
+          });
+          plan = scaffolded.plan;
+          travellerIds = scaffolded.travellerIds;
+          prunedGoals = scaffolded.prunedGoals;
+          pruneWarnings = scaffolded.pruneWarnings;
         }
 
-        // Step 2: Add travellers
-        const travellers: Traveller[] = [];
-        if (opts.travellers) {
-          if (!json && !agent) progress("Adding travellers...");
-          const parsed = parseTravellers(opts.travellers);
-          for (const t of parsed) {
-            const tData = await graphql<{ createTripPlanTraveller: Traveller }>(
-              CREATE_TRAVELLER_BRIEF,
-              { tripPlanId: plan.id, input: { firstName: t.firstName, lastName: t.lastName, declaredTravellerType: "Adult" } }
-            );
-            travellers.push(tData.createTripPlanTraveller);
-          }
-        }
-
-        // Resolve traveller IDs (from newly added or existing)
-        let travellerIds = travellers.map(t => t.id);
+        // Resolve traveller IDs for existing plans, and for new plans created
+        // without --travellers (scaffold only returns the IDs it added).
         if (travellerIds.length === 0) {
-          // Fetch existing travellers (always needed for existing plans; also for new plans with no --travellers)
           const tData = await graphql<{ tripPlanTravellers: Traveller[] }>(
             GET_TRAVELLERS_BRIEF,
             { tripPlanId: plan.id }
@@ -321,47 +201,6 @@ Examples:
 
         if (travellerIds.length === 0 && (opts.to || opts.hotel)) {
           warn("No travellers on plan — searches may fail without traveller IDs.");
-        }
-
-        // ── Trip-shape pruning (VOY-1727) ───────────────────────────────
-        // The scaffold's default goal graph is a round-trip + hotel TEMPLATE.
-        // Un-pruned goals the brief doesn't need are not inert: an unpruned
-        // Return Flights goal blocks one-way inventory fetch AND fare carting;
-        // unpruned hotel/flight goals pin `plan-status` readiness at BLOCKED
-        // forever. Shape flags prune at scaffold time so partial-scope plans
-        // can genuinely reach READY_TO_BOOK.
-        const prunedGoals: PrunableGoal[] = [];
-        const pruneWarnings: string[] = [];
-        const shape: ShapeFlags = {
-          oneWay: !!opts.oneWay,
-          flightOnly: !!opts.flightOnly,
-          hotelOnly: !!opts.hotelOnly,
-        };
-        if (shape.oneWay || shape.flightOnly || shape.hotelOnly) {
-          if (!json && !agent) progress("Pruning goals to match trip shape...");
-          const goalsData = await graphql<{ tripPlanGoals: PrunableGoal[] }>(
-            LIST_TRIP_PLAN_GOALS,
-            { tripPlanId: plan.id },
-          );
-          const { prune, warnings } = selectGoalsToPrune(goalsData.tripPlanGoals ?? [], shape);
-          pruneWarnings.push(...warnings);
-          for (const g of prune) {
-            try {
-              const del = await graphql<{ deleteTripPlanGoal: boolean }>(
-                DELETE_TRIP_PLAN_GOAL,
-                { id: g.id },
-              );
-              if (del.deleteTripPlanGoal === true) {
-                prunedGoals.push(g);
-              } else {
-                pruneWarnings.push(`Server declined to delete goal "${g.name ?? g.id}" (${g.type}). Remove it manually: voyagier plans goal-remove ${shellArg(g.id)} --force`);
-              }
-            } catch (err) {
-              const message = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ");
-              pruneWarnings.push(`Failed to delete goal "${g.name ?? g.id}" (${g.type}): ${message}. Remove it manually: voyagier plans goal-remove ${shellArg(g.id)} --force`);
-            }
-          }
-          for (const w of pruneWarnings) warn(w);
         }
 
         // ── Demoted to scaffold (VOY-1414) ──────────────────────────────
