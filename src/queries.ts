@@ -298,12 +298,18 @@ export const CREATE_COMMENT = `
   }
 `;
 
+// NOTE: tripPlanItemComments now returns PaginatedTripPlanItemComment (the
+// comment rows moved under `items`) and both `limit` and `page` are required
+// (Int!) — was a bare [TripPlanItemComment] with an optional limit. (VOY-1419)
 export const GET_COMMENTS = `
-  query Comments($itemId: String!, $limit: Int) {
-    tripPlanItemComments(itemId: $itemId, limit: $limit) {
-      id text parentCommentId
-      author { id firstName lastName }
-      replies { id text author { firstName lastName } }
+  query Comments($itemId: String!, $limit: Int!, $page: Int!) {
+    tripPlanItemComments(itemId: $itemId, limit: $limit, page: $page) {
+      count
+      items {
+        id text parentCommentId
+        author { id firstName lastName }
+        replies { id text author { firstName lastName } }
+      }
     }
   }
 `;

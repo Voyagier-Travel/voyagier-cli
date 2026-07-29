@@ -58,20 +58,26 @@ export function registerSocialCommands(plans: Command): void {
 
         // List mode
         const limit = parseInt(opts.limit, 10);
+        if (!Number.isInteger(limit) || limit < 1) {
+          throw new CliError(CliErrorCode.VALIDATION, "--limit must be a positive integer.");
+        }
         const data = await graphql<{
-          tripPlanItemComments: Array<{
-            id: string;
-            text: string;
-            author: { id: string; firstName: string; lastName: string };
-            parentCommentId?: string;
-            replies?: Array<{ id: string; text: string; author: { firstName: string; lastName: string } }>;
-          }>;
+          tripPlanItemComments: {
+            count: number;
+            items: Array<{
+              id: string;
+              text: string;
+              author: { id: string; firstName: string; lastName: string };
+              parentCommentId?: string;
+              replies?: Array<{ id: string; text: string; author: { firstName: string; lastName: string } }>;
+            }>;
+          };
         }>(
           GET_COMMENTS,
-          { itemId, limit }
+          { itemId, limit, page: 1 }
         );
 
-        const comments = data.tripPlanItemComments;
+        const comments = data.tripPlanItemComments.items;
 
         if (opts.json) {
           process.stdout.write(JSON.stringify({ itemId, comments }, null, 2) + "\n");

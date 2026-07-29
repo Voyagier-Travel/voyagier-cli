@@ -98,20 +98,27 @@ describe("plans comments", () => {
   });
 
   it("lists comments (--json) with the parsed limit", async () => {
-    const comments = [
+    const items = [
       { id: "cmt_1", text: "Hello", author: { id: "u1", firstName: "Amy", lastName: "Adams" }, replies: [] },
     ];
-    mockGraphql.mockResolvedValueOnce({ tripPlanItemComments: comments });
+    mockGraphql.mockResolvedValueOnce({ tripPlanItemComments: { count: 1, items } });
     await run(["comments", "item-1", "--limit", "5", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
-    expect(vars).toEqual({ itemId: "item-1", limit: 5 });
+    expect(vars).toEqual({ itemId: "item-1", limit: 5, page: 1 });
     const out = JSON.parse(writes.join(""));
     expect(out.itemId).toBe("item-1");
     expect(out.comments).toHaveLength(1);
   });
 
+  it("rejects a non-numeric --limit before calling the API", async () => {
+    await expect(run(["comments", "item-1", "--limit", "abc", "--json"])).rejects.toMatchObject({
+      code: "VALIDATION",
+    });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
   it("human mode renders authors, comment text, and replies", async () => {
-    const comments = [
+    const items = [
       {
         id: "cmt_1",
         text: "Looks great",
@@ -119,7 +126,7 @@ describe("plans comments", () => {
         replies: [{ id: "cmt_2", text: "Agreed", author: { firstName: "Ben", lastName: "Bell" } }],
       },
     ];
-    mockGraphql.mockResolvedValueOnce({ tripPlanItemComments: comments });
+    mockGraphql.mockResolvedValueOnce({ tripPlanItemComments: { count: 1, items } });
     await run(["comments", "item-1"]);
     const out = logJoined();
     expect(out).toContain("Comments (1)");
@@ -130,7 +137,7 @@ describe("plans comments", () => {
   });
 
   it("human mode shows an empty-state hint when there are no comments", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlanItemComments: [] });
+    mockGraphql.mockResolvedValueOnce({ tripPlanItemComments: { count: 0, items: [] } });
     await run(["comments", "item-1"]);
     expect(logJoined()).toContain("No comments yet.");
   });
