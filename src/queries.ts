@@ -186,12 +186,6 @@ export const CREATE_TRIP_PLAN = `
   }
 `;
 
-export const CREATE_TRIP_PLAN_BASIC = `
-  mutation CreateTripPlan($input: CreateTripPlanInput!) {
-    createTripPlan(input: $input) { id title startDate endDate }
-  }
-`;
-
 export const GET_TRIP_PLANS = `
   query TripPlans($page: Int, $limit: Int) {
     tripPlans(page: $page, limit: $limit) {
