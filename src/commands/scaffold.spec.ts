@@ -41,7 +41,7 @@ beforeAll(async () => {
 const SCAFFOLD_GOALS = [
   { id: "g-trav", name: "Travelers", type: "TravellerList" },
   { id: "g-out", name: "Outbound Flights", type: "Flight" },
-  { id: "g-hotel", name: "Secure Lodging", type: "Hotel" },
+  { id: "g-hotel", name: "Accommodation", type: "Hotel" },
   { id: "g-ret", name: "Return Flights", type: "Flight" },
   { id: "g-journey", name: "Flight Booking Details", type: "FlightJourney" },
 ];

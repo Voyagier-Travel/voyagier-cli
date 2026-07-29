@@ -32,7 +32,7 @@ export interface ShapeFlags {
  * Rules:
  *  - --one-way    → the return-leg Flight goal (type Flight, name matching
  *                   /return/i). The scaffold names it "Return Flights".
- *  - --flight-only   → every Hotel-type goal (scaffold: "Secure Lodging").
+ *  - --flight-only   → every Hotel-type goal (scaffold: "Accommodation").
  *  - --hotel-only → every Flight-type AND FlightJourney-type goal
  *                   (scaffold: "Outbound Flights", "Return Flights",
  *                   "Flight Booking Details") — plus nothing else.

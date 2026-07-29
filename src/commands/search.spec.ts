@@ -612,6 +612,23 @@ describe("registerSearchCommands", () => {
       expect("scaffolded" in out).toBe(false);
       expect(mockResolveClient).not.toHaveBeenCalled();
       expect(mockGraphql.mock.calls.some(c => String(c[0]).includes("mutation CreateTripPlan("))).toBe(false);
+      // --plan path never touches the last-search state file (loadSearchState
+      // has side effects on corrupted files — must stay unread here).
+      expect(mockLoadSearchState).not.toHaveBeenCalled();
+    });
+
+    it("reads the last-search state exactly once on the fallback path (no scaffold)", async () => {
+      mockLoadSearchState.mockReturnValue(state("last-search-plan"));
+      installRouter();
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", "--json",
+      ]);
+      expect(mockLoadSearchState).toHaveBeenCalledTimes(1);
+      const out = JSON.parse(stdout());
+      expect(out.tripPlanId).toBe("last-search-plan");
+      expect("scaffolded" in out).toBe(false);
+      expect(mockGraphql.mock.calls.some(c => String(c[0]).includes("mutation CreateTripPlan("))).toBe(false);
     });
   });
 

@@ -512,7 +512,7 @@ const SCAFFOLD_GOALS = [
   { id: "g-date", name: "Choose Date", type: "Date" },
   { id: "g-dest", name: "Choose Destination", type: "Destination" },
   { id: "g-out", name: "Outbound Flights", type: "Flight" },
-  { id: "g-hotel", name: "Secure Lodging", type: "Hotel" },
+  { id: "g-hotel", name: "Accommodation", type: "Hotel" },
   { id: "g-ret", name: "Return Flights", type: "Flight" },
   { id: "g-manifest", name: "Traveler Manifest", type: "TravellerList" },
   { id: "g-journey", name: "Flight Booking Details", type: "FlightJourney" },

@@ -26,6 +26,7 @@ import {
   setDestination,
 } from "./search-helpers.js";
 import { saveSearchState, loadSearchState } from "../state.js";
+import type { SearchState } from "../state.js";
 import { formatFlights, formatHotels, formatActivities } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivitySummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode, shellArg } from "../utils.js";
 import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "../agent-output.js";
@@ -160,7 +161,9 @@ async function resolveTravellerIds(tripPlanId: string): Promise<string[]> {
 }
 
 // Exported for unit testing the --plan validation contract (VOY-1437).
-export function resolvePlanId(opts: { plan?: string }): string {
+// `lastSearch` lets callers that already read the last-search state pass it in
+// (undefined = not read yet, so read here; null = read and absent).
+export function resolvePlanId(opts: { plan?: string }, lastSearch?: SearchState | null): string {
   // A passed-but-empty/whitespace --plan is an error, NOT a cue to silently
   // fall back to the last-search plan. Falling back here would run the search
   // against a DIFFERENT plan than the caller named — silent cross-plan
@@ -175,7 +178,7 @@ export function resolvePlanId(opts: { plan?: string }): string {
     }
     return trimmed;
   }
-  const state = loadSearchState();
+  const state = lastSearch !== undefined ? lastSearch : loadSearchState();
   if (state?.tripPlanId) {
     process.stderr.write(
       chalk.yellow(`No --plan given; using plan from last search: ${state.tripPlanId}\n`),
@@ -203,13 +206,16 @@ async function resolvePlanForSearch(
   scaffold: { title: string; shape: ShapeFlags },
   quiet: boolean,
 ): Promise<{ tripPlanId: string; scaffolded: boolean }> {
-  if (opts.plan !== undefined || loadSearchState()?.tripPlanId) {
-    return { tripPlanId: resolvePlanId(opts), scaffolded: false };
+  // Read the last-search state at most once (and, as before, not at all when
+  // --plan is given — loadSearchState has side effects on corrupted files).
+  const lastSearch = opts.plan === undefined ? loadSearchState() : undefined;
+  if (opts.plan !== undefined || lastSearch?.tripPlanId) {
+    return { tripPlanId: resolvePlanId(opts, lastSearch), scaffolded: false };
   }
   if (opts.dryRun) {
     // Preserve the pre-1761 hard error under --dry-run (scaffolding would create
     // a real plan, violating dry-run's no-mutation contract).
-    return { tripPlanId: resolvePlanId(opts), scaffolded: false };
+    return { tripPlanId: resolvePlanId(opts, lastSearch), scaffolded: false };
   }
   const result = await scaffoldPlan({
     client: opts.client,
