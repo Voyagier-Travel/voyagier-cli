@@ -161,7 +161,7 @@ export async function resolveClient(explicit?: string): Promise<ResolvedClient> 
       if (!match) {
         throw new CliError(
           CliErrorCode.NOT_FOUND,
-          `No ACTIVE client found with email "${explicit}".\n  Fix: voyagier clients list --json  (then pick an id)\n  Or:  voyagier clients create --name "..." --type individual --email "${explicit}"`
+          `No ACTIVE client found with email "${explicit}".\n  Fix: voyagier clients list  (then pass --client <id|name|email>)\n  Or:  voyagier clients create --name "..." --type individual --email "${explicit}"`
         );
       }
       return { id: match.id, name: match.name, autoResolved: false };
@@ -179,14 +179,14 @@ export async function resolveClient(explicit?: string): Promise<ResolvedClient> 
     if (matches.length === 0) {
       throw new CliError(
         CliErrorCode.NOT_FOUND,
-        `No ACTIVE client found matching "${explicit}".\n  Fix: voyagier clients list --json  (then pick an id)`
+        `No ACTIVE client found matching "${explicit}".\n  Fix: voyagier clients list  (then pass --client <id|name|email>)`
       );
     }
     if (matches.length > 1) {
       const list = matches.map((c) => `    ${c.id}  ${c.name}`).join("\n");
       throw new CliError(
         CliErrorCode.MULTIPLE_CLIENTS,
-        `Multiple ACTIVE clients matched "${explicit}". Specify --client <id>:\n${list}`
+        `Multiple ACTIVE clients matched "${explicit}". Specify --client <id|email>:\n${list}\n  Tip: an email or id is unambiguous.`
       );
     }
     return { id: matches[0].id, name: matches[0].name, autoResolved: false };
@@ -218,9 +218,10 @@ export async function resolveClient(explicit?: string): Promise<ResolvedClient> 
   const selfHint = selfClients.length > 0
     ? "\n  Note: more than one client is flagged as your self client — pass --client <id> explicitly."
     : "";
+  const exampleName = shellArg(active[0].name || "Client Name");
   throw new CliError(
     CliErrorCode.MULTIPLE_CLIENTS,
-    `Multiple ACTIVE clients found. Specify --client <id>:\n${list}${selfHint}\n  Fix: voyagier plan-trip --client <id>`
+    `Multiple ACTIVE clients found. Specify --client <id|name|email>:\n${list}${selfHint}\n  Fix: voyagier plan-trip --client ${exampleName}  (--client accepts an id, name, or email)`
   );
 }
 

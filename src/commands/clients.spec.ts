@@ -448,6 +448,51 @@ describe("resolveClientId", () => {
     });
   });
 
+  it("MULTIPLE_CLIENTS (auto-resolve) hint advertises id|name|email with a concrete name example (VOY-1764)", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: { items: [sampleClient, { ...sampleClient, id: "clt_OTHER", name: "Other Co" }] },
+    });
+    const err = await resolveClientId().catch((e) => e as CliError);
+    expect(err).toBeInstanceOf(CliError);
+    expect(err.message).toContain("--client <id|name|email>");
+    // Concrete example uses the first listed client's actual name, shell-quoted
+    // via shellArg (single quotes for values with spaces/metacharacters).
+    expect(err.message).toContain(`--client '${sampleClient.name}'`);
+    expect(err.message).toContain("accepts an id, name, or email");
+  });
+
+  it("NOT_FOUND (explicit name) hint mentions passing an id, name, or email (VOY-1764)", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient] } });
+    const err = await resolveClientId("Nobody Here").catch((e) => e as CliError);
+    expect(err).toBeInstanceOf(CliError);
+    expect(err.code).toBe(CliErrorCode.NOT_FOUND);
+    expect(err.message).toContain("--client <id|name|email>");
+  });
+
+  it("NOT_FOUND (explicit email) hint mentions passing an id, name, or email (VOY-1764)", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlanClients: { items: [sampleClient] } });
+    const err = await resolveClientId("nobody@example.com").catch((e) => e as CliError);
+    expect(err).toBeInstanceOf(CliError);
+    expect(err.code).toBe(CliErrorCode.NOT_FOUND);
+    expect(err.message).toContain("--client <id|name|email>");
+    // Still offers the create-client fallback with the searched email.
+    expect(err.message).toContain('--email "nobody@example.com"');
+  });
+
+  it("MULTIPLE_CLIENTS (explicit name matched >1) hint says email or id disambiguates (VOY-1764)", async () => {
+    // Two active clients share the same name; an explicit name value matches both.
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: {
+        items: [sampleClient, { ...sampleClient, id: "clt_TWIN", email: "twin@example.com" }],
+      },
+    });
+    const err = await resolveClientId(sampleClient.name).catch((e) => e as CliError);
+    expect(err).toBeInstanceOf(CliError);
+    expect(err.code).toBe(CliErrorCode.MULTIPLE_CLIENTS);
+    expect(err.message).toContain("--client <id|email>");
+    expect(err.message).toContain("an email or id is unambiguous");
+  });
+
   // ── VOY-1748: self-client auto-resolution ────────────────────────────────
 
   it("auto-picks the single self client among multiple active clients", async () => {
