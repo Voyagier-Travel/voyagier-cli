@@ -37,6 +37,10 @@ export function registerCrudCommands(plans: Command): void {
           client: opts.client,
           title: opts.title,
           dryRun: opts.dryRun,
+          // Pre-VOY-1763 contract: `plans create` always wrote the
+          // auto-resolved-client note to stderr (even under --json) but never
+          // emitted progress lines. progress:false preserves exactly that.
+          progress: false,
         });
 
         if (opts.json) {

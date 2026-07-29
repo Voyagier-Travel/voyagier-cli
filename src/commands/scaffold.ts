@@ -177,6 +177,12 @@ export interface ScaffoldOptions {
   shape?: { oneWay?: boolean; flightOnly?: boolean; hotelOnly?: boolean };
   /** Suppress progress output + the auto-resolved-client note (for --json callers). */
   quiet?: boolean;
+  /**
+   * Set false to suppress progress lines only, keeping the auto-resolved-client
+   * note (unless quiet). `plans create` uses this: its pre-VOY-1763 contract
+   * always wrote the note to stderr (even under --json) but never progress.
+   */
+  progress?: boolean;
   /** Print the createTripPlan mutation instead of executing (mirrors --dry-run). */
   dryRun?: boolean;
 }
@@ -215,7 +221,7 @@ export async function scaffoldPlan(opts: ScaffoldOptions): Promise<ScaffoldResul
   }
 
   // Step 2: Create the plan (server attaches the default goal graph).
-  if (chatty) progress("Creating trip plan...");
+  if (chatty && opts.progress !== false) progress("Creating trip plan...");
   const planInput: Record<string, unknown> = { clientId: resolved.id, title: opts.title };
   const planData = await graphql<{ createTripPlan: ScaffoldResult["plan"] }>(
     CREATE_TRIP_PLAN,

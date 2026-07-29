@@ -172,4 +172,11 @@ describe("scaffoldPlan — auto-resolved client note", () => {
     expect(stderr).not.toContain("auto-resolved client");
     expect(mockProgress).not.toHaveBeenCalled();
   });
+
+  it("progress:false suppresses progress but keeps the note (plans create contract)", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlan: { id: "plan-c", title: "C" } });
+    await scaffoldPlan({ title: "C", progress: false });
+    expect(stderr).toContain("auto-resolved client: Daniel Gardner");
+    expect(mockProgress).not.toHaveBeenCalled();
+  });
 });

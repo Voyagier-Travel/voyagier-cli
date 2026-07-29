@@ -237,6 +237,8 @@ describe("plans create — client wiring", () => {
     expect(Object.keys(out).sort()).toEqual(
       ["description", "endDate", "id", "planSummary", "startDate", "title", "url"].sort(),
     );
+    // --json stays stderr-silent (old crud never emitted progress; quiet passthrough).
+    expect(stderrWrites.join("")).not.toContain("Creating trip plan");
   });
 });
 
