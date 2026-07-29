@@ -103,6 +103,11 @@ describe("generateTripTitle", () => {
     expect(generateTripTitle({ to: "CDG", depart: "2026-09-03" }, now)).toBe("CDG · Sep 2026");
   });
 
+  it("rejects calendar-overflow dates instead of silently rolling them (Copilot, PR #131)", () => {
+    // 2026-02-31 would overflow to Mar 2026 via new Date(); fall back to `now` instead.
+    expect(generateTripTitle({ to: "CDG", depart: "2026-02-31" }, now)).toBe("CDG · Jul 2026");
+  });
+
   it("falls back to --hotel for destination and --checkin for the date", () => {
     expect(generateTripTitle({ hotel: "Paris", checkin: "2026-12-20" }, now)).toBe("Paris · Dec 2026");
   });

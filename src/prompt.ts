@@ -5,7 +5,8 @@
  * EXACT non-interactive error behavior everywhere else — agents, CI, `--json`
  * consumers, and the MCP server must never block on a prompt.
  *
- * Convention (matches the inline prompts in send.ts / travellers.ts):
+ * Convention (matches the inline prompt in send.ts; note travellers.ts
+ * predates it and still prompts to stdout — do not copy that):
  *   - createInterface from readline/promises
  *   - prompt output goes to process.stderr, NEVER stdout: stdout must stay a
  *     pure JSON/pipe stream (a piped consumer would otherwise ingest the prompt

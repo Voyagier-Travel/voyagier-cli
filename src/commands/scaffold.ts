@@ -213,8 +213,11 @@ function formatMonthYear(dateStr: string | undefined, now: Date): string {
   let d: Date | null = null;
   const m = dateStr ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim()) : null;
   if (m) {
-    const parsed = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-    if (!Number.isNaN(parsed.getTime())) d = parsed;
+    const [y, mo, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    const parsed = new Date(y, mo - 1, day);
+    // Reject calendar overflow (e.g. 2026-02-31 silently becomes Mar 2026):
+    // only accept dates that round-trip to the same Y/M/D.
+    if (parsed.getFullYear() === y && parsed.getMonth() === mo - 1 && parsed.getDate() === day) d = parsed;
   }
   if (!d) d = now;
   return `${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}`;

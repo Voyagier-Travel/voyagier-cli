@@ -399,7 +399,10 @@ describe("plan-trip scaffold (VOY-1414)", () => {
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-i", title: "Prompted Title" } })
       .mockResolvedValueOnce({ tripPlanTravellers: [] });
     try {
-      await runPlanTrip(["--client", "client-1", "--json"]);
+      // No --json: the real isInteractive() gate disables prompting under
+      // --json, so exercising the prompt path with it would be unreachable
+      // in production (Copilot review, PR #131).
+      await runPlanTrip(["--client", "client-1"]);
       const [, vars] = mockGraphql.mock.calls[0] as [string, any];
       expect(vars.input.title).toBe("Prompted Title");
       // A generated `<...> · <Mon YYYY>` default is offered to the prompt.
