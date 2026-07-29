@@ -179,4 +179,13 @@ describe("scaffoldPlan — auto-resolved client note", () => {
     expect(stderr).toContain("auto-resolved client: Daniel Gardner");
     expect(mockProgress).not.toHaveBeenCalled();
   });
+
+  it("progress:false silences traveller-add and prune progress too", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-d", title: "D" } }) // create
+      .mockResolvedValueOnce({ createTripPlanTraveller: { id: "trav-1" } }) // traveller add
+      .mockResolvedValueOnce({ tripPlanGoals: [] }); // prune listing
+    await scaffoldPlan({ title: "D", travellers: "Ada", shape: { oneWay: true }, progress: false });
+    expect(mockProgress).not.toHaveBeenCalled();
+  });
 });

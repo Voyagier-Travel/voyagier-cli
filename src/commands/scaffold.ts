@@ -147,16 +147,16 @@ export function parseTravellers(names: string): Array<{ firstName: string; lastN
  * Add a comma-separated list of traveller names to a plan and return their
  * new ids. Shared by scaffoldPlan (the create path) and plan-trip's existing
  * `--plan` path so both add travellers identically. Emits an "Adding
- * travellers..." progress line unless `quiet`.
+ * travellers..." progress line unless `quiet` or `progress:false`.
  */
 export async function addTravellers(
   tripPlanId: string,
   names: string,
-  opts?: { quiet?: boolean },
+  opts?: { quiet?: boolean; progress?: boolean },
 ): Promise<string[]> {
   const parsed = parseTravellers(names);
   if (parsed.length === 0) return [];
-  if (!opts?.quiet) progress("Adding travellers...");
+  if (!opts?.quiet && opts?.progress !== false) progress("Adding travellers...");
   const ids: string[] = [];
   for (const t of parsed) {
     const tData = await graphql<{ createTripPlanTraveller: { id: string } }>(
@@ -232,7 +232,7 @@ export async function scaffoldPlan(opts: ScaffoldOptions): Promise<ScaffoldResul
 
   // Step 3: Add any requested travellers.
   const travellerIds = opts.travellers
-    ? await addTravellers(plan.id, opts.travellers, { quiet: opts.quiet })
+    ? await addTravellers(plan.id, opts.travellers, { quiet: opts.quiet, progress: opts.progress })
     : [];
 
   // Step 4: Trip-shape pruning (VOY-1727). The scaffold's default goal graph is
@@ -249,7 +249,7 @@ export async function scaffoldPlan(opts: ScaffoldOptions): Promise<ScaffoldResul
     hotelOnly: !!opts.shape?.hotelOnly,
   };
   if (shape.oneWay || shape.flightOnly || shape.hotelOnly) {
-    if (chatty) progress("Pruning goals to match trip shape...");
+    if (chatty && opts.progress !== false) progress("Pruning goals to match trip shape...");
     const goalsData = await graphql<{ tripPlanGoals: PrunableGoal[] }>(
       LIST_TRIP_PLAN_GOALS,
       { tripPlanId: plan.id },
