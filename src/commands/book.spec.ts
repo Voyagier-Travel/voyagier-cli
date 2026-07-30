@@ -39,10 +39,12 @@ jest.unstable_mockModule("../utils.js", () => ({
 }));
 
 let registerBookCommands: (program: Command) => void;
+let blockerFix: typeof import("./book.js").blockerFix;
 
 beforeAll(async () => {
   const mod = await import("./book.js");
   registerBookCommands = mod.registerBookCommands;
+  blockerFix = mod.blockerFix;
 });
 
 let writes: string[];
@@ -499,6 +501,46 @@ describe("readiness hard-gate (PLAN_BLOCKED)", () => {
     routeGraphql();
     await runBook(["plan-1", "--expect-total", "339.10", "--json"]);
     expect(createVars()).toBeDefined();
+  });
+});
+
+// ── blockerFix routing (VOY-1792) ───────────────────────────────────────────
+// The PLAN_BLOCKED "fix" command must not disagree with plan-status's nextSteps
+// routing (plan-status.ts:777-790) for the same blocker.
+
+describe("blockerFix — PICK_PENDING routing parity with plan-status", () => {
+  it("single-candidate aggregated blocker (no refs.selectionId) routes straight to select", () => {
+    // VOY-1724: hotelCode matching collapsed the group to ONE live chain, so the
+    // exact selection is known even though refs carries only goalId.
+    const fix = blockerFix(
+      { kind: "PICK_PENDING", message: "room pick pending", refs: { goalId: "gh" }, candidateSelectionIds: ["room-A"] },
+      [],
+    );
+    expect(fix).toBe("voyagier select --selection-id room-A --option-id <optionId>");
+  });
+
+  it("multi-candidate aggregated blocker routes to goal inspection", () => {
+    const fix = blockerFix(
+      { kind: "PICK_PENDING", message: "pick pending", refs: { goalId: "gh" }, candidateSelectionIds: ["room-A", "room-B"] },
+      [],
+    );
+    expect(fix).toBe("voyagier plans goal gh --json");
+  });
+
+  it("selection-level blocker (refs.selectionId present, no candidates) routes to select", () => {
+    const fix = blockerFix(
+      { kind: "PICK_PENDING", message: "pick pending", refs: { selectionId: "sel-p", goalId: "g2" } },
+      [],
+    );
+    expect(fix).toBe("voyagier select --selection-id sel-p --option-id <optionId>");
+  });
+
+  it("no selection ref and no candidates falls back to goal inspection", () => {
+    const fix = blockerFix(
+      { kind: "PICK_PENDING", message: "pick pending", refs: { goalId: "g2" } },
+      [],
+    );
+    expect(fix).toBe("voyagier plans goal g2 --json");
   });
 });
 

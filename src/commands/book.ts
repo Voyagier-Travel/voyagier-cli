@@ -139,7 +139,7 @@ async function loadCheckoutSummary(planId: string): Promise<CheckoutSummary> {
  * blocker is fixed). All interpolated ids go through shellArg() — the fix
  * strings are documented as copy/paste runnable (VOY-1709 convention).
  */
-function blockerFix(
+export function blockerFix(
   b: PlanBlocker,
   travellers: { travellerId: string; missing: string[] }[],
 ): string {
@@ -157,10 +157,22 @@ function blockerFix(
       ].filter(Boolean);
       return `voyagier travellers update ${shellArg(b.refs.travellerId ?? "")} ${flags.join(" ")}`.trim();
     }
-    case "PICK_PENDING":
-      return b.refs.selectionId
-        ? `voyagier select --selection-id ${shellArg(b.refs.selectionId)} --option-id <optionId>`
-        : `voyagier plans goal ${shellArg(b.refs.goalId ?? "")} --json`;
+    case "PICK_PENDING": {
+      // Mirror plan-status's PICK_PENDING routing (plan-status.ts:777-790) so the
+      // advertised fix never disagrees. A single live candidate (VOY-1724:
+      // hotelCode matching collapsed an aggregated group to ONE chain) is a known
+      // selection, so route straight to the pick even when refs.selectionId is
+      // absent; a multi-candidate group has no single selection yet, so inspect
+      // the goal first.
+      const single =
+        b.candidateSelectionIds && b.candidateSelectionIds.length === 1
+          ? b.candidateSelectionIds[0]
+          : b.refs.selectionId;
+      if (single && !(b.candidateSelectionIds && b.candidateSelectionIds.length > 1)) {
+        return `voyagier select --selection-id ${shellArg(single)} --option-id <optionId>`;
+      }
+      return `voyagier plans goal ${shellArg(b.refs.goalId ?? "")} --json`;
+    }
     case "SELECTION_INPUT":
     case "REQUIREMENT_UNMET":
     default:
