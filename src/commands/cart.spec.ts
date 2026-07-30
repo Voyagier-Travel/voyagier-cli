@@ -108,7 +108,13 @@ describe("voyagier cart", () => {
     expect(out.data.cart.itemCount).toBe(2);
     expect(out.data.cart.byGoal).toHaveLength(2);
     expect(out.planContext.planId).toBe("plan-1");
-    expect(out.planContext.url).toContain("/plans/plan-1");
+    // Pin the planUrls(...) trio and the current routes (VOY-1795): url aliases
+    // clientUrl for back-compat; the retired /plans/{id} route must not return.
+    expect(out.planContext.url).toBe("https://dev.voyagier.com/me/trips/plans/plan-1");
+    expect(out.planContext.clientUrl).toBe("https://dev.voyagier.com/me/trips/plans/plan-1");
+    expect(out.planContext.advisorUrl).toBe("https://dev.voyagier.com/advisor/plans/plan-1");
+    expect(out.planContext.url).toBe(out.planContext.clientUrl);
+    expect(out.planContext.url).not.toBe("https://dev.voyagier.com/plans/plan-1");
   });
 
   it("groups by goal and orders by sortOrder", async () => {

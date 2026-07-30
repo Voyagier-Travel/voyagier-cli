@@ -274,7 +274,6 @@ export function registerTravellerCommands(program: Command): void {
 
         const t = data.createTripPlanTraveller;
         const baseUrl = deriveBaseUrl(getApiUrl());
-        const planUrl = clientPlanUrl(opts.plan, baseUrl);
 
         if (opts.json) {
           process.stdout.write(JSON.stringify({ ...t, ...planUrls(opts.plan, baseUrl) }, null, 2) + "\n");
