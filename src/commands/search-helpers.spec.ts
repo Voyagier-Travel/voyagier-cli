@@ -349,3 +349,51 @@ describe("findDestinationSelection + setDestination", () => {
     expect(mockGraphql).not.toHaveBeenCalled();
   });
 });
+
+// ── VOY-1793: selection-reuse param diffing ─────────────────────────────────
+
+describe("diffSearchParams", () => {
+  it("flags only the fields that differ (both sides set)", () => {
+    expect(SH.diffSearchParams(
+      { origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 },
+      { origin: "LAX", destination: "NRT", depart: "2026-09-01", partySize: 1 },
+    )).toEqual(["depart"]);
+  });
+
+  it("returns [] when every comparable field matches", () => {
+    const p = { destination: "Paris", checkin: "2026-08-01", checkout: "2026-08-05", partySize: 2 };
+    expect(SH.diffSearchParams(p, { ...p })).toEqual([]);
+  });
+
+  it("does not flag fields that are undefined on both sides (a field irrelevant to this selection kind)", () => {
+    // Hotel params: origin/depart/return stay undefined on both — not mismatches.
+    expect(SH.diffSearchParams(
+      { destination: "Paris", checkin: "2026-08-01", checkout: "2026-08-05" },
+      { destination: "Paris", checkin: "2026-08-01", checkout: "2026-08-05" },
+    )).toEqual([]);
+  });
+
+  it("flags a one-way → round-trip transition (return added)", () => {
+    expect(SH.diffSearchParams(
+      { origin: "LAX", destination: "NRT", depart: "2026-08-01" },
+      { origin: "LAX", destination: "NRT", depart: "2026-08-01", return: "2026-08-10" },
+    )).toEqual(["return"]);
+  });
+
+  it("flags a party-size change", () => {
+    expect(SH.diffSearchParams({ partySize: 1 }, { partySize: 3 })).toEqual(["partySize"]);
+  });
+});
+
+describe("formatReuseWarning", () => {
+  it("starts with the stable token and spells out each changed field as from → to", () => {
+    const msg = SH.formatReuseWarning(
+      ["depart", "partySize"],
+      { depart: "2026-08-01", partySize: 1 },
+      { depart: "2026-09-01", partySize: 2 },
+    );
+    expect(msg.startsWith("SELECTION_REUSED_PARAMS_MISMATCH")).toBe(true);
+    expect(msg).toContain("departure date 2026-08-01 → 2026-09-01");
+    expect(msg).toContain("party size 1 → 2");
+  });
+});

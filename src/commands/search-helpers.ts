@@ -7,6 +7,7 @@ import {
   SET_DESTINATION_VALUE,
 } from "../queries.js";
 import { CliError, CliErrorCode } from "../errors.js";
+import type { SelectionSearchParams } from "../state.js";
 
 /**
  * Search helpers for the goal/mirror-list model (VOY-1414).
@@ -307,4 +308,60 @@ export async function resolveDateRange(
     // Server semantics: duration = inclusive trip days, endDate = start + duration − 1.
     value: days + 1,
   });
+}
+
+// ── VOY-1793: selection-reuse param observability ───────────────────────────
+
+/** Human-facing labels for the comparable param fields. */
+const PARAM_LABELS: Record<keyof SelectionSearchParams, string> = {
+  origin: "origin",
+  destination: "destination",
+  depart: "departure date",
+  return: "return date",
+  checkin: "check-in",
+  checkout: "check-out",
+  partySize: "party size",
+};
+
+/**
+ * Fields that differ between the params a selection's inventory was fetched for
+ * (`effective`) and the params the current search asked for (`requested`).
+ *
+ * A field counts as changed only when at least one side is set and the two
+ * differ — two undefined sides (a field irrelevant to this selection's kind, or
+ * a one-way trip's `return` on both searches) is not a mismatch.
+ */
+export function diffSearchParams(
+  effective: SelectionSearchParams,
+  requested: SelectionSearchParams,
+): (keyof SelectionSearchParams)[] {
+  const norm = (v: unknown) => (v === undefined || v === null ? undefined : v);
+  const changed: (keyof SelectionSearchParams)[] = [];
+  for (const key of Object.keys(PARAM_LABELS) as (keyof SelectionSearchParams)[]) {
+    const a = norm(effective[key]);
+    const b = norm(requested[key]);
+    if (a !== b) changed.push(key);
+  }
+  return changed;
+}
+
+/**
+ * Build the SELECTION_REUSED_PARAMS_MISMATCH warning string for the changed
+ * fields. The token prefix is stable so agents can switch on it; the body
+ * spells out each changed field as `label X → Y`.
+ */
+export function formatReuseWarning(
+  changed: (keyof SelectionSearchParams)[],
+  effective: SelectionSearchParams,
+  requested: SelectionSearchParams,
+): string {
+  const parts = changed.map((key) => {
+    const from = effective[key];
+    const to = requested[key];
+    return `${PARAM_LABELS[key]} ${from ?? "—"} → ${to ?? "—"}`;
+  });
+  return (
+    `SELECTION_REUSED_PARAMS_MISMATCH: this search reused an existing selection whose inventory ` +
+    `was fetched for different params (${parts.join(", ")}); the results may reflect the original search params, not the ones just requested.`
+  );
 }

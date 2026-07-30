@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { existsSync, unlinkSync, writeFileSync, readFileSync, statSync, chmodSync } from "fs";
 import { join } from "path";
-import { saveSearchState, loadSearchState, clearSearchState, isSearchStateStale, SearchState, saveOptionsState, loadOptionsState, clearOptionsState } from "./state.js";
+import { saveSearchState, loadSearchState, clearSearchState, isSearchStateStale, SearchState, saveOptionsState, loadOptionsState, clearOptionsState, getSelectionSearchParams, rememberSelectionSearchParams, clearSelectionSearchParams } from "./state.js";
 import { CONFIG_DIR } from "./config.js";
 
 const STATE_FILE = join(CONFIG_DIR, "last-search.json");
+const SELECTION_PARAMS_FILE = join(CONFIG_DIR, "selection-params.json");
 
 const MOCK_STATE: SearchState = {
   type: "flights",
@@ -215,5 +216,56 @@ describe("OptionsState", () => {
     // Write garbage to the options state file
     writeFileSync(join(CONFIG_DIR, "last-options.json"), "not valid json");
     expect(loadOptionsState()).toBeNull();
+  });
+
+  // ── VOY-1793: selection search params ─────────────────────────────────────
+  describe("getSelectionSearchParams / rememberSelectionSearchParams", () => {
+    let backup: string | null = null;
+    beforeEach(() => {
+      backup = existsSync(SELECTION_PARAMS_FILE) ? readFileSync(SELECTION_PARAMS_FILE, "utf-8") : null;
+      clearSelectionSearchParams();
+    });
+    afterEach(() => {
+      clearSelectionSearchParams();
+      if (backup !== null) writeFileSync(SELECTION_PARAMS_FILE, backup, { mode: 0o600 });
+    });
+
+    it("returns null before anything is recorded", () => {
+      expect(getSelectionSearchParams("sel-x")).toBeNull();
+    });
+
+    it("records params on first sight and reads them back", () => {
+      rememberSelectionSearchParams("sel-x", { origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
+      expect(getSelectionSearchParams("sel-x")).toEqual({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
+    });
+
+    it("PRESERVES the original params — a later remember with different params does not overwrite", () => {
+      rememberSelectionSearchParams("sel-x", { depart: "2026-08-01" });
+      rememberSelectionSearchParams("sel-x", { depart: "2026-09-01" });
+      expect(getSelectionSearchParams("sel-x")).toEqual({ depart: "2026-08-01" });
+    });
+
+    it("keeps records for distinct selections independent", () => {
+      rememberSelectionSearchParams("sel-a", { depart: "2026-08-01" });
+      rememberSelectionSearchParams("sel-b", { checkin: "2026-08-02" });
+      expect(getSelectionSearchParams("sel-a")).toEqual({ depart: "2026-08-01" });
+      expect(getSelectionSearchParams("sel-b")).toEqual({ checkin: "2026-08-02" });
+    });
+
+    it("prunes stale entries (older than the max age) on write", () => {
+      const old = new Date("2020-01-01T00:00:00.000Z");
+      rememberSelectionSearchParams("sel-old", { depart: "2020-01-01" }, old);
+      // A fresh write happens 'now' — the ancient entry should be pruned.
+      rememberSelectionSearchParams("sel-new", { depart: "2026-08-01" });
+      expect(getSelectionSearchParams("sel-old")).toBeNull();
+      expect(getSelectionSearchParams("sel-new")).toEqual({ depart: "2026-08-01" });
+    });
+
+    it("degrades to no-record on a corrupt params file (never throws)", () => {
+      writeFileSync(SELECTION_PARAMS_FILE, "not valid json", { mode: 0o600 });
+      expect(getSelectionSearchParams("sel-x")).toBeNull();
+      expect(() => rememberSelectionSearchParams("sel-x", { depart: "2026-08-01" })).not.toThrow();
+      expect(getSelectionSearchParams("sel-x")).toEqual({ depart: "2026-08-01" });
+    });
   });
 });
