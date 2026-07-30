@@ -24,9 +24,11 @@ import {
   resolveReturnFlightGoal,
   requireDateSelection,
   setDestination,
+  diffSearchParams,
+  formatReuseWarning,
 } from "./search-helpers.js";
-import { saveSearchState, loadSearchState } from "../state.js";
-import type { SearchState } from "../state.js";
+import { saveSearchState, loadSearchState, getSelectionSearchParams, rememberSelectionSearchParams } from "../state.js";
+import type { SearchState, SelectionSearchParams } from "../state.js";
 import { formatFlights, formatHotels, formatActivities } from "../formatters.js";
 import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivitySummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode, shellArg } from "../utils.js";
 import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "../agent-output.js";
@@ -464,6 +466,52 @@ function reportWaitStop(result: SelectionStatusResult, selectionId: string): voi
   }
 }
 
+/**
+ * VOY-1793 selection-reuse observability.
+ *
+ * A search reuses the goal's existing decision selection (VOY-1692) rather than
+ * refetching, so results can silently reflect the params the selection was
+ * ORIGINALLY searched with. This records the params a selection was first
+ * searched with and, on reuse, surfaces `effectiveParams` (the original) plus a
+ * SELECTION_REUSED_PARAMS_MISMATCH warning when the new request differs. It is
+ * pure observability — it never changes what the search does.
+ */
+interface ReuseObservation {
+  requestedParams: SelectionSearchParams;
+  effectiveParams?: SelectionSearchParams;
+  warnings: string[];
+}
+
+function observeSelectionReuse(
+  selectionId: string,
+  requested: SelectionSearchParams,
+): ReuseObservation {
+  // No stored record yet → this is the selection's original search: remember it
+  // (best-effort) and there is nothing to reconcile against.
+  const stored = getSelectionSearchParams(selectionId);
+  if (!stored) {
+    rememberSelectionSearchParams(selectionId, requested);
+    return { requestedParams: requested, warnings: [] };
+  }
+  const changed = diffSearchParams(stored, requested);
+  const warnings = changed.length > 0 ? [formatReuseWarning(changed, stored, requested)] : [];
+  return { requestedParams: requested, effectiveParams: stored, warnings };
+}
+
+/** Fields injected into the search JSON envelope for reuse observability. */
+function reuseEnvelopeFields(obs: ReuseObservation): Record<string, unknown> {
+  return {
+    requestedParams: obs.requestedParams,
+    ...(obs.effectiveParams ? { effectiveParams: obs.effectiveParams } : {}),
+    ...(obs.warnings.length > 0 ? { warnings: obs.warnings } : {}),
+  };
+}
+
+/** Print the ⚠ reuse-mismatch line(s) to stderr for human output (VOY-1793). */
+function writeReuseWarnings(warnings: string[]): void {
+  for (const w of warnings) process.stderr.write(chalk.yellow(`⚠ ${w}\n`));
+}
+
 export function registerSearchCommands(program: Command): void {
   const search = program.command("search").description("Search flights, hotels, and activities");
 
@@ -667,6 +715,16 @@ export function registerSearchCommands(program: Command): void {
           searchSpinner?.stop();
         }
 
+        // VOY-1793: record/reconcile the params this (possibly reused) selection
+        // was searched with, so the envelope can flag a stale-reuse mismatch.
+        const reuse = observeSelectionReuse(selectionId, {
+          origin,
+          destination,
+          depart: opts.date,
+          ...(opts.return ? { return: opts.return } : {}),
+          partySize: travellerIds.length,
+        });
+
         // Human/TTY: wait inline for async inventory rather than handing the user
         // a poll command (VOY-1780). Kick a refresh + poll to completion, then
         // re-fetch the full options and fall through to the SAME render path as
@@ -742,6 +800,7 @@ export function registerSearchCommands(program: Command): void {
               ...(returnSelectionId ? { returnSelectionId } : {}),
               isRoundTrip,
               url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
+              ...reuseEnvelopeFields(reuse),
             },
             options as unknown as Array<Record<string, unknown>>,
             searchResults,
@@ -756,6 +815,7 @@ export function registerSearchCommands(program: Command): void {
           const lines: string[] = [];
           lines.push(`### Flights (${origin} → ${destination})`);
           if (scaffolded) lines.push(`_No plan given — created draft plan \`${tripPlanId}\`._`);
+          for (const w of reuse.warnings) lines.push(`> ⚠ ${w}`);
           if (options.length === 0) {
             // Options are produced asynchronously by the monitor once the goal's
             // inputs are sufficient. Empty here usually means "still fetching",
@@ -783,6 +843,9 @@ export function registerSearchCommands(program: Command): void {
           process.stdout.write(lines.join("\n") + "\n");
           return;
         }
+
+        // Human mode: surface the reuse-mismatch warning as a clear ⚠ line.
+        writeReuseWarnings(reuse.warnings);
 
         if (options.length === 0) {
           // Reached only when the inline wait was skipped (--no-wait / non-TTY);
@@ -960,6 +1023,15 @@ export function registerSearchCommands(program: Command): void {
           searchSpinner?.stop();
         }
 
+        // VOY-1793: record/reconcile the params this (possibly reused) hotel
+        // selection was searched with, so the envelope can flag a stale reuse.
+        const reuse = observeSelectionReuse(selectionId, {
+          destination: opts.location,
+          checkin: opts.checkin,
+          checkout: opts.checkout,
+          partySize: adults,
+        });
+
         // Human/TTY: wait inline for async inventory (VOY-1780). Same shape as
         // flights — poll to completion, re-fetch full options, then render
         // through the immediate-results path below. NO_RESULTS keeps the
@@ -1027,6 +1099,7 @@ export function registerSearchCommands(program: Command): void {
               ...(scaffolded ? { scaffolded: true } : {}),
               selectionId: selectionId,
               url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
+              ...reuseEnvelopeFields(reuse),
             },
             options as unknown as Array<Record<string, unknown>>,
             searchResults,
@@ -1041,6 +1114,7 @@ export function registerSearchCommands(program: Command): void {
           const lines: string[] = [];
           lines.push(`### Hotels (${opts.location})`);
           if (scaffolded) lines.push(`_No plan given — created draft plan \`${tripPlanId}\`._`);
+          for (const w of reuse.warnings) lines.push(`> ⚠ ${w}`);
           if (options.length === 0) {
             // Empty immediately after create usually means the monitor is still
             // fetching, not that there are no hotels — poll first (VOY-1421).
@@ -1061,6 +1135,9 @@ export function registerSearchCommands(program: Command): void {
           process.stdout.write(lines.join("\n") + "\n");
           return;
         }
+
+        // Human mode: surface the reuse-mismatch warning as a clear ⚠ line.
+        writeReuseWarnings(reuse.warnings);
 
         if (options.length === 0) {
           const loc = opts.location as string;

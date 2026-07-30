@@ -18,6 +18,11 @@ import type { SearchState } from "../state.js";
 
 const mockLoadSearchState = jest.fn<() => SearchState | null>();
 const mockGraphql = jest.fn<(query: string, vars?: Record<string, unknown>) => Promise<unknown>>();
+// VOY-1793: selection-reuse param observability. Default: no stored record
+// (first search) → no effectiveParams/warnings. Tests override the getter to
+// simulate a prior search with different params.
+const mockGetSelectionSearchParams = jest.fn<(id: string) => unknown>(() => null);
+const mockRememberSelectionSearchParams = jest.fn();
 
 jest.unstable_mockModule("../state.js", () => ({
   loadSearchState: mockLoadSearchState,
@@ -27,6 +32,8 @@ jest.unstable_mockModule("../state.js", () => ({
   saveOptionsState: jest.fn(),
   loadOptionsState: jest.fn(),
   clearOptionsState: jest.fn(),
+  getSelectionSearchParams: mockGetSelectionSearchParams,
+  rememberSelectionSearchParams: mockRememberSelectionSearchParams,
 }));
 
 jest.unstable_mockModule("../api.js", () => ({
@@ -336,6 +343,9 @@ describe("registerSearchCommands", () => {
     mockResolveClient.mockReset();
     mockResolveClient.mockResolvedValue({ id: "client-1", name: "Blog Tester", autoResolved: false });
     mockWaitForSelectionOptions.mockReset();
+    mockGetSelectionSearchParams.mockReset();
+    mockGetSelectionSearchParams.mockReturnValue(null);
+    mockRememberSelectionSearchParams.mockReset();
     stdoutWrites = [];
     stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
       stdoutWrites.push(typeof chunk === "string" ? chunk : String(chunk));
@@ -816,6 +826,72 @@ describe("registerSearchCommands", () => {
           "--plan", "plan-1", "--location", "Paris", "--checkin", "nope", "--checkout", "2026-08-05", "--json",
         ]),
       ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    });
+  });
+
+  // ── selection-reuse param observability (VOY-1793) ──────────────────────────
+
+  describe("selection-reuse param observability", () => {
+    const flightArgs = (date: string, extra: string[] = []) => [
+      "node", "v", "search", "flights",
+      "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", date, ...extra,
+    ];
+
+    it("flights --json echoes requestedParams and records the original on a first search (no warning)", async () => {
+      installRouter();
+      await buildProgram().parseAsync(flightArgs("2026-08-01", ["--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.requestedParams).toEqual({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
+      expect(out.effectiveParams).toBeUndefined();
+      expect(out.warnings).toBeUndefined();
+      expect(mockRememberSelectionSearchParams).toHaveBeenCalledWith(
+        "sel-fdec",
+        expect.objectContaining({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 }),
+      );
+    });
+
+    it("flights --json warns + echoes effectiveParams when the reused selection was searched with a different date", async () => {
+      installRouter();
+      mockGetSelectionSearchParams.mockReturnValue({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
+      await buildProgram().parseAsync(flightArgs("2026-09-01", ["--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.requestedParams.depart).toBe("2026-09-01");
+      expect(out.effectiveParams).toEqual({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
+      expect(out.warnings).toHaveLength(1);
+      expect(out.warnings[0]).toContain("SELECTION_REUSED_PARAMS_MISMATCH");
+      expect(out.warnings[0]).toContain("departure date");
+      // Reuse must NOT overwrite the stored original (else mismatch is undetectable next time).
+      expect(mockRememberSelectionSearchParams).not.toHaveBeenCalled();
+    });
+
+    it("flights --json: matching reused params echo effectiveParams but emit no warning", async () => {
+      installRouter();
+      mockGetSelectionSearchParams.mockReturnValue({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
+      await buildProgram().parseAsync(flightArgs("2026-08-01", ["--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.warnings).toBeUndefined();
+      expect(out.effectiveParams).toEqual({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
+    });
+
+    it("flights human output prints a clear ⚠ mismatch line to stderr", async () => {
+      installRouter();
+      mockGetSelectionSearchParams.mockReturnValue({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
+      await buildProgram().parseAsync(flightArgs("2026-09-01"));
+      expect(stderrWrites.join("")).toMatch(/⚠[\s\S]*SELECTION_REUSED_PARAMS_MISMATCH/);
+    });
+
+    it("hotels --json warns + echoes effectiveParams when the reused selection was searched with a different check-in", async () => {
+      installRouter({ goals: buildHotelGoals() });
+      mockGetSelectionSearchParams.mockReturnValue({ destination: "Paris", checkin: "2026-08-01", checkout: "2026-08-05", partySize: 1 });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-09-01", "--checkout", "2026-09-05", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.requestedParams).toEqual({ destination: "Paris", checkin: "2026-09-01", checkout: "2026-09-05", partySize: 1 });
+      expect(out.effectiveParams.checkin).toBe("2026-08-01");
+      expect(out.warnings[0]).toContain("SELECTION_REUSED_PARAMS_MISMATCH");
+      expect(out.warnings[0]).toContain("check-in");
     });
   });
 
