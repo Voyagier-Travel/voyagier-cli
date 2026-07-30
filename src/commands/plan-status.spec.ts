@@ -633,7 +633,10 @@ describe("buildPlanStatus — misc contract", () => {
   it("empty plan (no goals, no travellers) → IN_PROGRESS via CART_PENDING, url built from base", () => {
     const s = buildPlanStatus({ tripPlan: plan({ travellers: [] }), tripPlanGoals: [] }, BASE);
     expect(s.readiness).toBe("IN_PROGRESS");
-    expect(s.url).toBe("https://travel.voyagier.com/plans/plan-1");
+    // VOY-1795: url aliases the traveller-facing clientUrl; advisorUrl added alongside.
+    expect(s.url).toBe("https://travel.voyagier.com/me/trips/plans/plan-1");
+    expect(s.clientUrl).toBe("https://travel.voyagier.com/me/trips/plans/plan-1");
+    expect(s.advisorUrl).toBe("https://travel.voyagier.com/advisor/plans/plan-1");
     expect(s.summary).toEqual({ goalsTotal: 0, goalsDecided: 0, goalsBooked: 0, blockerCount: 0, alternateBranchCount: 0, bookableNow: false });
   });
 

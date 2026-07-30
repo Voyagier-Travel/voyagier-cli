@@ -11,6 +11,7 @@ import {
 } from "../queries.js";
 import { loadSearchState, clearSearchState, isSearchStateStale } from "../state.js";
 import { deriveBaseUrl, shellArg } from "../utils.js";
+import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { GET_PLAN_STATUS } from "../queries.js";
 import { resolveHotelCodes, buildPlanStatus, type PlanStatusQueryResult } from "./plan-status.js";
 import { hintFlightSelected, hintHotelSelected } from "../hints.js";
@@ -438,13 +439,13 @@ export function registerSelectCommands(program: Command): void {
               ...(chainNote ? { chainNote } : {}),
               // VOY-1724: the resolved matching room chain's real selection id.
               ...(roomStep ? { roomSelectionId: roomStep } : {}),
-              url: `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`,
+              ...planUrls(state.tripPlanId),
               ...(waitOutcome !== undefined ? waitJsonFragment(waitOutcome) : {}),
             },
             state.tripPlanId,
           );
         } else if (opts.agent) {
-          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${state.tripPlanId}`;
+          const planUrl = clientPlanUrl(state.tripPlanId);
           const icon = state.type === "flights" ? "✈️" : state.type === "activities" ? "🎯" : "🏨";
           const nextSteps = [
             ...(state.type === "flights" && state.returnSelectionId

@@ -4,6 +4,7 @@ import { graphql } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { formatPrice, deriveBaseUrl } from "../utils.js";
 import { getApiUrl } from "../config.js";
+import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import {
   GET_BOOKING_RECORDS,
   GET_BOOKING_RECORDS_BY_USER,
@@ -101,7 +102,7 @@ export function registerBookingsCommands(program: Command): void {
           const enriched = records.map(({ amount, ...r }) => ({
             ...r,
             amountCents: amount,
-            ...(r.tripPlanId ? { url: `${baseUrl}/plans/${r.tripPlanId}` } : {}),
+            ...(r.tripPlanId ? planUrls(r.tripPlanId, baseUrl) : {}),
           }));
           process.stdout.write(JSON.stringify({ bookings: enriched }, null, 2) + "\n");
           return;
@@ -166,7 +167,7 @@ export function registerBookingsCommands(program: Command): void {
           const enriched = {
             ...rest,
             amountCents: amount,
-            ...(r.tripPlanId ? { url: `${baseUrl}/plans/${r.tripPlanId}` } : {}),
+            ...(r.tripPlanId ? planUrls(r.tripPlanId, baseUrl) : {}),
           };
           process.stdout.write(JSON.stringify(enriched, null, 2) + "\n");
           return;
@@ -188,7 +189,7 @@ export function registerBookingsCommands(program: Command): void {
         }
         if (r.tripPlan) {
           console.log(`  Plan:       ${r.tripPlan.title}`);
-          console.log(chalk.dim(`              ${baseUrl}/plans/${r.tripPlan.id}`));
+          console.log(chalk.dim(`              ${clientPlanUrl(r.tripPlan.id, baseUrl)}`));
         }
         const item = r.tripPlanPlace ?? r.tripPlanProduct;
         if (item) console.log(`  Item:       ${item.name}`);

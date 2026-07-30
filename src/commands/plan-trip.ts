@@ -7,6 +7,7 @@ import {
   GET_TRAVELLERS_BRIEF,
 } from "../queries.js";
 import { validateDate, warnPastDate, validateIata, deriveBaseUrl, shellArg } from "../utils.js";
+import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { progress, warn, fatal, jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { scaffoldPlan, addTravellers, validateShapeFlags, selectGoalsToPrune, generateTripTitle } from "./scaffold.js";
@@ -259,7 +260,7 @@ Examples:
         // starting point and hands off — it is NOT the only door and must not
         // push agents down a fixed shape.
         const baseUrl2 = deriveBaseUrl(getApiUrl());
-        const planUrl = `${baseUrl2}/plans/${plan.id}`;
+        const planUrl = clientPlanUrl(plan.id, baseUrl2);
 
         const nextSteps: string[] = [];
         if (opts.to && opts.depart) {
@@ -298,7 +299,7 @@ Examples:
           travellerIds,
           scaffolded: true,
           note: "plan-trip creates a starting plan + default goal graph (a round-trip + hotel TEMPLATE); compose the trip with the primitives below. Prune goals your brief doesn't need — shape flags (--one-way/--flight-only/--hotel-only) at scaffold time, or `plans goal-remove <goalId> --force` any time.",
-          url: planUrl,
+          ...planUrls(plan.id, baseUrl2),
           ...(shapeLabels.length > 0
             ? {
                 shape: shapeLabels,

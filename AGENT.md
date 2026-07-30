@@ -86,7 +86,9 @@ voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
 # Round trip: a choice is needed on BOTH legs — repeat for returnSelectionId.
 # The SAME optionId appears in both legs' option lists (leg-mirrored journey
 # rows) — picking the identical id on outbound and return is the intended
-# pattern, not a bug:
+# pairing, not a bug. Operating airlines MAY differ between the two legs
+# (mixed-carrier round trips are normal), so don't reject a pairing just
+# because the return leg's carrier isn't the outbound's:
 voyagier selection-options <RETURN_SELECTION_ID> --wait --json
 voyagier select --selection-id <RETURN_SELECTION_ID> --option-id <OPTION_ID> --json
 
@@ -230,10 +232,14 @@ The CLI has two payload styles. Pick the right shape for the command you're call
   "planContext": {
     "planId": "...",
     "title": "...",
-    "url": "https://app.voyagier.com/plans/..."
+    "url": "https://app.voyagier.com/me/trips/plans/...",
+    "clientUrl": "https://app.voyagier.com/me/trips/plans/...",
+    "advisorUrl": "https://app.voyagier.com/advisor/plans/..."
   }
 }
 ```
+
+**Plan URL fields.** Payloads that link to a plan emit three fields: `clientUrl` (`<base>/me/trips/plans/{id}`) is the traveller-facing view a client opens; `advisorUrl` (`<base>/advisor/plans/{id}`) is the advisor-facing workspace. `url` is a back-compat alias of `clientUrl` — hand a client the `clientUrl`, and open the `advisorUrl` yourself. The older `<base>/plans/{id}` route is retired.
 
 **Style B — flat / domain-specific** (clients, `plans list`/`create`, travellers, search, select, whoami — the older surfaces). `select` payloads are flat but DO carry `ok: true`, so `.ok` is checkable on every select outcome:
 
@@ -241,9 +247,9 @@ The CLI has two payload styles. Pick the right shape for the command you're call
 // clients list:    { "clients": [...], "total": 12 }
 // clients get:     { "client": { id, name, ... } }
 // clients upsert:  { "client": { ... }, "ok": true, "created": false }
-// plans create:    { "id": "...", "title": "...", "url": "...", "planSummary": "..." }
-// plans list:      { "items": [...], "total": 12, "page": 1, "limit": 20 }
-// search flights:  { "tripPlanId": "...", "selectionId": "...", "optionCount": N, "topOptions": [≤10 summaries], "url": "..." }   (--full swaps topOptions for the complete options[] dump)
+// plans create:    { "id": "...", "title": "...", "url": "...", "clientUrl": "...", "advisorUrl": "...", "planSummary": "..." }
+// plans list:      { "items": [...], "total": 12, "page": 1, "limit": 20 }   (each item carries url/clientUrl/advisorUrl)
+// search flights:  { "tripPlanId": "...", "selectionId": "...", "optionCount": N, "topOptions": [≤10 summaries], "url": "...", "clientUrl": "...", "advisorUrl": "..." }   (--full swaps topOptions for the complete options[] dump)
 // select:          { "ok": true, "success": true, "type": "option_selected", ... }
 // selection-options: { "selectionId": "...", "status": "...", "optionCount": N, "options": [...] }
 ```
@@ -476,6 +482,12 @@ voyagier select <n> --plan <id> --json
 
 `selection-options` reports a status; `--wait` polls with backoff and returns once the status is **terminal** — `READY`, `NO_RESULTS`, `AWAITING_INPUT`, or `FETCH_ERROR` (only `FETCHING` keeps polling). `--goal <goalId>` targets a specific goal (default: the first Flight/Hotel/Activity goal on the plan). `--max-stops` and `--sort` are client-side presentation filters over the returned options.
 
+**Prices are party totals.** Every search option's price is the total for the searched traveller group, NOT per-person — do not multiply by traveller count. (Hotel search prices are additionally whole-STAY totals, not nightly.) `book --dry-run` / `quote` are the chargeable truth.
+
+**Default option order is the server's value ranking**, a composite of price / stops / duration computed server-side — it is NOT sorted by price. `topOptions[0]` (and `options[0]`) is the server's value pick, not the cheapest. To rank by a single factual field, pass `--sort price|duration|stops` (a client-side sort of the returned options); callers that specifically want the cheapest must sort or filter by `price` explicitly.
+
+**Re-searching a goal reuses its existing selection.** Running `search` again on a goal that already has a selection reuses that selection rather than creating a new one, so a re-search with DIFFERENT dates can return results computed for the original parameters. Always verify the effective dates in the response before selecting — cross-reference the echoed search params (`--full` includes the per-option data) rather than assuming the new dates took effect.
+
 ### Cart + Book (Style A JSON)
 ```bash
 voyagier cart <planId> --json
@@ -504,6 +516,8 @@ voyagier send <planId> --yes --note 'Ready when you are!' --json
 > 💰 **Quoted ≡ gated.** `quote`'s `chargeableTotal` is computed through the same cents-rounding the `book` gate compares, so the acceptance command can never fail its own gate on an unchanged cart. `acceptance` is `null` (with `acceptanceUnavailableReason`) when nothing is bookable.
 >
 > 🔢 **Rounding semantics:** `chargeableTotalCents` is rounded ONCE on the raw-dollar subtotal (gate semantics) — do NOT sum per-item `priceCents`, which is rounded per line and can differ on fractional-cent prices; raw `price` is included per item for re-derivation.
+>
+> 👥 **Search prices are party totals.** Every search/selection option price is the total for the searched traveller group, NOT per-person — do not multiply by traveller count (hotel search prices are additionally whole-STAY totals, not nightly). `quote`'s `chargeableTotal` and `book --dry-run`'s `chargeableSubtotal` are the chargeable truth.
 >
 > ✉️ **`send` is not idempotent** — every invocation emails the client again. Non-interactive runs refuse without `--yes` (`CONFIRMATION_REQUIRED`). Send once; track with `plan-status`.
 

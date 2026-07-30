@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { graphql } from "../../api.js";
 import { getApiUrl } from "../../config.js";
 import { deriveBaseUrl, formatDateRange } from "../../utils.js";
+import { clientPlanUrl } from "../../plan-urls.js";
 import { resolvePlanArg } from "../../resolve-plan-arg.js";
 import { jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
@@ -221,7 +222,7 @@ export function registerSharingCommands(plans: Command): void {
           const dr = formatDateRange(p.startDate, p.endDate);
           const dates = dr ? chalk.dim(` ${dr}`) : "";
           console.log(`  ${chalk.white(p.title)}${dates}`);
-          console.log(chalk.dim(`    ${baseUrl}/plans/${p.id}`));
+          console.log(chalk.dim(`    ${clientPlanUrl(p.id, baseUrl)}`));
         }
         console.log();
       } catch (err) {

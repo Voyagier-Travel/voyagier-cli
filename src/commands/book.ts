@@ -55,6 +55,7 @@ import { graphql } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
 import { formatPrice, openBrowser, deriveBaseUrl, shellArg, cents } from "../utils.js";
+import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { resolvePlanArg } from "../resolve-plan-arg.js";
 import { hintCheckoutCreated, hintBookingConfirmed, hintBookingPending, hintDryRun } from "../hints.js";
 import { GET_CART_V2, CREATE_CHECKOUT, GET_PAYMENT_CHECKOUTS, GET_PLAN_STATUS } from "../queries.js";
@@ -267,7 +268,7 @@ export function registerBookCommands(program: Command): void {
     }) => {
       const planId = resolvePlanArg(planIdInput, opts, "book");
       const baseUrl = deriveBaseUrl(getApiUrl());
-      const planUrl = `${baseUrl}/plans/${planId}`;
+      const planUrl = clientPlanUrl(planId, baseUrl);
 
       // --status mode
       if (opts.status) {
@@ -362,7 +363,7 @@ export function registerBookCommands(program: Command): void {
       const planContext = {
         planId: plan.id,
         title: plan.title,
-        url: planUrl,
+        ...planUrls(plan.id, baseUrl),
         urlForCli: `voyagier plans get ${shellArg(plan.id)}`,
       };
 
@@ -678,7 +679,7 @@ async function showBookingStatus(planId: string, baseUrl: string, json: boolean,
     throw new CliError(CliErrorCode.API_ERROR, `Failed to load booking status: ${message}`);
   }
   const checkouts = data.tripPlanPaymentCheckouts ?? [];
-  const planUrl = `${baseUrl}/plans/${planId}`;
+  const planUrl = clientPlanUrl(planId, baseUrl);
 
   if (json) {
     // Machine surface: rename bookingRecords[].amount → amountCents. The API
@@ -695,7 +696,7 @@ async function showBookingStatus(planId: string, baseUrl: string, json: boolean,
     process.stdout.write(JSON.stringify({
       ok: true,
       data: { checkouts: renamed },
-      planContext: { planId, url: planUrl, urlForCli: `voyagier plans get ${shellArg(planId)}` },
+      planContext: { planId, ...planUrls(planId, baseUrl), urlForCli: `voyagier plans get ${shellArg(planId)}` },
     }, null, 2) + "\n");
     return;
   }

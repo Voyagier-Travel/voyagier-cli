@@ -403,7 +403,10 @@ describe("registerSearchCommands", () => {
       expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["opt-b", "opt-a"]);
       expect(JSON.stringify(out)).not.toContain("bookingData");
       expect(out.options).toBeUndefined();
-      expect(out.url).toBe("https://dev.voyagier.com/plans/plan-1");
+      // VOY-1795: url aliases the traveller-facing clientUrl; advisorUrl added alongside.
+      expect(out.url).toBe("https://dev.voyagier.com/me/trips/plans/plan-1");
+      expect(out.clientUrl).toBe("https://dev.voyagier.com/me/trips/plans/plan-1");
+      expect(out.advisorUrl).toBe("https://dev.voyagier.com/advisor/plans/plan-1");
       // Airports were pushed to the goal graph (origin + destination).
       const airportCalls = mockGraphql.mock.calls.filter(c => String(c[0]).includes("updateTripPlanAirportSelection"));
       expect(airportCalls).toHaveLength(2);
@@ -564,7 +567,9 @@ describe("registerSearchCommands", () => {
       const out = JSON.parse(stdout());
       expect(out.scaffolded).toBe(true);
       expect(out.tripPlanId).toBe("scaffold-plan");
-      expect(out.url).toBe("https://dev.voyagier.com/plans/scaffold-plan");
+      expect(out.url).toBe("https://dev.voyagier.com/me/trips/plans/scaffold-plan");
+      expect(out.clientUrl).toBe("https://dev.voyagier.com/me/trips/plans/scaffold-plan");
+      expect(out.advisorUrl).toBe("https://dev.voyagier.com/advisor/plans/scaffold-plan");
       // The search still ran against the drafted plan (selection resolved).
       expect(out.selectionId).toBe("sel-fdec");
       // Client resolution was delegated with the explicit --client ref.
