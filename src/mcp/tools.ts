@@ -195,6 +195,7 @@ export interface BookInput {
   only_bookable?: boolean;
   types?: string[];
   rebook?: boolean;
+  force_checkout?: boolean;
 }
 
 // NOTE: `book` deliberately exposes NO idempotency_key input. The CLI's `book`
@@ -210,6 +211,7 @@ export function buildBookArgs(i: BookInput): string[] {
   bool(args, "--only-bookable", i.only_bookable);
   if (i.types && i.types.length > 0) args.push("--types", i.types.join(","));
   bool(args, "--rebook", i.rebook);
+  bool(args, "--force-checkout", i.force_checkout);
   args.push("--json");
   return args;
 }
@@ -412,6 +414,7 @@ export const TOOLS: ToolDef[] = [
       only_bookable: z.boolean().optional().describe("Restrict checkout to bookable items (server-side via itemIds)."),
       types: z.array(z.string()).optional().describe("CartItemType filter (e.g. [\"Activity\",\"Hotel\"]) — narrows the charged set server-side."),
       rebook: z.boolean().optional().describe("Proceed even though a Paid checkout already exists (intentional second charge)."),
+      force_checkout: z.boolean().optional().describe("Skip the client-side readiness guard (refuses checkout on hard traveller-data/other blockers) and trust the server's own validation."),
     },
     buildArgs: (i) => buildBookArgs(i),
   }),

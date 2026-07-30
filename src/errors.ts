@@ -44,6 +44,8 @@ export enum CliErrorCode {
   PRICE_CHANGED = "PRICE_CHANGED",
   /** A Paid checkout with booking records already exists for this plan. */
   ALREADY_BOOKED = "ALREADY_BOOKED",
+  /** Plan readiness reports hard (non-unverified) blockers — checkout refused (VOY-1792). */
+  PLAN_BLOCKED = "PLAN_BLOCKED",
 
   // v2.5.0 — VOY-1212 (send + quote)
   /** Externally-visible action (e.g. emailing a client) needs explicit confirmation: interactive yes or --yes. */

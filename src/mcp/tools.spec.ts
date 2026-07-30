@@ -162,6 +162,12 @@ describe("argv builders", () => {
     expect(args).not.toContain("--validate");
     expect(args).not.toContain("--rebook");
     expect(args).not.toContain("--max-total");
+    expect(args).not.toContain("--force-checkout");
+  });
+
+  it("book: force_checkout → --force-checkout (readiness-guard bypass parity with the CLI)", () => {
+    const args = buildBookArgs({ plan_id: "p", expect_total: 339.1, force_checkout: true });
+    expect(args).toEqual(["book", "p", "--expect-total", "339.10", "--force-checkout", "--json"]);
   });
 
   it("book: --max-total rendered via moneyArg when present", () => {
