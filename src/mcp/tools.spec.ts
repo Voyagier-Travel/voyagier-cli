@@ -15,6 +15,8 @@ import {
   buildCreateClientArgs,
   buildPlanTripArgs,
   buildAddTravellerArgs,
+  buildUpdateTravellerArgs,
+  buildGoalAddArgs,
   buildSearchFlightsArgs,
   buildSearchHotelsArgs,
   buildSearchActivitiesArgs,
@@ -33,6 +35,8 @@ const EXPECTED_TOOL_NAMES = [
   "create_client",
   "plan_trip",
   "add_traveller",
+  "travellers_update",
+  "goal_add",
   "search_flights",
   "search_hotels",
   "search_activities",
@@ -47,8 +51,12 @@ const EXPECTED_TOOL_NAMES = [
 ];
 
 describe("TOOLS table", () => {
-  it("exposes exactly the 15 expected tools, in order", () => {
+  it("exposes exactly the 17 expected tools, in order", () => {
     expect(TOOLS.map((t) => t.name)).toEqual(EXPECTED_TOOL_NAMES);
+  });
+
+  it("does NOT expose `send` (emails a real client — CLI-only)", () => {
+    expect(TOOLS.map((t) => t.name)).not.toContain("send");
   });
 
   it("every tool name is snake_case", () => {
@@ -106,6 +114,50 @@ describe("argv builders", () => {
     ]);
   });
 
+  it("travellers_update: id positional + only provided fields forwarded", () => {
+    expect(buildUpdateTravellerArgs({ traveller_id: "t1", first: "Jane", gender: "F", dob: "1990-01-02" })).toEqual([
+      "travellers", "update", "t1", "--first", "Jane", "--gender", "F", "--dob", "1990-01-02", "--json",
+    ]);
+    // Sparse update: nothing but the id → the CLI's own VALIDATION handles the
+    // empty-update case; the builder stays pure and forwards no field flags.
+    expect(buildUpdateTravellerArgs({ traveller_id: "t1" })).toEqual(["travellers", "update", "t1", "--json"]);
+  });
+
+  it("travellers_update: passport fields, repeatable loyalty, and clear flags", () => {
+    const args = buildUpdateTravellerArgs({
+      traveller_id: "t9",
+      passport_number: "X1234567",
+      passport_country: "US",
+      passport_nationality: "US",
+      passport_expiry: "2030-05",
+      frequent_flyer: ["DL:1234567", "B6:987654"],
+      clear_hotel_loyalty: true,
+    });
+    expect(args).toEqual([
+      "travellers", "update", "t9",
+      "--passport-number", "X1234567", "--passport-country", "US", "--passport-nationality", "US", "--passport-expiry", "2030-05",
+      "--frequent-flyer", "DL:1234567", "--frequent-flyer", "B6:987654",
+      "--clear-hotel-loyalty", "--json",
+    ]);
+    // clear flag is a bare flag only when true.
+    expect(buildUpdateTravellerArgs({ traveller_id: "t9", clear_hotel_loyalty: false })).not.toContain("--clear-hotel-loyalty");
+  });
+
+  it("goal_add: plan_id positional + --type required; optionals only when present", () => {
+    expect(buildGoalAddArgs({ plan_id: "pl1", type: "Activity" })).toEqual([
+      "plans", "goal-add", "pl1", "--type", "Activity", "--json",
+    ]);
+    const full = buildGoalAddArgs({
+      plan_id: "pl1", type: "Hotel", name: "Stay", relative_day: 2, sort_order: 3,
+      date: "2026-09-01", scope: "Group", travellers: "a,b", idempotency_key: "k1",
+    });
+    expect(full).toEqual([
+      "plans", "goal-add", "pl1", "--type", "Hotel", "--name", "Stay",
+      "--relative-day", "2", "--sort-order", "3", "--date", "2026-09-01",
+      "--scope", "Group", "--travellers", "a,b", "--idempotency-key", "k1", "--json",
+    ]);
+  });
+
   it("search_flights includes --return only when present", () => {
     expect(buildSearchFlightsArgs({ plan_id: "p", from: "JFK", to: "NRT", date: "2026-09-15" })).toEqual([
       "search", "flights", "--plan", "p", "--from", "JFK", "--to", "NRT", "--date", "2026-09-15", "--json",
@@ -114,10 +166,26 @@ describe("argv builders", () => {
       .toContain("--return");
   });
 
+  it("search_flights maps each sort field to --sort; default order preserved when omitted", () => {
+    for (const field of ["price", "duration", "stops"] as const) {
+      const args = buildSearchFlightsArgs({ plan_id: "p", from: "JFK", to: "NRT", date: "2026-09-15", sort: field });
+      expect(args).toEqual(expect.arrayContaining(["--sort", field]));
+    }
+    // No sort → no --sort flag → CLI default (server order) preserved.
+    expect(buildSearchFlightsArgs({ plan_id: "p", from: "JFK", to: "NRT", date: "2026-09-15" })).not.toContain("--sort");
+  });
+
   it("search_hotels", () => {
     expect(buildSearchHotelsArgs({ plan_id: "p", location: "Paris", checkin: "2026-09-01", checkout: "2026-09-05" })).toEqual([
       "search", "hotels", "--plan", "p", "--location", "Paris", "--checkin", "2026-09-01", "--checkout", "2026-09-05", "--json",
     ]);
+  });
+
+  it("search_hotels maps sort=price to --sort; default order preserved when omitted", () => {
+    expect(buildSearchHotelsArgs({ plan_id: "p", location: "Paris", checkin: "2026-09-01", checkout: "2026-09-05", sort: "price" }))
+      .toEqual(expect.arrayContaining(["--sort", "price"]));
+    expect(buildSearchHotelsArgs({ plan_id: "p", location: "Paris", checkin: "2026-09-01", checkout: "2026-09-05" }))
+      .not.toContain("--sort");
   });
 
   it("search_activities includes --query only when present", () => {
@@ -212,6 +280,8 @@ describe("--json discipline via the table (buildArgs on representative input)", 
     create_client: { email: "a@b.co", name: "n" },
     plan_trip: { client: "c", title: "t" },
     add_traveller: { plan_id: "p", first: "f", last: "l" },
+    travellers_update: { traveller_id: "t", first: "f" },
+    goal_add: { plan_id: "p", type: "Activity" },
     search_flights: { plan_id: "p", from: "A", to: "B", date: "d" },
     search_hotels: { plan_id: "p", location: "L", checkin: "c", checkout: "o" },
     search_activities: { plan_id: "p", destination: "D", date: "d" },
