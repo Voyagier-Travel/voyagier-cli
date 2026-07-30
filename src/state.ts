@@ -201,30 +201,62 @@ const SELECTION_PARAMS_FILE = join(CONFIG_DIR, "selection-params.json");
 // than this on write rather than let the map grow unbounded across sessions.
 const SELECTION_PARAMS_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
+/** Selection-map keys that would pollute the returned object's prototype. A
+ *  file that (tampered or not) carries one of these keys is dropped. */
+const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * Validate a stored params object field-by-field. Returns a clean
+ * SelectionSearchParams holding only the known fields, or null if any present
+ * field carries the wrong type. The cast in loadSelectionParamsMap is a trust
+ * boundary, not a guarantee — without this a tampered file could push a
+ * non-string origin or an object partySize into diffSearchParams, the
+ * SELECTION_REUSED_PARAMS_MISMATCH warning, and the JSON envelope. A tampered
+ * entry degrades to "no record" (returns null) rather than junk.
+ */
+const STRING_PARAM_KEYS = ["origin", "destination", "depart", "return", "checkin", "checkout"] as const;
+function sanitizeSelectionParams(raw: Record<string, unknown>): SelectionSearchParams | null {
+  const clean: SelectionSearchParams = {};
+  for (const k of STRING_PARAM_KEYS) {
+    const v = raw[k];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== "string") return null;
+    clean[k] = v;
+  }
+  if (raw.partySize !== undefined && raw.partySize !== null) {
+    if (typeof raw.partySize !== "number" || !Number.isFinite(raw.partySize)) return null;
+    clean.partySize = raw.partySize;
+  }
+  return clean;
+}
+
 /** L5 trust boundary: the params file sits beside the token — a malformed or
  *  tampered entry must degrade to "no record", never feed junk into an
- *  agent-facing warning. Validate exactly the fields callers read. */
+ *  agent-facing warning. Validate exactly the fields callers read; the returned
+ *  map is null-prototype so a `__proto__`-keyed entry can't pollute it. */
 function loadSelectionParamsMap(): Record<string, StoredSelectionParams> {
-  if (!existsSync(SELECTION_PARAMS_FILE)) return {};
+  if (!existsSync(SELECTION_PARAMS_FILE)) return Object.create(null);
   try {
     const raw = readFileSync(SELECTION_PARAMS_FILE, "utf-8");
     const parsed = JSON.parse(raw) as unknown;
     const map = (parsed as { selections?: unknown })?.selections;
-    if (typeof map !== "object" || map === null) return {};
-    const out: Record<string, StoredSelectionParams> = {};
+    if (typeof map !== "object" || map === null) return Object.create(null);
+    const out: Record<string, StoredSelectionParams> = Object.create(null);
     for (const [id, v] of Object.entries(map as Record<string, unknown>)) {
+      if (DANGEROUS_KEYS.has(id)) continue; // prototype-pollution guard
       if (typeof v !== "object" || v === null) continue;
       const e = v as Record<string, unknown>;
-      if (typeof e.timestamp === "string" && typeof e.params === "object" && e.params !== null) {
-        out[id] = { params: e.params as SelectionSearchParams, timestamp: e.timestamp };
-      }
+      if (typeof e.timestamp !== "string" || typeof e.params !== "object" || e.params === null) continue;
+      const params = sanitizeSelectionParams(e.params as Record<string, unknown>);
+      if (!params) continue; // tampered field types → drop the entry
+      out[id] = { params, timestamp: e.timestamp };
     }
     return out;
   } catch (err) {
     if (err instanceof SyntaxError) {
       try { unlinkSync(SELECTION_PARAMS_FILE); } catch { /* ignore */ }
     }
-    return {};
+    return Object.create(null);
   }
 }
 
@@ -247,14 +279,28 @@ export function rememberSelectionSearchParams(
 ): void {
   try {
     const map = loadSelectionParamsMap();
-    if (map[selectionId]) return; // preserve the original params
-    // Prune stale/undated entries so the file stays bounded.
+    // Prune stale/undated entries FIRST, before the preserve-original check
+    // below. The common path re-searches an EXISTING selectionId, and an early
+    // return there would skip pruning entirely — sibling entries (and a
+    // now-stale entry for this same selectionId) would then accumulate in a
+    // long-lived selection-params.json forever.
     const cutoff = now.getTime() - SELECTION_PARAMS_MAX_AGE_MS;
+    let mutated = false;
     for (const [id, e] of Object.entries(map)) {
       const t = new Date(e.timestamp).getTime();
-      if (!Number.isFinite(t) || t < cutoff) delete map[id];
+      if (!Number.isFinite(t) || t < cutoff) {
+        delete map[id];
+        mutated = true;
+      }
     }
-    map[selectionId] = { params, timestamp: now.toISOString() };
+    // Record the original only when absent: a surviving (non-stale) entry is
+    // preserved so a later params change stays detectable; an entry just pruned
+    // as stale above is re-recorded here as a fresh original.
+    if (!map[selectionId]) {
+      map[selectionId] = { params, timestamp: now.toISOString() };
+      mutated = true;
+    }
+    if (!mutated) return; // nothing pruned and the original stands — no write
     mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
     chmodSync(CONFIG_DIR, 0o700); // L1: correct a pre-existing loose-perm dir
     writeFileSync(SELECTION_PARAMS_FILE, JSON.stringify({ selections: map }, null, 2), { mode: 0o600 });

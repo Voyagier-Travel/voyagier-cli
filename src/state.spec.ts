@@ -267,5 +267,55 @@ describe("OptionsState", () => {
       expect(() => rememberSelectionSearchParams("sel-x", { depart: "2026-08-01" })).not.toThrow();
       expect(getSelectionSearchParams("sel-x")).toEqual({ depart: "2026-08-01" });
     });
+
+    it("drops an entry whose param fields carry the wrong types (tampered file degrades to no-record)", () => {
+      const ts = new Date().toISOString();
+      writeFileSync(
+        SELECTION_PARAMS_FILE,
+        JSON.stringify({ selections: {
+          "sel-bad": { params: { origin: 12345, partySize: "lots", destination: { nested: 1 } }, timestamp: ts },
+          "sel-ok": { params: { origin: "LAX", destination: "NRT", partySize: 2 }, timestamp: ts },
+        } }, null, 2),
+        { mode: 0o600 },
+      );
+      // The tampered entry never reaches diffSearchParams / the JSON envelope.
+      expect(getSelectionSearchParams("sel-bad")).toBeNull();
+      // A well-formed sibling still loads.
+      expect(getSelectionSearchParams("sel-ok")).toEqual({ origin: "LAX", destination: "NRT", partySize: 2 });
+    });
+
+    it("ignores prototype-pollution keys in the stored map", () => {
+      const ts = new Date().toISOString();
+      // Raw JSON so `__proto__` lands as an own key (JSON.parse never runs the setter).
+      writeFileSync(
+        SELECTION_PARAMS_FILE,
+        `{"selections":{"__proto__":{"params":{"depart":"2026-08-01"},"timestamp":"${ts}"},` +
+          `"sel-x":{"params":{"depart":"2026-08-01"},"timestamp":"${ts}"}}}`,
+        { mode: 0o600 },
+      );
+      expect(getSelectionSearchParams("sel-x")).toEqual({ depart: "2026-08-01" });
+      expect(getSelectionSearchParams("__proto__")).toBeNull();
+      // No global pollution: a fresh plain object gained no `params` key.
+      expect(({} as Record<string, unknown>).params).toBeUndefined();
+    });
+
+    it("prunes stale siblings on the REUSE path — an existing selectionId still triggers prune+write", () => {
+      // Simulate a file that accumulated a stale sibling under the pre-fix
+      // early-return behavior: a fresh entry for the selection about to be
+      // re-searched, plus an ancient one.
+      const at = new Date("2026-07-01T00:00:00.000Z");
+      writeFileSync(
+        SELECTION_PARAMS_FILE,
+        JSON.stringify({ selections: {
+          "sel-live": { params: { depart: "2026-08-01" }, timestamp: at.toISOString() },
+          "sel-stale": { params: { depart: "2020-01-01" }, timestamp: "2020-01-01T00:00:00.000Z" },
+        } }, null, 2),
+        { mode: 0o600 },
+      );
+      // Re-search the SAME live selection (exists → original preserved).
+      rememberSelectionSearchParams("sel-live", { depart: "2026-09-01" }, at);
+      expect(getSelectionSearchParams("sel-stale")).toBeNull(); // sibling pruned despite the reuse
+      expect(getSelectionSearchParams("sel-live")).toEqual({ depart: "2026-08-01" }); // original preserved
+    });
   });
 });
