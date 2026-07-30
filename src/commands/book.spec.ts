@@ -39,10 +39,12 @@ jest.unstable_mockModule("../utils.js", () => ({
 }));
 
 let registerBookCommands: (program: Command) => void;
+let blockerFix: typeof import("./book.js").blockerFix;
 
 beforeAll(async () => {
   const mod = await import("./book.js");
   registerBookCommands = mod.registerBookCommands;
+  blockerFix = mod.blockerFix;
 });
 
 let writes: string[];
@@ -96,6 +98,36 @@ function cartFixture() {
   };
 }
 
+/**
+ * Plan-status response for the VOY-1792 readiness guard (the real book path
+ * fetches this before creating a checkout). Default: a READY plan — travellers
+ * complete, no goal blockers — so the guard is a no-op and every pre-existing
+ * book test keeps passing. Pass overrides to inject blockers.
+ */
+function planStatusFixture(over: { travellers?: unknown[]; goals?: unknown[]; cartItems?: unknown[] } = {}) {
+  return {
+    tripPlan: {
+      id: "plan-1",
+      title: "BWI Getaway",
+      travellers: over.travellers ?? [
+        { id: "t-1", firstName: "Jane", lastName: "Doe", dateOfBirth: "1990-01-01", gender: "F", passport: { last4: "1234" } },
+      ],
+      cart: { itemCount: 1, total: 339.1, currency: "USD", items: over.cartItems ?? [{ selectionId: "sel-f", optionId: "opt-f", requiresPassport: false }] },
+    },
+    tripPlanGoals: over.goals ?? [
+      {
+        id: "g1", name: "Flights", type: "Flight", sortOrder: 1, isDecided: true, isBooked: false,
+        checkoutReadiness: { isReady: true, requirements: [] },
+        items: [{ id: "it-1", title: "Outbound", selections: [
+          { id: "sel-f", type: "Flight", mode: "Single", isComplete: true, isLocked: false, blueprintMonitorId: null, parentOptionId: null, mirrorListSelectionId: null,
+            travellerOptionChoices: [{ traveller: { id: "t-1" }, selectedOption: { id: "opt-f" } }],
+            inputs: [], options: [{ id: "opt-f", name: "BWI→MCO", isBookable: true }] },
+        ] }],
+      },
+    ],
+  };
+}
+
 const NO_CHECKOUTS = { tripPlanPaymentCheckouts: [] };
 const PENDING_CHECKOUT = {
   tripPlanPaymentCheckouts: [
@@ -117,13 +149,16 @@ const CANCELLED_CHECKOUT = {
   ],
 };
 
-/** Route queries by operation content: cart, checkouts, create. */
-function routeGraphql(overrides: { checkouts?: unknown; cart?: unknown; createUrl?: string } = {}) {
+/** Route queries by operation content: plan-status, cart, checkouts, create. */
+function routeGraphql(overrides: { checkouts?: unknown; cart?: unknown; createUrl?: string; planStatus?: unknown } = {}) {
   mockGraphql.mockImplementation(async (query: string) => {
     if (query.includes("TripPlanPaymentCheckouts")) return overrides.checkouts ?? NO_CHECKOUTS;
     if (query.includes("CreateTripPlanCheckout")) {
       return { createTripPlanCheckout: { url: overrides.createUrl ?? "https://stripe.test/pay/new" } };
     }
+    // PlanStatus must be checked before the generic `cart` match — its query
+    // body also contains a `cart {` block (VOY-1792 readiness guard).
+    if (query.includes("PlanStatus")) return overrides.planStatus ?? planStatusFixture();
     if (query.includes("cart")) return overrides.cart ?? cartFixture();
     throw new Error(`unrouted query: ${query.slice(0, 120)}`);
   });
@@ -326,6 +361,186 @@ describe("server-side itemIds pinning", () => {
       code: CliErrorCode.NOT_BOOKABLE,
     });
     expect(createVars()).toBeUndefined();
+  });
+});
+
+// ── Readiness hard-gate (VOY-1792) ──────────────────────────────────────────
+
+/** plan-status with a hard TRAVELLER_DATA blocker (Jane missing gender + DOB). */
+function travellerBlockedStatus() {
+  return planStatusFixture({
+    travellers: [
+      { id: "t-1", firstName: "Jane", lastName: "Doe", dateOfBirth: null, gender: null, passport: { last4: null } },
+    ],
+    goals: [
+      {
+        id: "g1", name: "Flights", type: "Flight", sortOrder: 1, isDecided: true, isBooked: false,
+        checkoutReadiness: { isReady: false, requirements: [
+          { label: "Date of birth", isFulfilled: false, isRequired: true, type: "TravellerField", selectionId: null, missingTravellerIds: ["t-1"] },
+        ] },
+        items: [{ id: "it-1", title: "Outbound", selections: [
+          { id: "sel-f", type: "Flight", mode: "Single", isComplete: true, isLocked: false, blueprintMonitorId: null, parentOptionId: null, mirrorListSelectionId: null,
+            travellerOptionChoices: [{ traveller: { id: "t-1" }, selectedOption: { id: "opt-f" } }],
+            inputs: [], options: [{ id: "opt-f", name: "BWI→MCO", isBookable: true }] },
+        ] }],
+      },
+    ],
+  });
+}
+
+/** plan-status with a PICK_PENDING blocker (hotel not yet picked). */
+function pickPendingStatus() {
+  return planStatusFixture({
+    goals: [
+      {
+        id: "g2", name: "Hotel", type: "Hotel", sortOrder: 2, isDecided: false, isBooked: false,
+        checkoutReadiness: { isReady: false, requirements: [] },
+        items: [{ id: "it-2", title: "Stay", selections: [
+          { id: "sel-p", type: "Hotel", mode: "Single", isComplete: false, isLocked: false, blueprintMonitorId: null, parentOptionId: null, mirrorListSelectionId: null,
+            travellerOptionChoices: [], inputs: [],
+            options: [{ id: "o1", name: "Hotel A", isBookable: true }, { id: "o2", name: "Hotel B", isBookable: true }] },
+        ] }],
+      },
+    ],
+  });
+}
+
+/** plan-status whose only blocker is unverified (a stale server ref, no selectionId). */
+function unverifiedOnlyStatus() {
+  return planStatusFixture({
+    goals: [
+      {
+        id: "g1", name: "Flights", type: "Flight", sortOrder: 1, isDecided: true, isBooked: false,
+        checkoutReadiness: { isReady: false, requirements: [
+          { label: "Cabin class", isFulfilled: false, isRequired: true, type: "Other", selectionId: null, missingTravellerIds: [] },
+        ] },
+        items: [{ id: "it-1", title: "Outbound", selections: [
+          { id: "sel-f", type: "Flight", mode: "Single", isComplete: true, isLocked: false, blueprintMonitorId: null, parentOptionId: null, mirrorListSelectionId: null,
+            travellerOptionChoices: [{ traveller: { id: "t-1" }, selectedOption: { id: "opt-f" } }],
+            inputs: [], options: [{ id: "opt-f", name: "BWI→MCO", isBookable: true }] },
+        ] }],
+      },
+    ],
+  });
+}
+
+describe("readiness hard-gate (PLAN_BLOCKED)", () => {
+  it("refuses checkout when a hard TRAVELLER_DATA blocker exists — no mutation, blockers + fix in details", async () => {
+    routeGraphql({ planStatus: travellerBlockedStatus() });
+    await expect(runBook(["plan-1", "--expect-total", "339.10", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.PLAN_BLOCKED,
+      details: {
+        blockers: [
+          expect.objectContaining({
+            kind: "TRAVELLER_DATA",
+            fix: "voyagier travellers update t-1 --gender <M|F|X> --dob <YYYY-MM-DD>",
+          }),
+        ],
+      },
+    });
+    expect(createVars()).toBeUndefined();
+  });
+
+  it("blocks conservatively on other hard blocker kinds too (PICK_PENDING)", async () => {
+    routeGraphql({ planStatus: pickPendingStatus() });
+    await expect(runBook(["plan-1", "--expect-total", "339.10", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.PLAN_BLOCKED,
+      details: {
+        blockers: [
+          expect.objectContaining({ kind: "PICK_PENDING", fix: "voyagier select --selection-id sel-p --option-id <optionId>" }),
+        ],
+      },
+    });
+    expect(createVars()).toBeUndefined();
+  });
+
+  it("does NOT block on unverified-class blockers — book --dry-run is the tie-breaker for those", async () => {
+    routeGraphql({ planStatus: unverifiedOnlyStatus() });
+    await runBook(["plan-1", "--expect-total", "339.10", "--json"]);
+    expect(createVars()).toBeDefined();
+  });
+
+  it("--force-checkout bypasses the guard and never fetches plan-status", async () => {
+    routeGraphql({ planStatus: travellerBlockedStatus() });
+    await runBook(["plan-1", "--expect-total", "339.10", "--force-checkout", "--json"]);
+    expect(createVars()).toBeDefined();
+    expect(mockGraphql.mock.calls.some(([q]) => (q as string).includes("PlanStatus"))).toBe(false);
+  });
+
+  it("--force-checkout still enforces the price gate (bypasses readiness only)", async () => {
+    routeGraphql({ planStatus: travellerBlockedStatus() });
+    await expect(runBook(["plan-1", "--expect-total", "1.00", "--force-checkout", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.PRICE_CHANGED,
+    });
+    expect(createVars()).toBeUndefined();
+  });
+
+  it("--dry-run never runs the guard (no PlanStatus fetch), even with blockers present", async () => {
+    routeGraphql({ planStatus: travellerBlockedStatus() });
+    await runBook(["plan-1", "--dry-run", "--json"]);
+    const out = lastJson();
+    expect(out.data.dryRun).toBe(true);
+    expect(mockGraphql.mock.calls.some(([q]) => (q as string).includes("PlanStatus"))).toBe(false);
+  });
+
+  it("fails CLOSED when the readiness query errors — no checkout, points at --force-checkout", async () => {
+    mockGraphql.mockImplementation(async (query: string) => {
+      if (query.includes("TripPlanPaymentCheckouts")) return NO_CHECKOUTS;
+      if (query.includes("PlanStatus")) throw new Error("upstream 502");
+      if (query.includes("cart")) return cartFixture();
+      throw new Error(`unrouted query: ${query.slice(0, 120)}`);
+    });
+    await expect(runBook(["plan-1", "--expect-total", "339.10", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.API_ERROR,
+      message: expect.stringContaining("--force-checkout"),
+    });
+    expect(createVars()).toBeUndefined();
+  });
+
+  it("a ready plan books normally (guard passes through)", async () => {
+    routeGraphql();
+    await runBook(["plan-1", "--expect-total", "339.10", "--json"]);
+    expect(createVars()).toBeDefined();
+  });
+});
+
+// ── blockerFix routing (VOY-1792) ───────────────────────────────────────────
+// The PLAN_BLOCKED "fix" command must not disagree with plan-status's nextSteps
+// routing (plan-status.ts:777-790) for the same blocker.
+
+describe("blockerFix — PICK_PENDING routing parity with plan-status", () => {
+  it("single-candidate aggregated blocker (no refs.selectionId) routes straight to select", () => {
+    // VOY-1724: hotelCode matching collapsed the group to ONE live chain, so the
+    // exact selection is known even though refs carries only goalId.
+    const fix = blockerFix(
+      { kind: "PICK_PENDING", message: "room pick pending", refs: { goalId: "gh" }, candidateSelectionIds: ["room-A"] },
+      [],
+    );
+    expect(fix).toBe("voyagier select --selection-id room-A --option-id <optionId>");
+  });
+
+  it("multi-candidate aggregated blocker routes to goal inspection", () => {
+    const fix = blockerFix(
+      { kind: "PICK_PENDING", message: "pick pending", refs: { goalId: "gh" }, candidateSelectionIds: ["room-A", "room-B"] },
+      [],
+    );
+    expect(fix).toBe("voyagier plans goal gh --json");
+  });
+
+  it("selection-level blocker (refs.selectionId present, no candidates) routes to select", () => {
+    const fix = blockerFix(
+      { kind: "PICK_PENDING", message: "pick pending", refs: { selectionId: "sel-p", goalId: "g2" } },
+      [],
+    );
+    expect(fix).toBe("voyagier select --selection-id sel-p --option-id <optionId>");
+  });
+
+  it("no selection ref and no candidates falls back to goal inspection", () => {
+    const fix = blockerFix(
+      { kind: "PICK_PENDING", message: "pick pending", refs: { goalId: "g2" } },
+      [],
+    );
+    expect(fix).toBe("voyagier plans goal g2 --json");
   });
 });
 

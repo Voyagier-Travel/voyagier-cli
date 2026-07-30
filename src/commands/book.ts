@@ -57,7 +57,7 @@ import { getApiUrl } from "../config.js";
 import { formatPrice, openBrowser, deriveBaseUrl, shellArg, cents } from "../utils.js";
 import { resolvePlanArg } from "../resolve-plan-arg.js";
 import { hintCheckoutCreated, hintBookingConfirmed, hintBookingPending, hintDryRun } from "../hints.js";
-import { GET_CART_V2, CREATE_CHECKOUT, GET_PAYMENT_CHECKOUTS } from "../queries.js";
+import { GET_CART_V2, CREATE_CHECKOUT, GET_PAYMENT_CHECKOUTS, GET_PLAN_STATUS } from "../queries.js";
 import {
   collectBlockers,
   filterBookable,
@@ -65,6 +65,12 @@ import {
   type CartV2QueryResult,
 } from "./cart-helpers.js";
 import { buildCheckoutPreview } from "./checkout-preview.js";
+import {
+  buildPlanStatus,
+  resolveHotelCodes,
+  type PlanStatusQueryResult,
+  type Blocker as PlanBlocker,
+} from "./plan-status.js";
 
 interface PaymentCheckout {
   id: string;
@@ -126,6 +132,109 @@ async function loadCheckoutSummary(planId: string): Promise<CheckoutSummary> {
   };
 }
 
+/**
+ * VOY-1792: map a readiness blocker to the single CLI command that resolves it,
+ * so the PLAN_BLOCKED envelope tells the caller exactly what to run. Kept in
+ * step with plan-status's nextSteps routing (the two must not disagree on how a
+ * blocker is fixed). All interpolated ids go through shellArg() — the fix
+ * strings are documented as copy/paste runnable (VOY-1709 convention).
+ */
+export function blockerFix(
+  b: PlanBlocker,
+  travellers: { travellerId: string; missing: string[] }[],
+): string {
+  switch (b.kind) {
+    case "TRAVELLER_DATA": {
+      // Tailor the flags to what's actually missing (a passport-only gap must
+      // not suggest gender/DOB flags that won't unblock anything).
+      const missing = travellers.find((t) => t.travellerId === b.refs.travellerId)?.missing ?? [];
+      const flags = [
+        missing.includes("gender") ? "--gender <M|F|X>" : null,
+        missing.includes("dateOfBirth") ? "--dob <YYYY-MM-DD>" : null,
+        missing.includes("passport")
+          ? "--passport-number <number> --passport-country <code> --passport-expiry <YYYY-MM>"
+          : null,
+      ].filter(Boolean);
+      return `voyagier travellers update ${shellArg(b.refs.travellerId ?? "")} ${flags.join(" ")}`.trim();
+    }
+    case "PICK_PENDING": {
+      // Mirror plan-status's PICK_PENDING routing (plan-status.ts:777-790) so the
+      // advertised fix never disagrees. A single live candidate (VOY-1724:
+      // hotelCode matching collapsed an aggregated group to ONE chain) is a known
+      // selection, so route straight to the pick even when refs.selectionId is
+      // absent; a multi-candidate group has no single selection yet, so inspect
+      // the goal first.
+      const single =
+        b.candidateSelectionIds && b.candidateSelectionIds.length === 1
+          ? b.candidateSelectionIds[0]
+          : b.refs.selectionId;
+      if (single && !(b.candidateSelectionIds && b.candidateSelectionIds.length > 1)) {
+        return `voyagier select --selection-id ${shellArg(single)} --option-id <optionId>`;
+      }
+      return `voyagier plans goal ${shellArg(b.refs.goalId ?? "")} --json`;
+    }
+    case "SELECTION_INPUT":
+    case "REQUIREMENT_UNMET":
+    default:
+      // Unknown/other hard blocker kinds route to a goal inspection — a safe,
+      // read-only default that surfaces the blocking requirement.
+      return `voyagier plans goal ${shellArg(b.refs.goalId ?? "")} --json`;
+  }
+}
+
+/**
+ * VOY-1792 readiness hard-gate. Fetches the plan's blockers (via the same query
+ * plan-status uses) and throws PLAN_BLOCKED when any hard blocker remains.
+ *
+ * "Hard" = every blocker EXCEPT the `unverified`-class (stale/phantom server
+ * refs — `book --dry-run` is the checkout truth for those). TRAVELLER_DATA is
+ * never unverified, so it always blocks; unknown/other blocker kinds are
+ * treated conservatively and block too.
+ *
+ * Fails CLOSED: if readiness can't be fetched we refuse rather than mint a
+ * checkout the server might wrongly accept — the caller can pass
+ * --force-checkout to override. (Mirrors the paid-checkout pre-flight's
+ * fail-closed posture; original error code is preserved for dispatch.)
+ */
+async function enforcePlanReadiness(planId: string, baseUrl: string, planIdArg: string): Promise<void> {
+  let statusData: PlanStatusQueryResult;
+  try {
+    statusData = await graphql<PlanStatusQueryResult>(GET_PLAN_STATUS, { id: planId });
+  } catch (err) {
+    const note =
+      "Could not verify the plan's readiness before checkout — refusing to book " +
+      `(re-run with --force-checkout to trust the server's own validation, or check: voyagier plan-status ${planIdArg}).`;
+    if (err instanceof CliError) throw new CliError(err.code, `${note}\n${err.message}`, err.details);
+    const message = err instanceof Error ? err.message : String(err);
+    throw new CliError(CliErrorCode.API_ERROR, `${note}\n${message}`);
+  }
+  // The cart load already confirmed the plan exists; a null here is schema
+  // drift, not a missing plan — nothing to verify, don't fabricate a block.
+  if (!statusData.tripPlan) return;
+
+  // Resolve supplier hotelCodes (best-effort, never throws) so room-chain dead
+  // branches are suppressed exactly as plan-status suppresses them — the guard
+  // must not block on a PICK_PENDING that plan-status itself would hide.
+  const hotelCodes = await resolveHotelCodes(statusData);
+  const status = buildPlanStatus(statusData, baseUrl, hotelCodes);
+  const hardBlockers = status.blockers.filter((b) => b.unverified !== true);
+  if (hardBlockers.length === 0) return;
+
+  const detailed = hardBlockers.map((b) => ({
+    kind: b.kind,
+    message: b.message,
+    refs: b.refs,
+    fix: blockerFix(b, status.travellers),
+  }));
+  const lines = detailed.map((b) => `  • [${b.kind}] ${b.message}\n    fix: ${b.fix}`);
+  throw new CliError(
+    CliErrorCode.PLAN_BLOCKED,
+    `Cannot book — the plan has ${hardBlockers.length} unresolved blocker${hardBlockers.length === 1 ? "" : "s"} that must be resolved before checkout ` +
+      `(or pass --force-checkout to trust the server's own validation):\n${lines.join("\n")}`,
+    { blockers: detailed },
+  );
+}
+
 export function registerBookCommands(program: Command): void {
   program
     .command("book [planId]")
@@ -139,6 +248,7 @@ export function registerBookCommands(program: Command): void {
     .option("--only-bookable", "Restrict checkout to bookable items (passed server-side via itemIds)")
     .option("--types <list>", "Comma-separated CartItemType filter (Flight,Hotel,Activity,Restaurant,Other); passed server-side via itemIds")
     .option("--rebook", "Create a checkout even though a Paid checkout already exists for this plan")
+    .option("--force-checkout", "Skip the client-side readiness guard and trust the server's own validation")
     .option("--status", "Show payment + booking status for past checkouts on this plan")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
     .action(async (planIdInput: string | undefined, opts: {
@@ -151,6 +261,7 @@ export function registerBookCommands(program: Command): void {
       onlyBookable?: boolean;
       types?: string;
       rebook?: boolean;
+      forceCheckout?: boolean;
       status?: boolean;
       plan?: string;
     }) => {
@@ -445,6 +556,18 @@ export function registerBookCommands(program: Command): void {
           `Chargeable subtotal ${formatPrice(chargeableSubtotal)} exceeds --max-total ${formatPrice(maxTotal!)} — not creating checkout.`,
           gateDetails,
         );
+      }
+
+      // --- VOY-1792 readiness hard-gate (real path only) ---
+      // The server currently lets checkout proceed even when plan readiness
+      // reports hard traveller-data blockers. Until the server fix lands, guard
+      // client-side: fetch the plan's readiness (the SAME query plan-status
+      // uses) and refuse if any hard (non-`unverified`) blocker remains.
+      // `unverified` blockers are possible phantoms (stale server refs) — the
+      // book dry-run is the checkout truth for those, so they never block here.
+      // --force-checkout bypasses the guard and trusts the server's validation.
+      if (!opts.forceCheckout) {
+        await enforcePlanReadiness(planId, baseUrl, planIdArg);
       }
 
       // --- Create real checkout session ---
