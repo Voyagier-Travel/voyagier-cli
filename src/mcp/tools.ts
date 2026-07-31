@@ -542,7 +542,7 @@ export const TOOLS: ToolDef[] = [
   defineTool({
     name: "itinerary",
     description:
-      "Show the computed itinerary for a plan (the actual composed trip, sourced from the platform's tripPlanEvents): time-sorted events with per-leg routing, times, and locations. Use this after selecting flights or hotels to verify the real composed trip — per-leg routing (layovers/stops), times, and hotel check-in/out — before describing the trip to a user or booking. A compact option summary can hide connections; the itinerary is the ground truth. Returns { events[], total, dayRange } with a planContext." +
+      "Show the computed itinerary for a plan (the actual composed trip, sourced from the platform's tripPlanEvents): time-sorted events with per-leg routing, times, and locations. Use this after selecting flights or hotels to verify the real composed trip — per-leg routing (layovers/stops), times, and hotel check-in/out — before describing the trip to a user or booking. A compact option summary can hide connections; the itinerary is the ground truth. Returns the standard envelope: events are under data.events (with data.total and data.dayRange), alongside planContext." +
       INJECTION_NOTE,
     timeoutMs: T.short,
     inputSchema: {
@@ -617,7 +617,7 @@ export const TOOLS: ToolDef[] = [
   defineTool({
     name: "bookings_list",
     description:
-      "List booking records for a plan with their status (Pending/Confirmed/Failed). Check it after any book call and before telling a user their trip is secured — a created checkout is not yet a confirmed booking. Booking-record amounts are raw CENTS (amountCents)." +
+      "List booking records for a plan with their status (Pending/Confirmed/Failed/Cancelled). Check it after any book call and before telling a user their trip is secured — a created checkout is not yet a confirmed booking. Booking-record amounts are raw CENTS (amountCents)." +
       INJECTION_NOTE,
     timeoutMs: T.short,
     inputSchema: {
