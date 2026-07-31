@@ -14,10 +14,10 @@ import type { CliResult } from "./exec.js";
 
 const EXPECTED_TOOL_NAMES = [
   "doctor", "create_client", "plan_trip", "add_traveller",
-  "travellers_update", "goal_add",
+  "travellers_update", "travellers_list", "goal_add",
   "search_flights", "search_hotels", "search_activities",
-  "get_selection_options", "select_option", "plan_status",
-  "quote", "book_dry_run", "book", "booking_status", "agent_docs",
+  "get_selection_options", "select_option", "itinerary", "plan_status",
+  "quote", "book_dry_run", "book", "booking_status", "bookings_list", "agent_docs",
 ];
 
 const okRun: CliRunner = async () => ({ stdout: "{}", stderr: "", exitCode: 0 });
@@ -43,10 +43,10 @@ describe("MCP server integration", () => {
     expect(client.getInstructions()).toBe(INSTRUCTIONS);
   });
 
-  it("tools/list returns exactly the 17 expected tools", async () => {
+  it("tools/list returns exactly the 20 expected tools", async () => {
     const { client } = await connect();
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(17);
+    expect(tools).toHaveLength(20);
     expect(tools.map((t) => t.name).sort()).toEqual([...EXPECTED_TOOL_NAMES].sort());
   });
 
@@ -147,6 +147,45 @@ describe("MCP server integration", () => {
     const res = (await client.callTool({ name: "travellers_update", arguments: { first: "Jane" } })) as TextResult;
     expect(res.isError).toBe(true);
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("travellers_list: forwards to the `travellers list --plan` argv (happy path)", async () => {
+    const run = jest.fn<CliRunner>(async () => ({
+      stdout: JSON.stringify({ travellers: [{ id: "t1", firstName: "Jane", lastName: "Doe" }] }),
+      stderr: "",
+      exitCode: 0,
+    }));
+    const { client } = await connect(run);
+    const res = (await client.callTool({ name: "travellers_list", arguments: { plan_id: "P1" } })) as TextResult;
+    expect(run).toHaveBeenCalledWith(["travellers", "list", "--plan", "P1", "--json"], 60_000);
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0]?.text).toContain("t1");
+  });
+
+  it("itinerary: forwards to the `itinerary <planId>` argv (happy path)", async () => {
+    const run = jest.fn<CliRunner>(async () => ({
+      stdout: JSON.stringify({ ok: true, data: { events: [], total: 0 }, planContext: { planId: "P1" } }),
+      stderr: "",
+      exitCode: 0,
+    }));
+    const { client } = await connect(run);
+    const res = (await client.callTool({ name: "itinerary", arguments: { plan_id: "P1" } })) as TextResult;
+    expect(run).toHaveBeenCalledWith(["itinerary", "P1", "--json"], 60_000);
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0]?.text).toContain("planContext");
+  });
+
+  it("bookings_list: forwards to the `bookings list --plan` argv (happy path)", async () => {
+    const run = jest.fn<CliRunner>(async () => ({
+      stdout: JSON.stringify({ bookings: [{ id: "b1", status: "Confirmed" }] }),
+      stderr: "",
+      exitCode: 0,
+    }));
+    const { client } = await connect(run);
+    const res = (await client.callTool({ name: "bookings_list", arguments: { plan_id: "P1" } })) as TextResult;
+    expect(run).toHaveBeenCalledWith(["bookings", "list", "--plan", "P1", "--json"], 60_000);
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0]?.text).toContain("Confirmed");
   });
 
   it("goal_add: forwards typed inputs to the `plans goal-add` argv (happy path)", async () => {
