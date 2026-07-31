@@ -344,6 +344,8 @@ voyagier doctor --json
 ```
 Each `checks[]` entry is `{ name, status: "PASS" | "WARN" | "FAIL", message, details? }`. The covered checks today are auth, schema reachability, state-file health, and version. Run this first whenever you encounter an unfamiliar error.
 
+At session start, `doctor` reports the installed CLI version. If a command or tool documented here is missing from your installed surface, the installed CLI (and its MCP server) is older than these docs — upgrade with `npm i -g @voyagier/cli@latest` before relying on the missing capability.
+
 Schema-drift verdicts are classified: drift confined to **peripheral** surfaces (places / comments / booking-record reads) reports `WARN` with an explicit "safe to proceed" — the core compose/close loop (plan → search → select → travellers → quote → book) is unaffected, so keep going. `FAIL` on the schema check means a CORE operation drifted (named in `details.coreDrifted`) — expect the corresponding command to break, and prefer upgrading the CLI before continuing.
 
 ### Clients (advisor CRM, Style B JSON)
@@ -425,6 +427,8 @@ Sourced from the `tripPlanEvents` resolver. Output:
 `location` shape comes from the schema's `TripPlanEventLocation` (`name`, `address`, `placeId`, `metadata: JSON`); coordinates, when present, live inside `metadata`. `dayRange` is numeric — day indexes computed relative to `plan.startDate` (Day 1 = the plan's start date).
 
 `--type` filtering is best-effort against `metadata.{type|eventType|selectionType|kind}`. Top-level typed fields aren't in the schema today.
+
+**Verify routing after selecting flights.** Once the flight legs are picked, run `voyagier itinerary <planId>` and confirm the per-leg routing (layovers/stops) and times match what you tell the user — a compact search/option summary can hide connections. Do this before describing the trip or booking.
 
 ### Travellers (Style B JSON)
 ```bash

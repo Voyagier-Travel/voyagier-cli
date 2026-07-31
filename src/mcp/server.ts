@@ -25,6 +25,8 @@ export const INSTRUCTIONS = [
   "",
   "Compose loop: create_client → plan_trip → (add_traveller) → search_flights/search_hotels/search_activities → get_selection_options → select_option → plan_status → quote → book.",
   "",
+  "Visibility tools verify the real state: travellers_list (discover traveller ids + missing checkout fields), itinerary (the actual composed trip — per-leg routing and times — after selecting flights/hotels), and bookings_list (booking records + status after a checkout, before telling a user their trip is secured).",
+  "",
   "search is ASYNC: a search may return optionCount 0 while inventory is still fetching in the background. When that happens, poll get_selection_options (wait defaults to true — it polls to a terminal status) before select_option.",
   "",
   "Round trips need a pick on BOTH legs: search_flights returns a returnSelectionId in addition to selectionId; call select_option once per leg. The SAME optionId appears in both legs' option lists (leg-mirrored journeys) — picking the identical optionId on outbound and return is intended, not a bug.",

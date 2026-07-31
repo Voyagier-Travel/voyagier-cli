@@ -16,17 +16,20 @@ import {
   buildPlanTripArgs,
   buildAddTravellerArgs,
   buildUpdateTravellerArgs,
+  buildTravellersListArgs,
   buildGoalAddArgs,
   buildSearchFlightsArgs,
   buildSearchHotelsArgs,
   buildSearchActivitiesArgs,
   buildGetSelectionOptionsArgs,
   buildSelectOptionArgs,
+  buildItineraryArgs,
   buildPlanStatusArgs,
   buildQuoteArgs,
   buildBookDryRunArgs,
   buildBookArgs,
   buildBookingStatusArgs,
+  buildBookingsListArgs,
   buildAgentDocsArgs,
 } from "./tools.js";
 
@@ -36,22 +39,25 @@ const EXPECTED_TOOL_NAMES = [
   "plan_trip",
   "add_traveller",
   "travellers_update",
+  "travellers_list",
   "goal_add",
   "search_flights",
   "search_hotels",
   "search_activities",
   "get_selection_options",
   "select_option",
+  "itinerary",
   "plan_status",
   "quote",
   "book_dry_run",
   "book",
   "booking_status",
+  "bookings_list",
   "agent_docs",
 ];
 
 describe("TOOLS table", () => {
-  it("exposes exactly the 17 expected tools, in order", () => {
+  it("exposes exactly the 20 expected tools, in order", () => {
     expect(TOOLS.map((t) => t.name)).toEqual(EXPECTED_TOOL_NAMES);
   });
 
@@ -112,6 +118,22 @@ describe("argv builders", () => {
     expect(buildAddTravellerArgs({ plan_id: "p", first: "Jane", last: "Doe" })).toEqual([
       "travellers", "add", "--plan", "p", "--first", "Jane", "--last", "Doe", "--type", "Adult", "--json",
     ]);
+  });
+
+  it("add_traveller forwards optional gender/dob/email only when present", () => {
+    expect(buildAddTravellerArgs({ plan_id: "p", first: "Jane", last: "Doe", gender: "F", dob: "1990-01-02", email: "jane@example.com" })).toEqual([
+      "travellers", "add", "--plan", "p", "--first", "Jane", "--last", "Doe", "--type", "Adult",
+      "--gender", "F", "--dob", "1990-01-02", "--email", "jane@example.com", "--json",
+    ]);
+    // Absent → no flag (the CLI treats them as optional / prompts interactively).
+    const bare = buildAddTravellerArgs({ plan_id: "p", first: "Jane", last: "Doe" });
+    expect(bare).not.toContain("--gender");
+    expect(bare).not.toContain("--dob");
+    expect(bare).not.toContain("--email");
+  });
+
+  it("travellers_list: plan flag + --json", () => {
+    expect(buildTravellersListArgs({ plan_id: "p" })).toEqual(["travellers", "list", "--plan", "p", "--json"]);
   });
 
   it("travellers_update: id positional + only provided fields forwarded", () => {
@@ -210,10 +232,18 @@ describe("argv builders", () => {
     expect(buildSelectOptionArgs({ selection_id: "s1", option_id: "o1", wait: false })).not.toContain("--wait");
   });
 
+  it("itinerary: plan id positional + --json", () => {
+    expect(buildItineraryArgs({ plan_id: "p" })).toEqual(["itinerary", "p", "--json"]);
+  });
+
   it("plan_status / quote / booking_status", () => {
     expect(buildPlanStatusArgs({ plan_id: "p" })).toEqual(["plan-status", "p", "--json"]);
     expect(buildQuoteArgs({ plan_id: "p" })).toEqual(["quote", "p", "--json"]);
     expect(buildBookingStatusArgs({ plan_id: "p" })).toEqual(["book", "p", "--status", "--json"]);
+  });
+
+  it("bookings_list: plan filter flag + --json", () => {
+    expect(buildBookingsListArgs({ plan_id: "p" })).toEqual(["bookings", "list", "--plan", "p", "--json"]);
   });
 
   it("book_dry_run: --expect-total only when provided, rendered via moneyArg", () => {
@@ -287,17 +317,20 @@ describe("--json discipline via the table (buildArgs on representative input)", 
     plan_trip: { client: "c", title: "t" },
     add_traveller: { plan_id: "p", first: "f", last: "l" },
     travellers_update: { traveller_id: "t", first: "f" },
+    travellers_list: { plan_id: "p" },
     goal_add: { plan_id: "p", type: "Activity" },
     search_flights: { plan_id: "p", from: "A", to: "B", date: "d" },
     search_hotels: { plan_id: "p", location: "L", checkin: "c", checkout: "o" },
     search_activities: { plan_id: "p", destination: "D", date: "d" },
     get_selection_options: { selection_id: "s" },
     select_option: { selection_id: "s", option_id: "o" },
+    itinerary: { plan_id: "p" },
     plan_status: { plan_id: "p" },
     quote: { plan_id: "p" },
     book_dry_run: { plan_id: "p" },
     book: { plan_id: "p", expect_total: 10 },
     booking_status: { plan_id: "p" },
+    bookings_list: { plan_id: "p" },
     agent_docs: {},
   };
 
