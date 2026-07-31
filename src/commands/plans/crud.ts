@@ -9,6 +9,7 @@ import { CliError, CliErrorCode } from "../../errors.js";
 import { scaffoldPlan, generateTripTitle } from "../scaffold.js";
 import { isInteractive, promptText } from "../../prompt.js";
 import { planUrl, typeIcon, chosenOption, TripPlan, TripPlanDetail, PaginatedTripPlans } from "./types.js";
+import { planUrls } from "../../plan-urls.js";
 import {
   GET_TRIP_PLANS,
   GET_TRIP_PLAN,
@@ -69,7 +70,7 @@ export function registerCrudCommands(plans: Command): void {
 
         if (opts.json) {
           const planSummary = await getPlanSummary(plan.id);
-          jsonOutput({ ...plan, url: planUrl(plan.id), planSummary });
+          jsonOutput({ ...plan, ...planUrls(plan.id), planSummary });
           return;
         }
 
@@ -134,7 +135,7 @@ export function registerCrudCommands(plans: Command): void {
 
         if (opts.json) {
           process.stdout.write(JSON.stringify({
-            items: items.map((p) => ({ ...p, url: planUrl(p.id) })),
+            items: items.map((p) => ({ ...p, ...planUrls(p.id) })),
             total: opts.active ? items.length : total,
             page: opts.active ? 1 : page,
             limit: opts.active ? items.length : limit,
@@ -207,7 +208,7 @@ export function registerCrudCommands(plans: Command): void {
         const plan = data.tripPlan;
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ ...plan, url: planUrl(plan.id) }, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({ ...plan, ...planUrls(plan.id) }, null, 2) + "\n");
           return;
         }
 

@@ -106,7 +106,13 @@ describe("travellers add", () => {
     expect(vars.input).toMatchObject({ firstName: "John", lastName: "Doe", declaredTravellerType: "Adult" });
     const out = JSON.parse(writes.join(""));
     expect(out.id).toBe("trv_01");
-    expect(out.url).toContain("/plans/plan-1");
+    // Pin the planUrls(...) trio and the current routes (VOY-1795): url aliases
+    // clientUrl for back-compat; the retired /plans/{id} route must not return.
+    expect(out.url).toBe("https://dev.voyagier.com/me/trips/plans/plan-1");
+    expect(out.clientUrl).toBe("https://dev.voyagier.com/me/trips/plans/plan-1");
+    expect(out.advisorUrl).toBe("https://dev.voyagier.com/advisor/plans/plan-1");
+    expect(out.url).toBe(out.clientUrl);
+    expect(out.url).not.toBe("https://dev.voyagier.com/plans/plan-1");
   });
 
   it("normalizes gender, validates DOB, and builds passport + contact inputs", async () => {
@@ -243,7 +249,12 @@ describe("travellers list", () => {
     await run(["list", "--plan", "plan-1", "--json"]);
     const out = JSON.parse(writes.join(""));
     expect(out.travellers).toHaveLength(1);
-    expect(out.url).toContain("/plans/plan-1");
+    // Pin the planUrls(...) trio and the current routes (VOY-1795).
+    expect(out.url).toBe("https://dev.voyagier.com/me/trips/plans/plan-1");
+    expect(out.clientUrl).toBe("https://dev.voyagier.com/me/trips/plans/plan-1");
+    expect(out.advisorUrl).toBe("https://dev.voyagier.com/advisor/plans/plan-1");
+    expect(out.url).toBe(out.clientUrl);
+    expect(out.url).not.toBe("https://dev.voyagier.com/plans/plan-1");
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars).toEqual({ tripPlanId: "plan-1" });
   });

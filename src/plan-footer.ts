@@ -1,7 +1,7 @@
 import chalk from "chalk";
 import { graphql } from "./api.js";
-import { getApiUrl } from "./config.js";
-import { deriveBaseUrl, formatDateRange } from "./utils.js";
+import { formatDateRange } from "./utils.js";
+import { clientPlanUrl, planUrls, type PlanUrls } from "./plan-urls.js";
 
 interface PlanFooterData {
   title: string;
@@ -22,7 +22,7 @@ export async function printPlanFooter(planId: string): Promise<void> {
     );
     const p = data.tripPlan;
     if (!p) return;
-    const url = `${deriveBaseUrl(getApiUrl())}/plans/${planId}`;
+    const url = clientPlanUrl(planId);
     const dates = formatDateRange(p.startDate, p.endDate);
     const tc = p.travellers?.length ?? 0;
     // `items` are goal-graph nodes (a fresh plan scaffolds ~25), NOT user-added
@@ -40,9 +40,8 @@ export async function printPlanFooter(planId: string): Promise<void> {
  * rename (e.g. the itemCount -> goalCount change) breaks the build instead of
  * silently shipping drift to agent consumers.
  */
-export interface PlanSummary {
+export interface PlanSummary extends PlanUrls {
   title: string;
-  url: string;
   dates: string;
   travellerCount: number;
   goalCount: number;
@@ -59,7 +58,7 @@ export async function getPlanSummary(planId: string): Promise<PlanSummary | null
     if (!p) return null;
     return {
       title: p.title,
-      url: `${deriveBaseUrl(getApiUrl())}/plans/${planId}`,
+      ...planUrls(planId),
       dates: formatDateRange(p.startDate, p.endDate),
       travellerCount: p.travellers?.length ?? 0,
       // `items` are goal-graph nodes (fresh plan scaffolds ~25), not user items.

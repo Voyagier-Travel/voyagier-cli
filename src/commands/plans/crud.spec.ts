@@ -230,12 +230,16 @@ describe("plans create — client wiring", () => {
     const out = JSON.parse(writes.join(""));
     expect(out.id).toBe(samplePlan.id);
     expect(out.title).toBe(samplePlan.title);
-    expect(out.url).toContain("/plans/plan-1");
+    // VOY-1795: url aliases clientUrl (traveller-facing); advisorUrl added alongside.
+    expect(out.url).toContain("/me/trips/plans/plan-1");
+    expect(out.clientUrl).toContain("/me/trips/plans/plan-1");
+    expect(out.advisorUrl).toContain("/advisor/plans/plan-1");
+    expect(out.url).toBe(out.clientUrl);
     // planSummary is embedded (getPlanSummary stub returns counts).
     expect(out.planSummary).toEqual({ travellerCount: 0, itemCount: 0 });
     // The raw plan fields still pass through (id/title/startDate/endDate/description).
     expect(Object.keys(out).sort()).toEqual(
-      ["description", "endDate", "id", "planSummary", "startDate", "title", "url"].sort(),
+      ["advisorUrl", "clientUrl", "description", "endDate", "id", "planSummary", "startDate", "title", "url"].sort(),
     );
     // --json stays stderr-silent (old crud never emitted progress; quiet passthrough).
     expect(stderrWrites.join("")).not.toContain("Creating trip plan");

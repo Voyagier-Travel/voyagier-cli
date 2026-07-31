@@ -2,7 +2,7 @@ import { printPlanFooter } from "../plan-footer.js";
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
-import { getApiUrl, getHomeAirports } from "../config.js";
+import { getHomeAirports } from "../config.js";
 import {
   GET_TRAVELLERS_BRIEF,
   CREATE_FLIGHT_SELECTION,
@@ -30,7 +30,8 @@ import {
 import { saveSearchState, loadSearchState, getSelectionSearchParams, rememberSelectionSearchParams } from "../state.js";
 import type { SearchState, SelectionSearchParams } from "../state.js";
 import { formatFlights, formatHotels, formatActivities } from "../formatters.js";
-import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivitySummary, validateDate, warnPastDate, validateIata, deriveBaseUrl, looksLikeAirportCode, shellArg } from "../utils.js";
+import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivitySummary, validateDate, warnPastDate, validateIata, looksLikeAirportCode, shellArg } from "../utils.js";
+import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "../agent-output.js";
 import { deriveHotelStay } from "../hotel-format.js";
 import { searchAirports } from "../data/airports.js";
@@ -799,7 +800,7 @@ export function registerSearchCommands(program: Command): void {
               selectionId,
               ...(returnSelectionId ? { returnSelectionId } : {}),
               isRoundTrip,
-              url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
+              ...planUrls(tripPlanId),
               ...reuseEnvelopeFields(reuse),
             },
             options as unknown as Array<Record<string, unknown>>,
@@ -811,7 +812,7 @@ export function registerSearchCommands(program: Command): void {
         }
 
         if (opts.agent) {
-          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`;
+          const planUrl = clientPlanUrl(tripPlanId);
           const lines: string[] = [];
           lines.push(`### Flights (${origin} → ${destination})`);
           if (scaffolded) lines.push(`_No plan given — created draft plan \`${tripPlanId}\`._`);
@@ -1098,7 +1099,7 @@ export function registerSearchCommands(program: Command): void {
               tripPlanId: tripPlanId,
               ...(scaffolded ? { scaffolded: true } : {}),
               selectionId: selectionId,
-              url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
+              ...planUrls(tripPlanId),
               ...reuseEnvelopeFields(reuse),
             },
             options as unknown as Array<Record<string, unknown>>,
@@ -1110,7 +1111,7 @@ export function registerSearchCommands(program: Command): void {
         }
 
         if (opts.agent) {
-          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`;
+          const planUrl = clientPlanUrl(tripPlanId);
           const lines: string[] = [];
           lines.push(`### Hotels (${opts.location})`);
           if (scaffolded) lines.push(`_No plan given — created draft plan \`${tripPlanId}\`._`);
@@ -1154,7 +1155,7 @@ export function registerSearchCommands(program: Command): void {
           process.stderr.write(chalk.dim(`  • Try a nearby major city with more hotel inventory\n`));
           process.stderr.write(chalk.dim(`  • Use --verbose to see exactly what location was sent to the API\n`));
           process.stderr.write(chalk.dim(`  • Check the web UI for expanded search options:\n`));
-          process.stderr.write(chalk.dim(`    ${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}\n`));
+          process.stderr.write(chalk.dim(`    ${clientPlanUrl(tripPlanId)}\n`));
           return;
         }
 
@@ -1323,7 +1324,7 @@ export function registerSearchCommands(program: Command): void {
             {
               tripPlanId: tripPlanId,
               selectionId: selectionId,
-              url: `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`,
+              ...planUrls(tripPlanId),
             },
             options as unknown as Array<Record<string, unknown>>,
             searchResults,
@@ -1334,7 +1335,7 @@ export function registerSearchCommands(program: Command): void {
         }
 
         if (opts.agent) {
-          const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${tripPlanId}`;
+          const planUrl = clientPlanUrl(tripPlanId);
           const lines: string[] = [];
           lines.push(`### Activities (${opts.destination})`);
           if (options.length === 0) {

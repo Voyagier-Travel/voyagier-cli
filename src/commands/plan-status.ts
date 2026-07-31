@@ -53,6 +53,7 @@ import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
 import { deriveBaseUrl, formatPrice, shellArg } from "../utils.js";
+import { planUrls } from "../plan-urls.js";
 import { resolvePlanArg } from "../resolve-plan-arg.js";
 import { GET_PLAN_STATUS, GET_HOTEL_OPTION_DATA } from "../queries.js";
 import { classifySelection } from "../selection-status.js";
@@ -821,7 +822,7 @@ export function buildPlanStatus(
   return {
     planId: plan.id,
     title: plan.title ?? null,
-    url: `${planUrlBase}/plans/${plan.id}`,
+    ...planUrls(plan.id, planUrlBase),
     readiness,
     summary: {
       goalsTotal: goalsOut.length,

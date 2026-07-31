@@ -30,8 +30,8 @@ import {
   ADD_TRAVELLERS_TO_GROUP,
   REMOVE_TRAVELLERS_FROM_GROUP,
 } from "../queries.js";
-import { deriveBaseUrl, shellArg } from "../utils.js";
-import { getApiUrl } from "../config.js";
+import { shellArg } from "../utils.js";
+import { planUrls } from "../plan-urls.js";
 
 // ---------- Types ----------
 
@@ -64,7 +64,7 @@ export function buildGroupPlanContext(plan: TravellerGroupPlanContext): Record<s
   return {
     planId: plan.id,
     title: plan.title,
-    url: `${deriveBaseUrl(getApiUrl())}/plans/${plan.id}`,
+    ...planUrls(plan.id),
     travellerCount: plan.travellers?.length ?? null,
   };
 }

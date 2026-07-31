@@ -23,8 +23,8 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
 import { jsonOutput } from "../output.js";
-import { deriveBaseUrl, shellArg } from "../utils.js";
-import { getApiUrl } from "../config.js";
+import { shellArg } from "../utils.js";
+import { planUrls } from "../plan-urls.js";
 import { GET_TRAVELLER_CHOICES } from "../queries.js";
 
 // ---------- Types ----------
@@ -225,7 +225,6 @@ export function registerTravellerChoicesCommands(program: Command): void {
       const pendingCount = filtered.filter((q) => q.pendingTravellers.length > 0).length;
 
       if (opts.json) {
-        const planUrl = `${deriveBaseUrl(getApiUrl())}/plans/${opts.plan}`;
         jsonOutput({
           ok: true,
           data: {
@@ -263,7 +262,7 @@ export function registerTravellerChoicesCommands(program: Command): void {
           planContext: {
             planId: opts.plan,
             title: result.title,
-            url: planUrl,
+            ...planUrls(opts.plan),
             travellerCount: allTravellerIds.length,
           },
         });

@@ -1,5 +1,4 @@
-import { getApiUrl } from "../../config.js";
-import { deriveBaseUrl } from "../../utils.js";
+import { clientPlanUrl } from "../../plan-urls.js";
 import { deriveChosen, type RawTravellerChoice } from "../../choices.js";
 
 // --- Deep plan model (GET_PLAN_DEEP) ---
@@ -129,9 +128,13 @@ export interface TripPlanDetail {
   };
 }
 
+/**
+ * Human-facing plan link (the traveller-facing clientUrl). JSON payloads should
+ * emit the full `planUrls(id)` trio instead so clientUrl/advisorUrl are both
+ * available; this single-string form is for console/markdown output.
+ */
 export function planUrl(id: string): string {
-  const baseUrl = deriveBaseUrl(getApiUrl());
-  return `${baseUrl}/plans/${id}`;
+  return clientPlanUrl(id);
 }
 
 /** Shared type inference from title text — used by both inferItemType and typeIcon. */

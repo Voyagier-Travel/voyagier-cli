@@ -6,6 +6,7 @@ import { stdin, stdout } from "process";
 import { graphql } from "../api.js";
 import { getApiUrl, getUserContext } from "../config.js";
 import { validateDate, deriveBaseUrl, shellArg, maskLoyaltyValue } from "../utils.js";
+import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { jsonOutput, fatal, warn } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import {
@@ -273,10 +274,9 @@ export function registerTravellerCommands(program: Command): void {
 
         const t = data.createTripPlanTraveller;
         const baseUrl = deriveBaseUrl(getApiUrl());
-        const planUrl = `${baseUrl}/plans/${opts.plan}`;
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ ...t, url: planUrl }, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({ ...t, ...planUrls(opts.plan, baseUrl) }, null, 2) + "\n");
           return;
         }
 
@@ -311,10 +311,10 @@ export function registerTravellerCommands(program: Command): void {
 
         const list = data.tripPlanTravellers;
         const baseUrl = deriveBaseUrl(getApiUrl());
-        const planUrl = `${baseUrl}/plans/${opts.plan}`;
+        const planUrl = clientPlanUrl(opts.plan, baseUrl);
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ travellers: list, url: planUrl }, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({ travellers: list, ...planUrls(opts.plan, baseUrl) }, null, 2) + "\n");
           return;
         }
 

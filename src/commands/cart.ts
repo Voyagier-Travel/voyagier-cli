@@ -15,6 +15,7 @@ import { graphql } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
 import { formatPrice, deriveBaseUrl, shellArg } from "../utils.js";
+import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { resolvePlanArg } from "../resolve-plan-arg.js";
 import { GET_CART_V2 } from "../queries.js";
 import {
@@ -35,7 +36,7 @@ export function registerCartCommands(program: Command): void {
     .action(async (planIdInput: string | undefined, opts: { json?: boolean; agent?: boolean; plan?: string }) => {
       const planId = resolvePlanArg(planIdInput, opts, "cart");
       const baseUrl = deriveBaseUrl(getApiUrl());
-      const planUrl = `${baseUrl}/plans/${planId}`;
+      const planUrl = clientPlanUrl(planId, baseUrl);
 
       let data: CartV2QueryResult;
       try {
@@ -60,7 +61,7 @@ export function registerCartCommands(program: Command): void {
       const planContext = {
         planId: plan.id,
         title: plan.title,
-        url: planUrl,
+        ...planUrls(plan.id, baseUrl),
         urlForCli: `voyagier plans get ${shellArg(plan.id)}`,
       };
 

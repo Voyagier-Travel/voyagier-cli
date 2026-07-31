@@ -25,9 +25,9 @@ import { graphql } from "../api.js";
 import { jsonOutput, fatal } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { GET_TRIP_PLAN_EVENTS } from "../queries.js";
-import { validateDate, deriveBaseUrl } from "../utils.js";
+import { validateDate } from "../utils.js";
 import { resolvePlanArg } from "../resolve-plan-arg.js";
-import { getApiUrl } from "../config.js";
+import { clientPlanUrl, planUrls } from "../plan-urls.js";
 
 export interface TripPlanEventLocation {
   name?: string | null;
@@ -158,7 +158,7 @@ function parseTimestamp(value?: string | null): number | null {
 }
 
 function planUrl(planId: string): string {
-  return `${deriveBaseUrl(getApiUrl())}/plans/${planId}`;
+  return clientPlanUrl(planId);
 }
 
 function formatEventLine(e: TripPlanEvent, planStart: string | null | undefined): string {
@@ -239,7 +239,7 @@ export function registerItineraryCommand(program: Command): void {
           planContext: {
             planId: plan.id,
             title: plan.title,
-            url: planUrl(plan.id),
+            ...planUrls(plan.id),
             startDate: plan.startDate ?? null,
             endDate: plan.endDate ?? null,
           },
