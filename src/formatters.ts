@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import { formatPrice } from "./utils.js";
-import { hotelStayLabel } from "./hotel-format.js";
+import { hotelStayLabel, deriveHotelFacts } from "./hotel-format.js";
+import { deriveFlightDetail, flightRouteLabel } from "./flight-format.js";
 
 interface FlightOption {
   id?: string;
@@ -49,10 +50,15 @@ export function formatFlights(options: FlightOption[], overrideRoute?: { origin:
   return options
     .map((opt, i) => {
       const idx = chalk.bold.cyan(`[${i + 1}]`);
-      const airline = opt.airline ? chalk.white(opt.airline) : "";
-      const route = chalk.white(overrideRoute
+      // VOY-1783: prefer leg detail (flight number + timed route + stops); fall
+      // back to airline + searchQuery route when the legs aren't in the payload.
+      const detail = deriveFlightDetail(opt.bookingData);
+      const lead = detail?.flightNumber ?? opt.airline;
+      const airline = lead ? chalk.white(lead) : "";
+      const detailRoute = detail ? flightRouteLabel(detail) : "";
+      const route = chalk.white(detailRoute || (overrideRoute
         ? `${overrideRoute.origin} to ${overrideRoute.destination}`
-        : extractRoute(opt));
+        : extractRoute(opt)));
       const price = opt.price != null ? chalk.green(formatPrice(opt.price)) : "";
       const duration = opt.duration ? chalk.dim(opt.duration) : "";
       const time = opt.time ? chalk.dim(opt.time) : "";
@@ -73,10 +79,14 @@ export function formatHotels(options: HotelOption[]): string {
     .map((opt, i) => {
       const idx = chalk.bold.cyan(`[${i + 1}]`);
       const name = chalk.white(opt.name);
+      // VOY-1783: rating + salient amenities when present.
+      const facts = deriveHotelFacts(opt.bookingData);
       // VOY-1724: minRate is the STAY TOTAL — "from $X total · N nights (~$Y/nt)".
       const label = hotelStayLabel(opt.price, opt.bookingData);
 
       let line = `  🏨  ${idx}  ${name}`;
+      if (facts?.rating != null) line += `  ·  ${chalk.yellow(`⭐${facts.rating}`)}`;
+      if (facts?.amenities.length) line += `  ·  ${chalk.dim(facts.amenities.join(", "))}`;
       if (label) line += `  ·  ${chalk.green(label)}`;
       return line;
     })

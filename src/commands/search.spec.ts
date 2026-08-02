@@ -412,6 +412,36 @@ describe("registerSearchCommands", () => {
       expect(airportCalls).toHaveLength(2);
     });
 
+    it("adds additive leg detail to compact topOptions when present (VOY-1783)", async () => {
+      installRouter({
+        options: [{
+          id: "opt-leg", name: "DL", price: 412, duration: "5h50m", sortOrder: 1,
+          bookingData: { flightToken: "TKleg", flights: [{ flightLegs: [
+            { origin: "BWI", destination: "ATL", departureTime: "2026-08-01T07:15:00", carrier: "DL", flightNumber: "1043" },
+            { origin: "ATL", destination: "AUS", arrivalTime: "2026-08-01T10:05:00", carrier: "DL", flightNumber: "2201" },
+          ] }] },
+        }],
+      });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "BWI", "--to", "AUS", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      const top = out.topOptions[0];
+      // Existing keys untouched (additive-only).
+      expect(top.optionId).toBe("opt-leg");
+      expect(top.flightToken).toBe("TKleg");
+      // New structured fields.
+      expect(top.flightNumber).toBe("DL 1043");
+      expect(top.departureTime).toBe("07:15");
+      expect(top.arrivalTime).toBe("10:05");
+      expect(top.stops).toBe(1);
+      expect(top.connections).toEqual(["ATL"]);
+      expect(top.summary).toContain("BWI 07:15 → AUS 10:05 (1 stop, ATL)");
+      // Still no raw bookingData leak in the compact envelope.
+      expect(JSON.stringify(out)).not.toContain("bookingData");
+    });
+
     it("uses the profile home airport when --from is omitted", async () => {
       mockGetHomeAirports.mockReturnValue(["sfo"]);
       installRouter();
@@ -777,6 +807,30 @@ describe("registerSearchCommands", () => {
       expect(mockGraphql.mock.calls.some(c => String(c[0]).includes("setTripPlanDestinationValue"))).toBe(true);
       // Check-out derived via a duration input.
       expect(mockGraphql.mock.calls.some(c => String(c[0]).includes("setTripPlanSelectionInputValue"))).toBe(true);
+    });
+
+    it("adds additive rating + amenities to compact topOptions (VOY-1783)", async () => {
+      installRouter({
+        goals: buildHotelGoals(),
+        options: [{
+          id: "opt-h", name: "Hotel Van Zandt", price: 890, sortOrder: 1,
+          bookingData: {
+            rating: 4.5, amenities: ["pool", "spa", "gym", "wifi"],
+            searchQuery: { checkInDate: "2026-08-01", checkOutDate: "2026-08-04" },
+          },
+        }],
+      });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "Austin", "--checkin", "2026-08-01", "--checkout", "2026-08-04", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      const top = out.topOptions[0];
+      expect(top.rating).toBe(4.5);
+      expect(top.amenities).toEqual(["pool", "spa", "gym"]); // capped at 3
+      expect(top.stayTotal).toBe(890); // existing VOY-1724 field untouched
+      expect(top.summary).toContain("Hotel Van Zandt · ⭐4.5 · pool, spa, gym");
+      expect(JSON.stringify(out)).not.toContain("bookingData");
     });
 
     it("warns (non-JSON) about existing hotel items without --replace", async () => {

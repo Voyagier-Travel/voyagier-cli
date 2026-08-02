@@ -1,5 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
-import { nightsBetween, deriveHotelStay, hotelStayLabel, deriveRoomStay } from "./hotel-format.js";
+import { nightsBetween, deriveHotelStay, hotelStayLabel, deriveRoomStay, deriveHotelFacts, hotelFactsFields } from "./hotel-format.js";
 
 /**
  * VOY-1724 hotel/room price honesty. The supplier's minRate is a STAY TOTAL,
@@ -54,6 +54,37 @@ describe("deriveHotelStay + hotelStayLabel (search: minRate = STAY TOTAL)", () =
   it("returns empty string / null when there is no price", () => {
     expect(hotelStayLabel(undefined, bookingData)).toBe("");
     expect(deriveHotelStay(undefined, bookingData)).toBeNull();
+  });
+});
+
+describe("deriveHotelFacts + hotelFactsFields (VOY-1783: rating + amenities)", () => {
+  it("extracts rating and caps amenities at 3 salient ones", () => {
+    const facts = deriveHotelFacts({ rating: 4.5, amenities: ["pool", "spa", "gym", "wifi"] })!;
+    expect(facts.rating).toBe(4.5);
+    expect(facts.amenities).toEqual(["pool", "spa", "gym"]);
+  });
+
+  it("accepts a starRating alias and rounds noisy decimals to one place", () => {
+    expect(deriveHotelFacts({ starRating: 4 })!.rating).toBe(4);
+    expect(deriveHotelFacts({ rating: 4.567 })!.rating).toBe(4.6);
+  });
+
+  it("returns null when neither rating nor amenities are present", () => {
+    expect(deriveHotelFacts({ searchQuery: { checkInDate: "2026-09-10" } })).toBeNull();
+    expect(deriveHotelFacts(undefined)).toBeNull();
+    expect(deriveHotelFacts("nope")).toBeNull();
+  });
+
+  it("drops non-string amenities and non-numeric ratings (optional-safe)", () => {
+    const facts = deriveHotelFacts({ rating: "5 stars", amenities: ["pool", 42, null, "spa"] })!;
+    expect(facts.rating).toBeNull();
+    expect(facts.amenities).toEqual(["pool", "spa"]);
+  });
+
+  it("hotelFactsFields emits only the known additive keys", () => {
+    expect(hotelFactsFields({ rating: 4.5, amenities: ["pool"] })).toEqual({ rating: 4.5, amenities: ["pool"] });
+    expect(hotelFactsFields({ amenities: ["pool"] })).toEqual({ amenities: ["pool"] });
+    expect(hotelFactsFields({})).toEqual({});
   });
 });
 

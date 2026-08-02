@@ -28,6 +28,22 @@ describe("agentFlightOptions", () => {
     const output = agentFlightOptions([]);
     expect(output).toContain("No flights found");
   });
+
+  it("renders decision-grade leg detail when present (VOY-1783)", () => {
+    const output = agentFlightOptions([{
+      airline: "Delta", duration: "5h50m", price: 412,
+      bookingData: { flights: [{ flightLegs: [
+        { origin: "BWI", destination: "ATL", departureTime: "2026-06-15T07:15:00", carrier: "DL", flightNumber: "1043" },
+        { origin: "ATL", destination: "AUS", arrivalTime: "2026-06-15T10:05:00", carrier: "DL", flightNumber: "2201" },
+      ] }] },
+    }]);
+    expect(output).toBe("1. DL 1043 · BWI 07:15 → AUS 10:05 (1 stop, ATL) · 5h50m · $412.00");
+  });
+
+  it("falls back to airline · duration · price without leg data (VOY-1783)", () => {
+    const output = agentFlightOptions([{ airline: "United", duration: "5h 30m", price: 423 }]);
+    expect(output).toBe("1. United · 5h 30m · $423.00");
+  });
 });
 
 describe("agentHotelOptions", () => {
@@ -57,6 +73,19 @@ describe("agentHotelOptions", () => {
     const output = agentHotelOptions([{ name: "Mystery Hotel" }]);
     expect(output).toContain("1. Mystery Hotel");
     expect(output).not.toContain("/night");
+  });
+
+  it("shows rating + amenities between name and stay total (VOY-1783)", () => {
+    const output = agentHotelOptions([{
+      name: "Hotel Van Zandt",
+      price: 890,
+      bookingData: {
+        rating: 4.5,
+        amenities: ["pool", "spa"],
+        searchQuery: { checkInDate: "2026-09-10", checkOutDate: "2026-09-13" },
+      },
+    }]);
+    expect(output).toBe("1. Hotel Van Zandt · ⭐4.5 · pool, spa · from $890.00 total · 3 nights (~$297/nt)");
   });
 
   it("should return placeholder for empty list", () => {

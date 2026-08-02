@@ -77,6 +77,60 @@ export function hotelStayLabel(price: number | null | undefined, bookingData?: u
   return `from ${formatPrice(stay.stayTotal)} total · ${stay.nights} night${stay.nights === 1 ? "" : "s"} (~$${stay.perNight}/nt)`;
 }
 
+/**
+ * Salient, at-a-glance facts for a hotel SEARCH option (VOY-1783). Rating and
+ * amenities live in the raw booking-data blob; the formatting layer used to
+ * discard them. Surfaced only when present — never fabricated.
+ */
+export interface HotelFacts {
+  /** Star/guest rating, e.g. 4.5; null when absent. */
+  rating: number | null;
+  /** Up to a few salient amenity labels. */
+  amenities: string[];
+}
+
+/** How many amenities to show — enough to be useful, few enough to stay compact. */
+const MAX_AMENITIES = 3;
+
+/**
+ * Derive rating + a capped amenity list from a hotel option's booking data.
+ * Returns null when neither is present (caller shows just the name + stay).
+ * Optional-safe: non-string amenities and non-numeric ratings are dropped.
+ */
+export function deriveHotelFacts(bookingData?: unknown): HotelFacts | null {
+  if (!bookingData || typeof bookingData !== "object") return null;
+  const bd = bookingData as Record<string, unknown>;
+
+  const raw = typeof bd.rating === "number" ? bd.rating : typeof bd.starRating === "number" ? bd.starRating : null;
+  // Keep clean integers as-is, round noisy decimals to one place (4.567 → 4.6).
+  const rating =
+    raw == null || Number.isNaN(raw)
+      ? null
+      : Number.isInteger(raw)
+        ? raw
+        : Math.round(raw * 10) / 10;
+
+  const amenities = Array.isArray(bd.amenities)
+    ? bd.amenities.filter((a): a is string => typeof a === "string" && a.length > 0).slice(0, MAX_AMENITIES)
+    : [];
+
+  if (rating == null && amenities.length === 0) return null;
+  return { rating, amenities };
+}
+
+/**
+ * Additive structured fields for the compact `--json` top-options projection.
+ * Only includes keys that are actually known. Returns {} when there's nothing.
+ */
+export function hotelFactsFields(bookingData?: unknown): Record<string, unknown> {
+  const facts = deriveHotelFacts(bookingData);
+  if (!facts) return {};
+  const out: Record<string, unknown> = {};
+  if (facts.rating != null) out.rating = facts.rating;
+  if (facts.amenities.length) out.amenities = facts.amenities;
+  return out;
+}
+
 /** Structured nights × rate derivation for a room / rate option. */
 export interface RoomStay {
   nights: number;
