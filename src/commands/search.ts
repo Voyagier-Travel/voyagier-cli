@@ -33,7 +33,8 @@ import { formatFlights, formatHotels, formatActivities } from "../formatters.js"
 import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivitySummary, validateDate, warnPastDate, validateIata, looksLikeAirportCode, shellArg } from "../utils.js";
 import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "../agent-output.js";
-import { deriveHotelStay } from "../hotel-format.js";
+import { deriveHotelStay, hotelFactsFields } from "../hotel-format.js";
+import { deriveFlightDetail, flightProjectionFields } from "../flight-format.js";
 import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 import { CliError, CliErrorCode } from "../errors.js";
@@ -254,6 +255,10 @@ function parseStops(bookingData?: Record<string, unknown>): number {
   if (typeof bookingData.stops === "number") return bookingData.stops;
   const segments = bookingData.segments as unknown[] | undefined;
   if (segments) return Math.max(0, segments.length - 1);
+  // Leg-only payloads (flights[].flightLegs) carry no stops/segments — derive
+  // the stop count from the legs so --max-stops/--sort stops keep working.
+  const derived = deriveFlightDetail(bookingData)?.stopCount;
+  if (typeof derived === "number") return derived;
   return Infinity;
 }
 
@@ -778,6 +783,9 @@ export function registerSearchCommands(program: Command): void {
           optionId: opt.id,
           flightToken: extractFlightToken(opt.bookingData),
           summary: buildFlightSummary(opt, origin, destination),
+          // VOY-1783: additive leg detail (times, flight number, stops,
+          // connections) so agents can decide without the --full dump.
+          ...flightProjectionFields(opt.bookingData),
         }));
 
         saveSearchState({
@@ -1073,6 +1081,8 @@ export function registerSearchCommands(program: Command): void {
             index: i + 1,
             optionId: opt.id,
             summary: buildHotelSummary(opt),
+            // VOY-1783: additive rating + amenities.
+            ...hotelFactsFields(opt.bookingData),
             ...(stay
               ? {
                   stayTotal: stay.stayTotal,

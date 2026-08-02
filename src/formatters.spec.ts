@@ -46,6 +46,68 @@ describe("formatFlights", () => {
   it("should return empty string for empty array", () => {
     expect(formatFlights([])).toBe("");
   });
+
+  describe("VOY-1783 leg detail", () => {
+    const legged = {
+      name: "flight",
+      price: 412,
+      airline: "Delta",
+      duration: "5h50m",
+      bookingData: {
+        flights: [{ flightLegs: [
+          { origin: "BWI", destination: "ATL", departureTime: "2026-06-15T07:15:00", carrier: "DL", flightNumber: "1043" },
+          { origin: "ATL", destination: "AUS", arrivalTime: "2026-06-15T10:05:00", carrier: "DL", flightNumber: "2201" },
+        ] }],
+      },
+    };
+
+    it("renders flight number, timed route, and stops with connection", () => {
+      const out = stripAnsi(formatFlights([legged]));
+      expect(out).toContain("DL 1043");
+      expect(out).toContain("BWI 07:15 → AUS 10:05 (1 stop, ATL)");
+      expect(out).toContain("$412.00");
+      expect(out).toContain("5h50m");
+      expect(out).not.toContain("undefined");
+    });
+
+    it("suppresses the legacy time line when leg detail carries times", () => {
+      const out = stripAnsi(formatFlights([{ ...legged, time: "7:15 AM" }]));
+      expect(out).toContain("BWI 07:15");
+      expect(out).not.toContain("7:15 AM");
+    });
+
+    it("suppresses the legacy time line when leg detail has only an arrival time", () => {
+      const out = stripAnsi(formatFlights([{
+        name: "x", price: 200, airline: "WN", time: "7:15 AM",
+        bookingData: { flights: [{ flightLegs: [
+          { origin: "SFO", destination: "JFK", arrivalTime: "2026-06-15T15:45:00", carrier: "WN", flightNumber: "442" },
+        ] }] },
+      }]));
+      expect(out).toContain("15:45");
+      expect(out).not.toContain("7:15 AM");
+    });
+
+    it("keeps the legacy time line when leg detail has no times", () => {
+      const out = stripAnsi(formatFlights([{
+        name: "x", price: 200, airline: "WN", time: "7:15 AM",
+        bookingData: { flights: [{ flightLegs: [
+          { origin: "SFO", destination: "JFK", carrier: "WN", flightNumber: "442" },
+        ] }] },
+      }]));
+      expect(out).toContain("7:15 AM");
+    });
+
+    it("says nonstop for a direct leg", () => {
+      const out = stripAnsi(formatFlights([{
+        name: "x", price: 200, airline: "WN",
+        bookingData: { flights: [{ flightLegs: [
+          { origin: "BWI", destination: "AUS", departureTime: "2026-06-15T07:15:00", arrivalTime: "2026-06-15T10:05:00", carrier: "WN", flightNumber: "442" },
+        ] }] },
+      }]));
+      expect(out).toContain("WN 442");
+      expect(out).toContain("BWI 07:15 → AUS 10:05 (nonstop)");
+    });
+  });
 });
 
 describe("formatHotels", () => {
@@ -93,6 +155,25 @@ describe("formatHotels", () => {
 
   it("should return empty string for empty array", () => {
     expect(formatHotels([])).toBe("");
+  });
+
+  it("shows rating + amenities alongside the stay total (VOY-1783)", () => {
+    const output = stripAnsi(formatHotels([
+      {
+        name: "Hotel Van Zandt",
+        price: 890,
+        bookingData: {
+          rating: 4.5,
+          amenities: ["pool", "spa"],
+          searchQuery: { checkInDate: "2026-09-10", checkOutDate: "2026-09-13" },
+        },
+      },
+    ]));
+    expect(output).toContain("Hotel Van Zandt");
+    expect(output).toContain("⭐4.5");
+    expect(output).toContain("pool, spa");
+    expect(output).toContain("from $890.00 total · 3 nights");
+    expect(output).not.toContain("undefined");
   });
 
   describe("flight route extraction", () => {

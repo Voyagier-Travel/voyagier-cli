@@ -142,6 +142,20 @@ describe("buildFlightSummary", () => {
   it("should handle zero price", () => {
     expect(buildFlightSummary({ name: "Test", price: 0 })).toBe("Test · $0.00");
   });
+
+  it("renders leg detail into the summary when present (VOY-1783)", () => {
+    const result = buildFlightSummary(
+      {
+        name: "flight", price: 412, airline: "Delta", duration: "5h50m",
+        bookingData: { flights: [{ flightLegs: [
+          { origin: "BWI", destination: "ATL", departureTime: "2026-06-15T07:15:00", carrier: "DL", flightNumber: "1043" },
+          { origin: "ATL", destination: "AUS", arrivalTime: "2026-06-15T10:05:00", carrier: "DL", flightNumber: "2201" },
+        ] }] },
+      },
+      "BWI", "AUS",
+    );
+    expect(result).toBe("DL 1043 · BWI 07:15 → AUS 10:05 (1 stop, ATL) · 5h50m · $412.00");
+  });
 });
 
 describe("buildHotelSummary", () => {
@@ -160,6 +174,17 @@ describe("buildHotelSummary", () => {
 
   it("should return just name when no price", () => {
     expect(buildHotelSummary({ name: "Hostel X" })).toBe("Hostel X");
+  });
+
+  it("inserts rating + amenities before the stay total (VOY-1783)", () => {
+    const bookingData = {
+      rating: 4.5,
+      amenities: ["pool", "spa"],
+      searchQuery: { checkInDate: "2026-09-10", checkOutDate: "2026-09-13" },
+    };
+    expect(buildHotelSummary({ name: "Hotel Van Zandt", price: 890, bookingData })).toBe(
+      "Hotel Van Zandt · ⭐4.5 · pool, spa · from $890.00 total · 3 nights (~$297/nt)",
+    );
   });
 });
 

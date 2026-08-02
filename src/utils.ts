@@ -2,7 +2,8 @@ import chalk from "chalk";
 import { spawn } from "child_process";
 import { CliError, CliErrorCode } from "./errors.js";
 import { formatPrice } from "./format.js";
-import { hotelStayLabel } from "./hotel-format.js";
+import { hotelStayLabel, deriveHotelFacts } from "./hotel-format.js";
+import { deriveFlightDetail, flightRouteLabel } from "./flight-format.js";
 
 // Re-exported from the leaf module so existing call sites keep importing from
 // utils; the definitions moved to format.ts to break the utils ↔ hotel-format
@@ -36,13 +37,31 @@ export function extractFlightToken(bookingData?: Record<string, unknown>): strin
 }
 
 /**
- * Build a human-readable one-line flight summary.
+ * Build a human-readable one-line flight summary (compact `--json` projection).
+ *
+ * VOY-1783: when the option carries leg detail, render the decision-grade line
+ * `DL 1043 · BWI 07:15 → AUS 10:05 (1 stop, ATL) · 5h50m · $412`. Without leg
+ * data it degrades to the original `ORIG→DEST · airline · price · duration`.
  */
 export function buildFlightSummary(
-  opt: { name: string; price?: number; airline?: string; duration?: string },
+  opt: { name: string; price?: number; airline?: string; duration?: string; bookingData?: Record<string, unknown> | null },
   origin?: string,
   destination?: string
 ): string {
+  const detail = deriveFlightDetail(opt.bookingData);
+  if (detail) {
+    const parts: string[] = [];
+    const lead = detail.flightNumber ?? opt.airline;
+    if (lead) parts.push(lead);
+    const route = flightRouteLabel(detail);
+    if (route) parts.push(route);
+    else if (origin && destination) parts.push(`${origin}→${destination}`);
+    else parts.push(opt.name);
+    if (opt.duration) parts.push(opt.duration);
+    if (opt.price != null) parts.push(formatPrice(opt.price));
+    return parts.join(" · ");
+  }
+  // No leg data — preserve today's exact output.
   const parts: string[] = [];
   if (origin && destination) parts.push(`${origin}→${destination}`);
   else parts.push(opt.name);
@@ -66,6 +85,10 @@ export function buildHotelSummary(opt: {
   bookingData?: Record<string, unknown> | null;
 }): string {
   const parts = [opt.name];
+  // VOY-1783: rating + salient amenities between name and stay total.
+  const facts = deriveHotelFacts(opt.bookingData);
+  if (facts?.rating != null) parts.push(`⭐${facts.rating}`);
+  if (facts?.amenities.length) parts.push(facts.amenities.join(", "));
   const label = hotelStayLabel(opt.price, opt.bookingData);
   if (label) parts.push(label);
   return parts.join(" · ");
