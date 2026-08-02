@@ -103,8 +103,9 @@ export function deriveHotelFacts(bookingData?: unknown): HotelFacts | null {
 
   const raw = typeof bd.rating === "number" ? bd.rating : typeof bd.starRating === "number" ? bd.starRating : null;
   // Keep clean integers as-is, round noisy decimals to one place (4.567 → 4.6).
+  // 0 (or negative) means "unrated" from most suppliers — treat as absent.
   const rating =
-    raw == null || Number.isNaN(raw)
+    raw == null || Number.isNaN(raw) || raw <= 0
       ? null
       : Number.isInteger(raw)
         ? raw

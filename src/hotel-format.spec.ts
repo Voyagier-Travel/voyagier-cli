@@ -69,6 +69,12 @@ describe("deriveHotelFacts + hotelFactsFields (VOY-1783: rating + amenities)", (
     expect(deriveHotelFacts({ rating: 4.567 })!.rating).toBe(4.6);
   });
 
+  it("treats a zero or negative rating as unrated", () => {
+    expect(deriveHotelFacts({ rating: 0 })).toBeNull();
+    expect(deriveHotelFacts({ rating: -1 })).toBeNull();
+    expect(deriveHotelFacts({ rating: 0, amenities: ["pool"] })!.rating).toBeNull();
+  });
+
   it("returns null when neither rating nor amenities are present", () => {
     expect(deriveHotelFacts({ searchQuery: { checkInDate: "2026-09-10" } })).toBeNull();
     expect(deriveHotelFacts(undefined)).toBeNull();

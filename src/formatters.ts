@@ -61,7 +61,9 @@ export function formatFlights(options: FlightOption[], overrideRoute?: { origin:
         : extractRoute(opt)));
       const price = opt.price != null ? chalk.green(formatPrice(opt.price)) : "";
       const duration = opt.duration ? chalk.dim(opt.duration) : "";
-      const time = opt.time ? chalk.dim(opt.time) : "";
+      // Suppress the legacy time line when leg detail already carries times —
+      // otherwise the two can disagree (leg data wins as the richer source).
+      const time = opt.time && !detail?.departureTime ? chalk.dim(opt.time) : "";
 
       const parts = [airline, route].filter(Boolean);
       const details = [price, duration].filter(Boolean).join("  ·  ");

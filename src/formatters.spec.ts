@@ -70,6 +70,22 @@ describe("formatFlights", () => {
       expect(out).not.toContain("undefined");
     });
 
+    it("suppresses the legacy time line when leg detail carries times", () => {
+      const out = stripAnsi(formatFlights([{ ...legged, time: "7:15 AM" }]));
+      expect(out).toContain("BWI 07:15");
+      expect(out).not.toContain("7:15 AM");
+    });
+
+    it("keeps the legacy time line when leg detail has no times", () => {
+      const out = stripAnsi(formatFlights([{
+        name: "x", price: 200, airline: "WN", time: "7:15 AM",
+        bookingData: { flights: [{ flightLegs: [
+          { origin: "SFO", destination: "JFK", carrier: "WN", flightNumber: "442" },
+        ] }] },
+      }]));
+      expect(out).toContain("7:15 AM");
+    });
+
     it("says nonstop for a direct leg", () => {
       const out = stripAnsi(formatFlights([{
         name: "x", price: 200, airline: "WN",
