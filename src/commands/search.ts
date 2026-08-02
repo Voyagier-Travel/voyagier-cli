@@ -34,7 +34,7 @@ import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivit
 import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "../agent-output.js";
 import { deriveHotelStay, hotelFactsFields } from "../hotel-format.js";
-import { flightProjectionFields } from "../flight-format.js";
+import { deriveFlightDetail, flightProjectionFields } from "../flight-format.js";
 import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 import { CliError, CliErrorCode } from "../errors.js";
@@ -255,6 +255,10 @@ function parseStops(bookingData?: Record<string, unknown>): number {
   if (typeof bookingData.stops === "number") return bookingData.stops;
   const segments = bookingData.segments as unknown[] | undefined;
   if (segments) return Math.max(0, segments.length - 1);
+  // Leg-only payloads (flights[].flightLegs) carry no stops/segments — derive
+  // the stop count from the legs so --max-stops/--sort stops keep working.
+  const derived = deriveFlightDetail(bookingData)?.stopCount;
+  if (typeof derived === "number") return derived;
   return Infinity;
 }
 

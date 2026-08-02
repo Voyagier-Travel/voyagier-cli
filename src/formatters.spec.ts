@@ -76,6 +76,17 @@ describe("formatFlights", () => {
       expect(out).not.toContain("7:15 AM");
     });
 
+    it("suppresses the legacy time line when leg detail has only an arrival time", () => {
+      const out = stripAnsi(formatFlights([{
+        name: "x", price: 200, airline: "WN", time: "7:15 AM",
+        bookingData: { flights: [{ flightLegs: [
+          { origin: "SFO", destination: "JFK", arrivalTime: "2026-06-15T15:45:00", carrier: "WN", flightNumber: "442" },
+        ] }] },
+      }]));
+      expect(out).toContain("15:45");
+      expect(out).not.toContain("7:15 AM");
+    });
+
     it("keeps the legacy time line when leg detail has no times", () => {
       const out = stripAnsi(formatFlights([{
         name: "x", price: 200, airline: "WN", time: "7:15 AM",

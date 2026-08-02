@@ -1142,6 +1142,28 @@ describe("registerSearchCommands", () => {
       const out = JSON.parse(stdout());
       expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["nonstop", "two-seg"]);
     });
+
+    it("derives stops from flightLegs for --max-stops and --sort stops on leg-only payloads", async () => {
+      const legOnly = (id: string, sortOrder: number, legs: object[]) => ({
+        id, name: id, sortOrder,
+        bookingData: { flightToken: `TK-${id}`, flights: [{ flightLegs: legs }] },
+      });
+      installRouter({
+        options: [
+          legOnly("one-stop", 1, [{ origin: "LAX", destination: "DEN" }, { origin: "DEN", destination: "NRT" }]),
+          legOnly("direct", 2, [{ origin: "LAX", destination: "NRT" }]),
+        ],
+      });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01",
+        "--max-stops", "0", "--sort", "stops", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      // Leg-only payloads must not be treated as Infinity stops: the direct
+      // option survives --max-stops 0 instead of everything being filtered out.
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["direct"]);
+    });
   });
 
   describe("single-airport metro", () => {
