@@ -34,7 +34,7 @@ import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivit
 import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "../agent-output.js";
 import { deriveHotelStay, hotelFactsFields } from "../hotel-format.js";
-import { deriveFlightDetail, flightProjectionFields } from "../flight-format.js";
+import { flightProjectionFields } from "../flight-format.js";
 import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 import { CliError, CliErrorCode } from "../errors.js";
@@ -46,6 +46,20 @@ import type { SpinnerHandle } from "../spinner.js";
 import { isInteractive, promptText } from "../prompt.js";
 import { scaffoldPlan, generateTripTitle } from "./scaffold.js";
 import type { ShapeFlags } from "./scaffold.js";
+import {
+  parseClockMinutes,
+  parseDurationMinutes,
+  stopCount,
+  filterFlights,
+  filterHotels,
+  flightCallouts,
+  flightCalloutLine,
+  flightFacets,
+  hotelCallouts,
+  hotelCalloutLine,
+  hotelFacets,
+} from "./search-refine.js";
+import type { FlightFilters, HotelFilters, FilteredToZero, FlightCallouts, HotelCallouts } from "./search-refine.js";
 
 /**
  * Resolve a date flag that used to be a commander `requiredOption` (VOY-1762):
@@ -241,25 +255,10 @@ async function resolvePlanForSearch(
 
 
 
-function parseDurationMinutes(duration?: string): number {
-  if (!duration) return Infinity;
-  const match = duration.match(/(\d+)h\s*(\d+)?m?/);
-  if (match) return parseInt(match[1], 10) * 60 + (parseInt(match[2] ?? "0", 10));
-  const minOnly = duration.match(/(\d+)\s*m/);
-  if (minOnly) return parseInt(minOnly[1], 10);
-  return Infinity;
-}
-
+/** Stops for sort ordering: unknown sinks to the end (Infinity), like a missing price. */
 function parseStops(bookingData?: Record<string, unknown>): number {
-  if (!bookingData) return Infinity;
-  if (typeof bookingData.stops === "number") return bookingData.stops;
-  const segments = bookingData.segments as unknown[] | undefined;
-  if (segments) return Math.max(0, segments.length - 1);
-  // Leg-only payloads (flights[].flightLegs) carry no stops/segments — derive
-  // the stop count from the legs so --max-stops/--sort stops keep working.
-  const derived = deriveFlightDetail(bookingData)?.stopCount;
-  if (typeof derived === "number") return derived;
-  return Infinity;
+  const c = stopCount(bookingData);
+  return c == null ? Infinity : c;
 }
 
 function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[] {
@@ -337,6 +336,11 @@ const TOP_OPTIONS = 10;
  * Compact `--json` search envelope; `full` restores the complete option dump.
  * `refineHint` lists ONLY the refinement flags the calling subcommand actually
  * supports (`--max-stops` is flights-only; hotels/activities have `--sort`).
+ *
+ * `facets` (VOY-1784) is an at-a-glance map of the option space (price range,
+ * airlines/stops distribution, …) added ONLY to the compact envelope — its whole
+ * point is letting an agent choose a refinement without pulling `--full`. It is
+ * ADDITIVE: existing fields are never removed or renamed.
  */
 function searchJsonBody(
   base: Record<string, unknown>,
@@ -344,6 +348,7 @@ function searchJsonBody(
   topOptions: Array<Record<string, unknown>>,
   full: boolean | undefined,
   refineHint: string,
+  facets?: Record<string, unknown> | null,
 ): Record<string, unknown> {
   if (full) {
     return { ...base, optionCount: options.length, options: options.map((opt, i) => ({ index: i + 1, ...opt })) };
@@ -352,10 +357,133 @@ function searchJsonBody(
     ...base,
     optionCount: options.length,
     topOptions: topOptions.slice(0, TOP_OPTIONS),
+    ...(facets && Object.keys(facets).length ? { facets } : {}),
     ...(options.length > TOP_OPTIONS
       ? { note: `Showing top ${TOP_OPTIONS} of ${options.length} options — re-run with --full for the complete dump (large: includes raw provider bookingData), or refine with ${refineHint}.` }
       : {}),
   };
+}
+
+/**
+ * Parse + validate a numeric flag as a non-negative number, or undefined when
+ * absent. Shared by --max-price / --max-total / --min-rating.
+ */
+function parseNonNegativeNumber(value: string | undefined, flag: string): number | undefined {
+  if (value === undefined) return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new CliError(CliErrorCode.VALIDATION, `${flag} must be a non-negative number (got "${value}").`);
+  }
+  return n;
+}
+
+/** Parse + validate an HH:MM time flag to minutes-since-midnight, or undefined. */
+function parseTimeFlag(value: string | undefined, flag: string): number | undefined {
+  if (value === undefined) return undefined;
+  const mins = parseClockMinutes(value);
+  if (mins == null) {
+    throw new CliError(CliErrorCode.VALIDATION, `${flag} must be a 24-hour HH:MM time (got "${value}").`);
+  }
+  return mins;
+}
+
+/**
+ * Build the flight refinement filters from the parsed CLI options, validating
+ * each value. `--nonstop` is sugar for `--max-stops 0`; when both are given the
+ * stricter (smaller) cap wins. Times reuse the VOY-1783 wall-clock model (no TZ
+ * math). Throws CliError(VALIDATION) on any malformed value.
+ */
+function parseFlightFilters(opts: Record<string, unknown>): FlightFilters {
+  let maxStops: number | undefined;
+  if (opts.maxStops !== undefined) {
+    const n = Number(opts.maxStops);
+    if (!Number.isInteger(n) || n < 0) {
+      throw new CliError(
+        CliErrorCode.VALIDATION,
+        `--max-stops must be a non-negative integer (got "${opts.maxStops}").`,
+      );
+    }
+    maxStops = n;
+  }
+  if (opts.nonstop) maxStops = maxStops === undefined ? 0 : Math.min(maxStops, 0);
+
+  const airlines = Array.isArray(opts.airline)
+    ? (opts.airline as string[]).map((a) => {
+        const code = String(a).trim().toUpperCase();
+        if (!/^[A-Z0-9]{2}$/.test(code)) {
+          throw new CliError(
+            CliErrorCode.VALIDATION,
+            `--airline must be a 2-character carrier IATA code (got "${a}").`,
+          );
+        }
+        return code;
+      })
+    : undefined;
+
+  return {
+    departAfter: parseTimeFlag(opts.departAfter as string | undefined, "--depart-after"),
+    departBefore: parseTimeFlag(opts.departBefore as string | undefined, "--depart-before"),
+    arriveBy: parseTimeFlag(opts.arriveBy as string | undefined, "--arrive-by"),
+    returnDepartAfter: parseTimeFlag(opts.returnDepartAfter as string | undefined, "--return-depart-after"),
+    returnDepartBefore: parseTimeFlag(opts.returnDepartBefore as string | undefined, "--return-depart-before"),
+    ...(airlines && airlines.length ? { airlines } : {}),
+    maxStops,
+    maxPrice: parseNonNegativeNumber(opts.maxPrice as string | undefined, "--max-price"),
+  };
+}
+
+/** Build the hotel refinement filters from the parsed CLI options, validating each. */
+function parseHotelFilters(opts: Record<string, unknown>): HotelFilters {
+  return {
+    minRating: parseNonNegativeNumber(opts.minRating as string | undefined, "--min-rating"),
+    maxTotal: parseNonNegativeNumber(opts.maxTotal as string | undefined, "--max-total"),
+  };
+}
+
+/**
+ * When active filters removed EVERY option (but the backend did return some),
+ * emit the which-filter attribution + nearest miss. Human/agent get the prose
+ * lines; --json gets the structured `filteredToZero` object. Exit stays 0 — an
+ * over-tight filter is a user choice, not a CLI failure.
+ */
+function filteredToZeroJson(zero: FilteredToZero): Record<string, unknown> {
+  return {
+    filteredToZero: {
+      eliminatedBy: zero.eliminatedBy,
+      inputCount: zero.inputCount,
+      combination: zero.combination,
+      detail: zero.detail,
+    },
+  };
+}
+
+/** Prose lines for a filtered-to-zero result (human + agent). */
+function filteredToZeroLines(zero: FilteredToZero): string[] {
+  const lines: string[] = [];
+  const lead = zero.combination
+    ? `All ${zero.inputCount} option${zero.inputCount === 1 ? "" : "s"} were filtered out by the combination of active filters:`
+    : `All ${zero.inputCount} option${zero.inputCount === 1 ? "" : "s"} were filtered out:`;
+  lines.push(lead);
+  for (const d of zero.detail) lines.push(`  • ${d.message}`);
+  lines.push("Loosen or drop a filter and search again.");
+  return lines;
+}
+
+/** Structured `callouts` field for flights (omitted when no datum supports one). */
+function flightCalloutsJson(c: FlightCallouts): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (c.cheapest) out.cheapest = c.cheapest;
+  if (c.fastest && c.fastest.durationLabel) out.fastest = { index: c.fastest.index, duration: c.fastest.durationLabel };
+  if (c.earliest) out.earliest = { index: c.earliest.index, departure: c.earliest.departLabel };
+  return Object.keys(out).length ? { callouts: out } : {};
+}
+
+/** Structured `callouts` field for hotels (cheapest + highest-rated, both factual). */
+function hotelCalloutsJson(c: HotelCallouts): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (c.cheapest) out.cheapest = c.cheapest;
+  if (c.highestRated) out.highestRated = c.highestRated;
+  return Object.keys(out).length ? { callouts: out } : {};
 }
 
 /** Hard cap on how long a search waits inline for async inventory (VOY-1780). */
@@ -571,6 +699,19 @@ export function registerSearchCommands(program: Command): void {
     .option("--date <date>", "Departure date (YYYY-MM-DD); prompted when omitted at a TTY")
     .option("--return <date>", "Return date (YYYY-MM-DD) for round-trip")
     .option("--max-stops <n>", "Maximum number of stops")
+    .option("--nonstop", "Only nonstop flights (sugar for --max-stops 0)")
+    .option("--depart-after <HH:MM>", "Outbound departs at or after this wall-clock time")
+    .option("--depart-before <HH:MM>", "Outbound departs before this wall-clock time")
+    .option("--arrive-by <HH:MM>", "Outbound arrives at or before this wall-clock time")
+    .option("--return-depart-after <HH:MM>", "Return leg departs at or after this time (round trips)")
+    .option("--return-depart-before <HH:MM>", "Return leg departs before this time (round trips)")
+    .option(
+      "--airline <code>",
+      "Filter by carrier IATA code (repeatable)",
+      (value: string, acc: string[]) => [...acc, value],
+      [] as string[],
+    )
+    .option("--max-price <n>", "Only options at or below this price")
     .option("--sort <field>", "Sort by: price, duration, stops, default", "default")
     .option("--full", "Include ALL options with raw provider data in the output (large; default shows top summaries)")
     .option("--json", "Output raw JSON")
@@ -614,6 +755,9 @@ export function registerSearchCommands(program: Command): void {
           validateDate(opts.return, "--return");
           warnPastDate(opts.return, "--return");
         }
+        // Validate refinement flags up front so a malformed value fails fast,
+        // before any search work (VOY-1784).
+        const flightFilters = parseFlightFilters(opts);
 
         // Auto-scaffold a draft plan when no --plan/last-search exists (VOY-1761).
         // Shape: flight-only (no hotel), and one-way unless --return is given.
@@ -763,20 +907,13 @@ export function registerSearchCommands(program: Command): void {
         }
 
         const sortBy = (opts.sort ?? "default") as SortField;
-        // --max-stops is a client-side presentation filter over the options the
-        // backend returned (same layer as --sort), not a goal-input constraint.
-        let filtered = [...fetchedOptions].sort((a, b) => a.sortOrder - b.sortOrder);
-        if (opts.maxStops !== undefined) {
-          const maxStops = Number(opts.maxStops);
-          if (!Number.isInteger(maxStops) || maxStops < 0) {
-            throw new CliError(
-              CliErrorCode.VALIDATION,
-              `--max-stops must be a non-negative integer (got "${opts.maxStops}").`,
-            );
-          }
-          filtered = filtered.filter((o) => parseStops(o.bookingData) <= maxStops);
-        }
-        const options = sortOptions(filtered, sortBy);
+        // Client-side presentation filters over the options the backend returned
+        // (same layer as --sort), NOT goal-input constraints — server order
+        // stays the default (VOY-1784). Filter first (over the sortOrder-ordered
+        // set), then apply --sort; both run before the display limit.
+        const prefiltered = [...fetchedOptions].sort((a, b) => a.sortOrder - b.sortOrder);
+        const { kept, zero: filteredToZero } = filterFlights(prefiltered, flightFilters);
+        const options = sortOptions(kept, sortBy);
 
         const searchResults = options.map((opt, i) => ({
           index: i + 1,
@@ -810,11 +947,16 @@ export function registerSearchCommands(program: Command): void {
               isRoundTrip,
               ...planUrls(tripPlanId),
               ...reuseEnvelopeFields(reuse),
+              // Factual callouts over the displayed (post-filter/sort) list.
+              ...flightCalloutsJson(flightCallouts(options)),
+              // Structured which-filter attribution when filters removed all.
+              ...(filteredToZero ? filteredToZeroJson(filteredToZero) : {}),
             },
             options as unknown as Array<Record<string, unknown>>,
             searchResults,
             opts.full,
-            "--sort/--max-stops",
+            "--sort/--max-stops/--nonstop/--depart-after/--depart-before/--arrive-by/--return-depart-after/--return-depart-before/--airline/--max-price",
+            flightFacets(options) as Record<string, unknown>,
           ), null, 2) + "\n");
           return;
         }
@@ -825,7 +967,11 @@ export function registerSearchCommands(program: Command): void {
           lines.push(`### Flights (${origin} → ${destination})`);
           if (scaffolded) lines.push(`_No plan given — created draft plan \`${tripPlanId}\`._`);
           for (const w of reuse.warnings) lines.push(`> ⚠ ${w}`);
-          if (options.length === 0) {
+          if (filteredToZero) {
+            // Filters removed everything the backend returned — say WHICH ones
+            // and the nearest miss (VOY-1784), not a generic "no options".
+            for (const l of filteredToZeroLines(filteredToZero)) lines.push(l);
+          } else if (options.length === 0) {
             // Options are produced asynchronously by the monitor once the goal's
             // inputs are sufficient. Empty here usually means "still fetching",
             // not "no results" — point at the async-aware poll (VOY-1421).
@@ -833,6 +979,8 @@ export function registerSearchCommands(program: Command): void {
             lines.push("");
             lines.push(`**Next:** \`voyagier selection-options ${shellArg(selectionId)} --wait --json\``);
           } else {
+            const callout = flightCalloutLine(options);
+            if (callout) lines.push(`_${callout}_`);
             const shown = opts.full ? options : options.slice(0, TOP_OPTIONS);
             lines.push(agentFlightOptions(shown));
             if (options.length > shown.length) {
@@ -856,6 +1004,13 @@ export function registerSearchCommands(program: Command): void {
         // Human mode: surface the reuse-mismatch warning as a clear ⚠ line.
         writeReuseWarnings(reuse.warnings);
 
+        if (filteredToZero) {
+          // Filters removed every returned option — explain which filter(s) and
+          // the nearest miss so the user knows what to loosen (VOY-1784).
+          for (const l of filteredToZeroLines(filteredToZero)) process.stderr.write(chalk.yellow(l + "\n"));
+          return;
+        }
+
         if (options.length === 0) {
           // Reached only when the inline wait was skipped (--no-wait / non-TTY);
           // hand back a copy-safe poll hint (VOY-1780).
@@ -866,6 +1021,8 @@ export function registerSearchCommands(program: Command): void {
 
         const sortLabel = sortBy !== "default" ? ` (sorted by ${sortBy})` : "";
         console.log(chalk.bold(`\n${options.length} flight option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
+        const calloutLine = flightCalloutLine(options);
+        if (calloutLine) console.log(chalk.dim(calloutLine));
         console.log(formatFlights(options));
         await printPlanFooter(tripPlanId);
         if (isRoundTrip) {
@@ -888,6 +1045,8 @@ export function registerSearchCommands(program: Command): void {
     .requiredOption("--checkout <date>", "Check-out date (YYYY-MM-DD)")
     .option("--currency <code>", "Currency code", "USD")
     .option("--guests <n>", "Number of adult guests", "1")
+    .option("--min-rating <n>", "Only hotels rated at or above this")
+    .option("--max-total <n>", "Only hotels with a stay total at or below this")
     .option("--sort <field>", "Sort by: price, default", "default")
     .option("--full", "Include ALL options with raw provider data in the output (large; default shows top summaries)")
     .option("--replace", "Replace existing hotel items for this location (removes old selections)")
@@ -905,6 +1064,8 @@ export function registerSearchCommands(program: Command): void {
         validateDate(opts.checkout, "--checkout");
         warnPastDate(opts.checkout, "--checkout");
         warnPastDate(opts.checkout, "--checkout");
+        // Validate refinement flags up front (VOY-1784).
+        const hotelFilters = parseHotelFilters(opts);
 
         const quietHotel = !!(opts.json || opts.agent);
         // Auto-scaffold a hotel-only draft plan when no --plan/last-search exists.
@@ -1069,9 +1230,15 @@ export function registerSearchCommands(program: Command): void {
         }
 
         const sortBy = (opts.sort ?? "default") as SortField;
+        // Client-side presentation filters over the returned set (VOY-1784),
+        // applied before the display limit; server order stays the default.
+        const { kept: keptHotels, zero: filteredToZero } = filterHotels(
+          [...fetchedOptions].sort((a, b) => a.sortOrder - b.sortOrder),
+          hotelFilters,
+        );
         const options = sortBy === "price"
-          ? [...fetchedOptions].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity))
-          : [...fetchedOptions].sort((a, b) => a.sortOrder - b.sortOrder);
+          ? [...keptHotels].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity))
+          : keptHotels;
 
         const searchResults = options.map((opt, i) => {
           // VOY-1724: minRate is a STAY TOTAL — expose derived stay fields
@@ -1111,11 +1278,14 @@ export function registerSearchCommands(program: Command): void {
               selectionId: selectionId,
               ...planUrls(tripPlanId),
               ...reuseEnvelopeFields(reuse),
+              ...hotelCalloutsJson(hotelCallouts(options)),
+              ...(filteredToZero ? filteredToZeroJson(filteredToZero) : {}),
             },
             options as unknown as Array<Record<string, unknown>>,
             searchResults,
             opts.full,
-            "--sort",
+            "--sort/--min-rating/--max-total",
+            hotelFacets(options) as Record<string, unknown>,
           ), null, 2) + "\n");
           return;
         }
@@ -1126,13 +1296,17 @@ export function registerSearchCommands(program: Command): void {
           lines.push(`### Hotels (${opts.location})`);
           if (scaffolded) lines.push(`_No plan given — created draft plan \`${tripPlanId}\`._`);
           for (const w of reuse.warnings) lines.push(`> ⚠ ${w}`);
-          if (options.length === 0) {
+          if (filteredToZero) {
+            for (const l of filteredToZeroLines(filteredToZero)) lines.push(l);
+          } else if (options.length === 0) {
             // Empty immediately after create usually means the monitor is still
             // fetching, not that there are no hotels — poll first (VOY-1421).
             lines.push("_No options yet — the search is still fetching inventory._");
             lines.push("");
             lines.push(`**Next:** \`voyagier selection-options ${shellArg(selectionId)} --wait --json\``);
           } else {
+            const callout = hotelCalloutLine(options);
+            if (callout) lines.push(`_${callout}_`);
             const shown = opts.full ? options : options.slice(0, TOP_OPTIONS);
             lines.push(agentHotelOptions(shown));
             if (options.length > shown.length) {
@@ -1149,6 +1323,11 @@ export function registerSearchCommands(program: Command): void {
 
         // Human mode: surface the reuse-mismatch warning as a clear ⚠ line.
         writeReuseWarnings(reuse.warnings);
+
+        if (filteredToZero) {
+          for (const l of filteredToZeroLines(filteredToZero)) process.stderr.write(chalk.yellow(l + "\n"));
+          return;
+        }
 
         if (options.length === 0) {
           const loc = opts.location as string;
@@ -1171,6 +1350,8 @@ export function registerSearchCommands(program: Command): void {
 
         const sortLabel = sortBy !== "default" ? ` (sorted by ${sortBy})` : "";
         console.log(chalk.bold(`\n${options.length} hotel option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
+        const hotelCallout = hotelCalloutLine(options);
+        if (hotelCallout) console.log(chalk.dim(hotelCallout));
         console.log(formatHotels(options));
         await printPlanFooter(tripPlanId);
         console.log(chalk.dim(`  Next: voyagier select <number>`));
