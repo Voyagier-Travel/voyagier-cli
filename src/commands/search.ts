@@ -410,10 +410,10 @@ function parseFlightFilters(opts: Record<string, unknown>): FlightFilters {
   const airlines = Array.isArray(opts.airline)
     ? (opts.airline as string[]).map((a) => {
         const code = String(a).trim().toUpperCase();
-        if (!/^[A-Z0-9]{2,3}$/.test(code)) {
+        if (!/^[A-Z0-9]{2}$/.test(code)) {
           throw new CliError(
             CliErrorCode.VALIDATION,
-            `--airline must be a 2–3 character carrier IATA code (got "${a}").`,
+            `--airline must be a 2-character carrier IATA code (got "${a}").`,
           );
         }
         return code;
@@ -955,7 +955,7 @@ export function registerSearchCommands(program: Command): void {
             options as unknown as Array<Record<string, unknown>>,
             searchResults,
             opts.full,
-            "--sort/--max-stops/--nonstop/--depart-after/--airline/--max-price",
+            "--sort/--max-stops/--nonstop/--depart-after/--depart-before/--arrive-by/--return-depart-after/--return-depart-before/--airline/--max-price",
             flightFacets(options) as Record<string, unknown>,
           ), null, 2) + "\n");
           return;

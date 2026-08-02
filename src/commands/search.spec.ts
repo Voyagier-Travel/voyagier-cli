@@ -758,6 +758,11 @@ describe("registerSearchCommands", () => {
       await expect(buildProgram().parseAsync(args(["--airline", "Delta", "--json"]))).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
     });
 
+    it("rejects a 3-character --airline code (leg carriers are 2-character IATA; 3 chars can never match)", async () => {
+      installRouter({ options: threeFlights() });
+      await expect(buildProgram().parseAsync(args(["--airline", "DAL", "--json"]))).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    });
+
     it("rejects a negative --max-price", async () => {
       installRouter({ options: threeFlights() });
       await expect(buildProgram().parseAsync(args(["--max-price", "-5", "--json"]))).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
