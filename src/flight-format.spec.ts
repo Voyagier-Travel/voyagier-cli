@@ -90,6 +90,33 @@ describe("deriveFlightDetail", () => {
     expect(d.origin).toBe("LAX");
     expect(d.flightNumber).toBe("AS 12");
   });
+
+  // VOY-1784: distinct carriers per segment + return-leg (segmentIndex 1) reads.
+  it("collects distinct carriers across a segment's legs", () => {
+    expect(deriveFlightDetail(twoLeg)!.carriers).toEqual(["DL"]);
+    const mixed = { flights: [{ flightLegs: [
+      { origin: "A", destination: "B", carrier: "DL" },
+      { origin: "B", destination: "C", carrier: "AA" },
+    ] }] };
+    expect(deriveFlightDetail(mixed)!.carriers).toEqual(["DL", "AA"]);
+  });
+
+  it("reads the return segment from flights[1] via segmentIndex", () => {
+    const rt = {
+      flights: [
+        { flightLegs: [{ origin: "LAX", destination: "NRT", departureTime: "2026-08-01T08:00:00", carrier: "UA" }] },
+        { flightLegs: [{ origin: "NRT", destination: "LAX", departureTime: "2026-08-10T20:00:00", carrier: "NH" }] },
+      ],
+    };
+    expect(deriveFlightDetail(rt, 0)!.departureTime).toBe("08:00");
+    const ret = deriveFlightDetail(rt, 1)!;
+    expect(ret.departureTime).toBe("20:00");
+    expect(ret.carriers).toEqual(["NH"]);
+    // No flights[1] → null for segment 1 (single-selection round trips).
+    expect(deriveFlightDetail(nonstop, 1)).toBeNull();
+    // The top-level flightLegs fallback applies to segment 0 only.
+    expect(deriveFlightDetail({ flightLegs: [{ origin: "A", destination: "B" }] }, 1)).toBeNull();
+  });
 });
 
 describe("flightStopsLabel", () => {

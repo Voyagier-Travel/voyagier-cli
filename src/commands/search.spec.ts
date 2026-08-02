@@ -584,6 +584,256 @@ describe("registerSearchCommands", () => {
     });
   });
 
+  // ── VOY-1784: refinement flags, callouts, facets ────────────────────────────
+  describe("search flights refinement (VOY-1784)", () => {
+    /** Flight option with outbound leg times + carrier (and optional return leg). */
+    function legFlight(
+      id: string,
+      o: { price?: number; duration?: string; sortOrder: number; depart?: string; arrive?: string; carrier?: string; connections?: number; returnDepart?: string },
+    ): unknown {
+      const nLegs = (o.connections ?? 0) + 1;
+      const legs: Record<string, unknown>[] = [];
+      for (let i = 0; i < nLegs; i++) {
+        legs.push({
+          origin: i === 0 ? "LAX" : `H${i}`,
+          destination: i === nLegs - 1 ? "NRT" : `H${i + 1}`,
+          ...(i === 0 && o.depart ? { departureTime: `2026-08-01T${o.depart}:00` } : {}),
+          ...(i === nLegs - 1 && o.arrive ? { arrivalTime: `2026-08-01T${o.arrive}:00` } : {}),
+          ...(o.carrier ? { carrier: o.carrier, flightNumber: `${100 + i}` } : {}),
+        });
+      }
+      const flights: Record<string, unknown>[] = [{ flightLegs: legs }];
+      if (o.returnDepart) {
+        flights.push({ flightLegs: [{ origin: "NRT", destination: "LAX", departureTime: `2026-08-10T${o.returnDepart}:00`, carrier: o.carrier ?? "DL", flightNumber: "900" }] });
+      }
+      return {
+        id, name: id, sortOrder: o.sortOrder,
+        ...(o.price != null ? { price: o.price } : {}),
+        ...(o.duration ? { duration: o.duration } : {}),
+        bookingData: { flightToken: `TK-${id}`, flights },
+      };
+    }
+
+    const threeFlights = () => [
+      legFlight("a", { price: 500, duration: "8h00m", sortOrder: 1, depart: "09:00", arrive: "17:00", carrier: "DL", connections: 1 }),
+      legFlight("b", { price: 300, duration: "5h30m", sortOrder: 2, depart: "06:15", arrive: "11:45", carrier: "UA", connections: 0 }),
+      legFlight("c", { price: 700, duration: "6h00m", sortOrder: 3, depart: "18:00", arrive: "23:00", carrier: "AA", connections: 2 }),
+    ];
+
+    const args = (extra: string[]) => [
+      "node", "v", "search", "flights",
+      "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--date", "2026-08-01", ...extra,
+    ];
+
+    it("--depart-after keeps only later departures and composes with --sort price", async () => {
+      installRouter({ options: threeFlights() });
+      await buildProgram().parseAsync(args(["--depart-after", "08:00", "--sort", "price", "--json"]));
+      const out = JSON.parse(stdout());
+      // a (09:00) and c (18:00) survive; sorted by price → a ($500) before c ($700).
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["a", "c"]);
+    });
+
+    it("--depart-before is exclusive at the boundary", async () => {
+      installRouter({ options: threeFlights() });
+      await buildProgram().parseAsync(args(["--depart-before", "09:00", "--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["b"]); // 06:15 only; 09:00 dropped
+    });
+
+    it("--arrive-by keeps arrivals at or before the time", async () => {
+      installRouter({ options: threeFlights() });
+      await buildProgram().parseAsync(args(["--arrive-by", "17:00", "--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId).sort()).toEqual(["a", "b"]);
+    });
+
+    it("--nonstop is sugar for --max-stops 0", async () => {
+      installRouter({ options: threeFlights() });
+      await buildProgram().parseAsync(args(["--nonstop", "--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["b"]);
+    });
+
+    it("--airline is repeatable (union of carriers)", async () => {
+      installRouter({ options: threeFlights() });
+      await buildProgram().parseAsync(args(["--airline", "DL", "--airline", "AA", "--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId).sort()).toEqual(["a", "c"]);
+    });
+
+    it("--max-price is inclusive", async () => {
+      installRouter({ options: threeFlights() });
+      await buildProgram().parseAsync(args(["--max-price", "500", "--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId).sort()).toEqual(["a", "b"]);
+    });
+
+    it("--return-depart-after filters the return segment", async () => {
+      installRouter({
+        goals: buildFlightGoals(true),
+        options: [
+          legFlight("early-ret", { price: 400, sortOrder: 1, depart: "08:00", returnDepart: "09:00" }),
+          legFlight("late-ret", { price: 450, sortOrder: 2, depart: "08:00", returnDepart: "20:00" }),
+        ],
+      });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights", "--plan", "plan-1", "--from", "LAX", "--to", "NRT",
+        "--date", "2026-08-01", "--return", "2026-08-10", "--return-depart-after", "18:00", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["late-ret"]);
+    });
+
+    it("emits factual callouts + facets in compact --json (additive; no bookingData)", async () => {
+      installRouter({ options: threeFlights() });
+      await buildProgram().parseAsync(args(["--json"]));
+      const out = JSON.parse(stdout());
+      // Callouts reference displayed (sortOrder) positions: a,b,c → 1,2,3.
+      expect(out.callouts.cheapest).toEqual({ index: 2, price: 300 });
+      expect(out.callouts.fastest).toEqual({ index: 2, duration: "5h30m" });
+      expect(out.callouts.earliest).toEqual({ index: 2, departure: "06:15" });
+      // Facets over the post-filter set.
+      expect(out.facets.priceRange).toEqual({ min: 300, max: 700 });
+      expect(out.facets.airlines).toEqual({ DL: 1, UA: 1, AA: 1 });
+      expect(out.facets.nonstop).toBe(1);
+      expect(out.facets.stops).toEqual({ "0": 1, "1": 1, "2": 1 });
+      expect(out.facets.earliestDeparture).toBe("06:15");
+      expect(out.facets.latestDeparture).toBe("18:00");
+      // Additive: existing envelope keys intact, still no raw provider payload.
+      expect(out.selectionId).toBe("sel-fdec");
+      expect(out.optionCount).toBe(3);
+      expect(JSON.stringify(out)).not.toContain("bookingData");
+    });
+
+    it("--full omits facets (compact-only) but keeps callouts", async () => {
+      installRouter({ options: threeFlights() });
+      await buildProgram().parseAsync(args(["--json", "--full"]));
+      const out = JSON.parse(stdout());
+      expect(out.facets).toBeUndefined();
+      expect(out.callouts.cheapest.index).toBe(2);
+      expect(out.options).toHaveLength(3);
+    });
+
+    it("filtered-to-zero (--json): structured which-filter + nearest miss, exit 0", async () => {
+      installRouter({ options: threeFlights() });
+      await buildProgram().parseAsync(args(["--depart-after", "20:00", "--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.optionCount).toBe(0);
+      expect(out.topOptions).toEqual([]);
+      expect(out.filteredToZero.eliminatedBy).toEqual(["depart-after"]);
+      expect(out.filteredToZero.inputCount).toBe(3);
+      expect(out.filteredToZero.detail[0].message).toBe("no options depart after 20:00; latest departure is 18:00");
+    });
+
+    it("filtered-to-zero (human): prints which filter and nearest miss to stderr", async () => {
+      installRouter({ options: threeFlights() });
+      await buildProgram().parseAsync(args(["--max-price", "100"]));
+      const err = stderrWrites.join("");
+      expect(err).toMatch(/no options at or below \$100; cheapest is \$300/);
+    });
+
+    it("filtered-to-zero (agent): reports the attribution, not a select hint", async () => {
+      installRouter({ options: threeFlights() });
+      await buildProgram().parseAsync(args(["--nonstop", "--max-price", "100", "--agent"]));
+      const md = stdout();
+      expect(md).toMatch(/filtered out/);
+      expect(md).toMatch(/cheapest is \$300/);
+      expect(md).not.toMatch(/voyagier select <number>/);
+    });
+
+    it("callout header prints in human output above the list", async () => {
+      installRouter({ options: threeFlights() });
+      await buildProgram().parseAsync(args([]));
+      const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+      expect(stripAnsi(stdout())).toMatch(/Cheapest: #2 \(\$300\) · Fastest: #2 \(5h30m\) · Earliest: #2 \(06:15\)/);
+    });
+
+    it("rejects a malformed --depart-after time", async () => {
+      installRouter({ options: threeFlights() });
+      await expect(buildProgram().parseAsync(args(["--depart-after", "9pm", "--json"]))).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    });
+
+    it("rejects a non-IATA --airline code", async () => {
+      installRouter({ options: threeFlights() });
+      await expect(buildProgram().parseAsync(args(["--airline", "Delta", "--json"]))).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    });
+
+    it("rejects a negative --max-price", async () => {
+      installRouter({ options: threeFlights() });
+      await expect(buildProgram().parseAsync(args(["--max-price", "-5", "--json"]))).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    });
+
+    it("no filters + empty backend options is 'still fetching', NOT filtered-to-zero", async () => {
+      installRouter({ options: [] });
+      await buildProgram().parseAsync(args(["--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.optionCount).toBe(0);
+      expect(out.filteredToZero).toBeUndefined();
+    });
+  });
+
+  describe("search hotels refinement (VOY-1784)", () => {
+    function ratedHotel(id: string, sortOrder: number, price: number, rating: number, amenities: string[] = []): unknown {
+      return { id, name: id, price, sortOrder, bookingData: { rating, amenities, searchQuery: { checkInDate: "2026-08-01", checkOutDate: "2026-08-05" } } };
+    }
+    const hotels = () => [
+      ratedHotel("ritz", 1, 900, 4.8, ["wifi", "pool", "spa"]),
+      ratedHotel("ibis", 2, 400, 3.5, ["wifi"]),
+      ratedHotel("hyatt", 3, 650, 4.2, ["wifi", "pool"]),
+    ];
+    const hargs = (extra: string[]) => [
+      "node", "v", "search", "hotels",
+      "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-08-01", "--checkout", "2026-08-05", ...extra,
+    ];
+
+    it("--min-rating (inclusive) composes with --sort price", async () => {
+      installRouter({ goals: buildHotelGoals(), options: hotels() });
+      await buildProgram().parseAsync(hargs(["--min-rating", "4.2", "--sort", "price", "--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["hyatt", "ritz"]); // ≥4.2, cheapest first
+    });
+
+    it("--max-total (inclusive) keeps stays at or below the cap", async () => {
+      installRouter({ goals: buildHotelGoals(), options: hotels() });
+      await buildProgram().parseAsync(hargs(["--max-total", "650", "--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId).sort()).toEqual(["hyatt", "ibis"]);
+    });
+
+    it("emits cheapest + highest-rated callouts and hotel facets in --json", async () => {
+      installRouter({ goals: buildHotelGoals(), options: hotels() });
+      await buildProgram().parseAsync(hargs(["--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.callouts.cheapest).toEqual({ index: 2, price: 400 });
+      expect(out.callouts.highestRated).toEqual({ index: 1, rating: 4.8 });
+      expect(out.facets.priceRange).toEqual({ min: 400, max: 900 });
+      expect(out.facets.ratingRange).toEqual({ min: 3.5, max: 4.8 });
+      expect(out.facets.amenities.wifi).toBe(3);
+      expect(JSON.stringify(out)).not.toContain("bookingData");
+    });
+
+    it("filtered-to-zero (--json) names the rating filter + nearest miss", async () => {
+      installRouter({ goals: buildHotelGoals(), options: hotels() });
+      await buildProgram().parseAsync(hargs(["--min-rating", "4.9", "--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.filteredToZero.eliminatedBy).toEqual(["min-rating"]);
+      expect(out.filteredToZero.detail[0].message).toBe("no hotels rated 4.9 or higher; highest rating is 4.8");
+    });
+
+    it("filtered-to-zero (human) prints the attribution to stderr, not the location hint", async () => {
+      installRouter({ goals: buildHotelGoals(), options: hotels() });
+      await buildProgram().parseAsync(hargs(["--max-total", "100"]));
+      const err = stderrWrites.join("");
+      expect(err).toMatch(/no hotels at or below \$100 total; cheapest is \$400/);
+      expect(err).not.toMatch(/no hotels matched/);
+    });
+
+    it("rejects a negative --min-rating", async () => {
+      installRouter({ goals: buildHotelGoals(), options: hotels() });
+      await expect(buildProgram().parseAsync(hargs(["--min-rating", "-1", "--json"]))).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    });
+  });
+
   // ── VOY-1761: auto-scaffold a draft plan when no --plan and no last-search ──
   describe("search flights auto-scaffold (VOY-1761)", () => {
     it("no --plan + no last-search: scaffolds a draft plan and runs the search", async () => {

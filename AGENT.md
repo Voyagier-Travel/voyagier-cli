@@ -249,7 +249,7 @@ The CLI has two payload styles. Pick the right shape for the command you're call
 // clients upsert:  { "client": { ... }, "ok": true, "created": false }
 // plans create:    { "id": "...", "title": "...", "url": "...", "clientUrl": "...", "advisorUrl": "...", "planSummary": "..." }
 // plans list:      { "items": [...], "total": 12, "page": 1, "limit": 20 }   (each item carries url/clientUrl/advisorUrl)
-// search flights:  { "tripPlanId": "...", "selectionId": "...", "optionCount": N, "topOptions": [≤10 summaries], "url": "...", "clientUrl": "...", "advisorUrl": "..." }   (--full swaps topOptions for the complete options[] dump)
+// search flights:  { "tripPlanId": "...", "selectionId": "...", "optionCount": N, "topOptions": [≤10 summaries], "callouts": { cheapest/fastest/earliest }, "facets": { priceRange, airlines, nonstop, stops, earliest/latestDeparture }, "url": "...", "clientUrl": "...", "advisorUrl": "..." }   (--full swaps topOptions for the complete options[] dump and omits facets; callouts index the post-filter/sort list; when a --filter drops everything: "filteredToZero": { eliminatedBy, detail, inputCount })
 // select:          { "ok": true, "success": true, "type": "option_selected", ... }
 // selection-options: { "selectionId": "...", "status": "...", "optionCount": N, "options": [...] }
 ```
@@ -470,8 +470,8 @@ Lists the plan's goal graph and, per goal, what still needs a decision (readines
 Search creates (or reuses) a selection against a goal. When the selection already has inventory, options come back inline immediately (compact: `optionCount` + `topOptions[≤10]` one-line summaries — add `--full` for the complete option objects, which are LARGE). When `optionCount` is 0 the inventory fetch is still running in the background — poll with `selection-options --wait`, then select by IDs.
 
 ```bash
-voyagier search flights --plan <id> --from <iata> --to <iata> --date <YYYY-MM-DD> [--return <YYYY-MM-DD>] [--goal <goalId>] [--max-stops <n>] [--sort price|duration|stops] [--full] --json
-voyagier search hotels --plan <id> --location <city> --checkin <date> --checkout <date> [--goal <goalId>] [--guests <n>] [--replace] [--full] --json
+voyagier search flights --plan <id> --from <iata> --to <iata> --date <YYYY-MM-DD> [--return <YYYY-MM-DD>] [--goal <goalId>] [--max-stops <n>] [--nonstop] [--depart-after <HH:MM>] [--depart-before <HH:MM>] [--arrive-by <HH:MM>] [--return-depart-after <HH:MM>] [--return-depart-before <HH:MM>] [--airline <code>] [--max-price <n>] [--sort price|duration|stops] [--full] --json
+voyagier search hotels --plan <id> --location <city> --checkin <date> --checkout <date> [--goal <goalId>] [--guests <n>] [--min-rating <n>] [--max-total <n>] [--replace] [--full] --json
 voyagier search activities --plan <id> --destination <city> [--date <date>] [--query <q>] [--goal <goalId>] [--replace] [--full] --json
 voyagier search airports "<query>" --json
 
@@ -484,7 +484,7 @@ voyagier select --selection-id <selectionId> --option-id <optionId> --json
 voyagier select <n> --plan <id> --json
 ```
 
-`selection-options` reports a status; `--wait` polls with backoff and returns once the status is **terminal** — `READY`, `NO_RESULTS`, `AWAITING_INPUT`, or `FETCH_ERROR` (only `FETCHING` keeps polling). `--goal <goalId>` targets a specific goal (default: the first Flight/Hotel/Activity goal on the plan). `--max-stops` and `--sort` are client-side presentation filters over the returned options.
+`selection-options` reports a status; `--wait` polls with backoff and returns once the status is **terminal** — `READY`, `NO_RESULTS`, `AWAITING_INPUT`, or `FETCH_ERROR` (only `FETCHING` keeps polling). `--goal <goalId>` targets a specific goal (default: the first Flight/Hotel/Activity goal on the plan). The refinement flags (`--max-stops`/`--nonstop`/`--depart-after`/`--depart-before`/`--arrive-by`/`--return-depart-*`/`--airline`/`--max-price`; hotels: `--min-rating`/`--max-total`) and `--sort` are client-side presentation filters over the ALREADY-returned options — they never re-query or re-rank server-side. They compose (AND) and run before the display limit. Times are compared as stored wall-clock (no timezone math); `--depart-after`/`--arrive-by`/`--max-*`/`--min-rating` are inclusive, `--depart-before`/`--return-depart-before` exclusive. When a filter drops everything, the response names which filter(s) and the nearest miss (`filteredToZero` in `--json`) — loosen and retry rather than assuming no inventory.
 
 **Prices are party totals.** Every search option's price is the total for the searched traveller group, NOT per-person — do not multiply by traveller count. (Hotel search prices are additionally whole-STAY totals, not nightly.) `book --dry-run` / `quote` are the chargeable truth.
 

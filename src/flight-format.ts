@@ -32,6 +32,8 @@ export interface FlightDetail {
   stopCount: number | null;
   /** Intermediate (connection) airport codes, in order. */
   connections: string[];
+  /** Distinct carrier codes across the segment's legs, in first-seen order. */
+  carriers: string[];
 }
 
 /** Non-empty string, or null. */
@@ -57,20 +59,28 @@ export function wallClockTime(value: unknown): string | null {
   return null;
 }
 
-/** Pull the legs array from either flights[0].flightLegs or a top-level flightLegs. */
-function legsOf(bookingData: Record<string, unknown>): Record<string, unknown>[] {
-  // flights[0] holds the current selection's journey — matches the flights[0]
-  // convention extractFlightToken already uses. Round trips use SEPARATE
-  // selections (each with its own option/bookingData), so per-selection
-  // flights[0] is the right leg set; no cross-segment projection needed here.
+/**
+ * Pull the legs array for a segment from `flights[segmentIndex].flightLegs`
+ * (or a top-level `flightLegs` for segment 0 only).
+ *
+ * `flights[0]` holds the outbound journey — matches the flights[0] convention
+ * extractFlightToken already uses. Round trips can arrive one of two ways: as
+ * SEPARATE selections (each option's own flights[0] is that leg's set), or as a
+ * single option carrying both legs (flights[0] = outbound, flights[1] = return).
+ * Passing `segmentIndex` lets the return-leg refinement filters read flights[1]
+ * when a provider bundles both legs into one option; when it doesn't, legsOf
+ * returns [] for segment 1 and the return filters treat the option as
+ * data-absent (excluded only while a return filter is active).
+ */
+function legsOf(bookingData: Record<string, unknown>, segmentIndex = 0): Record<string, unknown>[] {
   const flights = Array.isArray(bookingData.flights) ? bookingData.flights : null;
-  const first =
-    flights && flights[0] && typeof flights[0] === "object"
-      ? (flights[0] as Record<string, unknown>)
+  const seg =
+    flights && flights[segmentIndex] && typeof flights[segmentIndex] === "object"
+      ? (flights[segmentIndex] as Record<string, unknown>)
       : null;
-  const raw = first && Array.isArray(first.flightLegs)
-    ? first.flightLegs
-    : Array.isArray(bookingData.flightLegs)
+  const raw = seg && Array.isArray(seg.flightLegs)
+    ? seg.flightLegs
+    : segmentIndex === 0 && Array.isArray(bookingData.flightLegs)
       ? bookingData.flightLegs
       : [];
   return raw.filter((l): l is Record<string, unknown> => !!l && typeof l === "object");
@@ -79,10 +89,13 @@ function legsOf(bookingData: Record<string, unknown>): Record<string, unknown>[]
 /**
  * Derive leg-level flight detail from a raw booking-data blob, or null when no
  * usable leg data is present (caller then falls back to today's output).
+ *
+ * `segmentIndex` selects which journey to read — 0 (default) for the outbound,
+ * 1 for the return leg when a single option bundles both (round-trip refinement).
  */
-export function deriveFlightDetail(bookingData?: unknown): FlightDetail | null {
+export function deriveFlightDetail(bookingData?: unknown, segmentIndex = 0): FlightDetail | null {
   if (!bookingData || typeof bookingData !== "object") return null;
-  const legs = legsOf(bookingData as Record<string, unknown>);
+  const legs = legsOf(bookingData as Record<string, unknown>, segmentIndex);
   if (legs.length === 0) return null;
 
   const firstLeg = legs[0];
@@ -104,6 +117,13 @@ export function deriveFlightDetail(bookingData?: unknown): FlightDetail | null {
     if (code) connections.push(code);
   }
 
+  // Distinct carriers across the segment's legs (for airline filtering/facets).
+  const carriers: string[] = [];
+  for (const leg of legs) {
+    const c = str(leg.carrier);
+    if (c && !carriers.includes(c)) carriers.push(c);
+  }
+
   return {
     flightNumber,
     origin: str(firstLeg.origin),
@@ -112,6 +132,7 @@ export function deriveFlightDetail(bookingData?: unknown): FlightDetail | null {
     arrivalTime: wallClockTime(lastLeg.arrivalTime),
     stopCount: legs.length - 1,
     connections,
+    carriers,
   };
 }
 
