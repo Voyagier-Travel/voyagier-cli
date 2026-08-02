@@ -282,6 +282,21 @@ describe("filterFlights filtered-to-zero attribution", () => {
     expect(zero!.eliminatedBy.sort()).toEqual(["depart-before", "max-price"]);
   });
 
+  it("names every filter that independently zeroes the set", () => {
+    // Both filters are sole culprits: every option is too expensive AND departs too late.
+    const opts = [
+      flight("a", { price: 700, depart: "14:00" }),
+      flight("b", { price: 900, depart: "18:30" }),
+    ];
+    const { kept, zero } = filterFlights(opts, { maxPrice: 500, departBefore: 12 * 60 });
+    expect(kept).toHaveLength(0);
+    expect(zero!.combination).toBe(false);
+    expect(zero!.eliminatedBy.sort()).toEqual(["depart-before", "max-price"]);
+    const messages = zero!.detail.map((d) => d.message);
+    expect(messages).toContain("no options at or below $500; cheapest is $700");
+    expect(messages).toContain("no options depart before 12:00; earliest departure is 14:00");
+  });
+
   it("no zero attribution when options survive, or when input was already empty", () => {
     expect(filterFlights([flight("a", { price: 100 })], { maxPrice: 200 }).zero).toBeNull();
     expect(filterFlights([], { maxPrice: 200 }).zero).toBeNull();
