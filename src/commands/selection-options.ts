@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { GET_HOTEL_OPTION_DATA } from "../queries.js";
 import { deriveRoomStay, type RoomStay } from "../hotel-format.js";
+import { extractRankScore, rankScoreLabel } from "../flight-format.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { isTerminal, type SelectionStatusResult } from "../selection-status.js";
@@ -143,6 +144,10 @@ export function registerSelectionOptionsCommands(program: Command): void {
             ...(travellerChoices.length > 0 ? { travellerChoices } : {}),
             options: sortedOptions.map((o) => {
               const stay = roomStays.get(o.id);
+              // VOY-1824: platform value score, display-only. Read from the
+              // option's raw blob when present (omitted otherwise, same
+              // graceful-degrade as the leg detail).
+              const rankScore = extractRankScore(o.bookingData ?? o.optionData);
               return {
                 id: o.id,
                 name: o.name,
@@ -152,6 +157,7 @@ export function registerSelectionOptionsCommands(program: Command): void {
                 duration: o.duration ?? null,
                 // VOY-1724 additive: nights × rate breakdown for room/rate options.
                 ...(stay ? { stay: { nights: stay.nights, total: stay.total, perNight: stay.perNight } } : {}),
+                ...(rankScore !== undefined ? { rankScore } : {}),
               };
             }),
           });
@@ -181,7 +187,10 @@ export function registerSelectionOptionsCommands(program: Command): void {
           for (const o of sortedOptions) {
             const price = o.price != null ? chalk.green(` · $${o.price}`) : "";
             const chosen = chosenOptionId === o.id ? chalk.green(" ✓") : "";
-            console.log(`    ${chalk.white(o.name)}${price}${chosen}`);
+            // VOY-1824: append the platform value score when present, dimmed.
+            const rank = extractRankScore(o.bookingData ?? o.optionData);
+            const rankPart = rank !== undefined ? chalk.dim(` · ${rankScoreLabel(rank)}`) : "";
+            console.log(`    ${chalk.white(o.name)}${price}${rankPart}${chosen}`);
             const stay = roomStays.get(o.id);
             if (stay) console.log(chalk.dim(`      ${stay.label}`));
             console.log(chalk.dim(`      ${o.id}`));

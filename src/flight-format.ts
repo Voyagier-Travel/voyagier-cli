@@ -163,6 +163,29 @@ export function flightRouteLabel(detail: FlightDetail): string {
 }
 
 /**
+ * Extract the platform value score (`rankScore`) from a flight option's raw
+ * provider blob. The blob is the server's `optionData` — aliased to
+ * `bookingData` by the queries that fetch it — and the score is read directly
+ * off whichever blob the caller passes. Display-only (VOY-1824): the score is
+ * surfaced as a factual field, never used to re-order options.
+ *
+ * Returns the score verbatim when it is a finite number, or undefined when
+ * absent / non-numeric. It is NOT clamped or reshaped: a value slightly
+ * outside 0-1 is passed through as-is (the caller only displays it). The
+ * ranking formula's internal breakdown is deliberately never read here.
+ */
+export function extractRankScore(bookingData?: unknown): number | undefined {
+  if (!bookingData || typeof bookingData !== "object") return undefined;
+  const raw = (bookingData as Record<string, unknown>).rankScore;
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+}
+
+/** Compact display token for a rank score, e.g. "rank 0.82" (2 decimals). */
+export function rankScoreLabel(score: number): string {
+  return `rank ${score.toFixed(2)}`;
+}
+
+/**
  * Additive structured fields for the compact `--json` top-options projection.
  * Only includes keys that are actually known — keeps the projection compact and
  * never emits nulls/undefined. Returns {} when there's no leg detail.

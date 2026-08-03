@@ -5,6 +5,8 @@ import {
   flightStopsLabel,
   flightProjectionFields,
   wallClockTime,
+  extractRankScore,
+  rankScoreLabel,
 } from "./flight-format.js";
 
 // A realistic (anonymised) booking-data shape: flights[0].flightLegs[].
@@ -170,5 +172,51 @@ describe("flightProjectionFields", () => {
 
   it("returns {} when there's no leg detail", () => {
     expect(flightProjectionFields({ stops: 2 })).toEqual({});
+  });
+});
+
+describe("extractRankScore (VOY-1824, display-only)", () => {
+  it("returns the score for a valid finite number", () => {
+    expect(extractRankScore({ rankScore: 0.82 })).toBe(0.82);
+    expect(extractRankScore({ rankScore: 0 })).toBe(0);
+    expect(extractRankScore({ rankScore: 1 })).toBe(1);
+  });
+
+  it("passes a value slightly outside 0-1 through as-is (no clamp/reshape)", () => {
+    expect(extractRankScore({ rankScore: 1.04 })).toBe(1.04);
+    expect(extractRankScore({ rankScore: -0.02 })).toBe(-0.02);
+  });
+
+  it("returns undefined for a missing score", () => {
+    expect(extractRankScore({})).toBeUndefined();
+    expect(extractRankScore({ flights: [] })).toBeUndefined();
+  });
+
+  it("returns undefined for a non-finite or non-number score", () => {
+    expect(extractRankScore({ rankScore: NaN })).toBeUndefined();
+    expect(extractRankScore({ rankScore: Infinity })).toBeUndefined();
+    expect(extractRankScore({ rankScore: "0.82" })).toBeUndefined();
+    expect(extractRankScore({ rankScore: null })).toBeUndefined();
+  });
+
+  it("returns undefined for a null/undefined/non-object blob", () => {
+    expect(extractRankScore(undefined)).toBeUndefined();
+    expect(extractRankScore(null)).toBeUndefined();
+    expect(extractRankScore("nope")).toBeUndefined();
+  });
+
+  it("never reads the internal ranking breakdown", () => {
+    // rankBreakdown / _rankBreakdown / _rankScore are stripped server-side and
+    // must never be surfaced. The helper only ever reads the clean rankScore.
+    expect(extractRankScore({ rankBreakdown: { price: 0.4 } })).toBeUndefined();
+    expect(extractRankScore({ _rankScore: 0.9 })).toBeUndefined();
+  });
+});
+
+describe("rankScoreLabel (VOY-1824)", () => {
+  it("formats a compact 2-decimal token", () => {
+    expect(rankScoreLabel(0.82)).toBe("rank 0.82");
+    expect(rankScoreLabel(0.8)).toBe("rank 0.80");
+    expect(rankScoreLabel(1)).toBe("rank 1.00");
   });
 });

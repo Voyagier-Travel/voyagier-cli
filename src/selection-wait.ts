@@ -38,6 +38,13 @@ export interface RawOption {
   airline?: string | null;
   duration?: string | null;
   sortOrder?: number | null;
+  // Raw provider blob (`optionData`, aliased to `bookingData` on the queries
+  // that fetch it). Present only when a query actually selects it; the lean
+  // monitor read (GET_SELECTION_WITH_MONITOR) omits it. Kept optional so
+  // display-only derivations (e.g. VOY-1824 rankScore) can read it when it is
+  // present and degrade gracefully when it is not.
+  bookingData?: unknown;
+  optionData?: unknown;
 }
 
 export interface RawSelection {

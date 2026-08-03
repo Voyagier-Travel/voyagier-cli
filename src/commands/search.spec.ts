@@ -442,6 +442,41 @@ describe("registerSearchCommands", () => {
       expect(JSON.stringify(out)).not.toContain("bookingData");
     });
 
+    it("includes rankScore in a compact topOption when present (VOY-1824)", async () => {
+      installRouter({
+        options: [{
+          id: "opt-rank", name: "DL", price: 412, duration: "5h50m", sortOrder: 1,
+          bookingData: { flightToken: "TKrank", rankScore: 0.82 },
+        }],
+      });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "BWI", "--to", "AUS", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.topOptions[0].rankScore).toBe(0.82);
+      // Display-only: the surfaced score never changes ordering, and the raw
+      // internal breakdown is never leaked.
+      expect(JSON.stringify(out)).not.toContain("bookingData");
+      expect(JSON.stringify(out)).not.toContain("rankBreakdown");
+    });
+
+    it("omits the rankScore key entirely when absent or non-finite (VOY-1824)", async () => {
+      installRouter({
+        options: [
+          { id: "opt-none", name: "AA", price: 300, sortOrder: 1, bookingData: { flightToken: "TK1" } },
+          { id: "opt-bad", name: "UA", price: 350, sortOrder: 2, bookingData: { flightToken: "TK2", rankScore: "high" } },
+        ],
+      });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "BWI", "--to", "AUS", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.topOptions[0]).not.toHaveProperty("rankScore");
+      expect(out.topOptions[1]).not.toHaveProperty("rankScore");
+    });
+
     it("uses the profile home airport when --from is omitted", async () => {
       mockGetHomeAirports.mockReturnValue(["sfo"]);
       installRouter();

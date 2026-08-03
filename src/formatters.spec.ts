@@ -108,6 +108,22 @@ describe("formatFlights", () => {
       expect(out).toContain("BWI 07:15 → AUS 10:05 (nonstop)");
     });
   });
+
+  describe("VOY-1824 rankScore token (display-only)", () => {
+    it("appends `rank 0.82` when the option carries a rankScore", () => {
+      const out = stripAnsi(formatFlights([
+        { name: "AA100", price: 350, airline: "AA", duration: "5h", bookingData: { rankScore: 0.82 } },
+      ]));
+      expect(out).toContain("·  rank 0.82");
+    });
+
+    it("renders nothing extra when no rankScore is present", () => {
+      const out = stripAnsi(formatFlights([
+        { name: "AA100", price: 350, airline: "AA", duration: "5h" },
+      ]));
+      expect(out).not.toMatch(/rank \d/);
+    });
+  });
 });
 
 describe("formatHotels", () => {
