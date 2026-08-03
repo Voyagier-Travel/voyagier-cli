@@ -80,6 +80,10 @@ voyagier search flights --plan <PLAN_ID> --from JFK --to NRT \
 # selection — it does not create a new one). Round trips ALSO return a
 # returnSelectionId. topOptions carry {index, optionId, summary}; --full dumps
 # every option with raw provider data (multi-MB — avoid unless needed).
+# An option MAY also carry rankScore: the platform's value score (0-1, higher
+# is better; blends price, stops, duration, timing, and traveler airline
+# affinity). You MAY reason over it, but the CLI never re-sorts by it and there
+# is no "best" label — server order is the default.
 # If optionCount is 0 the fetch is still running — poll:
 voyagier selection-options <SELECTION_ID> --wait --json
 voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json

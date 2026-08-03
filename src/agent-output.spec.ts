@@ -44,6 +44,18 @@ describe("agentFlightOptions", () => {
     const output = agentFlightOptions([{ airline: "United", duration: "5h 30m", price: 423 }]);
     expect(output).toBe("1. United · 5h 30m · $423.00");
   });
+
+  it("appends a plain rank token when rankScore is present (VOY-1824)", () => {
+    const output = agentFlightOptions([
+      { airline: "United", duration: "5h 30m", price: 423, bookingData: { rankScore: 0.82 } },
+    ]);
+    expect(output).toBe("1. United · 5h 30m · $423.00 · rank 0.82");
+  });
+
+  it("renders nothing extra when rankScore is absent (VOY-1824)", () => {
+    const output = agentFlightOptions([{ airline: "United", duration: "5h 30m", price: 423 }]);
+    expect(output).not.toContain("rank");
+  });
 });
 
 describe("agentHotelOptions", () => {

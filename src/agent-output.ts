@@ -4,7 +4,7 @@
  */
 import { formatPrice } from "./utils.js";
 import { hotelStayLabel, deriveHotelFacts } from "./hotel-format.js";
-import { deriveFlightDetail, flightRouteLabel } from "./flight-format.js";
+import { deriveFlightDetail, flightRouteLabel, extractRankScore, rankScoreLabel } from "./flight-format.js";
 
 /**
  * Format a numbered list of flight options for agent output.
@@ -29,6 +29,9 @@ export function agentFlightOptions(
       // VOY-1724: the fare reflects the searched party — NOT a per-person price.
       // Dropping the old "/pp" suffix that wrongly implied "× traveller count".
       if (opt.price != null) parts.push(formatPrice(opt.price));
+      // VOY-1824: platform value score, plain (no ANSI), only when present.
+      const rank = extractRankScore(opt.bookingData);
+      if (rank !== undefined) parts.push(rankScoreLabel(rank));
       return `${i + 1}. ${parts.join(" · ")}`;
     })
     .join("\n");

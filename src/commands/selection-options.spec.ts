@@ -199,6 +199,29 @@ describe("selection-options command (VOY-1415)", () => {
     expect(out.staleWarning).toBe(true);
     expect(out.fetchError).toMatch(/404/);
   });
+
+  it("surfaces rankScore in JSON when the option carries it (VOY-1824)", async () => {
+    const ranked = { ...OPTION, optionData: { rankScore: 0.71 } };
+    mockGraphql
+      .mockResolvedValueOnce(selectionResult({ options: [ranked] }))
+      .mockResolvedValueOnce(monitorResult());
+    await run([SEL_ID]);
+    const out = lastJson();
+    expect(out.options[0].rankScore).toBe(0.71);
+    // Display-only: the internal breakdown is never surfaced.
+    expect(JSON.stringify(out)).not.toContain("rankBreakdown");
+  });
+
+  it("omits rankScore when absent or non-finite (VOY-1824)", async () => {
+    const bad = { ...OPTION, id: "opt-bad", optionData: { rankScore: NaN } };
+    mockGraphql
+      .mockResolvedValueOnce(selectionResult({ options: [OPTION, bad] }))
+      .mockResolvedValueOnce(monitorResult());
+    await run([SEL_ID]);
+    const out = lastJson();
+    expect(out.options[0]).not.toHaveProperty("rankScore");
+    expect(out.options[1]).not.toHaveProperty("rankScore");
+  });
 });
 
 // ── deriveChosen (participant-choice consensus, VOY-1692) ──────────────────

@@ -34,7 +34,7 @@ import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivit
 import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "../agent-output.js";
 import { deriveHotelStay, hotelFactsFields } from "../hotel-format.js";
-import { flightProjectionFields } from "../flight-format.js";
+import { flightProjectionFields, extractRankScore } from "../flight-format.js";
 import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 import { CliError, CliErrorCode } from "../errors.js";
@@ -915,15 +915,22 @@ export function registerSearchCommands(program: Command): void {
         const { kept, zero: filteredToZero } = filterFlights(prefiltered, flightFilters);
         const options = sortOptions(kept, sortBy);
 
-        const searchResults = options.map((opt, i) => ({
-          index: i + 1,
-          optionId: opt.id,
-          flightToken: extractFlightToken(opt.bookingData),
-          summary: buildFlightSummary(opt, origin, destination),
-          // VOY-1783: additive leg detail (times, flight number, stops,
-          // connections) so agents can decide without the --full dump.
-          ...flightProjectionFields(opt.bookingData),
-        }));
+        const searchResults = options.map((opt, i) => {
+          // VOY-1824: platform value score (optionData.rankScore), display-only.
+          // Included only when it is a finite number; the key is omitted
+          // entirely when absent (never null/undefined).
+          const rankScore = extractRankScore(opt.bookingData);
+          return {
+            index: i + 1,
+            optionId: opt.id,
+            flightToken: extractFlightToken(opt.bookingData),
+            summary: buildFlightSummary(opt, origin, destination),
+            // VOY-1783: additive leg detail (times, flight number, stops,
+            // connections) so agents can decide without the --full dump.
+            ...flightProjectionFields(opt.bookingData),
+            ...(rankScore !== undefined ? { rankScore } : {}),
+          };
+        });
 
         saveSearchState({
           type: "flights",

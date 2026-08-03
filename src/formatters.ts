@@ -1,7 +1,7 @@
 import chalk from "chalk";
 import { formatPrice } from "./utils.js";
 import { hotelStayLabel, deriveHotelFacts } from "./hotel-format.js";
-import { deriveFlightDetail, flightRouteLabel } from "./flight-format.js";
+import { deriveFlightDetail, flightRouteLabel, extractRankScore, rankScoreLabel } from "./flight-format.js";
 
 interface FlightOption {
   id?: string;
@@ -68,9 +68,13 @@ export function formatFlights(options: FlightOption[], overrideRoute?: { origin:
 
       const parts = [airline, route].filter(Boolean);
       const details = [price, duration].filter(Boolean).join("  ·  ");
+      // VOY-1824: append the platform value score when present (display-only,
+      // never a sort key). Absent → render nothing extra.
+      const rank = extractRankScore(opt.bookingData);
 
       let line = `  ✈️  ${idx}  ${parts.join("  ")}`;
       if (details) line += `  ·  ${details}`;
+      if (rank !== undefined) line += `  ·  ${chalk.dim(rankScoreLabel(rank))}`;
       if (time) line += `\n       ${time}`;
       return line;
     })
