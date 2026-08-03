@@ -164,8 +164,10 @@ export function flightRouteLabel(detail: FlightDetail): string {
 
 /**
  * Extract the platform value score (`rankScore`) from a flight option's raw
- * booking-data blob (`optionData.rankScore`). Display-only (VOY-1824): the
- * score is surfaced as a factual field, never used to re-order options.
+ * provider blob. The blob is the server's `optionData` — aliased to
+ * `bookingData` by the queries that fetch it — and the score is read directly
+ * off whichever blob the caller passes. Display-only (VOY-1824): the score is
+ * surfaced as a factual field, never used to re-order options.
  *
  * Returns the score verbatim when it is a finite number, or undefined when
  * absent / non-numeric. It is NOT clamped or reshaped: a value slightly
