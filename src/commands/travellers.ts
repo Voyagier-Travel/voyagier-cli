@@ -398,6 +398,11 @@ export function registerTravellerCommands(program: Command): void {
   travellers
     .command("update <id>")
     .description("Update a traveller's details")
+    // Accepted for symmetry with `travellers add` (which requires --plan). The
+    // traveller <id> already identifies the record, so --plan is optional
+    // context here and is not sent to the mutation — a redundant plan id is
+    // harmless, matching the plan-id convention used elsewhere.
+    .option("--plan <id>", "Trip plan ID (optional context; the traveller id already identifies the record)")
     .option("--first <name>", "First name")
     .option("--last <name>", "Last name")
     .option("--dob <date>", "Date of birth (YYYY-MM-DD)")

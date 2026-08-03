@@ -34,10 +34,19 @@ jest.unstable_mockModule("../state.js", () => ({
   clearOptionsState: jest.fn(),
   getSelectionSearchParams: mockGetSelectionSearchParams,
   rememberSelectionSearchParams: mockRememberSelectionSearchParams,
+  // Extra export used elsewhere in the tree; stubbed so build-program.js (which
+  // this suite imports for the real routeParseErrorsToJson hook) links cleanly.
+  clearSelectionSearchParams: jest.fn(),
 }));
 
 jest.unstable_mockModule("../api.js", () => ({
   graphql: mockGraphql,
+  // Rest of api.js's surface, stubbed so the full command tree pulled in by
+  // build-program.js (imported below for the real hook) links cleanly.
+  graphqlWithFieldFallback: jest.fn(),
+  streamChat: jest.fn(),
+  __resetFieldFallbackCache: jest.fn(),
+  AuthError: class AuthError extends Error {},
 }));
 
 // VOY-1780: the human/TTY inline wait delegates the poll loop to
@@ -49,15 +58,31 @@ const mockWaitForSelectionOptions =
   jest.fn<(...args: unknown[]) => Promise<{ raw: unknown; result: Record<string, unknown> }>>();
 jest.unstable_mockModule("../selection-wait.js", () => ({
   waitForSelectionOptions: mockWaitForSelectionOptions,
+  // Rest of selection-wait.js's surface, stubbed so the full tree links.
+  loadSelectionState: jest.fn(),
+  pollSelectionOptions: jest.fn(),
+  DEFAULT_RETRY_AFTER_MS: 2000,
 }));
 
 const mockGetHomeAirports = jest.fn<() => string[]>(() => []);
 jest.unstable_mockModule("../config.js", () => ({
   getApiUrl: jest.fn(() => "https://dev.voyagier.com/api"),
   getHomeAirports: mockGetHomeAirports,
-  // state.ts (fully mocked) is the only other config consumer in this graph;
-  // plan-footer.ts uses getApiUrl above. CONFIG_DIR kept for completeness.
   CONFIG_DIR: "/tmp/voyagier-search-spec-config",
+  // Rest of config.js's surface, stubbed so the full command tree pulled in by
+  // build-program.js (imported below for the real hook) links cleanly. The
+  // search action never calls these; they exist only to satisfy sibling
+  // command modules' imports at link time.
+  assertSecureApiUrl: jest.fn(),
+  saveCredentials: jest.fn(),
+  saveUserContext: jest.fn(),
+  getUserContext: jest.fn(() => null),
+  getPreferredCabin: jest.fn(() => null),
+  resetEnvUrlWarningForTests: jest.fn(),
+  loadCredentials: jest.fn(() => null),
+  clearCredentials: jest.fn(),
+  getToken: jest.fn(() => "test-token"),
+  credentialsExist: jest.fn(() => true),
 }));
 
 // VOY-1761: the auto-scaffold path (no --plan, no last-search) delegates client
@@ -66,17 +91,25 @@ jest.unstable_mockModule("../config.js", () => ({
 const mockResolveClient = jest.fn<(explicit?: string, opts?: unknown) => Promise<unknown>>();
 jest.unstable_mockModule("./clients.js", () => ({
   resolveClient: mockResolveClient,
+  // Rest of clients.js's surface, stubbed so build-program.js links (it imports
+  // registerClientsCommands from here).
+  resolveClientId: jest.fn(),
+  registerClientsCommands: jest.fn(),
 }));
 
 let resolvePlanId: (opts: { plan?: string }) => string;
 let resolveOrCreateDecisionSelection: typeof import("./search.js").resolveOrCreateDecisionSelection;
 let registerSearchCommands: (program: Command) => void;
+let routeParseErrorsToJson: (cmd: Command) => void;
 
 beforeAll(async () => {
   const mod = await import("./search.js");
   resolvePlanId = mod.resolvePlanId;
   resolveOrCreateDecisionSelection = mod.resolveOrCreateDecisionSelection;
   registerSearchCommands = mod.registerSearchCommands;
+  // The real production hook: wired onto the test program below so these specs
+  // exercise the actual --json routing and fail if it is reverted (VOY-1829).
+  ({ routeParseErrorsToJson } = await import("../build-program.js"));
 });
 
 let stderrSpy: ReturnType<typeof jest.spyOn>;
@@ -213,6 +246,7 @@ describe("registerSearchCommands", () => {
     const p = new Command();
     p.exitOverride();
     registerSearchCommands(p);
+    routeParseErrorsToJson(p);
     return p;
   }
 
@@ -1067,17 +1101,35 @@ describe("registerSearchCommands", () => {
       expect(err.message).toBe("error: required option '--date <date>' not specified");
     });
 
-    // --json is a non-interactive machine mode: same commander failure, and
-    // stdout MUST stay empty (no JSON error envelope) exactly as when the parser
-    // rejected the missing required option.
-    it("missing --date under --json: commander bytes on stderr, empty stdout", async () => {
-      const err = await buildProgram()
-        .parseAsync(["node", "v", "search", "flights", "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--json"])
-        .catch((e) => e as { message?: string; exitCode?: number });
-      expect(err.message).toBe("error: required option '--date <date>' not specified");
+    // --json is a non-interactive machine mode. VOY-1829 supersedes the old
+    // byte-identity contract for this path: with --json in argv, the
+    // build-program hook routes the synthesized parse failure to the uniform
+    // VALIDATION envelope on stdout, leaving stderr empty. The thrown
+    // CommanderError still carries commander's own code/exit. --json is detected
+    // by scanning process.argv (options are not parsed yet when the parser
+    // errors), so we reflect the real argv the production entrypoint would see.
+    // This assertion FAILS if the hook is reverted or argv detection breaks.
+    it("missing --date under --json: VALIDATION envelope on stdout, empty stderr", async () => {
+      const savedArgv = process.argv;
+      process.argv = ["node", "v", "search", "flights", "--plan", "plan-1", "--from", "LAX", "--to", "NRT", "--json"];
+      let err: { code?: string; message?: string; exitCode?: number } = {};
+      try {
+        await buildProgram()
+          .parseAsync(process.argv)
+          .catch((e) => {
+            err = e as { code?: string; message?: string; exitCode?: number };
+          });
+      } finally {
+        process.argv = savedArgv;
+      }
+      // CommanderError still propagates with commander's own code/exit.
+      expect(err.code).toBe("commander.missingMandatoryOptionValue");
       expect(err.exitCode).toBe(1);
-      expect(stderrWrites.join("")).toBe("error: required option '--date <date>' not specified\n");
-      expect(stdout()).toBe("");
+      // Envelope on stdout; stderr untouched (no bare commander text).
+      expect(stderrWrites.join("")).toBe("");
+      const payload = JSON.parse(stdout());
+      expect(payload).toMatchObject({ error: true, code: CliErrorCode.VALIDATION });
+      expect(payload.message).toBe("error: required option '--date <date>' not specified");
     });
   });
 
