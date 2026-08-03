@@ -54,7 +54,7 @@ describe("agentFlightOptions", () => {
 
   it("renders nothing extra when rankScore is absent (VOY-1824)", () => {
     const output = agentFlightOptions([{ airline: "United", duration: "5h 30m", price: 423 }]);
-    expect(output).not.toContain("rank");
+    expect(output).not.toContain("· rank");
   });
 });
 

@@ -200,7 +200,11 @@ describe("selection-options command (VOY-1415)", () => {
     expect(out.fetchError).toMatch(/404/);
   });
 
-  it("surfaces rankScore in JSON when the option carries it (VOY-1824)", async () => {
+  // Forward-compat: the current monitor query (GET_SELECTION_WITH_MONITOR)
+  // does not fetch optionData, so against today's server these options never
+  // carry rankScore. The wiring lights up if/when the server exposes it on
+  // the lean read — these specs pin that forward path, not current behavior.
+  it("surfaces rankScore in JSON when the option payload carries it (forward-compat, VOY-1824)", async () => {
     const ranked = { ...OPTION, optionData: { rankScore: 0.71 } };
     mockGraphql
       .mockResolvedValueOnce(selectionResult({ options: [ranked] }))

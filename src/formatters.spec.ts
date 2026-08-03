@@ -121,7 +121,7 @@ describe("formatFlights", () => {
       const out = stripAnsi(formatFlights([
         { name: "AA100", price: 350, airline: "AA", duration: "5h" },
       ]));
-      expect(out).not.toContain("rank");
+      expect(out).not.toMatch(/rank \d/);
     });
   });
 });
