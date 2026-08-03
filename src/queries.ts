@@ -828,6 +828,16 @@ export const DOCTOR_PING = `
   }
 `;
 
+// Minimal identity probe for `doctor`'s auth check — resolves who the token
+// authenticates as straight from the API (email preferred, name fallback).
+// Env-var auth (VOYAGIER_TOKEN) has no cached user context on disk, so without
+// this the check could only report "Authenticated as unknown" (VOY-1827).
+export const DOCTOR_IDENTITY = `
+  query DoctorIdentity {
+    me { email name }
+  }
+`;
+
 // --- Itinerary (v2.0.0 — computed from selections via tripPlanEvents resolver) ---
 //
 // Per Phase 0 audit: `tripPlanEvents` is FROZEN. Fields exposed at top level:

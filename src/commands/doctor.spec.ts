@@ -232,6 +232,87 @@ describe("voyagier doctor", () => {
     expect(reported.data.checks.find((c) => c.name === "auth")?.status).toBe("FAIL");
   });
 
+  it("resolves the authenticated identity from the API (env-var auth, no cached context)", async () => {
+    mockCredentialsExist.mockReturnValue(true);
+    // Env-var (VOYAGIER_TOKEN) auth has no cached user context on disk.
+    mockGetUserContext.mockReturnValue(null);
+    mockGraphql.mockImplementation(async (query: string) => {
+      if (query.includes("DoctorIdentity")) return { me: { email: "api-user@voyagier.com", name: "API User" } };
+      if (query.includes("IntrospectionQuery")) return { __schema: { queryType: { name: "Query" } } };
+      return { __schema: { queryType: { name: "Query" } } };
+    });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "doctor", "--json"]);
+
+    const reported = mockJsonOutput.mock.calls[0][0] as {
+      data: { checks: Array<{ name: string; status: string; message: string }> };
+    };
+    const auth = reported.data.checks.find((c) => c.name === "auth");
+    expect(auth?.status).toBe("PASS");
+    // Email preferred over name, and over the (absent) cached context.
+    expect(auth?.message).toBe("Authenticated as api-user@voyagier.com");
+  });
+
+  it("falls back to the API name when the identity has no email", async () => {
+    mockCredentialsExist.mockReturnValue(true);
+    mockGetUserContext.mockReturnValue(null);
+    mockGraphql.mockImplementation(async (query: string) => {
+      if (query.includes("DoctorIdentity")) return { me: { name: "Nameless User" } };
+      return { __schema: { queryType: { name: "Query" } } };
+    });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "doctor", "--json"]);
+
+    const reported = mockJsonOutput.mock.calls[0][0] as {
+      data: { checks: Array<{ name: string; status: string; message: string }> };
+    };
+    const auth = reported.data.checks.find((c) => c.name === "auth");
+    expect(auth?.status).toBe("PASS");
+    expect(auth?.message).toBe("Authenticated as Nameless User");
+  });
+
+  it("falls back to cached context when the API identity lookup fails (still PASS)", async () => {
+    mockCredentialsExist.mockReturnValue(true);
+    mockGetUserContext.mockReturnValue({ email: "cached@voyagier.com" });
+    mockGraphql.mockImplementation(async (query: string) => {
+      // The ping (and introspection) succeed; only the identity read fails.
+      if (query.includes("DoctorIdentity")) throw new Error("identity read blip");
+      return { __schema: { queryType: { name: "Query" } } };
+    });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "doctor", "--json"]);
+
+    const reported = mockJsonOutput.mock.calls[0][0] as {
+      data: { checks: Array<{ name: string; status: string; message: string }> };
+    };
+    const auth = reported.data.checks.find((c) => c.name === "auth");
+    // A failed identity lookup must NOT downgrade an otherwise-passing auth check.
+    expect(auth?.status).toBe("PASS");
+    expect(auth?.message).toBe("Authenticated as cached@voyagier.com");
+  });
+
+  it("reports 'unknown' only when neither API nor cached identity is available", async () => {
+    mockCredentialsExist.mockReturnValue(true);
+    mockGetUserContext.mockReturnValue(null);
+    mockGraphql.mockImplementation(async (query: string) => {
+      if (query.includes("DoctorIdentity")) return { me: null };
+      return { __schema: { queryType: { name: "Query" } } };
+    });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "doctor", "--json"]);
+
+    const reported = mockJsonOutput.mock.calls[0][0] as {
+      data: { checks: Array<{ name: string; status: string; message: string }> };
+    };
+    const auth = reported.data.checks.find((c) => c.name === "auth");
+    expect(auth?.status).toBe("PASS");
+    expect(auth?.message).toBe("Authenticated as unknown");
+  });
+
   it("reports WARN when version is outdated", async () => {
     mockCredentialsExist.mockReturnValue(true);
     mockGetUserContext.mockReturnValue({ email: "daniel@voyagier.com" });
