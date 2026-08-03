@@ -62,6 +62,17 @@ jest.unstable_mockModule("../utils.js", () => ({
   deriveBaseUrl: jest.fn().mockReturnValue("https://app.voyagier.com"),
   formatPrice: jest.fn().mockImplementation((p: unknown) => `$${p}`),
   shellArg: jest.fn().mockImplementation((v: unknown) => String(v ?? "")),
+  // Mirrors the real validateId contract (utils.ts) so direct-mode id
+  // validation is exercised end-to-end here; unit-tested exhaustively in
+  // utils.spec.ts.
+  validateId: jest.fn().mockImplementation((value: unknown, flagName: string) => {
+    const trimmed = String(value).trim();
+    const lowered = trimmed.toLowerCase();
+    if (trimmed === "" || lowered === "null" || lowered === "undefined") {
+      throw new CliError(CliErrorCode.VALIDATION, `Invalid ${flagName}: "${value}".`);
+    }
+    return trimmed;
+  }),
   // resolvePlanArg is not mocked: it lives in resolve-plan-arg.ts (own
   // module) so the real contract is always in play here.
 }));
@@ -593,6 +604,54 @@ describe("select: direct mode (--selection-id + --option-id)", () => {
     }
     expect(err).toBeInstanceOf(CliError);
     expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+  });
+
+  // ── VOY-1828: reject garbage ids client-side before any API call ──────────
+
+  it("rejects a literal \"null\" --option-id with VALIDATION and makes no API call", async () => {
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-1", "--option-id", "null"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+    expect((err as CliError).message).toContain("--option-id");
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("rejects a literal \"undefined\" --selection-id (case-insensitive) with VALIDATION, no API call", async () => {
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "UNDEFINED", "--option-id", "opt-1"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+    expect((err as CliError).message).toContain("--selection-id");
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty --selection-id with VALIDATION and makes no API call", async () => {
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "", "--option-id", "opt-1"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("lets valid-looking ids pass through to the API", async () => {
+    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1"]);
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("setTripPlanSelectedOption"),
+      expect.objectContaining({ selectionId: "sel-1", optionId: "opt-1" })
+    );
   });
 });
 

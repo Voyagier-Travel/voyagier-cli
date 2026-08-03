@@ -144,6 +144,29 @@ export function validateIata(value: string, flagName: string): void {
 }
 
 /**
+ * Validate a user-supplied id flag (e.g. --selection-id, --option-id) before it
+ * reaches the API. Rejects the garbage values a broken script pipeline produces:
+ * empty/whitespace, or the literal strings "null"/"undefined" (case-insensitive)
+ * that a failed `jq` extraction emits. Without this the API returns a raw
+ * API_ERROR ("invalid input syntax for type uuid") instead of a clean
+ * client-side VALIDATION error. Returns the trimmed id on success.
+ *
+ * Deliberately NOT a strict UUID-format check: real id shapes have not been
+ * audited and spec fixtures legitimately use ids like "opt-1".
+ */
+export function validateId(value: string, flagName: string): string {
+  const trimmed = value.trim();
+  const lowered = trimmed.toLowerCase();
+  if (trimmed === "" || lowered === "null" || lowered === "undefined") {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      `Invalid ${flagName}: "${value}". Pass a real id (an empty or "null"/"undefined" value usually means a broken script or jq extraction).`,
+    );
+  }
+  return trimmed;
+}
+
+/**
  * Human-readable label for a sub-selection type.
  */
 export function subSelectionLabel(type: string): string {

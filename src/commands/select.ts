@@ -10,7 +10,7 @@ import {
   SET_SELECTION_TRAVELLER_CHOICE,
 } from "../queries.js";
 import { loadSearchState, clearSearchState, isSearchStateStale } from "../state.js";
-import { deriveBaseUrl, shellArg } from "../utils.js";
+import { deriveBaseUrl, shellArg, validateId } from "../utils.js";
 import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { GET_PLAN_STATUS } from "../queries.js";
 import { resolveHotelCodes, buildPlanStatus, type PlanStatusQueryResult } from "./plan-status.js";
@@ -293,19 +293,28 @@ export function registerSelectCommands(program: Command): void {
       }
 
       // ── Direct mode: --selection-id + --option-id ───────────────────────
-      if (opts.selectionId || opts.optionId) {
-        if (!opts.selectionId || !opts.optionId) {
+      // Entry is decided on "was the flag provided" (!== undefined), not
+      // truthiness, so an empty --selection-id="" is caught here as a garbage
+      // id below rather than silently falling through to indexed mode. Same
+      // contract as normalizeChoiceScope.
+      if (opts.selectionId !== undefined || opts.optionId !== undefined) {
+        if (opts.selectionId === undefined || opts.optionId === undefined) {
           throw new CliError(
             CliErrorCode.VALIDATION,
             "Direct mode requires BOTH --selection-id and --option-id.",
           );
         }
+        // Reject empty/"null"/"undefined" ids client-side (VOY-1828) — index
+        // mode is exempt: its ids come from trusted cached search state, never
+        // from these user-supplied flags, so there is nothing to duplicate.
+        const selectionId = validateId(opts.selectionId, "--selection-id");
+        const optionId = validateId(opts.optionId, "--option-id");
         try {
           if (!opts.json) progress("Selecting option...");
-          const result = await setSelectedOption(opts.selectionId, opts.optionId, opts);
-          const name = result.parentOption?.name ?? opts.optionId;
+          const result = await setSelectedOption(selectionId, optionId, opts);
+          const name = result.parentOption?.name ?? optionId;
           const forScope = scopeLabel(opts);
-          const waitOutcome = opts.wait ? await runPickWait(opts.selectionId, opts.optionId, opts) : undefined;
+          const waitOutcome = opts.wait ? await runPickWait(selectionId, optionId, opts) : undefined;
           if (opts.json) {
             jsonOutput({
               // ok mirrors the error envelope's shape so agents can check one

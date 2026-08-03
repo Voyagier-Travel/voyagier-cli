@@ -59,6 +59,16 @@ jest.unstable_mockModule("../utils.js", () => ({
   formatPrice: jest.fn().mockImplementation((p: unknown) => `$${p}`),
   shellArg: jest.fn().mockImplementation((v: unknown) => String(v ?? "")),
   subSelectionLabel: jest.fn().mockReturnValue("cabin class"),
+  // Mirrors the real validateId contract (utils.ts) so select.js resolves its
+  // import; exhaustively unit-tested in utils.spec.ts.
+  validateId: jest.fn().mockImplementation((value: unknown, flagName: string) => {
+    const trimmed = String(value).trim();
+    const lowered = trimmed.toLowerCase();
+    if (trimmed === "" || lowered === "null" || lowered === "undefined") {
+      throw new CliError(CliErrorCode.VALIDATION, `Invalid ${flagName}: "${value}".`);
+    }
+    return trimmed;
+  }),
   // resolvePlanArg is not mocked: it lives in resolve-plan-arg.ts (own
   // module) so the real contract is always in play here.
 }));

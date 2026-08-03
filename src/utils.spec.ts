@@ -9,6 +9,7 @@ import {
   formatPrice,
   validateDate,
   validateIata,
+  validateId,
   subSelectionLabel,
   deriveBaseUrl,
   openBrowser,
@@ -294,6 +295,58 @@ describe("validateIata", () => {
 
   it("should include flag name in error message", () => {
     expect(() => validateIata("X", "--to")).toThrow(/--to/);
+  });
+});
+
+describe("validateId (VOY-1828)", () => {
+  it("returns the id for a valid-looking value", () => {
+    expect(validateId("opt-1", "--option-id")).toBe("opt-1");
+    expect(validateId("550e8400-e29b-41d4-a716-446655440000", "--selection-id")).toBe(
+      "550e8400-e29b-41d4-a716-446655440000",
+    );
+  });
+
+  it("trims surrounding whitespace and returns the trimmed id", () => {
+    expect(validateId("  opt-1\t", "--option-id")).toBe("opt-1");
+  });
+
+  it("rejects empty / whitespace-only ids with a VALIDATION CliError", () => {
+    for (const bad of ["", "   ", "\t"]) {
+      try {
+        validateId(bad, "--selection-id");
+        throw new Error("expected validateId to throw");
+      } catch (err) {
+        expect(err).toBeInstanceOf(CliError);
+        expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+      }
+    }
+  });
+
+  it("rejects the literal strings null/undefined case-insensitively", () => {
+    for (const bad of ["null", "NULL", "Null", "undefined", "UNDEFINED", " undefined "]) {
+      try {
+        validateId(bad, "--option-id");
+        throw new Error("expected validateId to throw");
+      } catch (err) {
+        expect(err).toBeInstanceOf(CliError);
+        expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+      }
+    }
+  });
+
+  it("includes the flag name and received value in the error message", () => {
+    try {
+      validateId("null", "--option-id");
+      throw new Error("expected validateId to throw");
+    } catch (err) {
+      expect((err as CliError).message).toContain("--option-id");
+      expect((err as CliError).message).toContain("null");
+    }
+  });
+
+  it("does NOT enforce strict UUID format (spec-style ids like opt-1 pass)", () => {
+    expect(() => validateId("opt-1", "--option-id")).not.toThrow();
+    expect(() => validateId("sel-abc", "--selection-id")).not.toThrow();
   });
 });
 
