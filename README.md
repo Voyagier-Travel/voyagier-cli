@@ -198,6 +198,14 @@ Non-admin tokens expire (90 days max, 30 by default) — mint a fresh one when y
 
 > **Tip:** prefer `voyagier login` (interactive prompt) over `voyagier auth set-token <token>` — it keeps your token out of shell history. For scripts, use the `VOYAGIER_TOKEN` env var.
 
+## Claude Desktop Extension (MCPB)
+
+The MCP server is also packaged as a Claude Desktop extension bundle (MCPB). Build it from the repo with `scripts/build-mcpb.sh`, which produces `dist-mcpb/voyagier-<version>.mcpb`. To install, drag the `.mcpb` file into Claude Desktop → Settings → Extensions, then enter your Personal Access Token when prompted.
+
+## Privacy Policy
+
+Data processed through the CLI and Voyagier services is handled per the [Voyagier privacy policy](https://www.voyagier.com/privacy-policy).
+
 ## License
 
 [Apache-2.0](LICENSE) — Copyright 2026 Voyagier, Inc. Use of Voyagier services through the CLI is subject to the [Voyagier Terms of Service](https://voyagier.com/terms). "Voyagier" and the Voyagier logo are trademarks of Voyagier, Inc.; the Apache-2.0 license does not grant trademark rights.
