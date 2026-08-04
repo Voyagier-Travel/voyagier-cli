@@ -35,7 +35,7 @@ import { CONFIG_DIR, credentialsExist, getApiUrl, getUserContext } from "../conf
 import { sanitizeExternalText } from "../utils.js";
 import { jsonOutput } from "../output.js";
 import { CliError } from "../errors.js";
-import { DOCTOR_PING, DOCTOR_IDENTITY } from "../queries.js";
+import { DOCTOR_IDENTITY } from "../queries.js";
 import * as queries from "../queries.js";
 
 /**
@@ -132,29 +132,13 @@ export function rollUpStatus(checks: DoctorCheck[]): CheckStatus {
 }
 
 /**
- * Resolve the display identity for a token that has already passed the auth
- * ping. Prefers the LIVE API identity (email, then name) so env-var auth
- * (VOYAGIER_TOKEN), which has no cached user context on disk, still reports a
- * real identity instead of "unknown" (VOY-1827). Falls back to the cached
- * getUserContext() when the identity lookup itself fails — a best-effort lookup
- * must never turn an otherwise-passing auth check into a failure.
- */
-async function resolveAuthIdentity(): Promise<string> {
-  const ctx = getUserContext();
-  try {
-    const { me } = await graphql<{ me: { email?: string | null; name?: string | null } | null }>(
-      DOCTOR_IDENTITY,
-    );
-    return me?.email ?? me?.name ?? ctx?.email ?? ctx?.name ?? "unknown";
-  } catch {
-    // Auth already succeeded (ping passed); only the identity read failed.
-    // Degrade to cached context rather than downgrading the whole check.
-    return ctx?.email ?? ctx?.name ?? "unknown";
-  }
-}
-
-/**
- * Verify auth: credentials exist and a basic GraphQL ping succeeds.
+ * Verify auth: credentials exist and a REAL authenticated query succeeds.
+ *
+ * VOY-1836: the probe must be `me { email name }` (DOCTOR_IDENTITY), never an
+ * introspection query — production endpoints disable introspection (standard
+ * Apollo hardening), which made the old `__schema` ping WARN on prod even
+ * though the token was perfectly valid. One query now both verifies the token
+ * and resolves the identity for the PASS message.
  */
 async function checkAuth(): Promise<DoctorCheck> {
   if (!credentialsExist()) {
@@ -164,8 +148,11 @@ async function checkAuth(): Promise<DoctorCheck> {
       message: "No credentials. Run: voyagier auth login (or voyagier auth set-token <PAT>)",
     };
   }
+  let me: { email?: string | null; name?: string | null } | null = null;
   try {
-    await graphql<{ __schema: { queryType: { name: string } } }>(DOCTOR_PING);
+    ({ me } = await graphql<{ me: { email?: string | null; name?: string | null } | null }>(
+      DOCTOR_IDENTITY,
+    ));
   } catch (err) {
     if (err instanceof AuthError || (err instanceof CliError && err.code === "AUTH_FAILED")) {
       return {
@@ -180,7 +167,10 @@ async function checkAuth(): Promise<DoctorCheck> {
       message: `Auth check could not complete: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
-  const who = await resolveAuthIdentity();
+  // Identity fallback chain (VOY-1827): live API identity first, cached user
+  // context second — env-var auth has no cached context on disk.
+  const ctx = getUserContext();
+  const who = me?.email ?? me?.name ?? ctx?.email ?? ctx?.name ?? "unknown";
   return {
     name: "auth",
     status: "PASS",
@@ -266,12 +256,25 @@ async function checkSchema(): Promise<DoctorCheck> {
         message: "Schema check skipped (auth failed; fix auth first)",
       };
     }
+    // VOY-1836: production endpoints disable GraphQL introspection (standard
+    // Apollo hardening). That is expected server config, not a fault — auth
+    // already passed with a real query, so report the skip without degrading
+    // the overall verdict.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/introspection/i.test(msg)) {
+      return {
+        name: "schema",
+        status: "PASS",
+        message:
+          "Schema validation skipped — this API disables GraphQL introspection (standard production hardening). Not an error; operations are validated at release time.",
+      };
+    }
     // Couldn't introspect or build the schema (network blip, permissions, or an
     // unexpected shape). Inconclusive — WARN, never a false FAIL.
     return {
       name: "schema",
       status: "WARN",
-      message: `Schema check inconclusive — could not introspect live schema: ${err instanceof Error ? err.message : String(err)}`,
+      message: `Schema check inconclusive — could not introspect live schema: ${msg}`,
     };
   }
 

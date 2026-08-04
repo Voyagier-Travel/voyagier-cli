@@ -821,12 +821,8 @@ export const UPDATE_TRIP_PLAN_CLIENT = `
 `;
 
 // --- Doctor (v2.0.0 — used for self-checks) ---
-
-export const DOCTOR_PING = `
-  query DoctorPing {
-    __schema { queryType { name } }
-  }
-`;
+// (DOCTOR_PING removed in VOY-1836: the auth probe must be a real
+// authenticated query, never introspection — production disables it.)
 
 // Minimal identity probe for `doctor`'s auth check — resolves who the token
 // authenticates as straight from the API (email preferred, name fallback).
