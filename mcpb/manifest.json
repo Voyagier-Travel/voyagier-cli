@@ -1,0 +1,52 @@
+{
+  "manifest_version": "0.2",
+  "name": "voyagier",
+  "display_name": "Voyagier Travel",
+  "version": "__VERSION__",
+  "description": "Book real travel from your agent — flights, hotels & activities behind a price-gated checkout.",
+  "long_description": "Voyagier lets AI agents plan and book real trips: search flights, hotels & activities, assemble trip plans, and check out through a price-gated booking flow that fails closed on price drift. Access is by invitation — request access and get your Personal Access Token at https://www.voyagier.com/agents.",
+  "author": {
+    "name": "Voyagier",
+    "email": "apis@voyagier.com",
+    "url": "https://www.voyagier.com"
+  },
+  "homepage": "https://www.voyagier.com/agents",
+  "documentation": "https://github.com/Voyagier-Travel/voyagier-cli#readme",
+  "support": "https://github.com/Voyagier-Travel/voyagier-cli/issues",
+  "license": "Apache-2.0",
+  "privacy_policies": ["https://www.voyagier.com/privacy-policy"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Voyagier-Travel/voyagier-cli"
+  },
+  "keywords": ["travel", "flights", "hotels", "booking", "trip-planning", "voyagier"],
+  "server": {
+    "type": "node",
+    "entry_point": "server/node_modules/@voyagier/cli/dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/server/node_modules/@voyagier/cli/dist/index.js",
+        "mcp"
+      ],
+      "env": {
+        "VOYAGIER_TOKEN": "${user_config.voyagier_token}"
+      }
+    }
+  },
+  "user_config": {
+    "voyagier_token": {
+      "type": "string",
+      "title": "Voyagier Personal Access Token",
+      "description": "Create at travel.voyagier.com → Settings → Personal Access Tokens. Access is by invitation — request at https://www.voyagier.com/agents.",
+      "sensitive": true,
+      "required": true
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=22.12.0"
+    }
+  }
+}

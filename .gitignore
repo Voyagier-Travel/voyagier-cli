@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 coverage/
+dist-mcpb/
 graphify-out/
 .openclaw/
 .graphifyignore
