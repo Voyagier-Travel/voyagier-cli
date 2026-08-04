@@ -268,6 +268,10 @@ describe("registerSearchCommands", () => {
      *  VOY-1780: lets the inline-wait re-fetch return a DIFFERENT (non-empty)
      *  set than the create mutation's initial (empty) options. */
     decisionOptions?: unknown[];
+    /** VOY-1835: monitor + inventory count backing the seededFrom block.
+     *  Absent → the selection resolves with no blueprintMonitorId and the
+     *  envelope omits seededFrom. */
+    seed?: { monitorId: string; totalAvailable: number };
   }
 
   function installRouter(cfg: RouterOpts = {}): void {
@@ -285,6 +289,14 @@ describe("registerSearchCommands", () => {
       if (query.includes("query TripPlanGoals")) return { tripPlanGoals: cfg.scaffoldGoals ?? [] };
       if (query.includes("createTripPlanGoal")) return { createTripPlanGoal: { id: "ng-scaffold", name: "Outbound Flights", type: "Flight" } };
       if (query.includes("deleteTripPlanGoal")) return { deleteTripPlanGoal: true };
+      // VOY-1835 seededFrom reads — must match BEFORE the generic
+      // getTripPlanSelection branch (both documents contain that field).
+      if (query.includes("TripPlanSelectionMonitorId")) {
+        return { getTripPlanSelection: { id: "sel-hdec", blueprintMonitorId: cfg.seed?.monitorId ?? null } };
+      }
+      if (query.includes("MonitorSeedCount")) {
+        return { blueprintMonitor: { id: cfg.seed?.monitorId ?? "mon-x", totalAvailableListings: cfg.seed?.totalAvailable ?? 0 } };
+      }
       if (query.includes("getTripPlanSelection")) {
         return { getTripPlanSelection: { id: "sel-reused", options: cfg.decisionOptions ?? options } };
       }
@@ -1218,6 +1230,61 @@ describe("registerSearchCommands", () => {
       expect(out.dryRun).toBe(true);
       // No goal-graph mutations in dry-run.
       expect(mockGraphql.mock.calls.some(c => String(c[0]).includes("createTripPlanHotelSelection"))).toBe(false);
+    });
+
+    it("--json emits seededFrom when the monitor holds more listings than shown (VOY-1835)", async () => {
+      installRouter({ goals: buildHotelGoals(), seed: { monitorId: "mon-1", totalAvailable: 12 } });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-08-01", "--checkout", "2026-08-05", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.optionCount).toBe(2);
+      expect(out.seededFrom).toMatchObject({ shown: 2, totalAvailable: 12 });
+      expect(out.seededFrom.note).toContain("STARTING shortlist");
+      expect(out.seededFrom.note).toContain("listings list --selection");
+      expect(out.seededFrom.note).toContain("listings add-to-selection");
+      // Existing envelope fields untouched (additive).
+      expect(out.topOptions).toHaveLength(2);
+    });
+
+    it("--json omits seededFrom when the inventory count doesn't exceed the shown set", async () => {
+      installRouter({ goals: buildHotelGoals(), seed: { monitorId: "mon-1", totalAvailable: 2 } });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-08-01", "--checkout", "2026-08-05", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.seededFrom).toBeUndefined();
+    });
+
+    it("--json omits seededFrom when the selection has no monitor (count unavailable)", async () => {
+      installRouter({ goals: buildHotelGoals() });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-08-01", "--checkout", "2026-08-05", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.seededFrom).toBeUndefined();
+    });
+
+    it("--agent surfaces the curated-shortlist line when more inventory exists (VOY-1835)", async () => {
+      installRouter({ goals: buildHotelGoals(), seed: { monitorId: "mon-1", totalAvailable: 12 } });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-08-01", "--checkout", "2026-08-05", "--agent",
+      ]);
+      expect(stdout()).toMatch(/curated shortlist of 12 available/);
+      expect(stdout()).toMatch(/listings list --selection/);
+    });
+
+    it("--agent omits the shortlist line when no extra inventory exists", async () => {
+      installRouter({ goals: buildHotelGoals(), seed: { monitorId: "mon-1", totalAvailable: 2 } });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-08-01", "--checkout", "2026-08-05", "--agent",
+      ]);
+      expect(stdout()).not.toMatch(/curated shortlist/);
     });
 
     it("throws VALIDATION for an invalid --checkin date", async () => {

@@ -11,6 +11,8 @@ import {
   CREATE_HOTEL_SELECTION,
   CREATE_ACTIVITY_SELECTION,
   GET_DECISION_SELECTION_OPTIONS,
+  GET_SELECTION_MONITOR_ID,
+  GET_MONITOR_SEED_COUNT,
 } from "../queries.js";
 import {
   loadGoals,
@@ -363,6 +365,47 @@ function searchJsonBody(
     ...(options.length > TOP_OPTIONS
       ? { note: `Showing top ${TOP_OPTIONS} of ${options.length} options — re-run with --full for the complete dump (large: includes raw provider bookingData), or refine with ${refineHint}.` }
       : {}),
+  };
+}
+
+/**
+ * Total available listings on the selection's blueprint monitor (VOY-1835).
+ * The backend intentionally seeds only a shortlist of options into a hotel
+ * decision selection; the full result set lives on the monitor. This reads
+ * the count so output can be honest about it. Best-effort: any failure (no
+ * monitor, field not yet deployed, network) returns null and the envelope
+ * simply omits seededFrom — never fails the search.
+ */
+async function fetchTotalAvailableListings(selectionId: string): Promise<number | null> {
+  try {
+    const selData = await graphql<{
+      getTripPlanSelection: { blueprintMonitorId?: string | null } | null;
+    }>(GET_SELECTION_MONITOR_ID, { tripPlanSelectionId: selectionId });
+    const monitorId = selData.getTripPlanSelection?.blueprintMonitorId;
+    if (!monitorId) return null;
+    const monData = await graphql<{
+      blueprintMonitor: { totalAvailableListings?: number | null } | null;
+    }>(GET_MONITOR_SEED_COUNT, { id: monitorId });
+    const n = monData.blueprintMonitor?.totalAvailableListings;
+    return typeof n === "number" && Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The `seededFrom` envelope block (VOY-1835): emitted only when the monitor
+ * holds more available listings than the options shown, so an agent knows the
+ * shortlist is a seed, not the market.
+ */
+function seededFromBlock(shown: number, totalAvailable: number | null): Record<string, unknown> {
+  if (totalAvailable == null || totalAvailable <= shown) return {};
+  return {
+    seededFrom: {
+      shown,
+      totalAvailable,
+      note: `Showing a curated shortlist of ${shown} hotels seeded from ${totalAvailable} available in this market. This is a STARTING shortlist, not the full inventory. To consider more: refine the search (narrow location/dates or add --min-rating/--max-total/--sort) to re-shop, or use \`voyagier listings list --selection <id>\` to browse the full set and \`voyagier listings add-to-selection <id> --listing <listingId>\` to add specific properties.`,
+    },
   };
 }
 
@@ -1281,6 +1324,11 @@ export function registerSearchCommands(program: Command): void {
           timestamp: new Date().toISOString(),
         });
 
+        // VOY-1835: the backend seeds only a shortlist of hotels into the
+        // selection; report the monitor's real inventory count so agents know
+        // more exist. Best-effort (null → omitted).
+        const totalAvailable = options.length > 0 ? await fetchTotalAvailableListings(selectionId) : null;
+
         if (opts.json) {
           process.stdout.write(JSON.stringify(searchJsonBody(
             {
@@ -1291,6 +1339,7 @@ export function registerSearchCommands(program: Command): void {
               ...reuseEnvelopeFields(reuse),
               ...hotelCalloutsJson(hotelCallouts(options)),
               ...(filteredToZero ? filteredToZeroJson(filteredToZero) : {}),
+              ...seededFromBlock(opts.full ? options.length : Math.min(options.length, TOP_OPTIONS), totalAvailable),
             },
             options as unknown as Array<Record<string, unknown>>,
             searchResults,
@@ -1322,6 +1371,9 @@ export function registerSearchCommands(program: Command): void {
             lines.push(agentHotelOptions(shown));
             if (options.length > shown.length) {
               lines.push(`_…and ${options.length - shown.length} more — \`--full\` lists all._`);
+            }
+            if (totalAvailable != null && totalAvailable > shown.length) {
+              lines.push(`_These ${shown.length} are a curated shortlist of ${totalAvailable} available — refine the search or use \`voyagier listings list --selection ${shellArg(selectionId)}\` to see more._`);
             }
             lines.push("");
             lines.push("**Next:** `voyagier select <number>`");
@@ -1364,6 +1416,9 @@ export function registerSearchCommands(program: Command): void {
         const hotelCallout = hotelCalloutLine(options);
         if (hotelCallout) console.log(chalk.dim(hotelCallout));
         console.log(formatHotels(options));
+        if (totalAvailable != null && totalAvailable > options.length) {
+          console.log(chalk.dim(`  Showing ${options.length} of ${totalAvailable} available — refine or \`voyagier listings list --selection ${selectionId}\` to see more.`));
+        }
         await printPlanFooter(tripPlanId);
         console.log(chalk.dim(`  Next: voyagier select <number>`));
       } catch (err) {
