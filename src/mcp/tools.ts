@@ -19,12 +19,26 @@
  */
 import { z } from "zod";
 
+/**
+ * MCP tool annotation hints — the subset of the SDK's `ToolAnnotations` we set.
+ * `readOnlyHint`: the tool does not mutate any state. `destructiveHint`: the
+ * tool performs an irreversible/real-world side effect (only `book` does).
+ */
+export interface ToolAnnotations {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+}
+
 /** A registered MCP tool: schema + argv builder + child timeout. */
 export interface ToolDef {
   name: string;
+  /** Human-readable display title surfaced to MCP clients. */
+  title: string;
   description: string;
   timeoutMs: number;
   inputSchema: z.ZodRawShape;
+  /** MCP client-directory hints (read-only / destructive). */
+  annotations: ToolAnnotations;
   /** Pure: validated tool input → CLI argv. */
   buildArgs: (input: Record<string, unknown>) => string[];
 }
@@ -35,9 +49,11 @@ export interface ToolDef {
  */
 function defineTool<S extends z.ZodRawShape>(def: {
   name: string;
+  title: string;
   description: string;
   timeoutMs: number;
   inputSchema: S;
+  annotations: ToolAnnotations;
   buildArgs: (input: z.infer<z.ZodObject<S>>) => string[];
 }): ToolDef {
   return def as unknown as ToolDef;
@@ -350,15 +366,18 @@ const INJECTION_NOTE =
 export const TOOLS: ToolDef[] = [
   defineTool({
     name: "doctor",
+    title: "Check connectivity",
     description:
       "Self-check the CLI environment (auth, schema reachability, local state, version) before doing real work. Run this first when you hit an unfamiliar error.",
     timeoutMs: T.short,
     inputSchema: {},
+    annotations: { readOnlyHint: true },
     buildArgs: () => buildDoctorArgs(),
   }),
 
   defineTool({
     name: "create_client",
+    title: "Create client",
     description:
       "Create or return an existing advisor CRM client by email (idempotent upsert). A trip plan requires a clientId. Returns { client, ok, created }.",
     timeoutMs: T.short,
@@ -367,11 +386,13 @@ export const TOOLS: ToolDef[] = [
       name: z.string().describe("Client display name (used when creating)."),
       type: z.string().optional().describe("Client type: Individual | Company | Group. Default Individual."),
     },
+    annotations: { readOnlyHint: false, destructiveHint: false },
     buildArgs: (i) => buildCreateClientArgs(i),
   }),
 
   defineTool({
     name: "plan_trip",
+    title: "Plan trip",
     description:
       "Scaffold a trip plan: creates the plan + a default goal graph (a round-trip + hotel TEMPLATE) and returns { tripPlanId, travellerIds, nextSteps }. It does NOT search or select — follow nextSteps to compose. Prune goals the brief doesn't need with the shape flags: one_way (drops the Return Flights goal), flight_only (drops the hotel goal), hotel_only (drops ALL flight goals). Omitting return alone does NOT make a plan one-way. Pass travellers as a comma-separated names string to add them inline.",
     timeoutMs: T.medium,
@@ -392,11 +413,13 @@ export const TOOLS: ToolDef[] = [
       hotel_only: z.boolean().optional().describe("Prune ALL flight goals (conflicts with flight flags)."),
       plan_id: z.string().optional().describe("Add to an existing plan id instead of creating a new one."),
     },
+    annotations: { readOnlyHint: false, destructiveHint: false },
     buildArgs: (i) => buildPlanTripArgs(i),
   }),
 
   defineTool({
     name: "add_traveller",
+    title: "Add traveller",
     description:
       "Add a traveller to a trip plan. Travellers are required before search. Gender and date of birth are required at flight checkout and passport data hard-gates international reservations — set them with the travellers_update tool (or pass gender/dob here) once you have them. Loyalty programs are applied at checkout best-effort — a booking never fails because of them.",
     timeoutMs: T.short,
@@ -411,11 +434,13 @@ export const TOOLS: ToolDef[] = [
       frequent_flyer: z.array(z.string()).optional().describe('Frequent-flyer programs as "AIRLINE:NUMBER", e.g. ["DL:1234567"]. Member number exactly as the airline issued it.'),
       hotel_loyalty: z.array(z.string()).optional().describe('Hotel loyalty programs as "CHAIN:NUMBER", e.g. ["HI:12345678"]. Member number is digits only — do NOT include the chain code prefix.'),
     },
+    annotations: { readOnlyHint: false, destructiveHint: false },
     buildArgs: (i) => buildAddTravellerArgs(i),
   }),
 
   defineTool({
     name: "travellers_update",
+    title: "Update traveller",
     description:
       "Update an existing traveller's record on a plan. Use to correct names or to fill the fields checkout requires: gender and date of birth (required at flight checkout) and passport data (hard-gates international reservations). Loyalty programs: passing frequent_flyer/hotel_loyalty REPLACES the existing list; clear_frequent_flyer/clear_hotel_loyalty remove all. At least one field must be provided.",
     timeoutMs: T.short,
@@ -437,22 +462,26 @@ export const TOOLS: ToolDef[] = [
       clear_frequent_flyer: z.boolean().optional().describe("Remove all frequent-flyer programs (mutually exclusive with frequent_flyer)."),
       clear_hotel_loyalty: z.boolean().optional().describe("Remove all hotel loyalty programs (mutually exclusive with hotel_loyalty)."),
     },
+    annotations: { readOnlyHint: false, destructiveHint: false },
     buildArgs: (i) => buildUpdateTravellerArgs(i),
   }),
 
   defineTool({
     name: "travellers_list",
+    title: "List travellers",
     description:
       "List the travellers on a plan. Use to discover traveller ids and to see which checkout-required fields are still missing (gender, date of birth, passport) — travellers may have been created outside this session, so never assume the roster. Pair with travellers_update to fill any gaps.",
     timeoutMs: T.short,
     inputSchema: {
       plan_id: z.string().describe("Trip plan id."),
     },
+    annotations: { readOnlyHint: true },
     buildArgs: (i) => buildTravellersListArgs(i),
   }),
 
   defineTool({
     name: "goal_add",
+    title: "Add goal",
     description:
       "Add a goal to a trip plan (no item/selection). A goal defines a slot the plan needs decided — e.g. an Activity goal is required before search_activities has anything to search against. type is a SelectionType (Activity, Flight, Hotel, HotelRoom, …), validated by the CLI. Returns the created goal; traveller assignment (if requested) is best-effort and surfaced in the result.",
     timeoutMs: T.short,
@@ -467,11 +496,13 @@ export const TOOLS: ToolDef[] = [
       travellers: z.string().optional().describe("Comma-separated traveller ids to assign after create (best-effort)."),
       idempotency_key: z.string().optional().describe("Echoed in output for client-side retry tracking."),
     },
+    annotations: { readOnlyHint: false, destructiveHint: false },
     buildArgs: (i) => buildGoalAddArgs(i),
   }),
 
   defineTool({
     name: "search_flights",
+    title: "Search flights",
     description:
       "Search flights against the plan's Flight goal (REUSES the goal's selection — does not create a new one). Returns a compact envelope { selectionId, optionCount, topOptions[≤10], requestedParams } (round trips also return returnSelectionId). Because the selection is reused (not refetched), the envelope also echoes effectiveParams (the params the reused inventory was originally searched with) and a warnings[] entry starting SELECTION_REUSED_PARAMS_MISMATCH when the requested params differ — treat the results as reflecting effectiveParams in that case. If optionCount is 0 the async fetch is still running — poll get_selection_options with wait. Round trip: pick BOTH legs; the SAME optionId appears in both legs' lists (leg-mirrored) — picking the identical id on outbound and return is intended. A topOption MAY also carry rankScore (typically 0-1, higher is better): the platform's value score, surfaced verbatim and informational only; server order remains the default and the CLI never re-sorts by it." +
       INJECTION_NOTE,
@@ -487,11 +518,13 @@ export const TOOLS: ToolDef[] = [
         .optional()
         .describe("Optional factual single-field sort of the returned options: price (cheapest first), duration (shortest first), or stops (fewest first). Omit to preserve the server's default value ordering (index 0 is the server's value pick, NOT the cheapest)."),
     },
+    annotations: { readOnlyHint: true },
     buildArgs: (i) => buildSearchFlightsArgs(i),
   }),
 
   defineTool({
     name: "search_hotels",
+    title: "Search hotels",
     description:
       "Search hotels against the plan's Hotel goal (REUSES the goal's selection). Returns a compact envelope { selectionId, optionCount, topOptions[≤10], requestedParams }. IMPORTANT: topOptions is a CURATED SEED shortlist (typically 5), NOT the full market. When the market holds more than the shortlist, the envelope includes a seededFrom block whose totalAvailable reports the real inventory count (best-effort: omitted when the count is unavailable or nothing beyond the shortlist exists — do NOT rely on it being present). To consider more options, either refine the search (narrower location/dates, sort/rating/price filters) to re-shop, or use the listings_list and listings_add_to_selection tools to browse the full set and promote specific properties into the decision. Because the selection is reused (not refetched), the envelope also echoes effectiveParams (the params the reused inventory was originally searched with) and a warnings[] entry starting SELECTION_REUSED_PARAMS_MISMATCH when the requested params differ — treat the results as reflecting effectiveParams in that case. Prices are STAY TOTALS, not nightly. If optionCount is 0 the async fetch is still running — poll get_selection_options with wait, then select." +
       INJECTION_NOTE,
@@ -506,11 +539,13 @@ export const TOOLS: ToolDef[] = [
         .optional()
         .describe("Optional factual sort of the returned options by price (cheapest first). Omit to preserve the server's default value ordering (index 0 is the server's value pick, NOT the cheapest). Duration/stops do not apply to hotels."),
     },
+    annotations: { readOnlyHint: true },
     buildArgs: (i) => buildSearchHotelsArgs(i),
   }),
 
   defineTool({
     name: "listings_list",
+    title: "List listings",
     description:
       "Browse the FULL set of available hotel/inventory listings on a selection's monitor (beyond the seeded shortlist). Returns id, name, price, rating, bookability for each. Use after search_hotels when you need more than the seeded options; then promote a listing with listings_add_to_selection." +
       INJECTION_NOTE,
@@ -519,11 +554,13 @@ export const TOOLS: ToolDef[] = [
       selection_id: z.string().describe("Selection id (from a search_hotels envelope)."),
       limit: z.number().int().optional().describe("Max listings to return (default 50, max 200)."),
     },
+    annotations: { readOnlyHint: true },
     buildArgs: (i) => buildListingsListArgs(i),
   }),
 
   defineTool({
     name: "listings_add_to_selection",
+    title: "Add listing to selection",
     description:
       "Promote a specific listing (from listings_list) into a selection as a pickable option, so it can be selected/booked. Use to consider hotels beyond the seeded shortlist.",
     timeoutMs: T.short,
@@ -531,11 +568,13 @@ export const TOOLS: ToolDef[] = [
       selection_id: z.string().describe("Selection id to add the listing to."),
       listing_id: z.string().describe("Listing id from listings_list."),
     },
+    annotations: { readOnlyHint: false, destructiveHint: false },
     buildArgs: (i) => buildListingsAddToSelectionArgs(i),
   }),
 
   defineTool({
     name: "search_activities",
+    title: "Search activities",
     description:
       "Search bookable activities/experiences against the plan's Activity goal. Returns a compact envelope { selectionId, optionCount, topOptions[≤10] }. If optionCount is 0 the async fetch is still running — poll get_selection_options with wait, then select." +
       INJECTION_NOTE,
@@ -546,11 +585,13 @@ export const TOOLS: ToolDef[] = [
       date: z.string().describe("Travel date (YYYY-MM-DD)."),
       query: z.string().optional().describe('Free-text query, e.g. "sushi tour".'),
     },
+    annotations: { readOnlyHint: true },
     buildArgs: (i) => buildSearchActivitiesArgs(i),
   }),
 
   defineTool({
     name: "get_selection_options",
+    title: "Get selection options",
     description:
       "Read a selection's options. Search is ASYNC: when a search returns optionCount 0 the inventory fetch is still running — with wait=true (default) this polls with backoff until the status is terminal (READY / NO_RESULTS / AWAITING_INPUT / FETCH_ERROR), then returns the options to select from." +
       INJECTION_NOTE,
@@ -559,11 +600,13 @@ export const TOOLS: ToolDef[] = [
       selection_id: z.string().describe("Selection id (from a search envelope)."),
       wait: z.boolean().optional().describe("Poll the async fetch to completion. Default true."),
     },
+    annotations: { readOnlyHint: true },
     buildArgs: (i) => buildGetSelectionOptionsArgs(i),
   }),
 
   defineTool({
     name: "select_option",
+    title: "Select option",
     description:
       "Choose an option on a selection by explicit selection + option id (defaults to choosing for all travellers). With wait=true (default), after the pick succeeds it polls until the pick is reflected server-side AND readiness settles, then returns a plan-status snapshot. A timed-out wait never means the pick failed. Round trip: call once per leg — the identical optionId on both legs is intended.",
     timeoutMs: T.search,
@@ -572,11 +615,13 @@ export const TOOLS: ToolDef[] = [
       option_id: z.string().describe("Option id to choose."),
       wait: z.boolean().optional().describe("Wait for the pick to reflect + readiness to settle. Default true."),
     },
+    annotations: { readOnlyHint: false, destructiveHint: false },
     buildArgs: (i) => buildSelectOptionArgs(i),
   }),
 
   defineTool({
     name: "itinerary",
+    title: "Trip itinerary",
     description:
       "Show the computed itinerary for a plan (the actual composed trip, sourced from the platform's tripPlanEvents): time-sorted events with per-leg routing, times, and locations. Use this after selecting flights or hotels to verify the real composed trip — per-leg routing (layovers/stops), times, and hotel check-in/out — before describing the trip to a user or booking. A compact option summary can hide connections; the itinerary is the ground truth. Returns the standard envelope: events are under data.events (with data.total and data.dayRange), alongside planContext." +
       INJECTION_NOTE,
@@ -584,33 +629,39 @@ export const TOOLS: ToolDef[] = [
     inputSchema: {
       plan_id: z.string().describe("Trip plan id."),
     },
+    annotations: { readOnlyHint: true },
     buildArgs: (i) => buildItineraryArgs(i),
   }),
 
   defineTool({
     name: "plan_status",
+    title: "Plan status",
     description:
       "ONE call answering 'what's left before this plan can book?'. Switch on data.readiness: BOOKED | READY_TO_BOOK | BLOCKED (act on data.blockers[]/nextSteps[]) | IN_PROGRESS (system is working — poll, don't act). book_dry_run is the checkout truth on any contradiction.",
     timeoutMs: T.short,
     inputSchema: {
       plan_id: z.string().describe("Trip plan id."),
     },
+    annotations: { readOnlyHint: true },
     buildArgs: (i) => buildPlanStatusArgs(i),
   }),
 
   defineTool({
     name: "quote",
+    title: "Quote trip",
     description:
       "Produce the advisor offer snapshot for a plan: items, chargeableTotal, and a machine-readable acceptance block { command, itemIds, expectedTotal }. quote's chargeableTotal equals the book price gate, so the acceptance total can never fail its own gate on an unchanged cart.",
     timeoutMs: T.medium,
     inputSchema: {
       plan_id: z.string().describe("Trip plan id."),
     },
+    annotations: { readOnlyHint: true },
     buildArgs: (i) => buildQuoteArgs(i),
   }),
 
   defineTool({
     name: "book_dry_run",
+    title: "Preview checkout",
     description:
       "Preview a checkout WITHOUT creating one and WITHOUT needing a price gate: returns the chargeable subtotal, blockers, existing checkouts, and the next step. Optionally pass expect_total to also get a gate verdict (data.gate.{wouldPass,failReason}) — pre-verify without risking PRICE_CHANGED. This is the checkout truth; run it before book.",
     timeoutMs: T.medium,
@@ -618,11 +669,13 @@ export const TOOLS: ToolDef[] = [
       plan_id: z.string().describe("Trip plan id."),
       expect_total: money.optional().describe("Optional gate to pre-verify (dollars, e.g. 339.10 or \"339.10\"). Pass the exact string from book_dry_run output when possible."),
     },
+    annotations: { readOnlyHint: true },
     buildArgs: (i) => buildBookDryRunArgs(i),
   }),
 
   defineTool({
     name: "book",
+    title: "Book the trip",
     description:
       "Create a real Stripe checkout for the bookable items. REQUIRES expect_total — this is the price hard-gate: the checkout is created only if the chargeable subtotal equals expect_total exactly (cents-compared), else it fails closed with PRICE_CHANGED and NO checkout is created. Get the current subtotal from book_dry_run first. Never retry a successful book (unpaid sessions are invisible and a retry mints a duplicate link).",
     timeoutMs: T.medium,
@@ -636,22 +689,26 @@ export const TOOLS: ToolDef[] = [
       rebook: z.boolean().optional().describe("Proceed even though a Paid checkout already exists (intentional second charge)."),
       force_checkout: z.boolean().optional().describe("Skip the client-side readiness guard (refuses checkout on hard traveller-data/other blockers) and trust the server's own validation."),
     },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     buildArgs: (i) => buildBookArgs(i),
   }),
 
   defineTool({
     name: "booking_status",
+    title: "Booking status",
     description:
       "Show payment + booking status for past checkouts on a plan (post-payment confirmation lookup). Booking-record amounts are raw CENTS.",
     timeoutMs: T.short,
     inputSchema: {
       plan_id: z.string().describe("Trip plan id."),
     },
+    annotations: { readOnlyHint: true },
     buildArgs: (i) => buildBookingStatusArgs(i),
   }),
 
   defineTool({
     name: "bookings_list",
+    title: "List bookings",
     description:
       "List booking records for a plan with their status (Pending/Confirmed/Failed/Cancelled). Check it after any book call and before telling a user their trip is secured — a created checkout is not yet a confirmed booking. Booking-record amounts are raw CENTS (amountCents)." +
       INJECTION_NOTE,
@@ -659,15 +716,18 @@ export const TOOLS: ToolDef[] = [
     inputSchema: {
       plan_id: z.string().describe("Trip plan id."),
     },
+    annotations: { readOnlyHint: true },
     buildArgs: (i) => buildBookingsListArgs(i),
   }),
 
   defineTool({
     name: "agent_docs",
+    title: "Voyagier agent guide",
     description:
       "Print the full Voyagier agent reference (AGENT.md) as markdown — the canonical integration guide for the compose/close loop, error codes, and quirks.",
     timeoutMs: T.quick,
     inputSchema: {},
+    annotations: { readOnlyHint: true },
     buildArgs: () => buildAgentDocsArgs(),
   }),
 ];

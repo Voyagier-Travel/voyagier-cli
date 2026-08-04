@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, jest } from "@jest/globals";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer, type CliRunner, INSTRUCTIONS } from "./server.js";
 import type { CliResult } from "./exec.js";
@@ -249,6 +250,51 @@ describe("MCP server integration", () => {
     })) as TextResult;
     expect(res.isError).toBe(true);
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("registerTool receives each tool's title + annotations config", () => {
+    // Capture the config object every registerTool call gets, then assert the
+    // title/annotations plumbed through from the TOOLS table survive the wiring.
+    type RegisterToolCfg = { title?: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } };
+    const configs = new Map<string, RegisterToolCfg>();
+    const spy = jest
+      .spyOn(McpServer.prototype, "registerTool")
+      .mockImplementation(function (this: McpServer, name: string, config: RegisterToolCfg) {
+        configs.set(name, config);
+        return {} as ReturnType<McpServer["registerTool"]>;
+      });
+    try {
+      createServer({ version: "9.9.9", run: okRun });
+    } finally {
+      spy.mockRestore();
+    }
+
+    // Every tool got a non-empty title and annotations with readOnlyHint defined.
+    expect(configs.size).toBe(EXPECTED_TOOL_NAMES.length);
+    for (const name of EXPECTED_TOOL_NAMES) {
+      const cfg = configs.get(name);
+      expect(cfg).toBeDefined();
+      expect(typeof cfg!.title).toBe("string");
+      expect(cfg!.title!.length).toBeGreaterThan(0);
+      expect(typeof cfg!.annotations?.readOnlyHint).toBe("boolean");
+    }
+    // book is the destructive one; read-only tools are not destructive.
+    expect(configs.get("book")!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    expect(configs.get("doctor")!.annotations).toMatchObject({ readOnlyHint: true });
+    expect(configs.get("doctor")!.annotations!.destructiveHint).not.toBe(true);
+  });
+
+  it("tools/list surfaces titles + annotations to the client", async () => {
+    const { client } = await connect();
+    const { tools } = await client.listTools();
+    const book = tools.find((t) => t.name === "book")!;
+    expect(book.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    const doctor = tools.find((t) => t.name === "doctor")!;
+    expect(doctor.annotations).toMatchObject({ readOnlyHint: true });
+    for (const t of tools) {
+      expect(typeof t.title).toBe("string");
+      expect((t.title ?? "").length).toBeGreaterThan(0);
+    }
   });
 
   it("search_hotels: sort=price maps to --sort price", async () => {
