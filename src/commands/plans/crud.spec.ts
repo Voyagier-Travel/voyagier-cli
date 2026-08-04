@@ -40,11 +40,30 @@ jest.unstable_mockModule("../../api.js", () => ({
   graphql: mockGraphql,
   graphqlWithFieldFallback: graphqlWithFieldFallbackDouble,
   AuthError: class AuthError extends Error {},
+  // Rest of api.js's surface, stubbed so the full command tree pulled in by
+  // build-program.js (imported below for the real routeParseErrorsToJson hook)
+  // links cleanly.
+  streamChat: jest.fn(),
+  __resetFieldFallbackCache: jest.fn(),
 }));
 
 jest.unstable_mockModule("../../config.js", () => ({
   getApiUrl: jest.fn().mockReturnValue("https://dev.voyagier.com/api"),
   CONFIG_DIR: "/tmp/test-config",
+  // Rest of config.js's surface, stubbed so build-program.js and the real
+  // state/selection-wait/clients modules it pulls in link cleanly. crud never
+  // calls these; they exist only to satisfy imports at link time.
+  getHomeAirports: jest.fn(() => []),
+  getPreferredCabin: jest.fn(() => null),
+  assertSecureApiUrl: jest.fn(),
+  saveCredentials: jest.fn(),
+  saveUserContext: jest.fn(),
+  getUserContext: jest.fn(() => null),
+  resetEnvUrlWarningForTests: jest.fn(),
+  loadCredentials: jest.fn(() => null),
+  clearCredentials: jest.fn(),
+  getToken: jest.fn(() => "test-token"),
+  credentialsExist: jest.fn(() => true),
 }));
 
 // Stub plan-footer so registerCrudCommands doesn't try to fetch a footer in tests.
@@ -54,10 +73,14 @@ jest.unstable_mockModule("../../plan-footer.js", () => ({
 }));
 
 let registerCrudCommands: (plans: Command) => void;
+let routeParseErrorsToJson: (cmd: Command) => void;
 
 beforeAll(async () => {
   const mod = await import("./crud.js");
   registerCrudCommands = mod.registerCrudCommands;
+  // The real production hook: wired onto the test program below so these specs
+  // exercise the actual --json routing and fail if it is reverted (VOY-1829).
+  ({ routeParseErrorsToJson } = await import("../../build-program.js"));
 });
 
 beforeEach(() => {
@@ -99,6 +122,7 @@ async function runPlansCreate(args: string[]): Promise<void> {
   program.exitOverride();
   const plans = program.command("plans");
   registerCrudCommands(plans);
+  routeParseErrorsToJson(program);
   await program.parseAsync(["node", "voyagier", "plans", "create", ...args]);
 }
 
@@ -262,17 +286,33 @@ describe("plans create — client wiring", () => {
     expect(mockGraphql).not.toHaveBeenCalled();
   });
 
-  // --json is a non-interactive machine mode: same commander failure, and
-  // stdout MUST stay empty (no JSON error envelope), exactly as when the parser
-  // rejected the missing required option.
-  it("missing --title under --json: commander bytes on stderr, empty stdout", async () => {
-    const err = await runPlansCreate(["--json"]).catch(
-      (e) => e as { exitCode?: number; message?: string },
-    );
-    expect(err.message).toBe("error: required option '--title <title>' not specified");
-    expect(err.exitCode).toBe(1);
-    expect(stderrWrites.join("")).toBe("error: required option '--title <title>' not specified\n");
-    expect(writes.join("")).toBe("");
+  // --json is a non-interactive machine mode. VOY-1829 supersedes the old
+  // byte-identity contract for this path: with --json in argv, the build-program
+  // hook routes the synthesized parse failure to the uniform VALIDATION envelope
+  // on stdout, leaving stderr empty. The thrown CommanderError still carries
+  // commander's own code/exit. --json is detected by scanning process.argv (the
+  // parser has not parsed options yet when it errors), so we reflect the real
+  // argv the production entrypoint would see. This assertion FAILS if the hook
+  // is reverted or argv detection breaks.
+  it("missing --title under --json: VALIDATION envelope on stdout, empty stderr", async () => {
+    const savedArgv = process.argv;
+    process.argv = ["node", "voyagier", "plans", "create", "--json"];
+    try {
+      const err = await runPlansCreate(["--json"]).catch(
+        (e) => e as { code?: string; exitCode?: number; message?: string },
+      );
+      // CommanderError still propagates with commander's own code/exit.
+      expect(err.code).toBe("commander.missingMandatoryOptionValue");
+      expect(err.exitCode).toBe(1);
+      // Envelope on stdout; stderr untouched (no bare commander text).
+      expect(stderrWrites.join("")).toBe("");
+      const payload = JSON.parse(writes.join(""));
+      expect(payload).toMatchObject({ error: true, code: CliErrorCode.VALIDATION });
+      expect(payload.message).toBe("error: required option '--title <title>' not specified");
+    } finally {
+      process.argv = savedArgv;
+    }
+    expect(mockGraphql).not.toHaveBeenCalled();
   });
 
   // --no-input is the explicit escape hatch: even if a TTY were present, it must

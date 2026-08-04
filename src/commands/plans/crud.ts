@@ -30,14 +30,15 @@ export function registerCrudCommands(plans: Command): void {
     .option("--no-input", "Never prompt for missing input; fail instead (for scripts, agents, CI)")
     .action(async (opts, command) => {
       // Title was a commander requiredOption; now optional so a human at a TTY
-      // can be prompted (VOY-1762). Non-interactively, reproduce commander's
-      // missing-required-option failure BYTE-FOR-BYTE: `error: required option
-      // '--title <title>' not specified` on stderr, empty stdout (even under
-      // --json — the old parse failure never reached the JSON error envelope),
-      // exit 1. `command.error(...)` is commander's own mechanism, so this is
-      // the exact path the parser used to take. Resolved BEFORE the try below so
-      // the thrown CommanderError (under exitOverride, in tests) is not caught
-      // and re-wrapped as an API_ERROR.
+      // can be prompted (VOY-1762). Non-interactively, synthesize commander's
+      // missing-required-option failure via `command.error(...)`: `error:
+      // required option '--title <title>' not specified`. WITHOUT --json that
+      // renders as commander's text on stderr with an empty stdout; WITH --json
+      // in argv the build-program hook routes it to the uniform { error: true,
+      // code: "VALIDATION", message } envelope on stdout (VOY-1829, superseding
+      // the VOY-1762 byte-identity note for the --json path only). Exit 1 either
+      // way. Resolved BEFORE the try below so the thrown CommanderError (under
+      // exitOverride, in tests) is not caught and re-wrapped as an API_ERROR.
       if (!opts.title) {
         if (isInteractive(opts)) {
           opts.title = await promptText("Trip title: ", { default: generateTripTitle({}) });

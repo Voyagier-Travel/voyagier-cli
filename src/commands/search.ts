@@ -63,18 +63,20 @@ import type { FlightFilters, HotelFilters, FilteredToZero, FlightCallouts, Hotel
 
 /**
  * Resolve a date flag that used to be a commander `requiredOption` (VOY-1762):
- * return it if present, prompt for it at an interactive TTY, otherwise reproduce
- * commander's original missing-required-option failure BYTE-FOR-BYTE. Agents /
- * CI / --json / --agent / --no-input all fall through to that failure.
+ * return it if present, prompt for it at an interactive TTY, otherwise
+ * synthesize commander's original missing-required-option failure via
+ * `command.error(...)`. Agents / CI / --json / --agent / --no-input all fall
+ * through to that failure.
  *
- * Byte-identity matters: a missing `--date` used to be caught by commander's
- * parser (`.requiredOption`), which writes `error: required option '--date
- * <date>' not specified` to stderr, leaves stdout empty (even under --json — the
- * parser never reaches our JSON error envelope), and exits 1. We reproduce that
- * exactly via `command.error(...)` so agents/CI parsing the old string, and
- * pipelines relying on an empty stdout, keep working. In production (no
- * exitOverride) commander's own `_exit` terminates the process; under test
- * (exitOverride) it throws a CommanderError — same path commander always used.
+ * How it surfaces depends on argv (VOY-1829, superseding the VOY-1762
+ * byte-identity note for the --json path only): WITHOUT --json it renders as
+ * commander's exact text — `error: required option '--date <date>' not
+ * specified` — on stderr with an empty stdout; WITH --json in argv the
+ * build-program hook routes it to the uniform { error: true, code:
+ * "VALIDATION", message } envelope on stdout instead. Exit code is 1 either
+ * way. In production (no exitOverride) commander's own `_exit` terminates the
+ * process; under test (exitOverride) it throws a CommanderError — same path
+ * commander always used.
  */
 async function resolveDateOpt(
   current: string | undefined,
@@ -728,7 +730,9 @@ export function registerSearchCommands(program: Command): void {
       // --date rather than the "No origin specified" error. It also sits OUTSIDE
       // the try below so the CommanderError `command.error` throws (under
       // exitOverride, in tests) is not swallowed and re-wrapped by
-      // handleSearchError — it must surface with commander's exact bytes/code.
+      // handleSearchError — it must surface with commander's own code/exit, and
+      // its text on stderr WITHOUT --json or the VALIDATION envelope on stdout
+      // WITH --json in argv (VOY-1829).
       opts.date = await resolveDateOpt(opts.date, opts, "Departure date (YYYY-MM-DD): ", command);
       try {
         const quiet = !!(opts.json || opts.agent);

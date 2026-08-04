@@ -388,6 +388,24 @@ describe("travellers update", () => {
       code: CliErrorCode.API_ERROR,
     });
   });
+
+  it("accepts an optional --plan for symmetry with add, but does not send it (VOY-1829)", async () => {
+    mockGraphql.mockResolvedValueOnce({ updateTripPlanTraveller: sampleTraveller });
+    // --plan must not throw an unknown-option error and must not leak into the
+    // mutation input — the traveller <id> already identifies the record.
+    await run(["update", "trv_01", "--plan", "plan-1", "--first", "Johnny", "--json"]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.id).toBe("trv_01");
+    expect(vars.input).toEqual({ firstName: "Johnny" });
+    expect(vars.input).not.toHaveProperty("plan");
+  });
+
+  it("still reports VALIDATION when --plan is the only flag (it is not an update)", async () => {
+    await expect(run(["update", "trv_01", "--plan", "plan-1", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.VALIDATION,
+    });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
 });
 
 // ── loyalty programs (flights + hotels) ──────────────────────────────────────

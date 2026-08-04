@@ -274,6 +274,8 @@ When in doubt: pipe `--json` through `jq keys` to inspect.
 
 Branch on `code`. The CLI exits 1 for `CliError`s, 2 for unexpected errors. Pass `--stacktrace` to get the full stack on stderr alongside the JSON.
 
+Argument-parse failures (unknown option, missing required option/argument, invalid argument value) also honor this envelope **when you pass `--json`**: they emit `{ "error": true, "code": "VALIDATION", "message": ... }` on stdout and exit 1. Without `--json` those failures print a bare `error: ...` line to stderr instead — so always drive the CLI with `--json` if you parse stdout.
+
 ### Error codes (what the CLI actually emits today)
 
 | Code | Meaning | Typical recovery |
@@ -440,7 +442,7 @@ Sourced from the `tripPlanEvents` resolver. Output:
 voyagier travellers add --plan <id> --first <f> --last <l> --type Adult|Child|Infant --json
 voyagier travellers add --plan <id> --first <f> --last <l> --frequent-flyer DL:1234567 --hotel-loyalty HI:12345678 --json
 voyagier travellers list --plan <id> --json
-voyagier travellers update <travellerId> [...] --json   # incl. --frequent-flyer / --hotel-loyalty (replace) and --clear-frequent-flyer / --clear-hotel-loyalty
+voyagier travellers update <travellerId> [--plan <id>] [...] --json   # --plan is optional context (the traveller id already identifies the record); incl. --frequent-flyer / --hotel-loyalty (replace) and --clear-frequent-flyer / --clear-hotel-loyalty
 voyagier travellers remove <travellerId> --json
 ```
 
