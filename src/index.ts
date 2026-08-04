@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { readFileSync } from "fs";
-import { buildProgram } from "./build-program.js";
+import { buildProgram, argvRequestsJson } from "./build-program.js";
 import { trackCommand, getTraceId, isTelemetryEnabled, telemetryErrorCode } from "./telemetry.js";
 import { gracefulExit } from "./exit.js";
 import { credentialsExist } from "./config.js";
@@ -64,7 +64,9 @@ try {
   await program.parseAsync();
 } catch (err) {
   if (err instanceof CliError) {
-    const isJson = process.argv.includes("--json");
+    // Same terminator-aware scan as the parse-error path in build-program.ts:
+    // `--json` after a bare `--` is positional data, not the output flag.
+    const isJson = argvRequestsJson(process.argv);
     if (isJson) {
       const payload: Record<string, unknown> = { error: true, code: err.code, message: err.message };
       if (err.details) payload.details = err.details;

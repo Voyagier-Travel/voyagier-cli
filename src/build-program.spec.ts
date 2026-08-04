@@ -1,6 +1,6 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import type { Command } from "commander";
-import { buildProgram } from "./build-program.js";
+import { argvRequestsJson, buildProgram } from "./build-program.js";
 
 /**
  * Argument-parse error contract (VOY-1829)
@@ -144,5 +144,25 @@ describe("help and version are unaffected", () => {
     expect(exitCode).toBe(0);
     expect(stdout.join("")).toContain("0.0.0-test");
     expect(stdout.join("")).not.toContain('"error": true');
+  });
+});
+
+describe("argvRequestsJson (shared by parse-error and CliError paths)", () => {
+  // src/index.ts uses this same helper for its top-level CliError handler, so
+  // these cases pin JSON-mode detection for ALL error paths at once.
+  it("detects --json as an option token", () => {
+    expect(argvRequestsJson(["node", "voyagier", "plans", "list", "--json"])).toBe(true);
+  });
+
+  it("ignores --json after a bare -- terminator (positional data)", () => {
+    expect(argvRequestsJson(["node", "voyagier", "send", "--", "--json"])).toBe(false);
+  });
+
+  it("detects --json before a terminator even when more args follow it", () => {
+    expect(argvRequestsJson(["node", "voyagier", "send", "--json", "--", "--json"])).toBe(true);
+  });
+
+  it("is false when --json is absent", () => {
+    expect(argvRequestsJson(["node", "voyagier", "plans", "list"])).toBe(false);
   });
 });

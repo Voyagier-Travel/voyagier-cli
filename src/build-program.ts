@@ -77,8 +77,12 @@ export function routeParseErrorsToJson(cmd: Command): void {
  * bare `--` terminator. Everything after a lone `--` is a positional value, so
  * a trailing `... -- --json` passes `--json` as data, not the output flag, and
  * must NOT switch us onto the JSON error path.
+ *
+ * Exported and shared with the entrypoint's top-level CliError handler so
+ * JSON-mode detection is consistent across ALL error paths (parse failures
+ * here, runtime CliErrors in src/index.ts).
  */
-function argvRequestsJson(argv: readonly string[]): boolean {
+export function argvRequestsJson(argv: readonly string[]): boolean {
   const terminator = argv.indexOf("--");
   const options = terminator === -1 ? argv : argv.slice(0, terminator);
   return options.includes("--json");
