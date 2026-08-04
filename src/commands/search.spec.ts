@@ -291,7 +291,7 @@ describe("registerSearchCommands", () => {
       if (query.includes("deleteTripPlanGoal")) return { deleteTripPlanGoal: true };
       // VOY-1835 seededFrom reads — must match BEFORE the generic
       // getTripPlanSelection branch (both documents contain that field).
-      if (query.includes("TripPlanSelectionWithMonitor")) {
+      if (query.includes("TripPlanSelectionMonitorId")) {
         return { getTripPlanSelection: { id: "sel-hdec", blueprintMonitorId: cfg.seed?.monitorId ?? null } };
       }
       if (query.includes("MonitorSeedCount")) {

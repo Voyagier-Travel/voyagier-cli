@@ -11,7 +11,7 @@ import {
   CREATE_HOTEL_SELECTION,
   CREATE_ACTIVITY_SELECTION,
   GET_DECISION_SELECTION_OPTIONS,
-  GET_SELECTION_WITH_MONITOR,
+  GET_SELECTION_MONITOR_ID,
   GET_MONITOR_SEED_COUNT,
 } from "../queries.js";
 import {
@@ -380,7 +380,7 @@ async function fetchTotalAvailableListings(selectionId: string): Promise<number 
   try {
     const selData = await graphql<{
       getTripPlanSelection: { blueprintMonitorId?: string | null } | null;
-    }>(GET_SELECTION_WITH_MONITOR, { tripPlanSelectionId: selectionId });
+    }>(GET_SELECTION_MONITOR_ID, { tripPlanSelectionId: selectionId });
     const monitorId = selData.getTripPlanSelection?.blueprintMonitorId;
     if (!monitorId) return null;
     const monData = await graphql<{

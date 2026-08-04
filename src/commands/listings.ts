@@ -23,7 +23,7 @@ import {
   GET_BLUEPRINT_LISTING_CHANGE_EVENTS,
   GET_BLUEPRINT_LISTING_CHANGE_EVENTS_BY_TYPE,
   ADD_BLUEPRINT_LISTING_AS_SELECTION_OPTION,
-  GET_SELECTION_WITH_MONITOR,
+  GET_SELECTION_MONITOR_ID,
   GET_MONITOR_LISTINGS,
 } from "../queries.js";
 
@@ -168,7 +168,7 @@ export function registerListingsCommands(program: Command): void {
 
       const selectionData = await graphql<{
         getTripPlanSelection: { id: string; blueprintMonitorId?: string | null } | null;
-      }>(GET_SELECTION_WITH_MONITOR, { tripPlanSelectionId: selectionId });
+      }>(GET_SELECTION_MONITOR_ID, { tripPlanSelectionId: selectionId });
 
       const selection = selectionData.getTripPlanSelection;
       if (!selection) {
@@ -277,12 +277,12 @@ export function registerListingsCommands(program: Command): void {
       // Group A: Strict validation for --limit
       const limit = parsePositiveInt(opts.limit, "--limit", { default: 20, max: 100 }) ?? 20;
 
-      // GET_SELECTION_WITH_MONITOR is now the generic, shape-agnostic union query
-      // (getTripPlanSelection(tripPlanSelectionId)); listings only needs id +
-      // blueprintMonitorId, which the union returns as a superset.
+      // GET_SELECTION_MONITOR_ID is the tiny shape-agnostic union query — this
+      // command only needs id + blueprintMonitorId, not the full selection
+      // payload (Copilot pass, VOY-1835).
       const selectionData = await graphql<{
         getTripPlanSelection: { id: string; blueprintMonitorId?: string | null } | null;
-      }>(GET_SELECTION_WITH_MONITOR, { tripPlanSelectionId: selectionId });
+      }>(GET_SELECTION_MONITOR_ID, { tripPlanSelectionId: selectionId });
 
       const selection = selectionData.getTripPlanSelection;
       if (!selection) {

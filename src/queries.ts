@@ -1085,6 +1085,27 @@ export const GET_BLUEPRINT_MONITOR = `
 `;
 
 /**
+ * Selection → monitor id ONLY (VOY-1835 Copilot pass). Shape-agnostic like
+ * GET_SELECTION_WITH_MONITOR but deliberately tiny: callers that only need to
+ * hop from a selection to its blueprint monitor (seeded-from count, listings
+ * browse) must not drag the full selection payload (inputs, options,
+ * traveller choices) over the wire.
+ */
+export const GET_SELECTION_MONITOR_ID = `
+  query TripPlanSelectionMonitorId($tripPlanSelectionId: String!) {
+    getTripPlanSelection(tripPlanSelectionId: $tripPlanSelectionId) {
+      __typename
+${TRIP_PLAN_SELECTION_UNION_MEMBERS.map(
+    (m) => `      ... on ${m} {
+        id
+        blueprintMonitorId
+      }`,
+  ).join("\n")}
+    }
+  }
+`;
+
+/**
  * Monitor inventory count only (VOY-1835). Fetched after a hotel search so
  * the envelope can report how many listings exist in the market beyond the
  * seeded shortlist. Deliberately tiny — no listings, no optionData.
