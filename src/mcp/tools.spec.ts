@@ -79,6 +79,35 @@ describe("TOOLS table", () => {
       expect(t.timeoutMs).toBeGreaterThan(0);
     }
   });
+
+  it("every tool declares a non-empty title", () => {
+    for (const t of TOOLS) {
+      expect(typeof t.title).toBe("string");
+      expect(t.title.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it("every tool declares annotations with readOnlyHint defined", () => {
+    for (const t of TOOLS) {
+      expect(t.annotations).toBeDefined();
+      expect(typeof t.annotations).toBe("object");
+      expect(typeof t.annotations.readOnlyHint).toBe("boolean");
+    }
+  });
+
+  it("book is the destructive tool (destructiveHint:true, not read-only)", () => {
+    const book = TOOLS.find((t) => t.name === "book")!;
+    expect(book.annotations.destructiveHint).toBe(true);
+    expect(book.annotations.readOnlyHint).toBe(false);
+  });
+
+  it("no read-only tool is also marked destructive", () => {
+    for (const t of TOOLS) {
+      if (t.annotations.readOnlyHint === true) {
+        expect(t.annotations.destructiveHint).not.toBe(true);
+      }
+    }
+  });
 });
 
 describe("argv builders", () => {

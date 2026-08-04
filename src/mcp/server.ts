@@ -71,7 +71,7 @@ export function createServer(deps: CreateServerDeps = {}): McpServer {
   for (const tool of TOOLS) {
     server.registerTool(
       tool.name,
-      { description: tool.description, inputSchema: tool.inputSchema },
+      { title: tool.title, description: tool.description, inputSchema: tool.inputSchema, annotations: tool.annotations },
       async (input: Record<string, unknown>) => {
         const args = tool.buildArgs(input ?? {});
         const result = await run(args, tool.timeoutMs);
