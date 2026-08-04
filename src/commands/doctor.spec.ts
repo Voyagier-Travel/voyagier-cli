@@ -200,6 +200,32 @@ describe("voyagier doctor", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it("schema check reports a non-degrading skip when the server disables introspection (VOY-1836)", async () => {
+    mockCredentialsExist.mockReturnValue(true);
+    mockGetUserContext.mockReturnValue({ email: "daniel@voyagier.com" });
+    mockGraphql.mockImplementation(async (query: string) => {
+      if (query.includes("DoctorIdentity")) return { me: { email: "daniel@voyagier.com" } };
+      // Production hardening: Apollo refuses introspection.
+      throw new Error("GraphQL introspection is not allowed by Apollo Server");
+    });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "doctor", "--json"]);
+
+    const reported = mockJsonOutput.mock.calls[0][0] as {
+      ok: boolean;
+      data: { overall: string; checks: Array<{ name: string; status: string; message: string }> };
+    };
+    const schema = reported.data.checks.find((c) => c.name === "schema");
+    expect(schema?.status).toBe("PASS");
+    expect(schema?.message).toMatch(/introspection/i);
+    expect(schema?.message).toMatch(/not an error/i);
+    // Auth passed via the real authenticated query, so the overall verdict
+    // must not be degraded by the deliberate prod introspection block.
+    expect(reported.data.checks.find((c) => c.name === "auth")?.status).toBe("PASS");
+    expect(reported.data.overall).not.toBe("FAIL");
+  });
+
   it("reports FAIL when no credentials exist", async () => {
     mockCredentialsExist.mockReturnValue(false);
 
@@ -273,11 +299,10 @@ describe("voyagier doctor", () => {
     expect(auth?.message).toBe("Authenticated as Nameless User");
   });
 
-  it("falls back to cached context when the API identity lookup fails (still PASS)", async () => {
+  it("reports WARN when the identity probe fails with a non-auth error (VOY-1836: the me query IS the auth check)", async () => {
     mockCredentialsExist.mockReturnValue(true);
     mockGetUserContext.mockReturnValue({ email: "cached@voyagier.com" });
     mockGraphql.mockImplementation(async (query: string) => {
-      // The ping (and introspection) succeed; only the identity read fails.
       if (query.includes("DoctorIdentity")) throw new Error("identity read blip");
       return { __schema: { queryType: { name: "Query" } } };
     });
@@ -289,9 +314,48 @@ describe("voyagier doctor", () => {
       data: { checks: Array<{ name: string; status: string; message: string }> };
     };
     const auth = reported.data.checks.find((c) => c.name === "auth");
-    // A failed identity lookup must NOT downgrade an otherwise-passing auth check.
+    // The authenticated identity query is now the auth probe itself — a
+    // non-auth failure means the check could not complete (inconclusive).
+    expect(auth?.status).toBe("WARN");
+    expect(auth?.message).toContain("could not complete");
+  });
+
+  it("falls back to cached context when the identity returns no usable fields (still PASS)", async () => {
+    mockCredentialsExist.mockReturnValue(true);
+    mockGetUserContext.mockReturnValue({ email: "cached@voyagier.com" });
+    mockGraphql.mockImplementation(async (query: string) => {
+      if (query.includes("DoctorIdentity")) return { me: {} };
+      return { __schema: { queryType: { name: "Query" } } };
+    });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "doctor", "--json"]);
+
+    const reported = mockJsonOutput.mock.calls[0][0] as {
+      data: { checks: Array<{ name: string; status: string; message: string }> };
+    };
+    const auth = reported.data.checks.find((c) => c.name === "auth");
     expect(auth?.status).toBe("PASS");
     expect(auth?.message).toBe("Authenticated as cached@voyagier.com");
+  });
+
+  it("never sends an introspection query as the auth probe (VOY-1836: prod disables introspection)", async () => {
+    mockCredentialsExist.mockReturnValue(true);
+    mockGetUserContext.mockReturnValue(null);
+    mockGraphql.mockImplementation(async (query: string) => {
+      if (query.includes("DoctorIdentity")) return { me: { email: "a@b.c" } };
+      return { __schema: { queryType: { name: "Query" } } };
+    });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "doctor", "--json"]);
+
+    // checkAuth runs before any other GraphQL traffic, so the FIRST query the
+    // doctor sends must be the authenticated identity probe — never any form
+    // of introspection (robust to getIntrospectionQuery() formatting).
+    const firstQuery = mockGraphql.mock.calls[0]?.[0] as string;
+    expect(firstQuery).toContain("DoctorIdentity");
+    expect(firstQuery).not.toMatch(/__schema/);
   });
 
   it("reports 'unknown' only when neither API nor cached identity is available", async () => {
