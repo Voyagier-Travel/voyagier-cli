@@ -25,7 +25,8 @@ import { z } from "zod";
  * tool performs an irreversible/real-world side effect (only `book` does).
  */
 export interface ToolAnnotations {
-  readOnlyHint?: boolean;
+  /** Required (not optional as in the SDK): every tool must declare read-only or not. */
+  readOnlyHint: boolean;
   destructiveHint?: boolean;
 }
 
