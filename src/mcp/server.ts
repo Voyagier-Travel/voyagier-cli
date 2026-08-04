@@ -1,7 +1,7 @@
 /**
  * MCP server construction for `voyagier mcp`.
  *
- * A thin adapter over the CLI's `--json` agent surface: it registers the 15
+ * A thin adapter over the CLI's `--json` agent surface: it registers the 22
  * tools from tools.ts, and each handler self-spawns the CLI (via the exec seam)
  * and returns the child's output normalised into one canonical `{ok,data}` /
  * `{ok:false,error}` envelope (see toToolResult). The server holds no tokens,

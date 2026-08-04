@@ -20,6 +20,8 @@ import {
   buildGoalAddArgs,
   buildSearchFlightsArgs,
   buildSearchHotelsArgs,
+  buildListingsListArgs,
+  buildListingsAddToSelectionArgs,
   buildSearchActivitiesArgs,
   buildGetSelectionOptionsArgs,
   buildSelectOptionArgs,
@@ -43,6 +45,8 @@ const EXPECTED_TOOL_NAMES = [
   "goal_add",
   "search_flights",
   "search_hotels",
+  "listings_list",
+  "listings_add_to_selection",
   "search_activities",
   "get_selection_options",
   "select_option",
@@ -57,7 +61,7 @@ const EXPECTED_TOOL_NAMES = [
 ];
 
 describe("TOOLS table", () => {
-  it("exposes exactly the 20 expected tools, in order", () => {
+  it("exposes exactly the 22 expected tools, in order", () => {
     expect(TOOLS.map((t) => t.name)).toEqual(EXPECTED_TOOL_NAMES);
   });
 
@@ -80,6 +84,21 @@ describe("TOOLS table", () => {
 describe("argv builders", () => {
   it("doctor", () => {
     expect(buildDoctorArgs()).toEqual(["doctor", "--json"]);
+  });
+
+  it("listings_list builds the selection-scoped list argv; --limit only when given", () => {
+    expect(buildListingsListArgs({ selection_id: "sel-1" })).toEqual([
+      "listings", "list", "--selection", "sel-1", "--json",
+    ]);
+    expect(buildListingsListArgs({ selection_id: "sel-1", limit: 100 })).toEqual([
+      "listings", "list", "--selection", "sel-1", "--limit", "100", "--json",
+    ]);
+  });
+
+  it("listings_add_to_selection builds the positional selection + --listing argv", () => {
+    expect(buildListingsAddToSelectionArgs({ selection_id: "sel-1", listing_id: "lst-9" })).toEqual([
+      "listings", "add-to-selection", "sel-1", "--listing", "lst-9", "--json",
+    ]);
   });
 
   it("create_client defaults type to Individual", () => {
@@ -321,6 +340,8 @@ describe("--json discipline via the table (buildArgs on representative input)", 
     goal_add: { plan_id: "p", type: "Activity" },
     search_flights: { plan_id: "p", from: "A", to: "B", date: "d" },
     search_hotels: { plan_id: "p", location: "L", checkin: "c", checkout: "o" },
+    listings_list: { selection_id: "s" },
+    listings_add_to_selection: { selection_id: "s", listing_id: "l" },
     search_activities: { plan_id: "p", destination: "D", date: "d" },
     get_selection_options: { selection_id: "s" },
     select_option: { selection_id: "s", option_id: "o" },

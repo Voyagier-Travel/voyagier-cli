@@ -118,6 +118,109 @@ describe("normalizeListingChangeType", () => {
   });
 });
 
+describe("listings list (VOY-1835)", () => {
+  const sampleMonitorListings = {
+    id: "mon_01HX",
+    totalAvailableListings: 42,
+    listings: [
+      {
+        id: "lst_01HX", name: "Hotel Le Bristol", price: 450, sortOrder: 1,
+        isBookable: true, isAvailable: true,
+        optionData: { rating: 4.8, hugeProviderBlob: { deeply: "nested" } },
+      },
+      {
+        id: "lst_02HX", name: "Hotel Lutetia", price: 610, sortOrder: 2,
+        isBookable: null, isAvailable: false,
+        optionData: null,
+      },
+    ],
+  };
+
+  it("outputs compact JSON rows with rating extracted and raw optionData discarded", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ getTripPlanSelection: sampleSelection })
+      .mockResolvedValueOnce({ blueprintMonitor: sampleMonitorListings });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "listings", "list", "--selection", "sel_01HX", "--json"]);
+
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    expect(mockGraphql).toHaveBeenNthCalledWith(2,
+      expect.stringContaining("totalAvailableListings"),
+      { id: "mon_01HX" }
+    );
+    const payload = mockJsonOutput.mock.calls[0][0] as {
+      ok: boolean;
+      data: { selectionId: string; monitorId: string; totalAvailable: number; shown: number; listings: Array<Record<string, unknown>> };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.data.selectionId).toBe("sel_01HX");
+    expect(payload.data.monitorId).toBe("mon_01HX");
+    expect(payload.data.totalAvailable).toBe(42);
+    expect(payload.data.shown).toBe(2);
+    expect(payload.data.listings[0]).toEqual({
+      id: "lst_01HX", name: "Hotel Le Bristol", price: 450, rating: 4.8,
+      sortOrder: 1, isBookable: true, isAvailable: true,
+    });
+    expect(payload.data.listings[1].rating).toBeNull();
+    // Payload discipline: raw provider data never reaches output.
+    expect(JSON.stringify(payload)).not.toContain("hugeProviderBlob");
+    expect(JSON.stringify(payload)).not.toContain("optionData");
+  });
+
+  it("applies --limit client-side", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ getTripPlanSelection: sampleSelection })
+      .mockResolvedValueOnce({ blueprintMonitor: sampleMonitorListings });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "listings", "list", "--selection", "sel_01HX", "--limit", "1", "--json"]);
+
+    const payload = mockJsonOutput.mock.calls[0][0] as { data: { shown: number; listings: unknown[]; totalAvailable: number } };
+    expect(payload.data.shown).toBe(1);
+    expect(payload.data.listings).toHaveLength(1);
+    expect(payload.data.totalAvailable).toBe(42);
+  });
+
+  it("emits an agent markdown table with a promote hint", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ getTripPlanSelection: sampleSelection })
+      .mockResolvedValueOnce({ blueprintMonitor: sampleMonitorListings });
+    const logs: string[] = [];
+    const logSpy = jest.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    });
+    try {
+      const p = buildProgram();
+      await p.parseAsync(["node", "test", "listings", "list", "--selection", "sel_01HX", "--agent"]);
+    } finally {
+      logSpy.mockRestore();
+    }
+    const out = logs.join("\n");
+    expect(out).toContain("## Available Listings");
+    expect(out).toContain("2 of 42 available");
+    expect(out).toContain("Hotel Le Bristol");
+    expect(out).toContain("⭐4.8");
+    expect(out).toContain("listings add-to-selection");
+  });
+
+  it("throws NOT_FOUND when the selection doesn't exist", async () => {
+    mockGraphql.mockResolvedValueOnce({ getTripPlanSelection: null });
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "listings", "list", "--selection", "sel_MISSING", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.NOT_FOUND });
+  });
+
+  it("throws NO_MONITOR when the selection has no blueprintMonitorId", async () => {
+    mockGraphql.mockResolvedValueOnce({ getTripPlanSelection: sampleSelectionNoMonitor });
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "listings", "list", "--selection", "sel_02HX", "--json"])
+    ).rejects.toMatchObject({ code: CliErrorCode.NO_MONITOR });
+  });
+});
+
 describe("listings recent", () => {
   it("fetches change events and outputs JSON", async () => {
     mockGraphql

@@ -1085,6 +1085,43 @@ export const GET_BLUEPRINT_MONITOR = `
 `;
 
 /**
+ * Monitor inventory count only (VOY-1835). Fetched after a hotel search so
+ * the envelope can report how many listings exist in the market beyond the
+ * seeded shortlist. Deliberately tiny — no listings, no optionData.
+ */
+export const GET_MONITOR_SEED_COUNT = `
+  query MonitorSeedCount($id: String!) {
+    blueprintMonitor(id: $id) {
+      id
+      totalAvailableListings
+    }
+  }
+`;
+
+/**
+ * Full available listing set on a monitor (VOY-1835), for `listings list`.
+ * optionData is fetched ONLY so the command can extract `rating`; the raw
+ * payload is discarded before anything reaches output (payload discipline).
+ */
+export const GET_MONITOR_LISTINGS = `
+  query MonitorListings($id: String!) {
+    blueprintMonitor(id: $id) {
+      id
+      totalAvailableListings
+      listings {
+        id
+        name
+        price
+        sortOrder
+        isBookable
+        isAvailable
+        optionData
+      }
+    }
+  }
+`;
+
+/**
  * Refresh a selection's options (enqueues a BlueprintMonitor fetch). No-op on
  * the backend if the selection has no monitor / is not auto-fetchable.
  */

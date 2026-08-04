@@ -5,6 +5,7 @@
  * Phase 0 schema audit (PHASE2-DESIGN-FREEZE.md Section 7).
  *
  * Surface:
+ *   voyagier listings list --selection <id> [--limit <n>] [--json] [--agent]
  *   voyagier listings recent --selection <id> [--type <changeType>] [--limit <n>] [--json] [--agent]
  *   voyagier listings add-to-selection <selectionId> --listing <listingId> [--json] [--agent]
  *
@@ -23,6 +24,7 @@ import {
   GET_BLUEPRINT_LISTING_CHANGE_EVENTS_BY_TYPE,
   ADD_BLUEPRINT_LISTING_AS_SELECTION_OPTION,
   GET_SELECTION_WITH_MONITOR,
+  GET_MONITOR_LISTINGS,
 } from "../queries.js";
 
 // ----- Types -----
@@ -88,6 +90,46 @@ export function normalizeListingChangeType(value: string): string {
   );
 }
 
+/** Compact listing row for `listings list` output (raw optionData discarded). */
+export interface ListingRow {
+  id: string;
+  name: string | null;
+  price: number | null;
+  rating: number | null;
+  sortOrder: number | null;
+  isBookable: boolean | null;
+  isAvailable: boolean | null;
+}
+
+interface MonitorListingRaw {
+  id: string;
+  name?: string | null;
+  price?: number | null;
+  sortOrder?: number | null;
+  isBookable?: boolean | null;
+  isAvailable?: boolean | null;
+  optionData?: unknown;
+}
+
+/**
+ * Reduce a raw monitor listing to the compact output row. Payload discipline:
+ * the ONLY thing extracted from optionData is a numeric `rating`; the rest of
+ * the (potentially large) provider payload never reaches output.
+ */
+export function toListingRow(l: MonitorListingRaw): ListingRow {
+  const od = l.optionData as { rating?: unknown } | null | undefined;
+  const rating = od && typeof od === "object" && typeof od.rating === "number" ? od.rating : null;
+  return {
+    id: l.id,
+    name: l.name ?? null,
+    price: l.price ?? null,
+    rating,
+    sortOrder: l.sortOrder ?? null,
+    isBookable: l.isBookable ?? null,
+    isAvailable: l.isAvailable ?? null,
+  };
+}
+
 // ----- Helpers -----
 
 function formatChangeEventLine(e: BlueprintListingChangeEvent): string {
@@ -111,6 +153,115 @@ export function registerListingsCommands(program: Command): void {
   const listings = program
     .command("listings")
     .description("Blueprint Listings — advisor inventory escape hatch");
+
+  // -- list (VOY-1835) --
+  listings
+    .command("list")
+    .description("List the FULL set of available listings on a selection's monitor (beyond the seeded option shortlist)")
+    .requiredOption("--selection <id>", "Selection ID (must have a blueprintMonitorId)")
+    .option("--limit <n>", "Max listings to return", "50")
+    .option("--json", "Output raw JSON")
+    .option("--agent", "Output plain markdown for AI agents")
+    .action(async (opts) => {
+      const selectionId = opts.selection;
+      const limit = parsePositiveInt(opts.limit, "--limit", { default: 50, max: 200 }) ?? 50;
+
+      const selectionData = await graphql<{
+        getTripPlanSelection: { id: string; blueprintMonitorId?: string | null } | null;
+      }>(GET_SELECTION_WITH_MONITOR, { tripPlanSelectionId: selectionId });
+
+      const selection = selectionData.getTripPlanSelection;
+      if (!selection) {
+        throw new CliError(
+          CliErrorCode.NOT_FOUND,
+          `Selection "${selectionId}" not found.\n  Fix: voyagier selections list --plan <planId> --json`
+        );
+      }
+
+      const monitorId = selection.blueprintMonitorId;
+      if (!monitorId) {
+        throw new CliError(
+          CliErrorCode.NO_MONITOR,
+          `Selection "${selectionId}" has no blueprintMonitorId. Cannot fetch listings.\n  Fix: voyagier monitors create --selection ${shellArg(selectionId)}`
+        );
+      }
+
+      const data = await graphql<{
+        blueprintMonitor: {
+          id: string;
+          totalAvailableListings?: number | null;
+          listings?: MonitorListingRaw[] | null;
+        } | null;
+      }>(GET_MONITOR_LISTINGS, { id: monitorId });
+
+      const monitor = data.blueprintMonitor;
+      if (!monitor) {
+        throw new CliError(
+          CliErrorCode.NOT_FOUND,
+          `Monitor "${monitorId}" not found for selection "${selectionId}".`
+        );
+      }
+
+      const all = monitor.listings ?? [];
+      const rows = all.slice(0, limit).map(toListingRow);
+      const totalAvailable = typeof monitor.totalAvailableListings === "number"
+        ? monitor.totalAvailableListings
+        : all.length;
+
+      if (opts.json) {
+        jsonOutput({
+          ok: true,
+          data: {
+            selectionId,
+            monitorId,
+            totalAvailable,
+            shown: rows.length,
+            listings: rows,
+            next: `voyagier listings add-to-selection ${selectionId} --listing <listingId>`,
+          },
+        });
+        return;
+      }
+
+      if (opts.agent) {
+        console.log(`## Available Listings\n`);
+        console.log(`**Selection:** \`${selectionId}\`  `);
+        console.log(`**Monitor:** \`${monitorId}\`  `);
+        console.log(`**Showing:** ${rows.length} of ${totalAvailable} available\n`);
+        if (rows.length === 0) {
+          console.log("No available listings on this monitor.\n");
+        } else {
+          console.log(`| Listing ID | Name | Price | Rating | Bookable | Available |`);
+          console.log(`|---|---|---|---|---|---|`);
+          for (const r of rows) {
+            const price = r.price != null ? formatPrice(r.price) : "—";
+            const rating = r.rating != null ? `⭐${r.rating}` : "—";
+            console.log(
+              `| \`${r.id}\` | ${escapeMdTableCell(r.name)} | ${escapeMdTableCell(price)} | ${escapeMdTableCell(rating)} | ${escapeMdTableCell(formatNullableBool(r.isBookable))} | ${escapeMdTableCell(formatNullableBool(r.isAvailable))} |`
+            );
+          }
+          console.log(`\n**Next:** \`voyagier listings add-to-selection ${shellArg(selectionId)} --listing <listingId>\` to promote one into the selection.`);
+        }
+        return;
+      }
+
+      console.log(`\n${chalk.bold("Available Listings")}  ${chalk.dim(`(monitor: ${monitorId})`)}\n`);
+      if (rows.length === 0) {
+        console.log(chalk.dim("  No available listings on this monitor."));
+      } else {
+        for (const r of rows) {
+          const avail =
+            r.isAvailable === true ? chalk.green("●")
+            : r.isAvailable === false ? chalk.red("○")
+            : chalk.dim("?");
+          const price = r.price != null ? chalk.green(formatPrice(r.price)) : "";
+          const rating = r.rating != null ? chalk.yellow(`⭐${r.rating}`) : "";
+          console.log(`${avail} ${chalk.bold(r.name ?? "(unnamed)")}  ${price}  ${rating}  ${chalk.dim(r.id)}`);
+        }
+        console.log(chalk.dim(`\n${rows.length} of ${totalAvailable} available listing(s)`));
+        console.log(chalk.dim(`Next: voyagier listings add-to-selection ${selectionId} --listing <listingId>`));
+      }
+    });
 
   // -- recent --
   listings
