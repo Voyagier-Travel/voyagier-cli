@@ -27,7 +27,7 @@ mkdir -p "$stage/server"
 (
   cd "$stage/server"
   npm init -y >/dev/null
-  npm install "$pkg" --omit=dev --silent
+  npm install "$pkg" --omit=dev --silent --no-audit --no-fund
 )
 
 # Stage the manifest, substituting the real version for the placeholder.
@@ -52,18 +52,24 @@ rm -f "$out_file"
 echo "Running smoke test..."
 smoke_out="$(
   printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}\n' \
-    | VOYAGIER_TOKEN=dummy node "$stage/server/node_modules/@voyagier/cli/dist/index.js" mcp 2>/dev/null \
+    | VOYAGIER_TOKEN=dummy node "$stage/server/node_modules/@voyagier/cli/dist/index.js" mcp 2>"$stage/smoke.stderr" \
     | head -1 || true
 )"
 
 if ! grep -q '"serverInfo"' <<<"$smoke_out"; then
   echo "Smoke test FAILED: no serverInfo in MCP initialize response" >&2
   echo "Output was: $smoke_out" >&2
+  echo "--- server stderr ---" >&2
+  cat "$stage/smoke.stderr" >&2 || true
   exit 1
 fi
 echo "Smoke test passed."
 
-sha256="$(sha256sum "$out_file" | awk '{print $1}')"
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256="$(sha256sum "$out_file" | awk '{print $1}')"
+else
+  sha256="$(shasum -a 256 "$out_file" | awk '{print $1}')" # macOS fallback
+fi
 echo ""
 echo "Bundle: $out_file"
 echo "sha256: $sha256"
