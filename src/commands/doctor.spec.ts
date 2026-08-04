@@ -350,10 +350,12 @@ describe("voyagier doctor", () => {
     const p = buildProgram();
     await p.parseAsync(["node", "test", "doctor", "--json"]);
 
-    const authProbes = mockGraphql.mock.calls
-      .map((c) => c[0] as string)
-      .filter((q) => q.includes("DoctorPing") || q.includes("__schema { queryType"));
-    expect(authProbes).toHaveLength(0);
+    // checkAuth runs before any other GraphQL traffic, so the FIRST query the
+    // doctor sends must be the authenticated identity probe — never any form
+    // of introspection (robust to getIntrospectionQuery() formatting).
+    const firstQuery = mockGraphql.mock.calls[0]?.[0] as string;
+    expect(firstQuery).toContain("DoctorIdentity");
+    expect(firstQuery).not.toMatch(/__schema/);
   });
 
   it("reports 'unknown' only when neither API nor cached identity is available", async () => {

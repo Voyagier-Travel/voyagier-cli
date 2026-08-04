@@ -164,7 +164,7 @@ async function checkAuth(): Promise<DoctorCheck> {
     return {
       name: "auth",
       status: "WARN",
-      message: `Auth check could not complete: ${err instanceof Error ? err.message : String(err)}`,
+      message: `Auth check could not complete: ${sanitizeExternalText(err instanceof Error ? err.message : String(err))}`,
     };
   }
   // Identity fallback chain (VOY-1827): live API identity first, cached user
@@ -260,7 +260,7 @@ async function checkSchema(): Promise<DoctorCheck> {
     // Apollo hardening). That is expected server config, not a fault — auth
     // already passed with a real query, so report the skip without degrading
     // the overall verdict.
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = sanitizeExternalText(err instanceof Error ? err.message : String(err));
     if (/introspection/i.test(msg)) {
       return {
         name: "schema",
