@@ -29,6 +29,8 @@ export interface GoalSelection {
   id: string;
   type: string | null;
   segmentIndex?: number | null;
+  /** Travellers assigned to this selection — the return-leg pairing signal (VOY-1870). */
+  assignedTravellers?: { id: string }[] | null;
 }
 
 export interface SearchGoal {
@@ -139,12 +141,56 @@ function goalSegmentIndex(goal: SearchGoal): number | null {
   return seg;
 }
 
+/** Union of traveller ids assigned to any selection within a goal (VOY-1870). */
+function goalAssignedTravellerIds(goal: SearchGoal): Set<string> {
+  const ids = new Set<string>();
+  for (const item of goal.items ?? []) {
+    for (const sel of item.selections ?? []) {
+      for (const t of sel.assignedTravellers ?? []) {
+        if (t?.id) ids.add(t.id);
+      }
+    }
+  }
+  return ids;
+}
+
+/** True when two id sets share at least one member. */
+function setsIntersect(a: Set<string>, b: Set<string>): boolean {
+  for (const id of a) {
+    if (b.has(id)) return true;
+  }
+  return false;
+}
+
+/** `"<name>" (<id>)` labels for the candidate goals, for the ambiguity message. */
+function describeGoals(goals: SearchGoal[]): string {
+  return goals.map((g) => `"${g.name}" (${g.id})`).join(", ");
+}
+
 /**
- * Find the RETURN-leg Flight goal (segmentIndex 1) for a round-trip plan, so its
- * Airport inputs get wired too. Without this only the outbound goal's airports
- * are set and the return segment's monitor query stays insufficient (VOY-1421).
+ * Find the RETURN-leg Flight goal for a round-trip plan, so its Airport inputs
+ * get wired too. Without this only the outbound goal's airports are set and the
+ * return segment's monitor query stays insufficient (VOY-1421).
  *
- * Identified by child selection segmentIndex (robust) rather than goal name.
+ * Pairing signal, in strict priority order (VOY-1870):
+ *   a. Real journey linkage between the outbound and return legs of the same
+ *      journey. The goals-for-search selection set exposes no such cross-goal
+ *      linkage field (FlightJourney pairing is not surfaced on TripPlanSelection
+ *      in the fetchable schema), so this tier is currently unavailable — we do
+ *      not invent a field for it.
+ *   b. Traveller-assignment overlap: the linked return goal is the candidate
+ *      whose assigned traveller set intersects the outbound goal's. This is the
+ *      strongest verifiable signal — `assignedTravellers` is a real selection
+ *      field (see GET_PLAN_DEEP) and is now fetched by GET_GOALS_FOR_SEARCH.
+ *   c. Legacy fallback: exactly ONE candidate return goal in total (the solo
+ *      round-trip case) resolves to that goal unchanged.
+ *
+ * On a group plan each traveller owns their own outbound/return goal pair, so
+ * the previous "first goal with child segmentIndex === 1" was arbitrary and
+ * could re-seed an unrelated traveller's return goal. When pairing stays
+ * ambiguous (multiple candidates, none overlapping) we FAIL CLOSED with
+ * RETURN_GOAL_AMBIGUOUS rather than guess.
+ *
  * Returns null when there's no distinct return goal (one-way plans).
  */
 export function resolveReturnFlightGoal(
@@ -152,11 +198,52 @@ export function resolveReturnFlightGoal(
   outboundGoalId: string,
 ): SearchGoal | null {
   const flightGoals = goals.filter((g) => g.type === "Flight" && g.id !== outboundGoalId);
-  // Prefer an explicit segmentIndex === 1; fall back to a single remaining
-  // Flight goal if segment indices aren't populated.
-  const bySeg = flightGoals.find((g) => goalSegmentIndex(g) === 1);
-  if (bySeg) return bySeg;
-  return flightGoals.length === 1 ? flightGoals[0] : null;
+  if (flightGoals.length === 0) return null; // one-way plan
+
+  // Return candidates: goals marked with a return-leg segment (segmentIndex 1).
+  // If NO other Flight goal carries a segment marker at all, segment indices
+  // aren't populated on this plan, so every other Flight goal is a candidate
+  // (legacy shape).
+  const anySegMarked = flightGoals.some((g) => goalSegmentIndex(g) != null);
+  let candidates = anySegMarked
+    ? flightGoals.filter((g) => goalSegmentIndex(g) === 1)
+    : flightGoals;
+
+  // Partially-populated segment indices: some goals carry markers but none is
+  // marked as a return leg. Goals explicitly marked outbound (segmentIndex 0)
+  // are ruled out; UNMARKED goals are still plausible return goals — without
+  // this fallback a return goal that simply lacks segment indices would be
+  // silently skipped and the return date never wired.
+  if (anySegMarked && candidates.length === 0) {
+    candidates = flightGoals.filter((g) => goalSegmentIndex(g) == null);
+  }
+
+  if (candidates.length === 0) return null; // no return-leg goal to wire
+  // (c) Solo round-trip: a single candidate return goal resolves unchanged.
+  if (candidates.length === 1) return candidates[0];
+
+  // (b) Multiple candidates — pair by traveller-assignment overlap.
+  const outbound = goals.find((g) => g.id === outboundGoalId);
+  const outboundTravellers = outbound ? goalAssignedTravellerIds(outbound) : new Set<string>();
+  if (outboundTravellers.size > 0) {
+    const overlapping = candidates.filter((c) =>
+      setsIntersect(goalAssignedTravellerIds(c), outboundTravellers),
+    );
+    if (overlapping.length === 1) return overlapping[0];
+  }
+
+  // Ambiguous: multiple candidate return goals and no single one is linked to
+  // the outbound. Fail closed — never re-seed an unrelated goal.
+  throw new CliError(
+    CliErrorCode.RETURN_GOAL_AMBIGUOUS,
+    `Can't tell which return-leg goal pairs with this outbound goal.\n` +
+      `  Candidate return goals: ${describeGoals(candidates)}.\n` +
+      `To disambiguate, run the search directly on the specific return goal ` +
+      `(one-way, no --return):\n` +
+      `  voyagier search flights --goal <returnGoalId> --date <returnDate>\n` +
+      `or pass the outbound and return goals that belong to the same traveller.`,
+    { candidateGoalIds: candidates.map((g) => g.id) },
+  );
 }
 
 /**

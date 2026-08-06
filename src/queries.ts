@@ -505,6 +505,11 @@ export const CREATE_ACTIVITY_SELECTION = `
 
 // Lean goals+selections read for resolving a goal and its mirror *List
 // selection in the search/create flow (VOY-1414).
+// assignedTravellers is the return-leg pairing signal (VOY-1870): on a group
+// plan each traveller owns their own outbound/return goal pair, so "first
+// segmentIndex 1 goal" is arbitrary — the linked return goal is the one whose
+// assigned travellers overlap the outbound goal's. (Comments must stay OUTSIDE
+// the template literal: the query is sent verbatim and "//" is invalid GraphQL.)
 export const GET_GOALS_FOR_SEARCH = `
   query GoalsForSearch($tripPlanId: String!) {
     tripPlanGoals(tripPlanId: $tripPlanId) {
@@ -513,7 +518,7 @@ export const GET_GOALS_FOR_SEARCH = `
       type
       sortOrder
       items {
-        selections { id type segmentIndex }
+        selections { id type segmentIndex assignedTravellers { id } }
       }
     }
   }
