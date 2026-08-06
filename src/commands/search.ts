@@ -36,7 +36,7 @@ import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivit
 import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "../agent-output.js";
 import { deriveHotelStay, hotelFactsFields } from "../hotel-format.js";
-import { flightProjectionFields, extractRankScore } from "../flight-format.js";
+import { flightProjectionFields, extractRankScore, deriveFlightDetail } from "../flight-format.js";
 import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 import { CliError, CliErrorCode } from "../errors.js";
@@ -691,6 +691,84 @@ function writeReuseWarnings(warnings: string[]): void {
   for (const w of warnings) process.stderr.write(chalk.yellow(`⚠ ${w}\n`));
 }
 
+/**
+ * VOY-1871: the origin / destination / date(s) a flight search actually wired
+ * into the goal graph — the params IN EFFECT for the searched selection after
+ * the search ran, as understood client-side from the inputs it set. Echoed to
+ * the envelope as `effectiveParams` so an agent can assert the direction and
+ * dates BEFORE selecting an option, rather than trusting whatever rows the
+ * (possibly not-yet-refreshed) selection happened to hand back.
+ */
+interface EffectiveFlightParams {
+  origin: string;
+  destination: string;
+  depart: string;
+  return?: string;
+}
+
+function effectiveFlightParams(
+  origin: string,
+  destination: string,
+  depart: string,
+  ret?: string,
+): EffectiveFlightParams {
+  return { origin, destination, depart, ...(ret ? { return: ret } : {}) };
+}
+
+/** One-line human echo of the effective search, e.g. "Search: LAS → BWI on 2026-12-10". */
+function effectiveParamsLine(p: EffectiveFlightParams): string {
+  const when = p.return ? `${p.depart} (return ${p.return})` : p.depart;
+  return `Search: ${p.origin} → ${p.destination} on ${when}`;
+}
+
+/**
+ * The outbound origin encoded in a flight option's rows (first leg's origin), or
+ * null when the leg data isn't present to read it. Used to detect inventory that
+ * still reflects a PREVIOUS search's params (VOY-1871).
+ */
+function optionOutboundOrigin(opt: SelectOption): string | null {
+  return deriveFlightDetail(opt.bookingData)?.origin ?? null;
+}
+
+/**
+ * True when the first option's outbound origin is KNOWN and differs from the
+ * origin just wired — i.e. the rows still reflect the previous params and the
+ * re-seed triggered by the new inputs has not landed yet. An option whose leg
+ * origin can't be read is treated as "can't tell" (never stale), so older/partial
+ * payloads never trip a false positive.
+ */
+function outboundOriginStale(options: SelectOption[], effectiveOrigin: string): boolean {
+  if (options.length === 0) return false;
+  const origin = optionOutboundOrigin(options[0]);
+  return origin != null && origin !== effectiveOrigin;
+}
+
+/**
+ * Envelope fields for the flights search (VOY-1793 reuse observability +
+ * VOY-1871 effectiveParams / staleInventory).
+ *
+ * `effectiveParams` (VOY-1871) is ALWAYS present and reflects the params wired
+ * for THIS search. The reused selection's ORIGINAL params (VOY-1793, present
+ * only on a reuse whose stored record differs) move to `previousSearchParams`
+ * so the two concepts don't collide on one key. `staleInventory` + its warning
+ * are added when the rendered rows still don't match the effective origin.
+ */
+function flightReuseEnvelopeFields(
+  reuse: ReuseObservation,
+  effectiveParams: EffectiveFlightParams,
+  staleInventory: boolean,
+  staleWarning: string | null,
+): Record<string, unknown> {
+  const warnings = [...reuse.warnings, ...(staleWarning ? [staleWarning] : [])];
+  return {
+    requestedParams: reuse.requestedParams,
+    effectiveParams,
+    ...(reuse.effectiveParams ? { previousSearchParams: reuse.effectiveParams } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
+    ...(staleInventory ? { staleInventory: true } : {}),
+  };
+}
+
 export function registerSearchCommands(program: Command): void {
   const search = program.command("search").description("Search flights, hotels, and activities");
 
@@ -922,6 +1000,10 @@ export function registerSearchCommands(program: Command): void {
           partySize: travellerIds.length,
         });
 
+        // VOY-1871: the params actually wired into the goal graph for THIS
+        // search — the origin/destination/date(s) in effect for the selection.
+        const effectiveParams = effectiveFlightParams(origin, destination, opts.date, opts.return);
+
         // Human/TTY: wait inline for async inventory rather than handing the user
         // a poll command (VOY-1780). Kick a refresh + poll to completion, then
         // re-fetch the full options and fall through to the SAME render path as
@@ -953,6 +1035,24 @@ export function registerSearchCommands(program: Command): void {
           }
         }
 
+        // VOY-1871: a REUSED selection can hand back the PREVIOUS params'
+        // inventory when we read it — wiring the new inputs above re-seeds the
+        // backend monitor asynchronously, so an immediate read (in
+        // resolveOrCreateDecisionSelection) can still see the old rows while the
+        // re-seed is in flight. The prior empty-wait only settles when NO rows
+        // came back; here rows DID come back but their outbound origin doesn't
+        // match the origin we just wired, which means they're stale. Wait on the
+        // same settle primitive the empty path uses, then re-read the full
+        // options, so the envelope is built from POST-refresh rows only. This
+        // runs in every mode (incl. --json/--agent) because agents consume the
+        // envelope directly.
+        if (outboundOriginStale(fetchedOptions, origin)) {
+          const settled = await waitForSelectionOptions(selectionId, { timeoutMs: SEARCH_WAIT_TIMEOUT_MS });
+          if (settled.result.status === "READY") {
+            fetchedOptions = await refetchDecisionOptions(selectionId);
+          }
+        }
+
         const sortBy = (opts.sort ?? "default") as SortField;
         // Client-side presentation filters over the options the backend returned
         // (same layer as --sort), NOT goal-input constraints — server order
@@ -961,6 +1061,15 @@ export function registerSearchCommands(program: Command): void {
         const prefiltered = [...fetchedOptions].sort((a, b) => a.sortOrder - b.sortOrder);
         const { kept, zero: filteredToZero } = filterFlights(prefiltered, flightFilters);
         const options = sortOptions(kept, sortBy);
+
+        // VOY-1871: after any settle+re-read, if the FIRST rendered row's
+        // outbound origin still disagrees with the effective origin, the
+        // inventory hasn't finished refreshing for the new params. Don't render
+        // silently — flag it so an agent re-fetches before selecting.
+        const staleInventory = outboundOriginStale(options, origin);
+        const staleWarning = staleInventory
+          ? `STALE_INVENTORY: the top option's outbound origin (${optionOutboundOrigin(options[0])}) does not match the searched origin (${origin}); the selection's inventory may still be refreshing for the new params. Re-fetch before selecting: voyagier selection-options ${shellArg(selectionId)} --wait --json`
+          : null;
 
         const searchResults = options.map((opt, i) => {
           // VOY-1824: platform value score (optionData.rankScore), display-only.
@@ -1000,7 +1109,7 @@ export function registerSearchCommands(program: Command): void {
               ...(returnSelectionId ? { returnSelectionId } : {}),
               isRoundTrip,
               ...planUrls(tripPlanId),
-              ...reuseEnvelopeFields(reuse),
+              ...flightReuseEnvelopeFields(reuse, effectiveParams, staleInventory, staleWarning),
               // Factual callouts over the displayed (post-filter/sort) list.
               ...flightCalloutsJson(flightCallouts(options)),
               // Structured which-filter attribution when filters removed all.
@@ -1020,7 +1129,10 @@ export function registerSearchCommands(program: Command): void {
           const lines: string[] = [];
           lines.push(`### Flights (${origin} → ${destination})`);
           if (scaffolded) lines.push(`_No plan given — created draft plan \`${tripPlanId}\`._`);
+          // VOY-1871: echo the effective search so an agent can assert direction.
+          lines.push(`_${effectiveParamsLine(effectiveParams)}_`);
           for (const w of reuse.warnings) lines.push(`> ⚠ ${w}`);
+          if (staleWarning) lines.push(`> ⚠ ${staleWarning}`);
           if (filteredToZero) {
             // Filters removed everything the backend returned — say WHICH ones
             // and the nearest miss (VOY-1784), not a generic "no options".
@@ -1057,6 +1169,10 @@ export function registerSearchCommands(program: Command): void {
 
         // Human mode: surface the reuse-mismatch warning as a clear ⚠ line.
         writeReuseWarnings(reuse.warnings);
+        // VOY-1871: one-line echo of the effective search direction/dates, and a
+        // clear ⚠ line when the rendered rows don't match it.
+        process.stderr.write(chalk.dim(effectiveParamsLine(effectiveParams) + "\n"));
+        if (staleWarning) process.stderr.write(chalk.yellow(`⚠ ${staleWarning}\n`));
 
         if (filteredToZero) {
           // Filters removed every returned option — explain which filter(s) and
