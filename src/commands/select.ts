@@ -8,6 +8,8 @@ import {
   SET_TRAVELLER_CHOICE_FOR_SUBSET,
   SET_TRAVELLER_CHOICE_FOR_GROUP,
   SET_SELECTION_TRAVELLER_CHOICE,
+  GET_SELECTION_WITH_MONITOR,
+  LIST_TRIP_PLAN_GOALS_DEEP,
 } from "../queries.js";
 import { loadSearchState, clearSearchState, isSearchStateStale } from "../state.js";
 import { deriveBaseUrl, shellArg, validateId } from "../utils.js";
@@ -87,44 +89,73 @@ function scopeLabel(scope: ChoiceScopeOpts): string {
   return "for all travellers";
 }
 
+/** Result of a pick, plus routing metadata when a fork-template rejection was
+ * auto-routed to the goal's non-template sibling selection (VOY-1872). */
+interface PickOutcome {
+  result: SelectionResponse;
+  /** Original (fork-template) selection id the pick was routed away from. */
+  routedFrom?: string;
+}
+
+/**
+ * Send the pick to the backend for the resolved scope. No error mapping here —
+ * the caller owns the catch so a single mapper/router covers both the initial
+ * attempt and the fork-template retry (VOY-1872), keeping the scope identical
+ * across both (the retry must honor the same --traveller/--travellers/--group).
+ */
+async function performPick(
+  selectionId: string,
+  optionId: string,
+  scope: ChoiceScopeOpts,
+): Promise<SelectionResponse> {
+  if (scope.traveller) {
+    const data = await graphql<{ setTripPlanSelectionTravellerChoice: SelectionResponse }>(
+      SET_SELECTION_TRAVELLER_CHOICE,
+      { selectionId, travellerId: scope.traveller, optionId },
+    );
+    return data.setTripPlanSelectionTravellerChoice;
+  }
+  if (scope.travellers) {
+    const travellerIds = scope.travellers.split(",").map((s: string) => s.trim()).filter(Boolean);
+    if (travellerIds.length === 0) {
+      throw new CliError(CliErrorCode.VALIDATION, "--travellers requires a comma-separated list of traveller IDs.");
+    }
+    const data = await graphql<{ setTripPlanTravellerChoiceForSubset: SelectionResponse }>(
+      SET_TRAVELLER_CHOICE_FOR_SUBSET,
+      { selectionId, travellerIds, optionId, replaceExisting: true },
+    );
+    return data.setTripPlanTravellerChoiceForSubset;
+  }
+  if (scope.group) {
+    const data = await graphql<{ setTripPlanTravellerChoiceForGroup: SelectionResponse }>(
+      SET_TRAVELLER_CHOICE_FOR_GROUP,
+      { selectionId, groupId: scope.group, optionId },
+    );
+    return data.setTripPlanTravellerChoiceForGroup;
+  }
+  const data = await graphql<{ setTripPlanSelectedOption: SelectionResponse }>(
+    SET_TRIP_PLAN_SELECTED_OPTION,
+    { selectionId, optionId },
+  );
+  return data.setTripPlanSelectedOption;
+}
+
 async function setSelectedOption(
   selectionId: string,
   optionId: string,
   rawScope: ChoiceScopeOpts = {},
-): Promise<SelectionResponse> {
+): Promise<PickOutcome> {
   const scope = normalizeChoiceScope(rawScope);
   try {
-    if (scope.traveller) {
-      const data = await graphql<{ setTripPlanSelectionTravellerChoice: SelectionResponse }>(
-        SET_SELECTION_TRAVELLER_CHOICE,
-        { selectionId, travellerId: scope.traveller, optionId },
-      );
-      return data.setTripPlanSelectionTravellerChoice;
-    }
-    if (scope.travellers) {
-      const travellerIds = scope.travellers.split(",").map((s: string) => s.trim()).filter(Boolean);
-      if (travellerIds.length === 0) {
-        throw new CliError(CliErrorCode.VALIDATION, "--travellers requires a comma-separated list of traveller IDs.");
-      }
-      const data = await graphql<{ setTripPlanTravellerChoiceForSubset: SelectionResponse }>(
-        SET_TRAVELLER_CHOICE_FOR_SUBSET,
-        { selectionId, travellerIds, optionId, replaceExisting: true },
-      );
-      return data.setTripPlanTravellerChoiceForSubset;
-    }
-    if (scope.group) {
-      const data = await graphql<{ setTripPlanTravellerChoiceForGroup: SelectionResponse }>(
-        SET_TRAVELLER_CHOICE_FOR_GROUP,
-        { selectionId, groupId: scope.group, optionId },
-      );
-      return data.setTripPlanTravellerChoiceForGroup;
-    }
-    const data = await graphql<{ setTripPlanSelectedOption: SelectionResponse }>(
-      SET_TRIP_PLAN_SELECTED_OPTION,
-      { selectionId, optionId },
-    );
-    return data.setTripPlanSelectedOption;
+    return { result: await performPick(selectionId, optionId, scope) };
   } catch (err) {
+    // Fork-template rejection: the pick can never land on this selection. Try
+    // to auto-route it to the goal's single non-template sibling (VOY-1872);
+    // that helper either returns the routed outcome or throws a FORK_TEMPLATE
+    // CliError with recovery guidance. Other errors go through the plain mapper.
+    if (isForkTemplateRejection(err)) {
+      return handleForkTemplate(selectionId, optionId, scope);
+    }
     throw mapChoiceError(err, selectionId);
   }
 }
@@ -154,6 +185,133 @@ function mapChoiceError(err: unknown, selectionId: string): unknown {
     );
   }
   return err;
+}
+
+/**
+ * Fork-template rejection detector (VOY-1872). The backend rejects picks that
+ * target a fork TEMPLATE selection with a message that names it a "fork
+ * template"; match on that stable substring only — the surrounding copy and the
+ * raw GraphQL operation names it suggests are not a contract and never reach
+ * the user.
+ */
+function isForkTemplateRejection(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes("fork template");
+}
+
+/** The goal-local context needed to route (or explain) a fork-template pick. */
+interface ForkTemplateContext {
+  planId: string | null;
+  /** Rejected selection's type; routing requires it so siblings match by type. */
+  type: string | null;
+  /** Same-type sibling selection ids under the same goal (rejected id excluded). */
+  candidates: string[];
+}
+
+interface SelectionRef {
+  id: string;
+  type?: string | null;
+}
+
+interface GoalDeepItems {
+  items?: { selections?: SelectionRef[] | null }[] | null;
+}
+
+/**
+ * Resolve the rejected selection's plan, type, and same-type sibling selections
+ * under its owning goal — reusing only queries the CLI already ships (no new
+ * server operations). Best-effort: any failure returns null and the caller
+ * emits the plain FORK_TEMPLATE guidance.
+ */
+async function resolveForkTemplateSiblings(selectionId: string): Promise<ForkTemplateContext | null> {
+  try {
+    const sel = await graphql<{
+      getTripPlanSelection: { id: string; tripPlanId?: string | null; type?: string | null } | null;
+    }>(GET_SELECTION_WITH_MONITOR, { tripPlanSelectionId: selectionId });
+    const planId = sel.getTripPlanSelection?.tripPlanId ?? null;
+    const type = sel.getTripPlanSelection?.type ?? null;
+    // Without the plan or the rejected type we cannot match siblings safely.
+    if (!planId || !type) return { planId, type, candidates: [] };
+
+    const goalsData = await graphql<{ tripPlanGoals: GoalDeepItems[] }>(
+      LIST_TRIP_PLAN_GOALS_DEEP,
+      { tripPlanId: planId },
+    );
+    const goals = goalsData.tripPlanGoals ?? [];
+    const owningGoal = goals.find((g) =>
+      (g.items ?? []).some((it) => (it.selections ?? []).some((s) => s.id === selectionId)),
+    );
+    if (!owningGoal) return { planId, type, candidates: [] };
+
+    const candidates = new Set<string>();
+    for (const it of owningGoal.items ?? []) {
+      for (const s of it.selections ?? []) {
+        if (s.id !== selectionId && s.type === type) candidates.add(s.id);
+      }
+    }
+    return { planId, type, candidates: [...candidates] };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build the FORK_TEMPLATE error with CLI-native recovery steps. The message
+ * never echoes the backend's GraphQL operation names; it points at the CLI
+ * commands that actually exist (goal tree → sibling select). Known context
+ * (plan id, resolved candidates) is surfaced both in the text and in `details`
+ * for --json consumers.
+ */
+function forkTemplateError(selectionId: string, ctx: ForkTemplateContext | null): CliError {
+  const planRef = ctx?.planId ? shellArg(ctx.planId) : "<planId>";
+  const type = ctx?.type ?? null;
+  const candidates = ctx?.candidates ?? [];
+  const lines = [
+    `Selection ${selectionId} is a fork template — picks are not accepted on it directly.`,
+    `  Pick the non-template sibling selection${type ? ` of type ${type}` : ""} under the same goal instead:`,
+    `    voyagier plans goals ${planRef} --tree   # list the goal's selections`,
+  ];
+  if (candidates.length > 1) {
+    lines.push(`  Same-type sibling selections found — re-run against the intended one:`);
+    for (const c of candidates) {
+      lines.push(`    voyagier select --selection-id ${shellArg(c)} --option-id <id>`);
+    }
+  } else {
+    lines.push(`  Then re-run against its id:`);
+    lines.push(`    voyagier select --selection-id <siblingId> --option-id <id>`);
+  }
+  const details: Record<string, unknown> = { forkTemplateSelectionId: selectionId };
+  if (ctx?.planId) details.planId = ctx.planId;
+  if (type) details.selectionType = type;
+  if (candidates.length > 0) details.candidateSelectionIds = candidates;
+  return new CliError(CliErrorCode.FORK_TEMPLATE, lines.join("\n"), details);
+}
+
+/**
+ * Handle a fork-template rejection (VOY-1872). Conservative auto-route: when the
+ * rejected selection's goal has EXACTLY ONE same-type sibling, retry the pick
+ * once against it (honoring the caller's scope) and report the routing. Zero or
+ * multiple siblings, or a failed retry, fall through to the FORK_TEMPLATE error
+ * (with candidates listed when known). No second retry.
+ */
+async function handleForkTemplate(
+  selectionId: string,
+  optionId: string,
+  scope: ChoiceScopeOpts,
+): Promise<PickOutcome> {
+  const ctx = await resolveForkTemplateSiblings(selectionId);
+  const candidates = ctx?.candidates ?? [];
+  if (candidates.length === 1) {
+    try {
+      const result = await performPick(candidates[0], optionId, scope);
+      return { result, routedFrom: selectionId };
+    } catch {
+      // The single candidate also rejected the pick — surface guidance, don't
+      // retry again.
+      throw forkTemplateError(selectionId, ctx);
+    }
+  }
+  throw forkTemplateError(selectionId, ctx);
 }
 
 /** Run the --wait phase after a successful pick. Never throws: a wait
@@ -311,10 +469,12 @@ export function registerSelectCommands(program: Command): void {
         const optionId = validateId(opts.optionId, "--option-id");
         try {
           if (!opts.json) progress("Selecting option...");
-          const result = await setSelectedOption(selectionId, optionId, opts);
+          const { result, routedFrom } = await setSelectedOption(selectionId, optionId, opts);
           const name = result.parentOption?.name ?? optionId;
           const forScope = scopeLabel(opts);
-          const waitOutcome = opts.wait ? await runPickWait(selectionId, optionId, opts) : undefined;
+          // VOY-1872: when the pick was auto-routed off a fork template, the
+          // pick landed on result.id — wait on THAT selection, not the template.
+          const waitOutcome = opts.wait ? await runPickWait(result.id, optionId, opts) : undefined;
           if (opts.json) {
             jsonOutput({
               // ok mirrors the error envelope's shape so agents can check one
@@ -324,15 +484,20 @@ export function registerSelectCommands(program: Command): void {
               success: true,
               type: "option_selected",
               selectionId: result.id,
+              // VOY-1872: fork-template auto-route — the original (template)
+              // selection id the pick was routed away from.
+              ...(routedFrom ? { routedFrom } : {}),
               scope: forScope,
               selected: result.parentOption ?? null,
               parentOptionId: result.parentOptionId ?? null,
               ...(waitOutcome !== undefined ? waitJsonFragment(waitOutcome) : {}),
             });
           } else if (opts.agent) {
+            if (routedFrom) process.stdout.write(`↪️ **Routed:** ${routedFrom} is a fork template — picked on its sibling ${result.id} instead.\n`);
             process.stdout.write(`✅ **Selected (${forScope}):** ${name}\n`);
             if (waitOutcome !== undefined) renderWaitOutcome(waitOutcome, true);
           } else {
+            if (routedFrom) console.log(chalk.yellow(`↪ Routed: ${routedFrom} is a fork template — picked on its sibling ${result.id} instead.`));
             console.log(chalk.green(`✓ Selected ${forScope}: ${name}`));
             if (waitOutcome !== undefined) renderWaitOutcome(waitOutcome, false);
           }
@@ -404,8 +569,10 @@ export function registerSelectCommands(program: Command): void {
 
       try {
         if (!opts.json) progress("Selecting option...");
-        const result = await setSelectedOption(state.selectionId, selected.optionId, opts);
-        const waitOutcome = opts.wait ? await runPickWait(state.selectionId, selected.optionId, opts) : undefined;
+        const { result, routedFrom } = await setSelectedOption(state.selectionId, selected.optionId, opts);
+        // VOY-1872: if auto-routed off a fork template, the pick landed on
+        // result.id — wait on THAT selection, not the template.
+        const waitOutcome = opts.wait ? await runPickWait(result.id, selected.optionId, opts) : undefined;
 
         // VOY-1724: after a hotel pick, try to name the actual matching room
         // chain (hotelCode matching). Null → fall back to the generic guidance.
@@ -441,6 +608,8 @@ export function registerSelectCommands(program: Command): void {
                     : "hotel_selected",
               selected: selected.summary,
               selectionId: result.id,
+              // VOY-1872: fork-template auto-route — original (template) id.
+              ...(routedFrom ? { routedFrom } : {}),
               ...(state.type === "flights" && state.returnSelectionId
                 ? { returnSelectionId: state.returnSelectionId, note: "Round trip: choose on returnSelectionId too." }
                 : {}),
@@ -488,6 +657,9 @@ export function registerSelectCommands(program: Command): void {
           ];
           process.stdout.write(
             [
+              ...(routedFrom
+                ? [`↪️ **Routed:** ${routedFrom} is a fork template — picked on its sibling ${result.id} instead.`, ""]
+                : []),
               `✅ **${icon} Selected:** ${selected.summary}`,
               "",
               `👉 **View & edit:** ${planUrl}`,
@@ -499,6 +671,7 @@ export function registerSelectCommands(program: Command): void {
           if (waitOutcome !== undefined) renderWaitOutcome(waitOutcome, true);
         } else {
           const icon = state.type === "flights" ? "✈️" : state.type === "activities" ? "🎯" : "🏨";
+          if (routedFrom) console.log(chalk.yellow(`↪ Routed: ${routedFrom} is a fork template — picked on its sibling ${result.id} instead.`));
           console.log(chalk.green(`\n✓ ${icon} Selected: ${selected.summary}`));
           if (state.type === "flights" && state.returnSelectionId) {
             console.log(chalk.dim(`  Round trip: also choose the return leg — voyagier select --selection-id ${shellArg(state.returnSelectionId)} --option-id <id>`));

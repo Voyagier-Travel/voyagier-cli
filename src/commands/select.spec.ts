@@ -787,6 +787,205 @@ describe("select: participant-choice scope flags (VOY-1692)", () => {
   });
 });
 
+// ── Tests: fork-template guidance + auto-route (VOY-1872) ─────────────────
+
+describe("select: fork-template selections (VOY-1872)", () => {
+  let stdoutOutput: string[];
+  let stdoutSpy: ReturnType<typeof jest.spyOn>;
+  let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+  // The backend rejection whose stable substring is "fork template".
+  const FORK_TEMPLATE_ERROR = new Error(
+    "Selection sel-template is a fork template and cannot take choices directly. " +
+      "Target an existing choice row via upsertParticipantChoice(...) — rows come from " +
+      "tripPlanChoicesView — or use the non-template fork selection.",
+  );
+
+  const PICK_RESULT = {
+    setTripPlanSelectedOption: {
+      id: "sel-sibling",
+      parentOptionId: "opt-1",
+      parentOption: { id: "opt-1", name: "AA Flight", price: 1200 },
+    },
+  };
+
+  // getTripPlanSelection response used to resolve the rejected selection's
+  // plan + type before listing siblings.
+  const SELECTION_META = {
+    getTripPlanSelection: { id: "sel-template", tripPlanId: "plan-9", type: "Flight" },
+  };
+
+  // Goal tree with a fork template (sel-template) and one same-type sibling
+  // (sel-sibling), plus a different-type selection that must be ignored.
+  function goalTree(siblingIds: string[]) {
+    return {
+      tripPlanGoals: [
+        {
+          id: "goal-other",
+          items: [{ selections: [{ id: "sel-unrelated", type: "Hotel" }] }],
+        },
+        {
+          id: "goal-flight",
+          items: [
+            {
+              selections: [
+                { id: "sel-template", type: "Flight" },
+                { id: "sel-decoy", type: "Hotel" },
+                ...siblingIds.map((id) => ({ id, type: "Flight" })),
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  beforeEach(() => {
+    process.env.VOYAGIER_TOKEN = "test-token";
+    stdoutOutput = [];
+    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      stdoutOutput.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    mockGraphql.mockReset();
+  });
+
+  afterEach(() => {
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+    delete process.env.VOYAGIER_TOKEN;
+  });
+
+  // (a) error-mapping shape: zero siblings → FORK_TEMPLATE, no raw op names.
+  it("maps the fork-template rejection to a FORK_TEMPLATE error without echoing GraphQL op names", async () => {
+    mockGraphql
+      .mockRejectedValueOnce(FORK_TEMPLATE_ERROR) // initial pick
+      .mockResolvedValueOnce(SELECTION_META) // resolve plan + type
+      .mockResolvedValueOnce(goalTree([])); // goal tree: no siblings
+
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-template", "--option-id", "opt-1"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.FORK_TEMPLATE);
+    expect((err as CliError).message).toContain("fork template");
+    expect((err as CliError).message).toContain("voyagier plans goals plan-9 --tree");
+    // Never leak the raw backend operation guidance.
+    expect((err as CliError).message).not.toContain("upsertParticipantChoice");
+    expect((err as CliError).message).not.toContain("tripPlanChoicesView");
+    // details carry the resolved context for --json consumers.
+    expect((err as CliError).details).toMatchObject({
+      forkTemplateSelectionId: "sel-template",
+      planId: "plan-9",
+      selectionType: "Flight",
+    });
+  });
+
+  // (b) auto-route success: exactly one sibling → retry lands the pick.
+  it("auto-routes to the single same-type sibling and reports routedFrom (--json)", async () => {
+    mockGraphql
+      .mockRejectedValueOnce(FORK_TEMPLATE_ERROR) // initial pick on template
+      .mockResolvedValueOnce(SELECTION_META) // resolve plan + type
+      .mockResolvedValueOnce(goalTree(["sel-sibling"])) // exactly one sibling
+      .mockResolvedValueOnce(PICK_RESULT); // retry pick succeeds
+
+    await runSelect(["--selection-id", "sel-template", "--option-id", "opt-1", "--json"]);
+    const parsed = JSON.parse(stdoutOutput.join(""));
+    expect(parsed.success).toBe(true);
+    expect(parsed.selectionId).toBe("sel-sibling");
+    expect(parsed.routedFrom).toBe("sel-template");
+    // The retry must target the sibling, still on the for-all mutation.
+    expect(mockGraphql).toHaveBeenLastCalledWith(
+      expect.stringContaining("setTripPlanSelectedOption"),
+      expect.objectContaining({ selectionId: "sel-sibling", optionId: "opt-1" }),
+    );
+  });
+
+  // (b') auto-route honors the original scope flags on the retry.
+  it("retries against the sibling with the SAME --traveller scope", async () => {
+    mockGraphql
+      .mockRejectedValueOnce(FORK_TEMPLATE_ERROR)
+      .mockResolvedValueOnce(SELECTION_META)
+      .mockResolvedValueOnce(goalTree(["sel-sibling"]))
+      .mockResolvedValueOnce({ setTripPlanSelectionTravellerChoice: PICK_RESULT.setTripPlanSelectedOption });
+
+    await runSelect(["--selection-id", "sel-template", "--option-id", "opt-1", "--traveller", "trav-a", "--json"]);
+    const parsed = JSON.parse(stdoutOutput.join(""));
+    expect(parsed.routedFrom).toBe("sel-template");
+    expect(mockGraphql).toHaveBeenLastCalledWith(
+      expect.stringContaining("setTripPlanSelectionTravellerChoice"),
+      expect.objectContaining({ selectionId: "sel-sibling", optionId: "opt-1", travellerId: "trav-a" }),
+    );
+  });
+
+  // (c) fallthrough — zero candidates: FORK_TEMPLATE error, no retry pick.
+  it("does not route when there are zero same-type siblings", async () => {
+    mockGraphql
+      .mockRejectedValueOnce(FORK_TEMPLATE_ERROR)
+      .mockResolvedValueOnce(SELECTION_META)
+      .mockResolvedValueOnce(goalTree([])); // no siblings
+
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-template", "--option-id", "opt-1"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.FORK_TEMPLATE);
+    // Exactly 3 calls: initial pick + meta + goal tree. No retry pick.
+    expect(mockGraphql).toHaveBeenCalledTimes(3);
+  });
+
+  // (c) fallthrough — multiple candidates: FORK_TEMPLATE error listing them.
+  it("does not route when there are multiple same-type siblings, but lists them", async () => {
+    mockGraphql
+      .mockRejectedValueOnce(FORK_TEMPLATE_ERROR)
+      .mockResolvedValueOnce(SELECTION_META)
+      .mockResolvedValueOnce(goalTree(["sel-sibling-a", "sel-sibling-b"]));
+
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-template", "--option-id", "opt-1"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.FORK_TEMPLATE);
+    expect((err as CliError).message).toContain("sel-sibling-a");
+    expect((err as CliError).message).toContain("sel-sibling-b");
+    expect((err as CliError).details).toMatchObject({
+      candidateSelectionIds: ["sel-sibling-a", "sel-sibling-b"],
+    });
+    // No retry pick attempted.
+    expect(mockGraphql).toHaveBeenCalledTimes(3);
+  });
+
+  // Retry that itself fails must not retry again — emits FORK_TEMPLATE.
+  it("falls through to FORK_TEMPLATE (no second retry) when the routed pick also fails", async () => {
+    mockGraphql
+      .mockRejectedValueOnce(FORK_TEMPLATE_ERROR) // initial pick
+      .mockResolvedValueOnce(SELECTION_META)
+      .mockResolvedValueOnce(goalTree(["sel-sibling"]))
+      .mockRejectedValueOnce(new Error("sibling rejected too")); // retry fails
+
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-template", "--option-id", "opt-1"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.FORK_TEMPLATE);
+    // 4 calls total: initial + meta + tree + single retry. No further attempts.
+    expect(mockGraphql).toHaveBeenCalledTimes(4);
+  });
+});
+
 
 // ── Tests: one-way flight chain guidance (VOY-1718, PR #79 review) ─────────
 
