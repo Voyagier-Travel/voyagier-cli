@@ -317,6 +317,16 @@ describe("analyzeFlightDuplicates (VOY-1877)", () => {
     expect(roles[1].duplicateOfOptionId).toBeUndefined();
   });
 
+  it("keeps an id-less duplicate visible (marked, never folded unnamed)", () => {
+    // The duplicate row has no id, so the primary's collapsed-alternates note
+    // could not name it — folding it would hide a row without a trace. It stays
+    // rendered; only the relationship marker is set.
+    const roles = analyzeFlightDuplicates([flightOpt("a"), flightOpt(undefined)]);
+    expect(roles[1].duplicateOfOptionId).toBe("a");
+    expect(roles[1].collapsed).toBeFalsy();
+    expect(roles[0].collapsedAlternates).toBeUndefined();
+  });
+
   it("does NOT collapse options that differ only in flight number (same times + price) (4b)", () => {
     const otherFlight = flightOpt("b", {
       bookingData: {

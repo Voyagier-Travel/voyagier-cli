@@ -348,8 +348,12 @@ export function analyzeFlightDuplicates(options: DuplicableFlightOption[]): Flig
       idxs.forEach((i, k) => {
         if (k === 0) return;
         roles[i].duplicateOfOptionId = primaryId;
+        // Only fold rows we can NAME as alternates: an id-less duplicate would
+        // vanish from the render without a trace, so it stays visible instead.
+        const dupId = options[i].id;
+        if (!dupId) return;
         roles[i].collapsed = true;
-        if (options[i].id) alternates.push(options[i].id as string);
+        alternates.push(dupId);
       });
       if (alternates.length > 0) roles[primary].collapsedAlternates = alternates;
     }
