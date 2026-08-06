@@ -1310,7 +1310,11 @@ describe("registerSearchCommands", () => {
       await buildProgram().parseAsync(flightArgs("2026-08-01", ["--json"]));
       const out = JSON.parse(stdout());
       expect(out.requestedParams).toEqual({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
-      expect(out.effectiveParams).toBeUndefined();
+      // VOY-1871: effectiveParams (the wired direction/dates) is always present;
+      // the reused-selection's ORIGINAL params live under previousSearchParams
+      // (absent on a first search — no stored record).
+      expect(out.effectiveParams).toEqual({ origin: "LAX", destination: "NRT", depart: "2026-08-01" });
+      expect(out.previousSearchParams).toBeUndefined();
       expect(out.warnings).toBeUndefined();
       expect(mockRememberSelectionSearchParams).toHaveBeenCalledWith(
         "sel-fdec",
@@ -1318,13 +1322,16 @@ describe("registerSearchCommands", () => {
       );
     });
 
-    it("flights --json warns + echoes effectiveParams when the reused selection was searched with a different date", async () => {
+    it("flights --json warns + echoes previousSearchParams when the reused selection was searched with a different date", async () => {
       installRouter();
       mockGetSelectionSearchParams.mockReturnValue({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
       await buildProgram().parseAsync(flightArgs("2026-09-01", ["--json"]));
       const out = JSON.parse(stdout());
       expect(out.requestedParams.depart).toBe("2026-09-01");
-      expect(out.effectiveParams).toEqual({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
+      // VOY-1871: effectiveParams reflects the NEW (just-wired) date; the stored
+      // original is surfaced separately as previousSearchParams.
+      expect(out.effectiveParams).toEqual({ origin: "LAX", destination: "NRT", depart: "2026-09-01" });
+      expect(out.previousSearchParams).toEqual({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
       expect(out.warnings).toHaveLength(1);
       expect(out.warnings[0]).toContain("SELECTION_REUSED_PARAMS_MISMATCH");
       expect(out.warnings[0]).toContain("departure date");
@@ -1332,13 +1339,14 @@ describe("registerSearchCommands", () => {
       expect(mockRememberSelectionSearchParams).not.toHaveBeenCalled();
     });
 
-    it("flights --json: matching reused params echo effectiveParams but emit no warning", async () => {
+    it("flights --json: matching reused params echo previousSearchParams but emit no warning", async () => {
       installRouter();
       mockGetSelectionSearchParams.mockReturnValue({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
       await buildProgram().parseAsync(flightArgs("2026-08-01", ["--json"]));
       const out = JSON.parse(stdout());
       expect(out.warnings).toBeUndefined();
-      expect(out.effectiveParams).toEqual({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
+      expect(out.effectiveParams).toEqual({ origin: "LAX", destination: "NRT", depart: "2026-08-01" });
+      expect(out.previousSearchParams).toEqual({ origin: "LAX", destination: "NRT", depart: "2026-08-01", partySize: 1 });
     });
 
     it("flights human output prints a clear ⚠ mismatch line to stderr", async () => {
@@ -1360,6 +1368,153 @@ describe("registerSearchCommands", () => {
       expect(out.effectiveParams.checkin).toBe("2026-08-01");
       expect(out.warnings[0]).toContain("SELECTION_REUSED_PARAMS_MISMATCH");
       expect(out.warnings[0]).toContain("check-in");
+    });
+  });
+
+  // ── refreshed-inventory render + effectiveParams (VOY-1871) ──────────────────
+
+  describe("refreshed inventory + effectiveParams", () => {
+    /** A flight option whose outbound leg goes `from → to`. */
+    function legOption(id: string, from: string, to: string, price: number, sortOrder: number): unknown {
+      return {
+        id, name: id, price, sortOrder,
+        bookingData: { flightToken: `TK-${id}`, flights: [{ flightLegs: [
+          { origin: from, destination: to, departureTime: "2026-12-01T09:00:00", carrier: "WN", flightNumber: "100" },
+        ] }] },
+      };
+    }
+
+    /**
+     * Router whose getTripPlanSelection read returns a DIFFERENT option set on
+     * each successive call (reuse read, then the post-settle refetch), so a test
+     * can model "selection held rows A when first read, rows B once refreshed".
+     */
+    function stagedReadRouter(reads: unknown[][], goals: unknown[] = buildFlightGoals()): void {
+      let call = 0;
+      mockGraphql.mockImplementation(async (query: string) => {
+        if (query.includes("tripPlanTravellers")) return { tripPlanTravellers: [{ id: "t-1", firstName: "A", lastName: "B" }] };
+        if (query.includes("GoalsForSearch")) return { tripPlanGoals: goals };
+        if (query.includes("updateTripPlanAirportSelection")) return { updateTripPlanAirportSelection: { id: "x" } };
+        if (query.includes("addTripPlanDateOption")) return { addTripPlanDateOption: { id: "x" } };
+        if (query.includes("setTripPlanSelectionInputValue")) return { setTripPlanSelectionInputValue: { id: "x" } };
+        if (query.includes("setTripPlanDestinationValue")) return { setTripPlanDestinationValue: { id: "x" } };
+        if (query.includes("getTripPlanSelection")) {
+          const opts = reads[Math.min(call, reads.length - 1)];
+          call++;
+          return { getTripPlanSelection: { id: "sel-fdec", options: opts } };
+        }
+        if (query.includes("PlanFooter")) return { tripPlan: null };
+        throw new Error(`unrouted query: ${query.slice(0, 60)}`);
+      });
+    }
+
+    const lasToBwi = (extra: string[]) => [
+      "node", "v", "search", "flights",
+      "--plan", "plan-1", "--from", "LAS", "--to", "BWI", "--date", "2026-12-10", ...extra,
+    ];
+
+    it("renders POST-refresh rows only when the reused selection held stale (reversed) inventory", async () => {
+      // Selection was previously BWI→LAS; the reuse read still returns those old
+      // rows, but the just-wired inputs are LAS→BWI. The settled refetch returns
+      // the correct LAS→BWI rows — the envelope must show ONLY those.
+      const stale = [legOption("old", "BWI", "LAS", 400, 1)];
+      const fresh = [legOption("new", "LAS", "BWI", 350, 1)];
+      stagedReadRouter([stale, fresh]);
+      mockWaitForSelectionOptions.mockResolvedValue({ raw: {}, result: { status: "READY", optionCount: 1 } });
+
+      await buildProgram().parseAsync(lasToBwi(["--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["new"]);
+      expect(out.topOptions[0].origin).toBe("LAS");
+      expect(out.staleInventory).toBeUndefined();
+      // It settled via the shared wait primitive against the reused selection.
+      expect(mockWaitForSelectionOptions).toHaveBeenCalledWith("sel-fdec", expect.objectContaining({ timeoutMs: expect.any(Number) }));
+    });
+
+    it("does NOT settle or flag when the reuse read already matches the wired origin", async () => {
+      const fresh = [legOption("ok", "LAS", "BWI", 350, 1)];
+      stagedReadRouter([fresh]);
+      await buildProgram().parseAsync(lasToBwi(["--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["ok"]);
+      expect(out.staleInventory).toBeUndefined();
+      expect(mockWaitForSelectionOptions).not.toHaveBeenCalled();
+    });
+
+    it("flags staleInventory when the rows STILL disagree with the effective origin after settling", async () => {
+      // Both the reuse read AND the refetch return reversed rows (re-seed hasn't
+      // landed) — don't render silently: flag it and warn.
+      const stale = [legOption("still-old", "BWI", "LAS", 400, 1)];
+      stagedReadRouter([stale, stale]);
+      mockWaitForSelectionOptions.mockResolvedValue({ raw: {}, result: { status: "READY", optionCount: 1 } });
+
+      await buildProgram().parseAsync(lasToBwi(["--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.staleInventory).toBe(true);
+      expect(out.warnings.some((w: string) => w.includes("STALE_INVENTORY"))).toBe(true);
+      // The rows are still surfaced (not suppressed) so the caller can inspect them.
+      expect(out.topOptions).toHaveLength(1);
+    });
+
+    it("flags staleInventory when only the DESTINATION disagrees (same origin)", async () => {
+      // Reused selection was LAS→PHX; new search is LAS→BWI. Origin matches, so
+      // origin-only comparison would let these rows slip through unflagged.
+      const stale = [legOption("wrong-dest", "LAS", "PHX", 400, 1)];
+      stagedReadRouter([stale, stale]);
+      mockWaitForSelectionOptions.mockResolvedValue({ raw: {}, result: { status: "READY", optionCount: 1 } });
+
+      await buildProgram().parseAsync(lasToBwi(["--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.staleInventory).toBe(true);
+      expect(out.warnings.some((w: string) => w.includes("STALE_INVENTORY"))).toBe(true);
+    });
+
+    it("re-polls (bounded) when the selection is already terminal but rows are still stale", async () => {
+      // The status wait returns immediately (READY) while the first refetch
+      // still hands back old rows; the bounded re-poll must converge on the
+      // fresh rows instead of rendering the stale ones.
+      const stale = [legOption("old", "BWI", "LAS", 400, 1)];
+      const fresh = [legOption("new", "LAS", "BWI", 350, 1)];
+      stagedReadRouter([stale, stale, fresh]);
+      mockWaitForSelectionOptions.mockResolvedValue({ raw: {}, result: { status: "READY", optionCount: 1 } });
+
+      await buildProgram().parseAsync(lasToBwi(["--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["new"]);
+      expect(out.staleInventory).toBeUndefined();
+    });
+
+    it("echoes effectiveParams (origin/destination/date) on the one-way --json envelope", async () => {
+      const fresh = [legOption("ok", "LAS", "BWI", 350, 1)];
+      stagedReadRouter([fresh]);
+      await buildProgram().parseAsync(lasToBwi(["--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.effectiveParams).toEqual({ origin: "LAS", destination: "BWI", depart: "2026-12-10" });
+    });
+
+    it("includes the return date in effectiveParams for a round trip", async () => {
+      const fresh = [legOption("ok", "LAS", "BWI", 350, 1)];
+      stagedReadRouter([fresh], buildFlightGoals(true));
+      await buildProgram().parseAsync(lasToBwi(["--return", "2026-12-17", "--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.effectiveParams).toEqual({ origin: "LAS", destination: "BWI", depart: "2026-12-10", return: "2026-12-17" });
+    });
+
+    it("prints a one-line effective-search echo in human output", async () => {
+      const fresh = [legOption("ok", "LAS", "BWI", 350, 1)];
+      stagedReadRouter([fresh]);
+      await buildProgram().parseAsync(lasToBwi([]));
+      expect(stderrWrites.join("")).toContain("Search: LAS → BWI on 2026-12-10");
+    });
+
+    it("emits the effective-search echo and a stale warning in agent markdown", async () => {
+      const stale = [legOption("still-old", "BWI", "LAS", 400, 1)];
+      stagedReadRouter([stale, stale]);
+      mockWaitForSelectionOptions.mockResolvedValue({ raw: {}, result: { status: "READY", optionCount: 1 } });
+      await buildProgram().parseAsync(lasToBwi(["--agent"]));
+      const out = stdout();
+      expect(out).toContain("Search: LAS → BWI on 2026-12-10");
+      expect(out).toContain("STALE_INVENTORY");
     });
   });
 
