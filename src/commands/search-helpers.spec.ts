@@ -254,12 +254,28 @@ describe("resolveDateRange (VOY-1421: populate BOTH date outputs)", () => {
   });
 });
 
-describe("resolveReturnFlightGoal (VOY-1421: wire the return leg)", () => {
-  const flightGoal = (id: string, segmentIndex?: number) =>
+describe("resolveReturnFlightGoal (VOY-1421 wire the return leg; VOY-1870 pair correctly)", () => {
+  const flightGoal = (
+    id: string,
+    segmentIndex?: number,
+    travellerIds?: string[],
+  ) =>
     goal({
       id,
+      name: id,
       type: "Flight",
-      items: [{ selections: [{ id: `${id}-f`, type: "Flight", ...(segmentIndex != null ? { segmentIndex } : {}) }] }],
+      items: [
+        {
+          selections: [
+            {
+              id: `${id}-f`,
+              type: "Flight",
+              ...(segmentIndex != null ? { segmentIndex } : {}),
+              ...(travellerIds ? { assignedTravellers: travellerIds.map((t) => ({ id: t })) } : {}),
+            },
+          ],
+        },
+      ],
     });
 
   it("finds the goal whose child selection has segmentIndex === 1", () => {
@@ -277,15 +293,52 @@ describe("resolveReturnFlightGoal (VOY-1421: wire the return leg)", () => {
     expect(SH.resolveReturnFlightGoal(goals, "g-out")).toBeNull();
   });
 
-  it("returns null when multiple return candidates lack a segmentIndex === 1 marker", () => {
-    // Three flight goals, none marked seg 1, more than one remaining -> ambiguous -> null.
-    const goals = [flightGoal("g-out", 0), flightGoal("g-a"), flightGoal("g-b")];
-    expect(SH.resolveReturnFlightGoal(goals, "g-out")).toBeNull();
-  });
-
-  it("prefers the segmentIndex === 1 goal even when several Flight goals remain", () => {
+  it("prefers the segmentIndex === 1 goal even when several Flight goals remain (only one seg-1 candidate)", () => {
     const goals = [flightGoal("g-out", 0), flightGoal("g-a"), flightGoal("g-ret", 1)];
     expect(SH.resolveReturnFlightGoal(goals, "g-out")?.id).toBe("g-ret");
+  });
+
+  it("group plan: pairs the return goal by shared traveller assignment, not by first seg-1", () => {
+    // Two travellers, each with their own outbound/return pair. The outbound
+    // being searched (g-out-A) belongs to traveller t1, so it must pair with the
+    // return goal assigned to t1 — NOT the arbitrary first seg-1 goal.
+    const goals = [
+      flightGoal("g-out-A", 0, ["t1"]),
+      flightGoal("g-out-B", 0, ["t2"]),
+      flightGoal("g-ret-B", 1, ["t2"]),
+      flightGoal("g-ret-A", 1, ["t1"]),
+    ];
+    expect(SH.resolveReturnFlightGoal(goals, "g-out-A")?.id).toBe("g-ret-A");
+    expect(SH.resolveReturnFlightGoal(goals, "g-out-B")?.id).toBe("g-ret-B");
+  });
+
+  it("throws RETURN_GOAL_AMBIGUOUS listing candidates when multiple seg-1 goals have no distinguishing linkage", () => {
+    // Two return candidates, no traveller assignments to pair on -> fail closed.
+    const goals = [flightGoal("g-out", 0), flightGoal("g-ret-a", 1), flightGoal("g-ret-b", 1)];
+    try {
+      SH.resolveReturnFlightGoal(goals, "g-out");
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(CliError);
+      const err = e as InstanceType<typeof CliError>;
+      expect(err.code).toBe(CliErrorCode.RETURN_GOAL_AMBIGUOUS);
+      expect(err.message).toContain("g-ret-a");
+      expect(err.message).toContain("g-ret-b");
+      expect(err.details?.candidateGoalIds).toEqual(["g-ret-a", "g-ret-b"]);
+    }
+  });
+
+  it("throws RETURN_GOAL_AMBIGUOUS when several unmarked Flight goals remain and can't be paired", () => {
+    // Three flight goals, none marked seg 1, more than one remaining, no
+    // assignments to pair on -> ambiguous -> fail closed (was silently null).
+    const goals = [flightGoal("g-out", 0), flightGoal("g-a"), flightGoal("g-b")];
+    try {
+      SH.resolveReturnFlightGoal(goals, "g-out");
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(CliError);
+      expect((e as InstanceType<typeof CliError>).code).toBe(CliErrorCode.RETURN_GOAL_AMBIGUOUS);
+    }
   });
 });
 

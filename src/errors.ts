@@ -54,6 +54,14 @@ export enum CliErrorCode {
   // v2.11.0 — plan-id harmonization (--plan accepted alongside the positional)
   /** Conflicting or missing plan id (positional vs --plan), or other malformed input. */
   INVALID_INPUT = "INVALID_INPUT",
+
+  // VOY-1870 — return-leg goal pairing
+  /**
+   * A round-trip search could not unambiguously pair the outbound goal with a
+   * single return-leg goal (multiple candidate return goals, none linked to the
+   * outbound). Fail closed rather than re-seed an unrelated traveller's goal.
+   */
+  RETURN_GOAL_AMBIGUOUS = "RETURN_GOAL_AMBIGUOUS",
 }
 
 export class CliError extends Error {
