@@ -55,13 +55,17 @@ export enum CliErrorCode {
   /** Conflicting or missing plan id (positional vs --plan), or other malformed input. */
   INVALID_INPUT = "INVALID_INPUT",
 
-  // VOY-1870 — return-leg goal pairing
+// VOY-1870 — return-leg goal pairing
   /**
    * A round-trip search could not unambiguously pair the outbound goal with a
    * single return-leg goal (multiple candidate return goals, none linked to the
    * outbound). Fail closed rather than re-seed an unrelated traveller's goal.
    */
   RETURN_GOAL_AMBIGUOUS = "RETURN_GOAL_AMBIGUOUS",
+
+  // VOY-1872 — fork-template selections
+  /** The target selection is a fork template; picks must land on its non-template sibling. */
+  FORK_TEMPLATE = "FORK_TEMPLATE",
 }
 
 export class CliError extends Error {
