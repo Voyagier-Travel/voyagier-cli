@@ -1456,6 +1456,34 @@ describe("registerSearchCommands", () => {
       expect(out.topOptions).toHaveLength(1);
     });
 
+    it("flags staleInventory when only the DESTINATION disagrees (same origin)", async () => {
+      // Reused selection was LAS→PHX; new search is LAS→BWI. Origin matches, so
+      // origin-only comparison would let these rows slip through unflagged.
+      const stale = [legOption("wrong-dest", "LAS", "PHX", 400, 1)];
+      stagedReadRouter([stale, stale]);
+      mockWaitForSelectionOptions.mockResolvedValue({ raw: {}, result: { status: "READY", optionCount: 1 } });
+
+      await buildProgram().parseAsync(lasToBwi(["--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.staleInventory).toBe(true);
+      expect(out.warnings.some((w: string) => w.includes("STALE_INVENTORY"))).toBe(true);
+    });
+
+    it("re-polls (bounded) when the selection is already terminal but rows are still stale", async () => {
+      // The status wait returns immediately (READY) while the first refetch
+      // still hands back old rows; the bounded re-poll must converge on the
+      // fresh rows instead of rendering the stale ones.
+      const stale = [legOption("old", "BWI", "LAS", 400, 1)];
+      const fresh = [legOption("new", "LAS", "BWI", 350, 1)];
+      stagedReadRouter([stale, stale, fresh]);
+      mockWaitForSelectionOptions.mockResolvedValue({ raw: {}, result: { status: "READY", optionCount: 1 } });
+
+      await buildProgram().parseAsync(lasToBwi(["--json"]));
+      const out = JSON.parse(stdout());
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["new"]);
+      expect(out.staleInventory).toBeUndefined();
+    });
+
     it("echoes effectiveParams (origin/destination/date) on the one-way --json envelope", async () => {
       const fresh = [legOption("ok", "LAS", "BWI", 350, 1)];
       stagedReadRouter([fresh]);

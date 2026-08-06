@@ -730,18 +730,37 @@ function optionOutboundOrigin(opt: SelectOption): string | null {
   return deriveFlightDetail(opt.bookingData)?.origin ?? null;
 }
 
-/**
- * True when the first option's outbound origin is KNOWN and differs from the
- * origin just wired — i.e. the rows still reflect the previous params and the
- * re-seed triggered by the new inputs has not landed yet. An option whose leg
- * origin can't be read is treated as "can't tell" (never stale), so older/partial
- * payloads never trip a false positive.
- */
-function outboundOriginStale(options: SelectOption[], effectiveOrigin: string): boolean {
-  if (options.length === 0) return false;
-  const origin = optionOutboundOrigin(options[0]);
-  return origin != null && origin !== effectiveOrigin;
+/** The outbound final destination encoded in a flight option's rows, or null. */
+function optionOutboundDestination(opt: SelectOption): string | null {
+  return deriveFlightDetail(opt.bookingData)?.destination ?? null;
 }
+
+/**
+ * True when the first option's outbound origin OR destination is KNOWN and
+ * differs from the params just wired — i.e. the rows still reflect the previous
+ * params and the re-seed triggered by the new inputs has not landed yet.
+ * Comparing both endpoints matters: a reused selection whose destination
+ * changed (same origin) is just as stale as a reversed direction. A field that
+ * can't be read is treated as "can't tell" (never stale on that field), so
+ * older/partial payloads never trip a false positive.
+ */
+function outboundLegStale(
+  options: SelectOption[],
+  effectiveOrigin: string,
+  effectiveDestination: string,
+): boolean {
+  if (options.length === 0) return false;
+  const legOrigin = optionOutboundOrigin(options[0]);
+  const legDestination = optionOutboundDestination(options[0]);
+  if (legOrigin != null && legOrigin !== effectiveOrigin) return true;
+  return legDestination != null && legDestination !== effectiveDestination;
+}
+
+/** Bounded re-poll for the stale-inventory refetch (VOY-1871): the selection
+ * status can already be terminal (READY) while rows still reflect the previous
+ * params, so a status wait alone can return immediately with stale rows. */
+export const STALE_REFETCH_ATTEMPTS = 3;
+export const STALE_REFETCH_DELAY_MS = 750;
 
 /**
  * Envelope fields for the flights search (VOY-1793 reuse observability +
@@ -749,9 +768,10 @@ function outboundOriginStale(options: SelectOption[], effectiveOrigin: string): 
  *
  * `effectiveParams` (VOY-1871) is ALWAYS present and reflects the params wired
  * for THIS search. The reused selection's ORIGINAL params (VOY-1793, present
- * only on a reuse whose stored record differs) move to `previousSearchParams`
- * so the two concepts don't collide on one key. `staleInventory` + its warning
- * are added when the rendered rows still don't match the effective origin.
+ * on any reuse that has a stored record — matching or not) move to
+ * `previousSearchParams` so the two concepts don't collide on one key.
+ * `staleInventory` + its warning are added when the rendered rows still don't
+ * match the effective origin/destination.
  */
 function flightReuseEnvelopeFields(
   reuse: ReuseObservation,
@@ -1040,16 +1060,22 @@ export function registerSearchCommands(program: Command): void {
         // backend monitor asynchronously, so an immediate read (in
         // resolveOrCreateDecisionSelection) can still see the old rows while the
         // re-seed is in flight. The prior empty-wait only settles when NO rows
-        // came back; here rows DID come back but their outbound origin doesn't
-        // match the origin we just wired, which means they're stale. Wait on the
-        // same settle primitive the empty path uses, then re-read the full
-        // options, so the envelope is built from POST-refresh rows only. This
-        // runs in every mode (incl. --json/--agent) because agents consume the
-        // envelope directly.
-        if (outboundOriginStale(fetchedOptions, origin)) {
-          const settled = await waitForSelectionOptions(selectionId, { timeoutMs: SEARCH_WAIT_TIMEOUT_MS });
-          if (settled.result.status === "READY") {
+        // came back; here rows DID come back but their outbound leg doesn't
+        // match the params we just wired, which means they're stale. The status
+        // wait alone is NOT sufficient: a reused selection is often already
+        // terminal (READY), so the wait returns immediately while the rows are
+        // still the old ones. Re-poll the full options (bounded) until the rows
+        // match the effective params, so the envelope is built from
+        // POST-refresh rows only. Runs in every mode (incl. --json/--agent)
+        // because agents consume the envelope directly.
+        if (outboundLegStale(fetchedOptions, origin, destination)) {
+          await waitForSelectionOptions(selectionId, { timeoutMs: SEARCH_WAIT_TIMEOUT_MS });
+          for (let attempt = 1; attempt <= STALE_REFETCH_ATTEMPTS; attempt++) {
             fetchedOptions = await refetchDecisionOptions(selectionId);
+            if (!outboundLegStale(fetchedOptions, origin, destination)) break;
+            if (attempt < STALE_REFETCH_ATTEMPTS) {
+              await new Promise<void>((r) => setTimeout(r, STALE_REFETCH_DELAY_MS));
+            }
           }
         }
 
@@ -1062,13 +1088,13 @@ export function registerSearchCommands(program: Command): void {
         const { kept, zero: filteredToZero } = filterFlights(prefiltered, flightFilters);
         const options = sortOptions(kept, sortBy);
 
-        // VOY-1871: after any settle+re-read, if the FIRST rendered row's
-        // outbound origin still disagrees with the effective origin, the
-        // inventory hasn't finished refreshing for the new params. Don't render
-        // silently — flag it so an agent re-fetches before selecting.
-        const staleInventory = outboundOriginStale(options, origin);
+        // VOY-1871: after the bounded re-poll, if the FIRST rendered row's
+        // outbound leg still disagrees with the effective params, the
+        // inventory hasn't finished refreshing. Don't render silently — flag it
+        // so an agent re-fetches before selecting.
+        const staleInventory = outboundLegStale(options, origin, destination);
         const staleWarning = staleInventory
-          ? `STALE_INVENTORY: the top option's outbound origin (${optionOutboundOrigin(options[0])}) does not match the searched origin (${origin}); the selection's inventory may still be refreshing for the new params. Re-fetch before selecting: voyagier selection-options ${shellArg(selectionId)} --wait --json`
+          ? `STALE_INVENTORY: the top option's outbound leg (${optionOutboundOrigin(options[0]) ?? "?"} → ${optionOutboundDestination(options[0]) ?? "?"}) does not match the searched params (${origin} → ${destination}); the selection's inventory may still be refreshing for the new params. Re-fetch before selecting: voyagier selection-options ${shellArg(selectionId)} --wait --json`
           : null;
 
         const searchResults = options.map((opt, i) => {
