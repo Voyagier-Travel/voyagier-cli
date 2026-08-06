@@ -7,6 +7,9 @@ import {
   wallClockTime,
   extractRankScore,
   rankScoreLabel,
+  analyzeFlightDuplicates,
+  extractFareLabel,
+  collapsedAlternatesLabel,
 } from "./flight-format.js";
 
 // A realistic (anonymised) booking-data shape: flights[0].flightLegs[].
@@ -218,5 +221,142 @@ describe("rankScoreLabel (VOY-1824)", () => {
     expect(rankScoreLabel(0.82)).toBe("rank 0.82");
     expect(rankScoreLabel(0.8)).toBe("rank 0.80");
     expect(rankScoreLabel(1)).toBe("rank 1.00");
+  });
+});
+
+// A flight option shaped like search.ts's SelectOption subset the duplicate
+// analysis reads. Same schedule + price across the group unless overridden.
+function flightOpt(
+  id: string | undefined,
+  over: Partial<{ price: number; airline: string; duration: string; bookingData: Record<string, unknown> }> = {},
+) {
+  return {
+    id,
+    price: 412,
+    airline: "DL",
+    duration: "5h50m",
+    bookingData: {
+      flights: [
+        {
+          flightLegs: [
+            { origin: "BWI", destination: "AUS", departureTime: "2026-06-15T07:15:00", arrivalTime: "2026-06-15T10:05:00", carrier: "DL", flightNumber: "1043" },
+          ],
+        },
+      ],
+    },
+    ...over,
+  };
+}
+
+describe("extractFareLabel (VOY-1877)", () => {
+  it("reads a fare/product descriptor from the top-level blob", () => {
+    expect(extractFareLabel({ fareBrand: "Main Cabin" })).toBe("Main Cabin");
+    expect(extractFareLabel({ cabinClass: "Economy" })).toBe("Economy");
+  });
+
+  it("falls back to flights[0] and its first leg", () => {
+    expect(extractFareLabel({ flights: [{ brandName: "Basic" }] })).toBe("Basic");
+    expect(extractFareLabel({ flights: [{ flightLegs: [{ bookingClass: "Y" }] }] })).toBe("Y");
+  });
+
+  it("returns null when no fare descriptor is present or the blob is unusable", () => {
+    expect(extractFareLabel({ flights: [{ flightLegs: [{ carrier: "DL" }] }] })).toBeNull();
+    expect(extractFareLabel(undefined)).toBeNull();
+    expect(extractFareLabel("nope")).toBeNull();
+    expect(extractFareLabel({ fareBrand: "  " })).toBeNull();
+  });
+});
+
+describe("collapsedAlternatesLabel (VOY-1877)", () => {
+  it("singular vs plural", () => {
+    expect(collapsedAlternatesLabel(["opt-2"])).toBe("+1 identical option: opt-2");
+    expect(collapsedAlternatesLabel(["opt-2", "opt-3"])).toBe("+2 identical options: opt-2, opt-3");
+  });
+});
+
+describe("analyzeFlightDuplicates (VOY-1877)", () => {
+  it("collapses two indistinguishable options: later folds into the earlier, all retained via markers (4a)", () => {
+    const roles = analyzeFlightDuplicates([flightOpt("a"), flightOpt("b")]);
+    // Primary keeps its row and names the folded alternate.
+    expect(roles[0].collapsed).toBeFalsy();
+    expect(roles[0].collapsedAlternates).toEqual(["b"]);
+    expect(roles[0].duplicateOfOptionId).toBeUndefined();
+    // Duplicate is folded from the render but carries the JSON marker.
+    expect(roles[1].collapsed).toBe(true);
+    expect(roles[1].duplicateOfOptionId).toBe("a");
+  });
+
+  it("folds N alternates into a single primary", () => {
+    const roles = analyzeFlightDuplicates([flightOpt("a"), flightOpt("b"), flightOpt("c")]);
+    expect(roles[0].collapsedAlternates).toEqual(["b", "c"]);
+    expect(roles[1].collapsed).toBe(true);
+    expect(roles[2].collapsed).toBe(true);
+    expect(roles[2].duplicateOfOptionId).toBe("a");
+  });
+
+  it("does NOT collapse options that differ only in price (4b)", () => {
+    const roles = analyzeFlightDuplicates([flightOpt("a", { price: 412 }), flightOpt("b", { price: 399 })]);
+    expect(roles[0]).toEqual({});
+    expect(roles[1]).toEqual({});
+  });
+
+  it("does NOT collapse options that differ only in departure/arrival time (4b)", () => {
+    const later = flightOpt("b", {
+      bookingData: {
+        flights: [
+          {
+            flightLegs: [
+              { origin: "BWI", destination: "AUS", departureTime: "2026-06-15T09:15:00", arrivalTime: "2026-06-15T12:05:00", carrier: "DL", flightNumber: "1043" },
+            ],
+          },
+        ],
+      },
+    });
+    const roles = analyzeFlightDuplicates([flightOpt("a"), later]);
+    expect(roles[1].collapsed).toBeFalsy();
+    expect(roles[1].duplicateOfOptionId).toBeUndefined();
+  });
+
+  it("annotates (does not collapse) when a fare difference IS detectable", () => {
+    const a = flightOpt("a", { bookingData: { fareBrand: "Main Cabin", flights: flightOpt("a").bookingData.flights } });
+    const b = flightOpt("b", { bookingData: { fareBrand: "Basic Economy", flights: flightOpt("b").bookingData.flights } });
+    const roles = analyzeFlightDuplicates([a, b]);
+    // Both rows kept and annotated with their own fare.
+    expect(roles[0].collapsed).toBeFalsy();
+    expect(roles[0].annotate).toBe("Main Cabin");
+    expect(roles[1].collapsed).toBeFalsy();
+    expect(roles[1].annotate).toBe("Basic Economy");
+    // Still flagged as display-identical in the machine surface.
+    expect(roles[1].duplicateOfOptionId).toBe("a");
+  });
+
+  it("collapses when identical-schedule rows share the same fare (indistinguishable)", () => {
+    const a = flightOpt("a", { bookingData: { fareBrand: "Main Cabin", flights: flightOpt("a").bookingData.flights } });
+    const b = flightOpt("b", { bookingData: { fareBrand: "Main Cabin", flights: flightOpt("b").bookingData.flights } });
+    const roles = analyzeFlightDuplicates([a, b]);
+    expect(roles[1].collapsed).toBe(true);
+    expect(roles[0].collapsedAlternates).toEqual(["b"]);
+  });
+
+  it("never collapses a float-artifact price apart from an exact-cents twin", () => {
+    // 412.10 stored as a dirty float must still match a clean 412.10 sibling.
+    const roles = analyzeFlightDuplicates([flightOpt("a", { price: 412.1 }), flightOpt("b", { price: 412.10000000000002 })]);
+    expect(roles[1].collapsed).toBe(true);
+    expect(roles[1].duplicateOfOptionId).toBe("a");
+  });
+
+  it("leaves options without an id as separate rows (nothing to reference)", () => {
+    const roles = analyzeFlightDuplicates([flightOpt(undefined), flightOpt(undefined)]);
+    expect(roles[0]).toEqual({});
+    expect(roles[1]).toEqual({});
+  });
+
+  it("does not dedup rows too sparse to compare (no price)", () => {
+    const roles = analyzeFlightDuplicates([
+      { id: "a", airline: "DL", bookingData: {} },
+      { id: "b", airline: "DL", bookingData: {} },
+    ]);
+    expect(roles[0]).toEqual({});
+    expect(roles[1]).toEqual({});
   });
 });

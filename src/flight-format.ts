@@ -15,6 +15,7 @@
  * Times are rendered as the LOCAL WALL-CLOCK exactly as stored — no Date
  * parsing, no timezone conversion, no offset arithmetic (see wallClockTime).
  */
+import { cents } from "./format.js";
 
 /** Structured leg-level detail for a flight search option. */
 export interface FlightDetail {
@@ -183,6 +184,178 @@ export function extractRankScore(bookingData?: unknown): number | undefined {
 /** Compact display token for a rank score, e.g. "rank 0.82" (2 decimals). */
 export function rankScoreLabel(score: number): string {
   return `rank ${score.toFixed(2)}`;
+}
+
+/**
+ * Candidate keys carrying a fare / product descriptor in provider bookingData.
+ * The fare product (brand/cabin/booking class) is what distinguishes two
+ * option rows that share an identical displayed schedule + price. Names vary by
+ * GDS, so we probe a small, ordered set and take the first non-empty string.
+ */
+const FARE_KEYS = [
+  "fareBrand",
+  "fareBrandName",
+  "brandName",
+  "fareName",
+  "fareFamily",
+  "fareType",
+  "fareBasis",
+  "cabin",
+  "cabinClass",
+  "cabinName",
+  "bookingClass",
+  "fareClass",
+  "fareCode",
+];
+
+function scanFareKeys(o: Record<string, unknown>): string | null {
+  for (const k of FARE_KEYS) {
+    const v = o[k];
+    if (typeof v === "string" && v.trim().length > 0) return v.trim();
+  }
+  return null;
+}
+
+/**
+ * Best-effort fare / product label for a flight option, or null when none is
+ * detectable. Probes the top-level blob, then flights[0], then its first leg —
+ * the same nesting `deriveFlightDetail` walks. Display-only: used to decide
+ * whether two identical-schedule rows are actually distinguishable (annotate)
+ * or truly indistinguishable (collapse).
+ */
+export function extractFareLabel(bookingData?: unknown): string | null {
+  if (!bookingData || typeof bookingData !== "object") return null;
+  const bd = bookingData as Record<string, unknown>;
+  const top = scanFareKeys(bd);
+  if (top) return top;
+  const flights = Array.isArray(bd.flights) ? bd.flights : null;
+  const f0 = flights && flights[0] && typeof flights[0] === "object" ? (flights[0] as Record<string, unknown>) : null;
+  if (f0) {
+    const s = scanFareKeys(f0);
+    if (s) return s;
+    const legs = Array.isArray(f0.flightLegs) ? f0.flightLegs : null;
+    const l0 = legs && legs[0] && typeof legs[0] === "object" ? (legs[0] as Record<string, unknown>) : null;
+    if (l0) {
+      const sl = scanFareKeys(l0);
+      if (sl) return sl;
+    }
+  }
+  return null;
+}
+
+/** Minimal option shape the duplicate analysis reads (a subset of SelectOption). */
+export interface DuplicableFlightOption {
+  id?: string;
+  price?: number;
+  airline?: string;
+  duration?: string;
+  bookingData?: Record<string, unknown> | null;
+}
+
+/**
+ * Per-option role in the display-duplicate analysis (aligned to the input
+ * order). All fields are optional; a plain `{}` means "unique / render as-is".
+ *
+ * `duplicateOfOptionId` is the JSON marker: set on every option that is
+ * display-identical to an EARLIER one, whether it is annotated or collapsed —
+ * the machine surface keeps all options, only flagging the relationship.
+ */
+export interface FlightDupRole {
+  /** JSON marker: id of the earlier, display-identical option this duplicates. */
+  duplicateOfOptionId?: string;
+  /** Human/agent: omit this row entirely (folded into its primary). */
+  collapsed?: boolean;
+  /** Human/agent: fare/product label to show on this row (annotate mode). */
+  annotate?: string;
+  /** On a primary: ids of the identical options folded into it (collapse mode). */
+  collapsedAlternates?: string[];
+}
+
+/**
+ * Signature of what a compact flight row actually SHOWS: leading carrier/flight
+ * number (or airline), timed route + stops, price, duration. Two options with
+ * the same signature are indistinguishable at the display layer. Returns null
+ * when there isn't enough shown content to safely claim a duplicate (e.g. no
+ * price and no schedule), so sparse rows are never collapsed.
+ */
+function displaySignature(opt: DuplicableFlightOption): string | null {
+  if (opt.price == null) return null;
+  const detail = deriveFlightDetail(opt.bookingData);
+  const lead = detail?.flightNumber ?? opt.airline ?? "";
+  const route = detail ? flightRouteLabel(detail) : "";
+  if (!lead && !route) return null;
+  // Normalise price through the shared cents rounding so a float artifact can
+  // never split two otherwise-identical rows into different signatures.
+  const priceKey = String(cents(opt.price));
+  return [lead, route, priceKey, opt.duration ?? ""].join("¦");
+}
+
+/**
+ * Label noting the identical options folded into a collapsed row, e.g.
+ * "+1 identical option: opt-2" / "+2 identical options: opt-2, opt-3".
+ */
+export function collapsedAlternatesLabel(ids: string[]): string {
+  return `+${ids.length} identical option${ids.length === 1 ? "" : "s"}: ${ids.join(", ")}`;
+}
+
+/**
+ * Classify a list of flight options for display-duplicate handling (VOY-1877).
+ *
+ * Options sharing an identical DISPLAYED schedule + price are grouped. Within a
+ * group the first (earliest) option is the primary; the rest are duplicates:
+ *   - when a fare/product difference IS detectable (distinct `extractFareLabel`
+ *     across the group) every member is ANNOTATED with its own fare and kept —
+ *     the rows are distinguishable, so we don't hide anything;
+ *   - otherwise the duplicates are COLLAPSED into the primary, which notes the
+ *     folded ids.
+ * Either way, each duplicate carries `duplicateOfOptionId` for the JSON marker.
+ *
+ * Pure and deterministic (input order only): callers on the human, agent, and
+ * JSON paths run it over the same option list and cannot disagree.
+ */
+export function analyzeFlightDuplicates(options: DuplicableFlightOption[]): FlightDupRole[] {
+  const roles: FlightDupRole[] = options.map(() => ({}));
+  const groups = new Map<string, number[]>();
+  options.forEach((opt, i) => {
+    const sig = displaySignature(opt);
+    if (sig == null) return;
+    const arr = groups.get(sig);
+    if (arr) arr.push(i);
+    else groups.set(sig, [i]);
+  });
+
+  for (const idxs of groups.values()) {
+    if (idxs.length < 2) continue;
+    const primary = idxs[0];
+    const primaryId = options[primary].id;
+    // Without a stable id for the primary we can neither emit a marker nor name
+    // the alternates — leave the group as separate rows rather than lose info.
+    if (!primaryId) continue;
+
+    const labels = idxs.map((i) => extractFareLabel(options[i].bookingData));
+    // More than one distinct fare label (null folded to "") ⇒ the rows are
+    // actually distinguishable ⇒ annotate rather than collapse.
+    const annotateMode = new Set(labels.map((l) => l ?? "")).size > 1;
+
+    if (annotateMode) {
+      idxs.forEach((i, k) => {
+        const label = labels[k];
+        if (label) roles[i].annotate = label;
+        if (k > 0) roles[i].duplicateOfOptionId = primaryId;
+      });
+    } else {
+      const alternates: string[] = [];
+      idxs.forEach((i, k) => {
+        if (k === 0) return;
+        roles[i].duplicateOfOptionId = primaryId;
+        roles[i].collapsed = true;
+        if (options[i].id) alternates.push(options[i].id as string);
+      });
+      if (alternates.length > 0) roles[primary].collapsedAlternates = alternates;
+    }
+  }
+
+  return roles;
 }
 
 /**

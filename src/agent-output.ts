@@ -4,7 +4,8 @@
  */
 import { formatPrice } from "./utils.js";
 import { hotelStayLabel, deriveHotelFacts } from "./hotel-format.js";
-import { deriveFlightDetail, flightRouteLabel, extractRankScore, rankScoreLabel } from "./flight-format.js";
+import { deriveFlightDetail, flightRouteLabel, extractRankScore, rankScoreLabel, analyzeFlightDuplicates, collapsedAlternatesLabel } from "./flight-format.js";
+import type { FlightDupRole } from "./flight-format.js";
 
 /**
  * Format a numbered list of flight options for agent output.
@@ -14,11 +15,18 @@ import { deriveFlightDetail, flightRouteLabel, extractRankScore, rankScoreLabel 
  * data it degrades to the original `airline · duration · price`.
  */
 export function agentFlightOptions(
-  options: Array<{ airline?: string; duration?: string; price?: number; bookingData?: Record<string, unknown> | null }>
+  options: Array<{ id?: string; airline?: string; duration?: string; price?: number; bookingData?: Record<string, unknown> | null }>,
+  roles?: FlightDupRole[],
 ): string {
   if (options.length === 0) return "_No flights found._";
+  // VOY-1877: fold/annotate display-identical rows, matching the human + JSON
+  // surfaces. Numbers are kept positional so `select <n>` still resolves a
+  // collapsed option (identical to the shown primary).
+  const dupRoles = roles ?? analyzeFlightDuplicates(options);
   return options
     .map((opt, i) => {
+      const role = dupRoles[i] ?? {};
+      if (role.collapsed) return null;
       const detail = deriveFlightDetail(opt.bookingData);
       const parts: string[] = [];
       const lead = detail?.flightNumber ?? opt.airline;
@@ -32,8 +40,15 @@ export function agentFlightOptions(
       // VOY-1824: platform value score, plain (no ANSI), only when present.
       const rank = extractRankScore(opt.bookingData);
       if (rank !== undefined) parts.push(rankScoreLabel(rank));
-      return `${i + 1}. ${parts.join(" · ")}`;
+      // VOY-1877: fare annotation for a distinguishable identical-schedule row.
+      if (role.annotate) parts.push(`fare: ${role.annotate}`);
+      let line = `${i + 1}. ${parts.join(" · ")}`;
+      if (role.collapsedAlternates?.length) {
+        line += ` (${collapsedAlternatesLabel(role.collapsedAlternates)})`;
+      }
+      return line;
     })
+    .filter((line): line is string => line !== null)
     .join("\n");
 }
 

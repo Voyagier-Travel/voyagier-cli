@@ -23,3 +23,15 @@ export function formatPrice(price: number): string {
 export function cents(n: number): number {
   return Math.round(n * 100);
 }
+
+/**
+ * Round a dollar amount to a clean 2-decimal number for JSON emission, via the
+ * same integer-cents rounding `cents()` uses for comparisons. Kills float-sum
+ * artifacts (e.g. 0.1 + 0.2 → 0.30000000000000004 → 0.3) without changing the
+ * type: money fields stay numbers. Use wherever a summed money value is written
+ * to a machine surface (`cart`/`book` JSON) so emitted totals never leak the raw
+ * float. Comparisons still go through `cents()` — this only cleans OUTPUT.
+ */
+export function money(n: number): number {
+  return cents(n) / 100;
+}

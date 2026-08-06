@@ -56,6 +56,33 @@ describe("agentFlightOptions", () => {
     const output = agentFlightOptions([{ airline: "United", duration: "5h 30m", price: 423 }]);
     expect(output).not.toContain("· rank");
   });
+
+  it("collapses an indistinguishable duplicate and notes the alternate (VOY-1877)", () => {
+    const legs = { flights: [{ flightLegs: [
+      { origin: "BWI", destination: "AUS", departureTime: "2026-06-15T07:15:00", arrivalTime: "2026-06-15T10:05:00", carrier: "DL", flightNumber: "1043" },
+    ] }] };
+    const output = agentFlightOptions([
+      { id: "opt-a", airline: "DL", duration: "2h50m", price: 412, bookingData: legs },
+      { id: "opt-b", airline: "DL", duration: "2h50m", price: 412, bookingData: legs },
+    ]);
+    // Second row folded away; the first notes the identical alternate.
+    expect(output).toContain("1.");
+    expect(output).not.toMatch(/^2\./m);
+    expect(output).toContain("+1 identical option: opt-b");
+  });
+
+  it("annotates fares instead of collapsing when a difference is detectable (VOY-1877)", () => {
+    const legs = { flights: [{ flightLegs: [
+      { origin: "BWI", destination: "AUS", departureTime: "2026-06-15T07:15:00", arrivalTime: "2026-06-15T10:05:00", carrier: "DL", flightNumber: "1043" },
+    ] }] };
+    const output = agentFlightOptions([
+      { id: "opt-a", airline: "DL", duration: "2h50m", price: 412, bookingData: { ...legs, fareBrand: "Main Cabin" } },
+      { id: "opt-b", airline: "DL", duration: "2h50m", price: 412, bookingData: { ...legs, fareBrand: "Basic Economy" } },
+    ]);
+    expect(output).toMatch(/^2\./m);
+    expect(output).toContain("fare: Main Cabin");
+    expect(output).toContain("fare: Basic Economy");
+  });
 });
 
 describe("agentHotelOptions", () => {
