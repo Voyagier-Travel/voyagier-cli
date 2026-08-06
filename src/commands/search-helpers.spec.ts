@@ -328,6 +328,28 @@ describe("resolveReturnFlightGoal (VOY-1421 wire the return leg; VOY-1870 pair c
     }
   });
 
+  it("partially-marked plan: unmarked return goals are still candidates (seg-0 goals ruled out)", () => {
+    // Outbound goals carry segmentIndex 0 but the return goals were seeded
+    // WITHOUT segment indices. Marked-outbound goals must be excluded, the
+    // unmarked goals treated as candidates, and traveller overlap must pair.
+    const goals = [
+      flightGoal("g-out-A", 0, ["t1"]),
+      flightGoal("g-out-B", 0, ["t2"]),
+      flightGoal("g-ret-A", undefined, ["t1"]),
+      flightGoal("g-ret-B", undefined, ["t2"]),
+    ];
+    expect(SH.resolveReturnFlightGoal(goals, "g-out-A")?.id).toBe("g-ret-A");
+    expect(SH.resolveReturnFlightGoal(goals, "g-out-B")?.id).toBe("g-ret-B");
+  });
+
+  it("partially-marked plan: a single unmarked Flight goal resolves as the return goal", () => {
+    // One other outbound (marked seg 0) plus one unmarked goal: the unmarked
+    // goal is the only plausible return leg and must be wired (previously the
+    // seg-1 filter silently returned null here).
+    const goals = [flightGoal("g-out", 0), flightGoal("g-out-other", 0), flightGoal("g-ret")];
+    expect(SH.resolveReturnFlightGoal(goals, "g-out")?.id).toBe("g-ret");
+  });
+
   it("throws RETURN_GOAL_AMBIGUOUS when several unmarked Flight goals remain and can't be paired", () => {
     // Three flight goals, none marked seg 1, more than one remaining, no
     // assignments to pair on -> ambiguous -> fail closed (was silently null).

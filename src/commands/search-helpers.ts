@@ -205,9 +205,18 @@ export function resolveReturnFlightGoal(
   // aren't populated on this plan, so every other Flight goal is a candidate
   // (legacy shape).
   const anySegMarked = flightGoals.some((g) => goalSegmentIndex(g) != null);
-  const candidates = anySegMarked
+  let candidates = anySegMarked
     ? flightGoals.filter((g) => goalSegmentIndex(g) === 1)
     : flightGoals;
+
+  // Partially-populated segment indices: some goals carry markers but none is
+  // marked as a return leg. Goals explicitly marked outbound (segmentIndex 0)
+  // are ruled out; UNMARKED goals are still plausible return goals — without
+  // this fallback a return goal that simply lacks segment indices would be
+  // silently skipped and the return date never wired.
+  if (anySegMarked && candidates.length === 0) {
+    candidates = flightGoals.filter((g) => goalSegmentIndex(g) == null);
+  }
 
   if (candidates.length === 0) return null; // no return-leg goal to wire
   // (c) Solo round-trip: a single candidate return goal resolves unchanged.
