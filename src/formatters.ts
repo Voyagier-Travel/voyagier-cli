@@ -51,6 +51,7 @@ export function formatFlights(
   options: FlightOption[],
   overrideRoute?: { origin: string; destination: string },
   roles?: FlightDupRole[],
+  markers?: Array<string | undefined>,
 ): string {
   // VOY-1877: fold/annotate display-identical rows. Roles are aligned to the
   // option order; when not supplied we derive them here so the human render
@@ -95,6 +96,10 @@ export function formatFlights(
       if (role.collapsedAlternates?.length) {
         line += `  ·  ${chalk.dim(collapsedAlternatesLabel(role.collapsedAlternates))}`;
       }
+      // VOY-1874: flag an option departing/arriving a nearby airport instead of
+      // the explicitly requested code (only set in --nearby / all-nearby mode).
+      const marker = markers?.[i];
+      if (marker) line += `  ·  ${chalk.yellow(marker)}`;
       if (time) line += `\n       ${time}`;
       return line;
     })

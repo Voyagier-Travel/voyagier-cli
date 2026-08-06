@@ -226,12 +226,14 @@ export function buildGoalAddArgs(i: GoalAddInput): string[] {
   return args;
 }
 
-export function buildSearchFlightsArgs(i: { plan_id: string; from: string; to: string; date: string; return?: string; sort?: string }): string[] {
+export function buildSearchFlightsArgs(i: { plan_id: string; from: string; to: string; date: string; return?: string; sort?: string; nearby?: boolean }): string[] {
   const args = ["search", "flights", "--plan", i.plan_id, "--from", i.from, "--to", i.to, "--date", i.date];
   opt(args, "--return", i.return);
   // Maps to the CLI's factual single-field `--sort` (price | duration | stops);
   // omitted → CLI default preserves the server's returned order.
   opt(args, "--sort", i.sort);
+  // VOY-1874: opt into nearby-airport substitutes for an explicit IATA request.
+  bool(args, "--nearby", i.nearby);
   args.push("--json");
   return args;
 }
@@ -506,7 +508,7 @@ export const TOOLS: ToolDef[] = [
     name: "search_flights",
     title: "Search flights",
     description:
-      "Search flights against the plan's Flight goal (REUSES the goal's selection — does not create a new one). Returns a compact envelope { selectionId, optionCount, topOptions[≤10], requestedParams, effectiveParams } (round trips also return returnSelectionId). effectiveParams is the origin/destination/date actually in effect for the searched selection — assert it matches your intent before picking. On any reuse with a recorded original search the envelope adds previousSearchParams (what the reused inventory was originally searched with), plus a warnings[] entry starting SELECTION_REUSED_PARAMS_MISMATCH when the requested params differ; staleInventory: true plus a STALE_INVENTORY warning means the rendered rows could not be confirmed against effectiveParams — re-poll get_selection_options before picking. If optionCount is 0 the async fetch is still running — poll get_selection_options with wait. Round trip: pick BOTH legs; the SAME optionId appears in both legs' lists (leg-mirrored) — picking the identical id on outbound and return is intended. A topOption MAY also carry rankScore (typically 0-1, higher is better): the platform's value score, surfaced verbatim and informational only; server order remains the default and the CLI never re-sorts by it. A topOption MAY also carry duplicateOfOptionId: it is display-identical (same flight numbers, times, price) to that earlier option — usually a different fare product of the same flight; every option is still listed and selectable." +
+      "Search flights against the plan's Flight goal (REUSES the goal's selection — does not create a new one). Returns a compact envelope { selectionId, optionCount, topOptions[≤10], requestedParams, effectiveParams } (round trips also return returnSelectionId). effectiveParams is the origin/destination/date actually in effect for the searched selection — assert it matches your intent before picking. On any reuse with a recorded original search the envelope adds previousSearchParams (what the reused inventory was originally searched with), plus a warnings[] entry starting SELECTION_REUSED_PARAMS_MISMATCH when the requested params differ; staleInventory: true plus a STALE_INVENTORY warning means the rendered rows could not be confirmed against effectiveParams — re-poll get_selection_options before picking. If optionCount is 0 the async fetch is still running — poll get_selection_options with wait. Round trip: pick BOTH legs; the SAME optionId appears in both legs' lists (leg-mirrored) — picking the identical id on outbound and return is intended. A topOption MAY also carry rankScore (typically 0-1, higher is better): the platform's value score, surfaced verbatim and informational only; server order remains the default and the CLI never re-sorts by it. A topOption MAY also carry duplicateOfOptionId: it is display-identical (same flight numbers, times, price) to that earlier option — usually a different fare product of the same flight; every option is still listed and selectable. Exact-airport matching (VOY-1874): when from/to is an explicit 3-letter IATA code, options departing/arriving a DIFFERENT (nearby) airport are removed by default; the envelope then reports nearbyFiltered (how many were dropped) and nearbyAirports (the substitute codes seen) plus a warnings[] entry. If EVERY option is from a nearby airport they are kept instead of returned empty, each flagged with originMismatch/destinationMismatch and nearbyOnly: true. Pass nearby: true to keep nearby-airport options; they are then annotated with originMismatch/destinationMismatch rather than filtered. A city/metro name in from/to is allowed to expand and is never filtered." +
       INJECTION_NOTE,
     timeoutMs: T.search,
     inputSchema: {
@@ -519,6 +521,10 @@ export const TOOLS: ToolDef[] = [
         .enum(["price", "duration", "stops"])
         .optional()
         .describe("Optional factual single-field sort of the returned options: price (cheapest first), duration (shortest first), or stops (fewest first). Omit to preserve the server's default value ordering (index 0 is the server's value pick, NOT the cheapest)."),
+      nearby: z
+        .boolean()
+        .optional()
+        .describe("Include flights from nearby airports when from/to is an explicit IATA code. Default (omitted/false): keep only exact-airport matches and report nearbyFiltered. true: keep nearby-airport options, each flagged with originMismatch/destinationMismatch."),
     },
     annotations: { readOnlyHint: true },
     buildArgs: (i) => buildSearchFlightsArgs(i),

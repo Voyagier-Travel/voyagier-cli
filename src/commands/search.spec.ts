@@ -1559,6 +1559,205 @@ describe("registerSearchCommands", () => {
     });
   });
 
+  // ── VOY-1874: exact-airport matching + --nearby ─────────────────────────────
+  describe("exact-airport matching (VOY-1874)", () => {
+    /** A one-way option whose outbound leg goes `from → to`. */
+    function outbound(id: string, from: string, to: string, price: number, sortOrder: number): unknown {
+      return {
+        id, name: id, price, duration: "3h", sortOrder,
+        bookingData: { flightToken: `TK-${id}`, flights: [{ flightLegs: [
+          { origin: from, destination: to, departureTime: "2026-08-01T09:00:00", arrivalTime: "2026-08-01T12:00:00", carrier: "AS", flightNumber: "100" },
+        ] }] },
+      };
+    }
+
+    /** A round-trip option: outbound `oF→oT` bundled with return `rF→rT`. */
+    function roundTrip(id: string, oF: string, oT: string, rF: string, rT: string, price: number, sortOrder: number): unknown {
+      return {
+        id, name: id, price, duration: "3h", sortOrder,
+        bookingData: { flightToken: `TK-${id}`, flights: [
+          { flightLegs: [{ origin: oF, destination: oT, departureTime: "2026-08-01T09:00:00", arrivalTime: "2026-08-01T12:00:00", carrier: "AS", flightNumber: "100" }] },
+          { flightLegs: [{ origin: rF, destination: rT, departureTime: "2026-08-10T09:00:00", arrivalTime: "2026-08-10T12:00:00", carrier: "AS", flightNumber: "200" }] },
+        ] },
+      };
+    }
+
+    // (a) default: an origin-substituted option is filtered, with count + warning + JSON fields.
+    it("filters a nearby-origin option by default and reports nearbyFiltered + airports + warning", async () => {
+      installRouter({ options: [
+        outbound("exact", "SEA", "JFK", 300, 1), // exact match first → no stale re-poll
+        outbound("near", "PAE", "JFK", 250, 2),  // PAE substituted for SEA
+      ] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "SEA", "--to", "JFK", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.optionCount).toBe(1);
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["exact"]);
+      expect(out.nearbyFiltered).toBe(1);
+      expect(out.nearbyAirports).toContain("PAE");
+      expect(out.warnings.some((w: string) => /nearby airports \(PAE\)/.test(w) && /--nearby/.test(w))).toBe(true);
+      // The kept exact-match option carries no mismatch flags.
+      expect(out.topOptions[0]).not.toHaveProperty("originMismatch");
+    });
+
+    // (b) exact matches are untouched.
+    it("leaves exact-airport matches untouched (no filtering, no flags, no warning)", async () => {
+      installRouter({ options: [
+        outbound("a", "SEA", "JFK", 300, 1),
+        outbound("b", "SEA", "JFK", 320, 2),
+      ] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "SEA", "--to", "JFK", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.optionCount).toBe(2);
+      expect(out.nearbyFiltered).toBeUndefined();
+      expect(out.nearbyAirports).toBeUndefined();
+      expect(JSON.stringify(out)).not.toContain("originMismatch");
+    });
+
+    // (c) --nearby keeps and annotates mismatches (JSON flags + human/agent marker).
+    it("--nearby keeps nearby-airport options and flags them with originMismatch (JSON)", async () => {
+      installRouter({ options: [
+        outbound("exact", "SEA", "JFK", 300, 1),
+        outbound("near", "PAE", "JFK", 250, 2),
+      ] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "SEA", "--to", "JFK", "--date", "2026-08-01", "--nearby", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.optionCount).toBe(2);
+      expect(out.nearbyFiltered).toBeUndefined();
+      const near = out.topOptions.find((o: { optionId: string }) => o.optionId === "near");
+      expect(near.originMismatch).toBe(true);
+      const exact = out.topOptions.find((o: { optionId: string }) => o.optionId === "exact");
+      expect(exact).not.toHaveProperty("originMismatch");
+      // Under --nearby the substituted endpoint is expected, not stale.
+      expect(out.staleInventory).toBeUndefined();
+    });
+
+    it("--nearby annotates the substituted row in agent markdown", async () => {
+      installRouter({ options: [
+        outbound("exact", "SEA", "JFK", 300, 1),
+        outbound("near", "PAE", "JFK", 250, 2),
+      ] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "SEA", "--to", "JFK", "--date", "2026-08-01", "--nearby", "--agent",
+      ]);
+      expect(stdout()).toContain("requested SEA, this departs PAE");
+    });
+
+    // (d) all-options-mismatch: kept with flags + warning (never silently empty).
+    // Round trip whose outbound matches but return leg arrives a nearby airport,
+    // so the outbound-only stale check stays quiet and only VOY-1874 fires.
+    it("keeps all options with flags + warning when every option is from a nearby airport", async () => {
+      installRouter({ goals: buildFlightGoals(true), options: [
+        roundTrip("only", "SEA", "JFK", "JFK", "PAE", 300, 1), // return arrives PAE, not SEA
+      ] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "SEA", "--to", "JFK",
+        "--date", "2026-08-01", "--return", "2026-08-10", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      // Not filtered to empty — the single option survives, flagged.
+      expect(out.optionCount).toBe(1);
+      expect(out.nearbyOnly).toBe(true);
+      expect(out.nearbyFiltered).toBeUndefined();
+      expect(out.topOptions[0].originMismatch).toBe(true);
+      expect(out.warnings.some((w: string) => /only nearby-airport inventory/i.test(w) && /--nearby/.test(w))).toBe(true);
+      expect(out.staleInventory).toBeUndefined();
+    });
+
+    // (e) a city/metro-name input is allowed to expand — never filtered.
+    it("does NOT filter when the input was a city/metro name (not an explicit IATA code)", async () => {
+      installRouter({ options: [
+        outbound("exact", "SEA", "LAX", 300, 1), // matches resolved SEA → no stale re-poll
+        outbound("near", "PAE", "LAX", 250, 2),  // PAE differs, but origin came from a city name
+      ] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "Seattle", "--to", "LAX", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.optionCount).toBe(2);
+      expect(out.nearbyFiltered).toBeUndefined();
+      expect(JSON.stringify(out)).not.toContain("originMismatch");
+    });
+
+    // A 3-letter METRO/CITY code (NYC → JFK/LGA/EWR) is not one airport — it
+    // must resolve like a city name, never as an explicit exact-airport contract.
+    it("does not filter or flag when the input is a 3-letter metro code (NYC)", async () => {
+      installRouter({ options: [
+        outbound("jfk", "JFK", "LAX", 300, 1),
+        outbound("ewr", "EWR", "LAX", 250, 2),
+      ] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "NYC", "--to", "LAX", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.optionCount).toBe(2);
+      expect(out.nearbyFiltered).toBeUndefined();
+      expect(out.nearbyOnly).toBeUndefined();
+      expect(JSON.stringify(out)).not.toContain("originMismatch");
+    });
+
+    // Stale detection (VOY-1871) must survive --nearby when the input was a
+    // CITY NAME: no mismatch annotations exist there to carry the signal.
+    it("keeps stale-inventory detection under --nearby with a city-name origin", async () => {
+      installRouter({ options: [
+        outbound("old", "BWI", "LAX", 300, 1), // reflects previous params, not resolved SEA
+      ] });
+      mockWaitForSelectionOptions.mockResolvedValue({ raw: {}, result: { status: "READY", optionCount: 1 } });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "Seattle", "--to", "LAX", "--date", "2026-08-01", "--nearby", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.staleInventory).toBe(true);
+      expect(out.warnings.some((w: string) => w.includes("STALE_INVENTORY"))).toBe(true);
+    });
+
+    // (f) unreadable leg data is treated as matching — never filtered, never flagged.
+    it("treats an option with unreadable leg data as matching (no filter, no flag)", async () => {
+      installRouter({ options: [
+        { id: "opaque", name: "AS", price: 300, duration: "3h", sortOrder: 1, bookingData: { flightToken: "TKo", stops: 0 } },
+      ] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "SEA", "--to", "JFK", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.optionCount).toBe(1);
+      expect(out.nearbyFiltered).toBeUndefined();
+      expect(JSON.stringify(out)).not.toContain("originMismatch");
+    });
+
+    // (g) round trip: the return leg's endpoints are checked symmetrically.
+    it("filters a round-trip option whose return leg departs a nearby airport", async () => {
+      installRouter({ goals: buildFlightGoals(true), options: [
+        roundTrip("exact", "SEA", "JFK", "JFK", "SEA", 300, 1), // clean round trip first
+        roundTrip("near", "SEA", "JFK", "EWR", "SEA", 250, 2),  // return departs EWR, not JFK
+      ] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "SEA", "--to", "JFK",
+        "--date", "2026-08-01", "--return", "2026-08-10", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.optionCount).toBe(1);
+      expect(out.topOptions.map((o: { optionId: string }) => o.optionId)).toEqual(["exact"]);
+      expect(out.nearbyFiltered).toBe(1);
+      expect(out.nearbyAirports).toContain("EWR");
+    });
+  });
+
   // ── activities ────────────────────────────────────────────────────────────
 
   describe("search activities", () => {

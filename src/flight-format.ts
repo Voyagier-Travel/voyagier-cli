@@ -363,6 +363,105 @@ export function analyzeFlightDuplicates(options: DuplicableFlightOption[]): Flig
 }
 
 /**
+ * Exact-airport matching for explicit IATA requests (VOY-1874).
+ *
+ * When a search asks for a specific airport code (e.g. `--from SEA`), upstream
+ * inventory may geo-expand and return flights from nearby airports (PAE) with no
+ * indication in the output. An explicit IATA code is a contract, so the CLI
+ * compares each option's rendered endpoints against the requested codes and can
+ * filter or flag the substitutes.
+ *
+ * `origin`/`destination` are the requested codes, and are set ONLY when the
+ * user's input was an explicit 3-letter code — a city/metro name is allowed to
+ * expand, so its endpoint is left null and never enforced.
+ */
+export interface RequestedEndpoints {
+  origin: string | null;
+  destination: string | null;
+  roundTrip: boolean;
+}
+
+/** Whether an option's endpoints diverge from the requested codes, and how. */
+export interface EndpointMismatch {
+  originMismatch: boolean;
+  destinationMismatch: boolean;
+  /** Substitute airport the option actually departs (origin side). */
+  actualOrigin?: string;
+  /** Substitute airport the option actually uses on the destination side. */
+  actualDestination?: string;
+}
+
+/**
+ * Compare one option's rendered endpoints against the requested codes.
+ *
+ * Reads leg data through `deriveFlightDetail` (segment 0 = outbound, segment 1 =
+ * the bundled return leg on a round trip). The comparison is symmetric per
+ * direction: the outbound must depart the requested origin and arrive the
+ * requested destination; the return leg must depart the destination and arrive
+ * the origin. A substitution on EITHER side of a city sets that side's flag.
+ *
+ * Missing-data policy (VOY-1874 rule 4): a code that can't be read (null leg
+ * data, older/partial payloads) is treated as MATCHING — never flagged, never
+ * filtered — so there are no false positives.
+ */
+export function detectEndpointMismatch(
+  bookingData: unknown,
+  req: RequestedEndpoints,
+): EndpointMismatch {
+  const result: EndpointMismatch = { originMismatch: false, destinationMismatch: false };
+  const outbound = deriveFlightDetail(bookingData, 0);
+  if (req.origin && outbound?.origin && outbound.origin !== req.origin) {
+    result.originMismatch = true;
+    result.actualOrigin = outbound.origin;
+  }
+  if (req.destination && outbound?.destination && outbound.destination !== req.destination) {
+    result.destinationMismatch = true;
+    result.actualDestination = outbound.destination;
+  }
+  if (req.roundTrip) {
+    const ret = deriveFlightDetail(bookingData, 1);
+    // The return leg departs the destination city and arrives back at the origin.
+    if (req.destination && ret?.origin && ret.origin !== req.destination) {
+      result.destinationMismatch = true;
+      result.actualDestination = result.actualDestination ?? ret.origin;
+    }
+    if (req.origin && ret?.destination && ret.destination !== req.origin) {
+      result.originMismatch = true;
+      result.actualOrigin = result.actualOrigin ?? ret.destination;
+    }
+  }
+  return result;
+}
+
+/** True when either endpoint diverges from the requested codes. */
+export function hasEndpointMismatch(m: EndpointMismatch): boolean {
+  return m.originMismatch || m.destinationMismatch;
+}
+
+/** The substitute airport codes referenced by a mismatch (for the report set). */
+export function mismatchAirportCodes(m: EndpointMismatch): string[] {
+  const codes: string[] = [];
+  if (m.originMismatch && m.actualOrigin) codes.push(m.actualOrigin);
+  if (m.destinationMismatch && m.actualDestination) codes.push(m.actualDestination);
+  return codes;
+}
+
+/**
+ * Human/agent row marker for a substituted-airport option, e.g.
+ * "⚠ requested SEA, this departs PAE". Returns "" when nothing diverges.
+ */
+export function endpointMismatchMarker(m: EndpointMismatch, req: RequestedEndpoints): string {
+  const parts: string[] = [];
+  if (m.originMismatch && req.origin) {
+    parts.push(`requested ${req.origin}, this departs ${m.actualOrigin ?? "a nearby airport"}`);
+  }
+  if (m.destinationMismatch && req.destination) {
+    parts.push(`requested ${req.destination}, this arrives ${m.actualDestination ?? "a nearby airport"}`);
+  }
+  return parts.length ? `⚠ ${parts.join("; ")}` : "";
+}
+
+/**
  * Additive structured fields for the compact `--json` top-options projection.
  * Only includes keys that are actually known — keeps the projection compact and
  * never emits nulls/undefined. Returns {} when there's no leg detail.
