@@ -53,6 +53,7 @@ import {
 import {
   SELECTION_TYPES,
   SELECTION_SCOPES,
+  DEFAULT_SELECTION_SCOPE,
   SelectionType,
   SelectionScope,
   TripPlanGoalSummary,
@@ -60,6 +61,11 @@ import {
   CreateGoalResult,
   CheckoutRequirementStatus,
 } from "./types.js";
+
+// Flag help for --scope, built from the shared SELECTION_SCOPES list so the
+// documented values never drift from what the CLI validates and the server accepts.
+const SCOPE_FLAG_DESCRIPTION =
+  `Selection scope: ${SELECTION_SCOPES.join(", ")} (omit to use the server default: ${DEFAULT_SELECTION_SCOPE})`;
 
 // ---------- Pure helpers (exported for reuse / tests) ----------
 
@@ -466,7 +472,7 @@ export function registerGoalCommands(plans: Command): void {
     .option("--relative-day <n>", "Day offset from trip start (integer)")
     .option("--sort-order <n>", "Initial sort order (integer)")
     .option("--date <iso>", "Goal date (ISO 8601)")
-    .option("--scope <scope>", "Selection scope: Group, Traveller, Trip")
+    .option("--scope <scope>", SCOPE_FLAG_DESCRIPTION)
     .option("--travellers <ids>", "Comma-separated traveller ids to assign after create")
     .option("--idempotency-key <ulid>", "Echoed in JSON output for client-side retry tracking (server-side dedup pending)")
     .option("--json", "Output raw JSON")
@@ -579,8 +585,8 @@ export function registerGoalCommands(plans: Command): void {
     .description("Add a goal with an initial item + selection in one call")
     .requiredOption("--type <selectionType>", "Selection type (e.g., Hotel, Flight, Activity)")
     .option("--name <name>", "Goal name (server may auto-name from selection if omitted)")
-    .option("--scope <scope>", "Selection scope: Group, Traveller, Trip")
-    .option("--include-all-travellers", "Apply this goal to all travellers on the plan", false)
+    .option("--scope <scope>", SCOPE_FLAG_DESCRIPTION)
+    .option("--include-all-travellers", "Apply this goal to all travellers on the plan (server default when omitted: true; pass to be explicit)", false)
     .option(
       "--initial-search <json>",
       "Agent leverage point: initial search query as a JSON object that seeds this selection (e.g., '{\"query\":\"hotel in Paris\"}'). Pass when the agent has a concrete user intent to anchor with; omit when the goal is exploratory and the user will refine in the web UI. Server uses this as the starting point for the search; selection options will refresh from it.",

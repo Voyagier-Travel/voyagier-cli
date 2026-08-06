@@ -18,6 +18,7 @@
  *  - `send` is intentionally absent (it emails a real client) — see README.
  */
 import { z } from "zod";
+import { SELECTION_SCOPES, DEFAULT_SELECTION_SCOPE } from "../commands/plans/types.js";
 
 /**
  * MCP tool annotation hints — the subset of the SDK's `ToolAnnotations` we set.
@@ -493,7 +494,7 @@ export const TOOLS: ToolDef[] = [
       relative_day: z.number().int().optional().describe("Day offset from trip start (integer)."),
       sort_order: z.number().int().optional().describe("Initial sort order (integer)."),
       date: z.string().optional().describe("Goal date (ISO 8601 date or datetime)."),
-      scope: z.string().optional().describe("Selection scope: Group | Traveller | Trip."),
+      scope: z.enum(SELECTION_SCOPES).optional().describe(`Selection scope: ${SELECTION_SCOPES.join(" | ")}. Omit to use the server default (${DEFAULT_SELECTION_SCOPE}).`),
       travellers: z.string().optional().describe("Comma-separated traveller ids to assign after create (best-effort)."),
       idempotency_key: z.string().optional().describe("Echoed in output for client-side retry tracking."),
     },

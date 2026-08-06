@@ -8,6 +8,7 @@
  * "--json on everything but agent_docs" rule.
  */
 import { describe, it, expect } from "@jest/globals";
+import { SELECTION_SCOPES } from "../commands/plans/types.js";
 import {
   TOOLS,
   moneyArg,
@@ -213,18 +214,30 @@ describe("argv builders", () => {
     expect(buildUpdateTravellerArgs({ traveller_id: "t9", clear_hotel_loyalty: false })).not.toContain("--clear-hotel-loyalty");
   });
 
+  it("goal_add scope enum derives from the shared SELECTION_SCOPES (drift guard)", () => {
+    const goalAdd = TOOLS.find(t => t.name === "goal_add");
+    expect(goalAdd).toBeDefined();
+    // The MCP scope field is `z.enum(SELECTION_SCOPES).optional()`; unwrap the
+    // optional to reach the enum's `.options`. Asserting deep equality here means
+    // any future edit to the CLI's SELECTION_SCOPES that isn't mirrored by the MCP
+    // schema (or vice-versa) fails this test.
+    const scopeSchema: any = (goalAdd as any).inputSchema.scope;
+    const enumOptions: readonly string[] = scopeSchema.unwrap().options;
+    expect(enumOptions).toEqual([...SELECTION_SCOPES]);
+  });
+
   it("goal_add: plan_id positional + --type required; optionals only when present", () => {
     expect(buildGoalAddArgs({ plan_id: "pl1", type: "Activity" })).toEqual([
       "plans", "goal-add", "pl1", "--type", "Activity", "--json",
     ]);
     const full = buildGoalAddArgs({
       plan_id: "pl1", type: "Hotel", name: "Stay", relative_day: 2, sort_order: 3,
-      date: "2026-09-01", scope: "Group", travellers: "a,b", idempotency_key: "k1",
+      date: "2026-09-01", scope: "Individual", travellers: "a,b", idempotency_key: "k1",
     });
     expect(full).toEqual([
       "plans", "goal-add", "pl1", "--type", "Hotel", "--name", "Stay",
       "--relative-day", "2", "--sort-order", "3", "--date", "2026-09-01",
-      "--scope", "Group", "--travellers", "a,b", "--idempotency-key", "k1", "--json",
+      "--scope", "Individual", "--travellers", "a,b", "--idempotency-key", "k1", "--json",
     ]);
   });
 

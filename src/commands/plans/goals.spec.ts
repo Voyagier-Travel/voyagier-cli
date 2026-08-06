@@ -125,21 +125,23 @@ describe("normalizeSelectionType", () => {
 
 describe("normalizeSelectionScope", () => {
   it("accepts canonical PascalCase", () => {
-    expect(normalizeSelectionScope("Group")).toBe("Group");
-    expect(normalizeSelectionScope("Traveller")).toBe("Traveller");
-    expect(normalizeSelectionScope("Trip")).toBe("Trip");
+    expect(normalizeSelectionScope("AllTravellers")).toBe("AllTravellers");
+    expect(normalizeSelectionScope("Subset")).toBe("Subset");
+    expect(normalizeSelectionScope("Individual")).toBe("Individual");
   });
   it("accepts lowercase", () => {
-    expect(normalizeSelectionScope("trip")).toBe("Trip");
-    expect(normalizeSelectionScope("group")).toBe("Group");
+    expect(normalizeSelectionScope("subset")).toBe("Subset");
+    expect(normalizeSelectionScope("individual")).toBe("Individual");
+    expect(normalizeSelectionScope("alltravellers")).toBe("AllTravellers");
   });
-  it("rejects unknown scopes", () => {
+  it("rejects unknown scopes with the full allow-list", () => {
     try {
-      normalizeSelectionScope("Plan");
+      normalizeSelectionScope("Group");
       fail("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(CliError);
-      expect((err as CliError).message).toContain("Group, Traveller, Trip");
+      expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+      expect((err as CliError).message).toContain("AllTravellers, Subset, Individual");
     }
   });
   it("rejects empty", () => {
@@ -326,7 +328,7 @@ const GOAL_FIXTURE = {
   id: "g-1",
   name: "Paris hotel",
   type: "Hotel",
-  scope: "Trip",
+  scope: "Subset",
   sortOrder: 1,
   relativeDay: 0,
   date: null,
@@ -506,7 +508,7 @@ describe("plans goal-add <planId>", () => {
       "--name", "Paris hotel",
       "--relative-day", "3",
       "--sort-order", "2",
-      "--scope", "trip",
+      "--scope", "subset",
       "--date", "2026-05-04",
       "--json",
     ]);
@@ -517,7 +519,7 @@ describe("plans goal-add <planId>", () => {
       name: "Paris hotel",
       relativeDay: 3,
       sortOrder: 2,
-      scope: "Trip",
+      scope: "Subset",
       date: "2026-05-04",
     });
   });
@@ -525,6 +527,13 @@ describe("plans goal-add <planId>", () => {
   it("rejects bad --type with the full allow-list", async () => {
     await expect(
       runGoals(["goal-add", "plan-1", "--type", "Spaceship", "--json"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid --scope before any network call", async () => {
+    await expect(
+      runGoals(["goal-add", "plan-1", "--type", "Hotel", "--scope", "Trip", "--json"]),
     ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
     expect(mockGraphql).not.toHaveBeenCalled();
   });
@@ -1175,14 +1184,14 @@ describe("human output — goal-add-with-selection", () => {
     await runGoals([
       "goal-add-with-selection", "plan-1",
       "--type", "Hotel",
-      "--scope", "group",
+      "--scope", "individual",
       "--include-all-travellers",
       "--question-template", "Which hotel?",
       "--place-after", "g-anchor",
     ]);
     const [, vars] = mockGraphql.mock.calls[0];
     expect((vars as any).input).toMatchObject({
-      scope: "Group",
+      scope: "Individual",
       includeAllTravellers: true,
       questionTemplate: "Which hotel?",
       placeAfterGoalId: "g-anchor",
