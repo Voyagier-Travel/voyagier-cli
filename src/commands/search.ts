@@ -651,7 +651,9 @@ function reportWaitStop(result: SelectionStatusResult, selectionId: string): voi
  * A search reuses the goal's existing decision selection (VOY-1692) rather than
  * refetching, so results can silently reflect the params the selection was
  * ORIGINALLY searched with. This records the params a selection was first
- * searched with and, on reuse, surfaces `effectiveParams` (the original) plus a
+ * searched with and, on reuse, surfaces the stored ORIGINAL params (held on
+ * `ReuseObservation.effectiveParams`, emitted in the envelope as
+ * `previousSearchParams` — see reuseEnvelopeFields) plus a
  * SELECTION_REUSED_PARAMS_MISMATCH warning when the new request differs. It is
  * pure observability — it never changes what the search does.
  */
@@ -677,11 +679,23 @@ function observeSelectionReuse(
   return { requestedParams: requested, effectiveParams: stored, warnings };
 }
 
-/** Fields injected into the search JSON envelope for reuse observability. */
+/**
+ * Fields injected into the search JSON envelope for reuse observability
+ * (hotels + activities), converged on the flights contract (VOY-1875).
+ *
+ * `effectiveParams` is ALWAYS present and reflects the params in effect for THIS
+ * search — for these verticals the requested params ARE the wired params (no
+ * separate normalization), so effectiveParams mirrors requestedParams. The
+ * reused selection's ORIGINAL params (present on any reuse with a stored record)
+ * move to `previousSearchParams`, so the two concepts don't collide on one key,
+ * exactly as the flights envelope does (VOY-1871). The
+ * SELECTION_REUSED_PARAMS_MISMATCH warning still fires only on a mismatch.
+ */
 function reuseEnvelopeFields(obs: ReuseObservation): Record<string, unknown> {
   return {
     requestedParams: obs.requestedParams,
-    ...(obs.effectiveParams ? { effectiveParams: obs.effectiveParams } : {}),
+    effectiveParams: obs.requestedParams,
+    ...(obs.effectiveParams ? { previousSearchParams: obs.effectiveParams } : {}),
     ...(obs.warnings.length > 0 ? { warnings: obs.warnings } : {}),
   };
 }
@@ -1699,6 +1713,15 @@ export function registerSearchCommands(program: Command): void {
           searchSpinner?.stop();
         }
 
+        // VOY-1793/VOY-1875: record/reconcile the params this (possibly reused)
+        // activity selection was searched with, so the envelope can flag a stale
+        // reuse — same contract as flights and hotels.
+        const reuse = observeSelectionReuse(selectionId, {
+          destination: opts.destination,
+          depart: opts.date,
+          partySize: travellerIds.length,
+        });
+
         const sortBy = (opts.sort ?? "default") as SortField;
         const options = sortBy === "price"
           ? [...fetchedOptions].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity))
@@ -1724,6 +1747,7 @@ export function registerSearchCommands(program: Command): void {
               tripPlanId: tripPlanId,
               selectionId: selectionId,
               ...planUrls(tripPlanId),
+              ...reuseEnvelopeFields(reuse),
             },
             options as unknown as Array<Record<string, unknown>>,
             searchResults,
@@ -1737,6 +1761,7 @@ export function registerSearchCommands(program: Command): void {
           const planUrl = clientPlanUrl(tripPlanId);
           const lines: string[] = [];
           lines.push(`### Activities (${opts.destination})`);
+          for (const w of reuse.warnings) lines.push(`> ⚠ ${w}`);
           if (options.length === 0) {
             lines.push("_No activities found for this destination and date._");
           } else {
@@ -1753,6 +1778,9 @@ export function registerSearchCommands(program: Command): void {
           process.stdout.write(lines.join("\n") + "\n");
           return;
         }
+
+        // Human mode: surface the reuse-mismatch warning as a clear ⚠ line.
+        writeReuseWarnings(reuse.warnings);
 
         if (options.length === 0) {
           process.stderr.write(chalk.yellow(`No activities found for "${opts.destination}" on this date.\n`));

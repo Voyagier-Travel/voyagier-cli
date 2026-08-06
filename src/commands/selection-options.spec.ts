@@ -113,6 +113,9 @@ describe("selection-options command (VOY-1415)", () => {
     expect(out.optionCount).toBe(1);
     expect(out.options[0].id).toBe("opt-1");
     expect(out.selectionId).toBe(SEL_ID);
+    // VOY-1875: the selection also exposes `id` as an additive alias, equal to selectionId.
+    expect(out.id).toBe(SEL_ID);
+    expect(out.id).toBe(out.selectionId);
   });
 
   it("--human produces a table (no JSON output call)", async () => {

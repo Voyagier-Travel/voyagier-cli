@@ -276,7 +276,7 @@ export function registerTravellerCommands(program: Command): void {
         const baseUrl = deriveBaseUrl(getApiUrl());
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ ...t, ...planUrls(opts.plan, baseUrl) }, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({ ok: true, ...t, ...planUrls(opts.plan, baseUrl) }, null, 2) + "\n");
           return;
         }
 
@@ -383,7 +383,7 @@ export function registerTravellerCommands(program: Command): void {
         );
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ success: true, id }) + "\n");
+          process.stdout.write(JSON.stringify({ ok: true, success: true, id }) + "\n");
           return;
         }
 
@@ -476,7 +476,7 @@ export function registerTravellerCommands(program: Command): void {
         const t = data.updateTripPlanTraveller;
 
         if (opts.json) {
-          jsonOutput(t);
+          jsonOutput({ ok: true, ...t });
           return;
         }
 

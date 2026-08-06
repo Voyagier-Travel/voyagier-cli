@@ -68,7 +68,7 @@ export function registerSharingCommands(plans: Command): void {
               { input: { email: opts.email as string } }
             );
             if (opts.json) {
-              jsonOutput({ invited: true, email: opts.email, message: "Platform invitation sent. Re-run after they sign up." });
+              jsonOutput({ ok: true, invited: true, email: opts.email, message: "Platform invitation sent. Re-run after they sign up." });
               return;
             }
             console.log(chalk.yellow(`\n  ✉ No Voyagier account found for ${opts.email}.`));
@@ -97,7 +97,7 @@ export function registerSharingCommands(plans: Command): void {
         );
 
         if (opts.json) {
-          jsonOutput({ success: true, planId, invitedUser: userDisplay, role: role.name });
+          jsonOutput({ ok: true, success: true, planId, invitedUser: userDisplay, role: role.name });
           return;
         }
         console.log(chalk.green(`\n  ✓ Invited ${chalk.bold(userDisplay)} as ${role.name}\n`));
@@ -174,7 +174,7 @@ export function registerSharingCommands(plans: Command): void {
         );
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ success: true, removed: opts.collaboratorId }, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({ ok: true, success: true, removed: opts.collaboratorId }, null, 2) + "\n");
           return;
         }
 

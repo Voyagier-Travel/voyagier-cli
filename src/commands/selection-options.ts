@@ -120,6 +120,9 @@ export function registerSelectionOptionsCommands(program: Command): void {
 
         if (asJson) {
           jsonOutput({
+            // VOY-1875: `selectionId` is canonical; `id` is an additive alias so
+            // consumers keyed on either name can read the selection generically.
+            id: raw.id,
             selectionId: raw.id,
             type: raw.type ?? null,
             status: result.status,

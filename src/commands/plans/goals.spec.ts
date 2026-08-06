@@ -401,6 +401,24 @@ describe("plans goal <goalId>", () => {
     expect(out.data.goal.items).toHaveLength(1);
   });
 
+  it("exposes both id and goalId on the goal and both id and selectionId on nested selections (VOY-1875)", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanGoal: {
+        ...GOAL_FIXTURE,
+        items: [{ id: "i-1", title: "Bristol", goalId: "g-1", selections: [{ id: "sel-1", type: "Flight", isLocked: false }] }],
+      },
+    });
+    await runGoals(["goal", "g-1", "--json"]);
+    const goal = lastJsonOutput().data.goal;
+    // Canonical goalId is added additively; original id is preserved and equal.
+    expect(goal.id).toBe("g-1");
+    expect(goal.goalId).toBe("g-1");
+    // Nested selection carries both id and the canonical selectionId, equal.
+    const sel = goal.items[0].selections[0];
+    expect(sel.id).toBe("sel-1");
+    expect(sel.selectionId).toBe("sel-1");
+  });
+
   it("throws GOAL_NOT_FOUND on null", async () => {
     mockGraphql.mockResolvedValueOnce({ tripPlanGoal: null });
     await expect(runGoals(["goal", "g-x", "--json"])).rejects.toMatchObject({

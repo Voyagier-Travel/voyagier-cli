@@ -261,9 +261,11 @@ describe("plans create — client wiring", () => {
     expect(out.url).toBe(out.clientUrl);
     // planSummary is embedded (getPlanSummary stub returns counts).
     expect(out.planSummary).toEqual({ travellerCount: 0, itemCount: 0 });
+    // VOY-1875: additive uniform success marker on the mutation envelope.
+    expect(out.ok).toBe(true);
     // The raw plan fields still pass through (id/title/startDate/endDate/description).
     expect(Object.keys(out).sort()).toEqual(
-      ["advisorUrl", "clientUrl", "description", "endDate", "id", "planSummary", "startDate", "title", "url"].sort(),
+      ["advisorUrl", "clientUrl", "description", "endDate", "id", "ok", "planSummary", "startDate", "title", "url"].sort(),
     );
     // --json stays stderr-silent (old crud never emitted progress; quiet passthrough).
     expect(stderrWrites.join("")).not.toContain("Creating trip plan");
@@ -792,6 +794,8 @@ describe("plans update", () => {
     const out = JSON.parse(writes.join(""));
     expect(out.title).toBe("Renamed");
     expect(out.url).toContain("/plans/plan-1");
+    // VOY-1875: additive uniform success marker on the mutation envelope.
+    expect(out.ok).toBe(true);
   });
 
   it("sends only the title when only --title is provided", async () => {
@@ -851,7 +855,7 @@ describe("plans delete", () => {
     expect(mockGraphql).toHaveBeenCalledTimes(1);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars).toEqual({ id: "plan-1" });
-    expect(JSON.parse(writes.join(""))).toEqual({ success: true, id: "plan-1" });
+    expect(JSON.parse(writes.join(""))).toEqual({ ok: true, success: true, id: "plan-1" });
   });
 
   it("human mode prints a confirmation", async () => {

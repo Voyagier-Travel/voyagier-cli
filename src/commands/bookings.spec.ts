@@ -177,6 +177,8 @@ describe("bookings get", () => {
     expect(mockGraphql).toHaveBeenCalledTimes(2);
     const [, refreshVars] = mockGraphql.mock.calls[0] as [string, any];
     expect(refreshVars).toEqual({ id: "bkg_1" });
+    // VOY-1875: the mutation-capable --refresh path carries a uniform ok marker.
+    expect(JSON.parse(writes.join("")).ok).toBe(true);
   });
 
   it("--refresh writes a progress line to stderr in human mode", async () => {

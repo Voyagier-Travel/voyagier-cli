@@ -165,6 +165,7 @@ export function registerBookingsCommands(program: Command): void {
           // Machine surface: amount → amountCents (VOY-1713, matches list mode).
           const { amount, ...rest } = r;
           const enriched = {
+            ok: true,
             ...rest,
             amountCents: amount,
             ...(r.tripPlanId ? planUrls(r.tripPlanId, baseUrl) : {}),
