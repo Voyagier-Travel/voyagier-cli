@@ -17,6 +17,7 @@ import type { FlightDupRole } from "./flight-format.js";
 export function agentFlightOptions(
   options: Array<{ id?: string; airline?: string; duration?: string; price?: number; bookingData?: Record<string, unknown> | null }>,
   roles?: FlightDupRole[],
+  markers?: Array<string | undefined>,
 ): string {
   if (options.length === 0) return "_No flights found._";
   // VOY-1877: fold/annotate display-identical rows, matching the human + JSON
@@ -42,6 +43,9 @@ export function agentFlightOptions(
       if (rank !== undefined) parts.push(rankScoreLabel(rank));
       // VOY-1877: fare annotation for a distinguishable identical-schedule row.
       if (role.annotate) parts.push(`fare: ${role.annotate}`);
+      // VOY-1874: nearby-airport substitution marker (--nearby / all-nearby mode).
+      const marker = markers?.[i];
+      if (marker) parts.push(marker);
       let line = `${i + 1}. ${parts.join(" · ")}`;
       if (role.collapsedAlternates?.length) {
         line += ` (${collapsedAlternatesLabel(role.collapsedAlternates)})`;
