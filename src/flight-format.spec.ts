@@ -317,6 +317,23 @@ describe("analyzeFlightDuplicates (VOY-1877)", () => {
     expect(roles[1].duplicateOfOptionId).toBeUndefined();
   });
 
+  it("does NOT collapse options that differ only in flight number (same times + price) (4b)", () => {
+    const otherFlight = flightOpt("b", {
+      bookingData: {
+        flights: [
+          {
+            flightLegs: [
+              { origin: "BWI", destination: "AUS", departureTime: "2026-06-15T07:15:00", arrivalTime: "2026-06-15T10:05:00", carrier: "UA", flightNumber: "2201" },
+            ],
+          },
+        ],
+      },
+    });
+    const roles = analyzeFlightDuplicates([flightOpt("a"), otherFlight]);
+    expect(roles[0]).toEqual({});
+    expect(roles[1]).toEqual({});
+  });
+
   it("annotates (does not collapse) when a fare difference IS detectable", () => {
     const a = flightOpt("a", { bookingData: { fareBrand: "Main Cabin", flights: flightOpt("a").bookingData.flights } });
     const b = flightOpt("b", { bookingData: { fareBrand: "Basic Economy", flights: flightOpt("b").bookingData.flights } });
