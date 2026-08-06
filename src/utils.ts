@@ -8,7 +8,7 @@ import { deriveFlightDetail, flightRouteLabel } from "./flight-format.js";
 // Re-exported from the leaf module so existing call sites keep importing from
 // utils; the definitions moved to format.ts to break the utils ↔ hotel-format
 // import cycle.
-export { formatPrice, cents } from "./format.js";
+export { formatPrice, cents, money } from "./format.js";
 
 /**
  * Mask a potentially sensitive loyalty value for terminal output: member

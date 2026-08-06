@@ -488,6 +488,47 @@ describe("registerSearchCommands", () => {
       expect(JSON.stringify(out)).not.toContain("bookingData");
     });
 
+    it("marks a display-identical topOption with duplicateOfOptionId, retaining every option (VOY-1877)", async () => {
+      const legs = { flights: [{ flightLegs: [
+        { origin: "BWI", destination: "AUS", departureTime: "2026-08-01T07:15:00", arrivalTime: "2026-08-01T10:05:00", carrier: "DL", flightNumber: "1043" },
+      ] }] };
+      installRouter({
+        options: [
+          { id: "opt-a", name: "DL 1043", price: 412, duration: "2h50m", sortOrder: 1, bookingData: { flightToken: "TKa", ...legs } },
+          { id: "opt-b", name: "DL 1043", price: 412, duration: "2h50m", sortOrder: 2, bookingData: { flightToken: "TKb", ...legs } },
+        ],
+      });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "BWI", "--to", "AUS", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      // JSON drops NOTHING — both options are present.
+      expect(out.topOptions).toHaveLength(2);
+      expect(out.optionCount).toBe(2);
+      // The earlier option is unmarked; the later, display-identical one points back to it.
+      expect(out.topOptions[0]).not.toHaveProperty("duplicateOfOptionId");
+      expect(out.topOptions[1].duplicateOfOptionId).toBe("opt-a");
+    });
+
+    it("does NOT mark options that differ only in price (VOY-1877)", async () => {
+      const legs = { flights: [{ flightLegs: [
+        { origin: "BWI", destination: "AUS", departureTime: "2026-08-01T07:15:00", arrivalTime: "2026-08-01T10:05:00", carrier: "DL", flightNumber: "1043" },
+      ] }] };
+      installRouter({
+        options: [
+          { id: "opt-a", name: "DL 1043", price: 412, duration: "2h50m", sortOrder: 1, bookingData: { flightToken: "TKa", ...legs } },
+          { id: "opt-b", name: "DL 1043", price: 455, duration: "2h50m", sortOrder: 2, bookingData: { flightToken: "TKb", ...legs } },
+        ],
+      });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "flights",
+        "--plan", "plan-1", "--from", "BWI", "--to", "AUS", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.topOptions[1]).not.toHaveProperty("duplicateOfOptionId");
+    });
+
     it("includes rankScore in a compact topOption when present (VOY-1824)", async () => {
       installRouter({
         options: [{

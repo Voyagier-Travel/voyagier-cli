@@ -36,7 +36,7 @@ import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivit
 import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "../agent-output.js";
 import { deriveHotelStay, hotelFactsFields } from "../hotel-format.js";
-import { flightProjectionFields, extractRankScore, deriveFlightDetail } from "../flight-format.js";
+import { flightProjectionFields, extractRankScore, deriveFlightDetail, analyzeFlightDuplicates } from "../flight-format.js";
 import { searchAirports } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 import { CliError, CliErrorCode } from "../errors.js";
@@ -1097,11 +1097,19 @@ export function registerSearchCommands(program: Command): void {
           ? `STALE_INVENTORY: the top option's outbound leg (${optionOutboundOrigin(options[0]) ?? "?"} → ${optionOutboundDestination(options[0]) ?? "?"}) does not match the searched params (${origin} → ${destination}); the selection's inventory may still be refreshing for the new params. Re-fetch before selecting: voyagier selection-options ${shellArg(selectionId)} --wait --json`
           : null;
 
+        // VOY-1877: classify display-identical rows (same flight numbers, times,
+        // price) ONCE over the displayed list, so the human, agent, and JSON
+        // surfaces stay in lock-step. JSON keeps every option and only flags the
+        // relationship via `duplicateOfOptionId`; the rendered surfaces fold or
+        // annotate.
+        const dupRoles = analyzeFlightDuplicates(options);
+
         const searchResults = options.map((opt, i) => {
           // VOY-1824: platform value score (optionData.rankScore), display-only.
           // Included only when it is a finite number; the key is omitted
           // entirely when absent (never null/undefined).
           const rankScore = extractRankScore(opt.bookingData);
+          const dupOfId = dupRoles[i]?.duplicateOfOptionId;
           return {
             index: i + 1,
             optionId: opt.id,
@@ -1111,6 +1119,8 @@ export function registerSearchCommands(program: Command): void {
             // connections) so agents can decide without the --full dump.
             ...flightProjectionFields(opt.bookingData),
             ...(rankScore !== undefined ? { rankScore } : {}),
+            // VOY-1877: marker on options display-identical to an earlier one.
+            ...(dupOfId ? { duplicateOfOptionId: dupOfId } : {}),
           };
         });
 
@@ -1124,6 +1134,14 @@ export function registerSearchCommands(program: Command): void {
           destination,
           results: searchResults,
           timestamp: new Date().toISOString(),
+        });
+
+        // VOY-1877: carry the same `duplicateOfOptionId` marker into the --full
+        // dump so no option is dropped and the relationship survives at every
+        // detail level.
+        const optionsForJson = options.map((opt, i) => {
+          const dupOfId = dupRoles[i]?.duplicateOfOptionId;
+          return dupOfId ? { ...opt, duplicateOfOptionId: dupOfId } : opt;
         });
 
         if (opts.json) {
@@ -1141,7 +1159,7 @@ export function registerSearchCommands(program: Command): void {
               // Structured which-filter attribution when filters removed all.
               ...(filteredToZero ? filteredToZeroJson(filteredToZero) : {}),
             },
-            options as unknown as Array<Record<string, unknown>>,
+            optionsForJson as unknown as Array<Record<string, unknown>>,
             searchResults,
             opts.full,
             "--sort/--max-stops/--nonstop/--depart-after/--depart-before/--arrive-by/--return-depart-after/--return-depart-before/--airline/--max-price",
@@ -1174,7 +1192,10 @@ export function registerSearchCommands(program: Command): void {
             const callout = flightCalloutLine(options);
             if (callout) lines.push(`_${callout}_`);
             const shown = opts.full ? options : options.slice(0, TOP_OPTIONS);
-            lines.push(agentFlightOptions(shown));
+            // Roles align to `options` order; the shown slice is a prefix, so a
+            // matching prefix of dupRoles applies (a duplicate's primary is
+            // always earlier, hence in-slice whenever the duplicate is).
+            lines.push(agentFlightOptions(shown, dupRoles.slice(0, shown.length)));
             if (options.length > shown.length) {
               lines.push(`_…and ${options.length - shown.length} more — \`--full\` lists all, \`--sort price\`/\`--max-stops\` refine._`);
             }
@@ -1219,7 +1240,7 @@ export function registerSearchCommands(program: Command): void {
         console.log(chalk.bold(`\n${options.length} flight option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
         const calloutLine = flightCalloutLine(options);
         if (calloutLine) console.log(chalk.dim(calloutLine));
-        console.log(formatFlights(options));
+        console.log(formatFlights(options, undefined, dupRoles));
         await printPlanFooter(tripPlanId);
         if (isRoundTrip) {
           console.log(chalk.dim(`  Note: Select the outbound leg first, then the return leg${returnSelectionId ? ` (selection ${returnSelectionId})` : ""}.`));

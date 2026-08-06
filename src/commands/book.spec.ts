@@ -27,6 +27,8 @@ jest.unstable_mockModule("../utils.js", () => ({
   // Real semantics required: the gate's cents-rounding IS the behavior under
   // test (moved to utils in VOY-1212 so quote shares it).
   cents: (n: number) => Math.round(n * 100),
+  // VOY-1877: real cents-based rounding — emitted money values are asserted below.
+  money: (n: number) => Math.round(n * 100) / 100,
   // Real implementation semantics matter here: nextStep assertions verify the
   // recipe stays paste-runnable (simple tokens unquoted, unsafe ones quoted).
   shellArg: (v: string | number | null | undefined) => {
@@ -688,5 +690,60 @@ describe("parseMoney", () => {
 
   it("rejects absurdly long digit strings that overflow to Infinity", () => {
     expect(() => parseMoney("9".repeat(400), "--max-total")).toThrow(/too large/);
+  });
+});
+
+// ── VOY-1877: money emission (integer cents) ────────────────────────────────
+
+/** Two bookable flight lines priced to float-sum dirty (0.1 + 0.2). */
+function dirtyCartFixture() {
+  return {
+    tripPlan: {
+      id: "plan-1",
+      title: "Dirty Sum",
+      cart: {
+        items: [
+          { id: "ci-1", name: "Leg A", type: "Flight", price: 0.1, currency: "USD", selectionId: "sel-f", optionId: "opt-a" },
+          { id: "ci-2", name: "Leg B", type: "Flight", price: 0.2, currency: "USD", selectionId: "sel-f", optionId: "opt-b" },
+        ],
+        itemCount: 2,
+        total: 0.1 + 0.2,
+        currency: "USD",
+      },
+      goals: [
+        {
+          id: "g1", name: "Flights", sortOrder: 1,
+          items: [{ selections: [{ id: "sel-f", options: [
+            { id: "opt-a", isBookable: true, status: "Available", blueprintListingId: null, externalId: "sabre-1" },
+            { id: "opt-b", isBookable: true, status: "Available", blueprintListingId: null, externalId: "sabre-2" },
+          ] }] }],
+        },
+      ],
+    },
+  };
+}
+
+describe("money emission (VOY-1877)", () => {
+  it("dry-run --json emits summed money at exactly 2 decimals, no float artifact (4c)", async () => {
+    routeGraphql({ cart: dirtyCartFixture() });
+    await runBook(["plan-1", "--dry-run", "--json"]);
+    const out = lastJson();
+    expect(out.data.chargeableSubtotal).toBe(0.3);
+    expect(out.data.subtotal).toBe(0.3);
+    expect(out.data.items.map((i: { price: number }) => i.price)).toEqual([0.1, 0.2]);
+    expect(writes.join("")).not.toContain("0.30000000000000004");
+  });
+
+  it("the price gate still compares in integer cents — a dirty 0.30 sum passes --expect-total 0.30 (4d)", async () => {
+    routeGraphql({ cart: dirtyCartFixture() });
+    // Gate verdict is computed in cents (0.1+0.2 → 30¢ === 30¢), so it PASSES
+    // and a checkout is minted despite the raw float being 0.30000000000000004.
+    await runBook(["plan-1", "--expect-total", "0.30", "--json"]);
+    const out = lastJson();
+    expect(out.ok).toBe(true);
+    expect(out.data.checkoutUrl).toBeTruthy();
+    // …and the emitted money is still the clean 2-decimal value.
+    expect(out.data.chargeableSubtotal).toBe(0.3);
+    expect(createVars()).toBeDefined();
   });
 });

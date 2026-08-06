@@ -14,7 +14,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
-import { formatPrice, deriveBaseUrl, shellArg } from "../utils.js";
+import { formatPrice, deriveBaseUrl, shellArg, money } from "../utils.js";
 import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { resolvePlanArg } from "../resolve-plan-arg.js";
 import { GET_CART_V2 } from "../queries.js";
@@ -66,14 +66,22 @@ export function registerCartCommands(program: Command): void {
       };
 
       if (opts.json) {
+        // VOY-1877: emit every money number through integer-cents rounding so a
+        // float-summed subtotal (e.g. 0.1 + 0.2) never leaks its raw artifact
+        // onto the machine surface. Numbers stay numbers; no field is renamed.
+        const byGoalJson = byGoal.map((g) => ({
+          ...g,
+          subtotal: money(g.subtotal),
+          items: g.items.map((it) => ({ ...it, price: money(it.price) })),
+        }));
         process.stdout.write(JSON.stringify({
           ok: true,
           data: {
             cart: {
-              total: cart.total,
+              total: money(cart.total),
               currency: cart.currency,
               itemCount: cart.itemCount,
-              byGoal,
+              byGoal: byGoalJson,
             },
           },
           planContext,
