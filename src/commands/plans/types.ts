@@ -197,8 +197,15 @@ export const SELECTION_TYPES = [
 ] as const;
 export type SelectionType = (typeof SELECTION_TYPES)[number];
 
-export const SELECTION_SCOPES = ["Group", "Traveller", "Trip"] as const;
+// Single source of truth for the GraphQL SelectionScope enum. The server accepts
+// AllTravellers | Subset | Individual and defaults to Subset when no scope is sent.
+// Both the CLI --scope validation and the MCP goal_add tool schema derive from this
+// list — do not duplicate these literals elsewhere.
+export const SELECTION_SCOPES = ["AllTravellers", "Subset", "Individual"] as const;
 export type SelectionScope = (typeof SELECTION_SCOPES)[number];
+
+/** The server-side default SelectionScope applied when no scope is provided. */
+export const DEFAULT_SELECTION_SCOPE: SelectionScope = "Subset";
 
 /**
  * One checkout/decision requirement on a goal, as computed server-side
