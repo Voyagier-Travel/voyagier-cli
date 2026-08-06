@@ -36,8 +36,18 @@ import { extractFlightToken, buildFlightSummary, buildHotelSummary, buildActivit
 import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { agentFlightOptions, agentHotelOptions, agentActivityOptions } from "../agent-output.js";
 import { deriveHotelStay, hotelFactsFields } from "../hotel-format.js";
-import { flightProjectionFields, extractRankScore, deriveFlightDetail, analyzeFlightDuplicates } from "../flight-format.js";
-import { searchAirports } from "../data/airports.js";
+import {
+  flightProjectionFields,
+  extractRankScore,
+  deriveFlightDetail,
+  analyzeFlightDuplicates,
+  detectEndpointMismatch,
+  hasEndpointMismatch,
+  mismatchAirportCodes,
+  endpointMismatchMarker,
+} from "../flight-format.js";
+import type { RequestedEndpoints, EndpointMismatch } from "../flight-format.js";
+import { searchAirports, resolveAirport } from "../data/airports.js";
 import { findMetroArea } from "../data/metro-areas.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { waitForSelectionOptions } from "../selection-wait.js";
@@ -282,15 +292,38 @@ function sortOptions(options: SelectOption[], sortBy: SortField): SelectOption[]
 }
 
 /**
+ * The outcome of resolving a user-supplied airport value.
+ * `explicit` (VOY-1874) is true ONLY when the input was already a 3-letter IATA
+ * code — a contract for that exact airport. A city/metro name resolves to a code
+ * but is allowed to expand to nearby airports, so `explicit` is false.
+ */
+interface ResolvedAirport {
+  code: string;
+  explicit: boolean;
+}
+
+/**
  * Resolve a user-supplied airport value to an IATA code.
  * Priority: exact IATA code → metro area (shows options) → single city match → ambiguous error.
  * Shows a note if city name was resolved. Throws CliError if ambiguous or unknown.
  */
-function resolveAirportInput(value: string, flagName: string, quiet: boolean): string {
-  // If it's already a valid 3-letter code, validate and return
+function resolveAirportInput(value: string, flagName: string, quiet: boolean): ResolvedAirport {
+  // A 3-letter input is an explicit exact-airport contract ONLY when it is a
+  // KNOWN airport code. Some 3-letter codes are metro/city codes (NYC, LON …)
+  // that upstream inventory legitimately expands to several airports — treating
+  // those as explicit would flag or filter perfectly correct results.
   if (/^[A-Za-z]{3}$/.test(value.trim())) {
     validateIata(value, flagName);
-    return value.toUpperCase();
+    const upper = value.trim().toUpperCase();
+    if (resolveAirport(upper)) {
+      return { code: upper, explicit: true };
+    }
+    // Not a known airport: fall through to metro handling (e.g. "NYC"); if no
+    // metro matches either, pass the code through non-explicit so exact-airport
+    // enforcement never fires on a code we can't verify.
+    if (!findMetroArea(value)) {
+      return { code: upper, explicit: false };
+    }
   }
 
   // Check metro areas first — "Washington DC" → show BWI, DCA, IAD as options
@@ -300,14 +333,14 @@ function resolveAirportInput(value: string, flagName: string, quiet: boolean): s
       if (!quiet) {
         process.stderr.write(chalk.dim(`Using ${metro.airports[0]} (${metro.name}) for ${flagName}\n`));
       }
-      return metro.airports[0];
+      return { code: metro.airports[0], explicit: false };
     }
     // Metro with multiple airports — use the primary (first) but show all
     if (!quiet) {
       process.stderr.write(chalk.dim(`${metro.name} airports: ${metro.airports.join(", ")}\n`));
       process.stderr.write(chalk.dim(`Using ${metro.airports[0]} (primary) for ${flagName}. Specify a code to override.\n`));
     }
-    return metro.airports[0];
+    return { code: metro.airports[0], explicit: false };
   }
 
   // Try to resolve as city name
@@ -319,7 +352,7 @@ function resolveAirportInput(value: string, flagName: string, quiet: boolean): s
     if (!quiet) {
       process.stderr.write(chalk.dim(`Using ${matches[0].code} (${matches[0].name}) for ${flagName}\n`));
     }
-    return matches[0].code;
+    return { code: matches[0].code, explicit: false };
   }
   // Multiple matches but not a known metro — show them all
   const codes = matches.slice(0, 10).map((m) => m.code).join(", ");
@@ -746,14 +779,14 @@ function optionOutboundDestination(opt: SelectOption): string | null {
  */
 function outboundLegStale(
   options: SelectOption[],
-  effectiveOrigin: string,
-  effectiveDestination: string,
+  effectiveOrigin: string | null,
+  effectiveDestination: string | null,
 ): boolean {
   if (options.length === 0) return false;
   const legOrigin = optionOutboundOrigin(options[0]);
   const legDestination = optionOutboundDestination(options[0]);
-  if (legOrigin != null && legOrigin !== effectiveOrigin) return true;
-  return legDestination != null && legDestination !== effectiveDestination;
+  if (effectiveOrigin != null && legOrigin != null && legOrigin !== effectiveOrigin) return true;
+  return effectiveDestination != null && legDestination != null && legDestination !== effectiveDestination;
 }
 
 /** Bounded re-poll for the stale-inventory refetch (VOY-1871): the selection
@@ -763,29 +796,140 @@ export const STALE_REFETCH_ATTEMPTS = 3;
 export const STALE_REFETCH_DELAY_MS = 750;
 
 /**
+ * Result of the nearby-airport enforcement (VOY-1874). `filtered` counts options
+ * dropped by the DEFAULT exact-match filter; `airports` is the set of substitute
+ * codes seen; `onlyNearby` marks the fallback where every option was a substitute
+ * (kept + flagged rather than returned empty); `warning` is the human/agent line
+ * and the JSON `warnings[]` entry.
+ */
+interface NearbyOutcome {
+  filtered: number;
+  airports: string[];
+  onlyNearby: boolean;
+  warning: string | null;
+}
+
+interface NearbyFilterResult {
+  kept: SelectOption[];
+  outcome: NearbyOutcome;
+  /** Kept options should carry mismatch flags/markers (--nearby or all-nearby). */
+  annotate: boolean;
+}
+
+const EMPTY_NEARBY: NearbyOutcome = { filtered: 0, airports: [], onlyNearby: false, warning: null };
+
+/** De-duplicate airport codes preserving first-seen order. */
+function uniqueCodes(codes: string[]): string[] {
+  const out: string[] = [];
+  for (const c of codes) if (c && !out.includes(c)) out.push(c);
+  return out;
+}
+
+/** The explicitly requested code(s) as a compact label, e.g. "SEA" or "SEA/JFK". */
+function requestedCodesLabel(req: RequestedEndpoints): string {
+  return [req.origin, req.destination].filter(Boolean).join("/");
+}
+
+/**
+ * Enforce exact-airport matching for explicitly requested IATA codes (VOY-1874).
+ *
+ * DEFAULT: drop options whose endpoints don't match the requested codes, keeping
+ * the exact matches; report how many were dropped and which substitute airports
+ * appeared. If that would remove EVERY option, keep them all instead, flag each,
+ * and warn that only nearby-airport inventory exists (never a silent empty).
+ * `--nearby` skips the filter entirely and flags the substitutes.
+ *
+ * Runs over the client-side option set (same layer as --sort / filterFlights)
+ * and BEFORE duplicate analysis, so folded groups are never half-filtered.
+ * Options whose leg data can't be read never match a mismatch, so they are
+ * neither filtered nor flagged.
+ */
+function applyNearbyAirportFilter(
+  options: SelectOption[],
+  req: RequestedEndpoints,
+  nearby: boolean,
+): NearbyFilterResult {
+  // Nothing to enforce unless at least one endpoint was an explicit IATA code.
+  if (!req.origin && !req.destination) {
+    return { kept: options, outcome: EMPTY_NEARBY, annotate: false };
+  }
+  const classified = options.map((opt) => ({ opt, m: detectEndpointMismatch(opt.bookingData, req) }));
+  const mismatching = classified.filter((c) => hasEndpointMismatch(c.m));
+  if (mismatching.length === 0) {
+    return { kept: options, outcome: EMPTY_NEARBY, annotate: false };
+  }
+  const substituted = uniqueCodes(mismatching.flatMap((c) => mismatchAirportCodes(c.m)));
+
+  if (nearby) {
+    // Opt-in: keep everything, annotate the substitutes, no filter report.
+    return { kept: options, outcome: EMPTY_NEARBY, annotate: true };
+  }
+
+  const matching = classified.filter((c) => !hasEndpointMismatch(c.m));
+  if (matching.length === 0) {
+    // Filtering would remove ALL options — keep them, flag them, and warn rather
+    // than silently returning an empty result.
+    const requested = requestedCodesLabel(req);
+    const airportsLabel = substituted.length ? ` (${substituted.join(", ")})` : "";
+    return {
+      kept: options,
+      outcome: {
+        filtered: 0,
+        airports: substituted,
+        onlyNearby: true,
+        warning: `No options use the requested ${requested} — only nearby-airport inventory${airportsLabel} is available. Showing it; pass --nearby to accept nearby airports without this warning.`,
+      },
+      annotate: true,
+    };
+  }
+
+  // Default: drop the nearby substitutes, keep the exact matches, and report.
+  const n = mismatching.length;
+  return {
+    kept: matching.map((c) => c.opt),
+    outcome: {
+      filtered: n,
+      airports: substituted,
+      onlyNearby: false,
+      warning: `Filtered ${n} option${n === 1 ? "" : "s"} from nearby airports (${substituted.join(", ")}); use --nearby to include them.`,
+    },
+    annotate: false,
+  };
+}
+
+/**
  * Envelope fields for the flights search (VOY-1793 reuse observability +
- * VOY-1871 effectiveParams / staleInventory).
+ * VOY-1871 effectiveParams / staleInventory + VOY-1874 nearby filtering).
  *
  * `effectiveParams` (VOY-1871) is ALWAYS present and reflects the params wired
  * for THIS search. The reused selection's ORIGINAL params (VOY-1793, present
  * on any reuse that has a stored record — matching or not) move to
  * `previousSearchParams` so the two concepts don't collide on one key.
  * `staleInventory` + its warning are added when the rendered rows still don't
- * match the effective origin/destination.
+ * match the effective origin/destination. `nearbyFiltered` / `nearbyAirports` /
+ * `nearbyOnly` (VOY-1874) report exact-airport enforcement.
  */
 function flightReuseEnvelopeFields(
   reuse: ReuseObservation,
   effectiveParams: EffectiveFlightParams,
   staleInventory: boolean,
   staleWarning: string | null,
+  nearby: NearbyOutcome,
 ): Record<string, unknown> {
-  const warnings = [...reuse.warnings, ...(staleWarning ? [staleWarning] : [])];
+  const warnings = [
+    ...reuse.warnings,
+    ...(staleWarning ? [staleWarning] : []),
+    ...(nearby.warning ? [nearby.warning] : []),
+  ];
   return {
     requestedParams: reuse.requestedParams,
     effectiveParams,
     ...(reuse.effectiveParams ? { previousSearchParams: reuse.effectiveParams } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
     ...(staleInventory ? { staleInventory: true } : {}),
+    ...(nearby.filtered > 0 ? { nearbyFiltered: nearby.filtered } : {}),
+    ...(nearby.airports.length > 0 ? { nearbyAirports: nearby.airports } : {}),
+    ...(nearby.onlyNearby ? { nearbyOnly: true } : {}),
   };
 }
 
@@ -855,6 +999,7 @@ export function registerSearchCommands(program: Command): void {
       [] as string[],
     )
     .option("--max-price <n>", "Only options at or below this price")
+    .option("--nearby", "Include flights from nearby airports when an explicit IATA code was requested (default: exact-airport only)")
     .option("--sort <field>", "Sort by: price, duration, stops, default", "default")
     .option("--full", "Include ALL options with raw provider data in the output (large; default shows top summaries)")
     .option("--json", "Output raw JSON")
@@ -877,22 +1022,28 @@ export function registerSearchCommands(program: Command): void {
       opts.date = await resolveDateOpt(opts.date, opts, "Departure date (YYYY-MM-DD): ", command);
       try {
         const quiet = !!(opts.json || opts.agent);
-        // Resolve origin: explicit --from, or home airport default
+        // Resolve origin: explicit --from, or home airport default. Track whether
+        // the input was an explicit IATA code — only then is exact-airport
+        // matching enforced (VOY-1874). A city/metro name is allowed to expand.
         let origin: string;
+        let originExplicit: boolean;
         if (opts.from) {
-          origin = resolveAirportInput(opts.from, "--from", quiet);
+          ({ code: origin, explicit: originExplicit } = resolveAirportInput(opts.from, "--from", quiet));
         } else {
           const homeAirports = getHomeAirports();
           if (homeAirports.length > 0) {
             origin = homeAirports[0].toUpperCase();
             validateIata(origin, "--from (home airport)");
+            // The home airport is a concrete code from the profile — treat it as
+            // an explicit request for that exact airport.
+            originExplicit = true;
             if (!opts.json && !opts.agent) process.stderr.write(chalk.dim(`Using home airport: ${origin} (from profile)\n`));
           } else {
             throw new CliError(CliErrorCode.VALIDATION, "No origin specified. Run: voyagier auth setup (or use --from <code>)");
           }
         }
 
-        const destination = resolveAirportInput(opts.to, "--to", quiet);
+        const { code: destination, explicit: destinationExplicit } = resolveAirportInput(opts.to, "--to", quiet);
         validateDate(opts.date, "--date");
         warnPastDate(opts.date, "--date");
         warnPastDate(opts.date, "--date");
@@ -1067,12 +1218,17 @@ export function registerSearchCommands(program: Command): void {
         // still the old ones. Re-poll the full options (bounded) until the rows
         // match the effective params, so the envelope is built from
         // POST-refresh rows only. Runs in every mode (incl. --json/--agent)
-        // because agents consume the envelope directly.
-        if (outboundLegStale(fetchedOptions, origin, destination)) {
+        // because agents consume the envelope directly. Per-endpoint suppression
+        // mirrors the render-time check below: under --nearby an explicitly
+        // requested endpoint is allowed to differ (expected substitution), so it
+        // must not trigger pointless re-polls.
+        const staleCheckOrigin = opts.nearby && originExplicit ? null : origin;
+        const staleCheckDestination = opts.nearby && destinationExplicit ? null : destination;
+        if (outboundLegStale(fetchedOptions, staleCheckOrigin, staleCheckDestination)) {
           await waitForSelectionOptions(selectionId, { timeoutMs: SEARCH_WAIT_TIMEOUT_MS });
           for (let attempt = 1; attempt <= STALE_REFETCH_ATTEMPTS; attempt++) {
             fetchedOptions = await refetchDecisionOptions(selectionId);
-            if (!outboundLegStale(fetchedOptions, origin, destination)) break;
+            if (!outboundLegStale(fetchedOptions, staleCheckOrigin, staleCheckDestination)) break;
             if (attempt < STALE_REFETCH_ATTEMPTS) {
               await new Promise<void>((r) => setTimeout(r, STALE_REFETCH_DELAY_MS));
             }
@@ -1086,13 +1242,45 @@ export function registerSearchCommands(program: Command): void {
         // set), then apply --sort; both run before the display limit.
         const prefiltered = [...fetchedOptions].sort((a, b) => a.sortOrder - b.sortOrder);
         const { kept, zero: filteredToZero } = filterFlights(prefiltered, flightFilters);
-        const options = sortOptions(kept, sortBy);
+
+        // VOY-1874: enforce exact-airport matching for explicitly requested IATA
+        // codes. Runs on the filtered set (same layer as --sort) and BEFORE both
+        // --sort and duplicate analysis, so a folded group is never half-filtered.
+        const requestedEndpoints: RequestedEndpoints = {
+          origin: originExplicit ? origin : null,
+          destination: destinationExplicit ? destination : null,
+          roundTrip: isRoundTrip,
+        };
+        const nearbyResult = applyNearbyAirportFilter(kept, requestedEndpoints, !!opts.nearby);
+        const annotateMismatches = nearbyResult.annotate;
+        const nearby = nearbyResult.outcome;
+        const options = sortOptions(nearbyResult.kept, sortBy);
+
+        // VOY-1874: per-displayed-option endpoint mismatch (only meaningful when
+        // we intentionally KEEP substitutes — --nearby or the all-nearby fallback;
+        // the default filter already removed them).
+        const optionMismatch = (opt: SelectOption): EndpointMismatch | null =>
+          annotateMismatches ? detectEndpointMismatch(opt.bookingData, requestedEndpoints) : null;
+        const mismatchMarkers = annotateMismatches
+          ? options.map((opt) => {
+              const m = detectEndpointMismatch(opt.bookingData, requestedEndpoints);
+              return hasEndpointMismatch(m) ? endpointMismatchMarker(m, requestedEndpoints) : undefined;
+            })
+          : undefined;
 
         // VOY-1871: after the bounded re-poll, if the FIRST rendered row's
         // outbound leg still disagrees with the effective params, the
         // inventory hasn't finished refreshing. Don't render silently — flag it
-        // so an agent re-fetches before selecting.
-        const staleInventory = outboundLegStale(options, origin, destination);
+        // so an agent re-fetches before selecting. Suppression is PER ENDPOINT:
+        // under the --nearby opt-in (VOY-1874) an EXPLICITLY requested endpoint
+        // may legitimately differ (substitution is expected and each such row
+        // carries a mismatch annotation, so the signal isn't lost) — but a
+        // city-name endpoint has no annotations to compensate, so its staleness
+        // check stays on even under --nearby. Without --nearby the default
+        // filter has already removed substitutes; the check can still fire in
+        // the all-nearby fallback, where a stale re-fetch hint alongside the
+        // nearby notice is harmless and both are true.
+        const staleInventory = outboundLegStale(options, staleCheckOrigin, staleCheckDestination);
         const staleWarning = staleInventory
           ? `STALE_INVENTORY: the top option's outbound leg (${optionOutboundOrigin(options[0]) ?? "?"} → ${optionOutboundDestination(options[0]) ?? "?"}) does not match the searched params (${origin} → ${destination}); the selection's inventory may still be refreshing for the new params. Re-fetch before selecting: voyagier selection-options ${shellArg(selectionId)} --wait --json`
           : null;
@@ -1110,6 +1298,7 @@ export function registerSearchCommands(program: Command): void {
           // entirely when absent (never null/undefined).
           const rankScore = extractRankScore(opt.bookingData);
           const dupOfId = dupRoles[i]?.duplicateOfOptionId;
+          const mism = optionMismatch(opt);
           return {
             index: i + 1,
             optionId: opt.id,
@@ -1121,6 +1310,9 @@ export function registerSearchCommands(program: Command): void {
             ...(rankScore !== undefined ? { rankScore } : {}),
             // VOY-1877: marker on options display-identical to an earlier one.
             ...(dupOfId ? { duplicateOfOptionId: dupOfId } : {}),
+            // VOY-1874: nearby-airport substitution flags (kept-and-flagged mode).
+            ...(mism?.originMismatch ? { originMismatch: true } : {}),
+            ...(mism?.destinationMismatch ? { destinationMismatch: true } : {}),
           };
         });
 
@@ -1141,7 +1333,15 @@ export function registerSearchCommands(program: Command): void {
         // detail level.
         const optionsForJson = options.map((opt, i) => {
           const dupOfId = dupRoles[i]?.duplicateOfOptionId;
-          return dupOfId ? { ...opt, duplicateOfOptionId: dupOfId } : opt;
+          const mism = optionMismatch(opt);
+          if (!dupOfId && !mism?.originMismatch && !mism?.destinationMismatch) return opt;
+          return {
+            ...opt,
+            ...(dupOfId ? { duplicateOfOptionId: dupOfId } : {}),
+            // VOY-1874: carry the substitution flags into the --full dump too.
+            ...(mism?.originMismatch ? { originMismatch: true } : {}),
+            ...(mism?.destinationMismatch ? { destinationMismatch: true } : {}),
+          };
         });
 
         if (opts.json) {
@@ -1153,7 +1353,7 @@ export function registerSearchCommands(program: Command): void {
               ...(returnSelectionId ? { returnSelectionId } : {}),
               isRoundTrip,
               ...planUrls(tripPlanId),
-              ...flightReuseEnvelopeFields(reuse, effectiveParams, staleInventory, staleWarning),
+              ...flightReuseEnvelopeFields(reuse, effectiveParams, staleInventory, staleWarning, nearby),
               // Factual callouts over the displayed (post-filter/sort) list.
               ...flightCalloutsJson(flightCallouts(options)),
               // Structured which-filter attribution when filters removed all.
@@ -1177,6 +1377,8 @@ export function registerSearchCommands(program: Command): void {
           lines.push(`_${effectiveParamsLine(effectiveParams)}_`);
           for (const w of reuse.warnings) lines.push(`> ⚠ ${w}`);
           if (staleWarning) lines.push(`> ⚠ ${staleWarning}`);
+          // VOY-1874: nearby-airport filtering / all-nearby warning.
+          if (nearby.warning) lines.push(`> ⚠ ${nearby.warning}`);
           if (filteredToZero) {
             // Filters removed everything the backend returned — say WHICH ones
             // and the nearest miss (VOY-1784), not a generic "no options".
@@ -1195,7 +1397,7 @@ export function registerSearchCommands(program: Command): void {
             // Roles align to `options` order; the shown slice is a prefix, so a
             // matching prefix of dupRoles applies (a duplicate's primary is
             // always earlier, hence in-slice whenever the duplicate is).
-            lines.push(agentFlightOptions(shown, dupRoles.slice(0, shown.length)));
+            lines.push(agentFlightOptions(shown, dupRoles.slice(0, shown.length), mismatchMarkers?.slice(0, shown.length)));
             if (options.length > shown.length) {
               lines.push(`_…and ${options.length - shown.length} more — \`--full\` lists all, \`--sort price\`/\`--max-stops\` refine._`);
             }
@@ -1220,6 +1422,8 @@ export function registerSearchCommands(program: Command): void {
         // clear ⚠ line when the rendered rows don't match it.
         process.stderr.write(chalk.dim(effectiveParamsLine(effectiveParams) + "\n"));
         if (staleWarning) process.stderr.write(chalk.yellow(`⚠ ${staleWarning}\n`));
+        // VOY-1874: nearby-airport filtering / all-nearby warning.
+        if (nearby.warning) process.stderr.write(chalk.yellow(`⚠ ${nearby.warning}\n`));
 
         if (filteredToZero) {
           // Filters removed every returned option — explain which filter(s) and
@@ -1240,7 +1444,7 @@ export function registerSearchCommands(program: Command): void {
         console.log(chalk.bold(`\n${options.length} flight option${options.length > 1 ? "s" : ""} found${sortLabel}:\n`));
         const calloutLine = flightCalloutLine(options);
         if (calloutLine) console.log(chalk.dim(calloutLine));
-        console.log(formatFlights(options, undefined, dupRoles));
+        console.log(formatFlights(options, undefined, dupRoles, mismatchMarkers));
         await printPlanFooter(tripPlanId);
         if (isRoundTrip) {
           console.log(chalk.dim(`  Note: Select the outbound leg first, then the return leg${returnSelectionId ? ` (selection ${returnSelectionId})` : ""}.`));

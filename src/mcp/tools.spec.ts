@@ -249,6 +249,17 @@ describe("argv builders", () => {
       .toContain("--return");
   });
 
+  it("search_flights passes --nearby only when nearby is true (VOY-1874)", () => {
+    // Default / false → no --nearby (exact-airport matching stays the default).
+    expect(buildSearchFlightsArgs({ plan_id: "p", from: "SEA", to: "JFK", date: "2026-09-15" }))
+      .not.toContain("--nearby");
+    expect(buildSearchFlightsArgs({ plan_id: "p", from: "SEA", to: "JFK", date: "2026-09-15", nearby: false }))
+      .not.toContain("--nearby");
+    // true → bare --nearby flag threaded to the CLI.
+    expect(buildSearchFlightsArgs({ plan_id: "p", from: "SEA", to: "JFK", date: "2026-09-15", nearby: true }))
+      .toContain("--nearby");
+  });
+
   it("search_flights maps each sort field to --sort; default order preserved when omitted", () => {
     for (const field of ["price", "duration", "stops"] as const) {
       const args = buildSearchFlightsArgs({ plan_id: "p", from: "JFK", to: "NRT", date: "2026-09-15", sort: field });
