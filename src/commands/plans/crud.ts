@@ -71,7 +71,7 @@ export function registerCrudCommands(plans: Command): void {
 
         if (opts.json) {
           const planSummary = await getPlanSummary(plan.id);
-          jsonOutput({ ...plan, ...planUrls(plan.id), planSummary });
+          jsonOutput({ ok: true, ...plan, ...planUrls(plan.id), planSummary });
           return;
         }
 
@@ -486,7 +486,7 @@ export function registerCrudCommands(plans: Command): void {
         const plan = refetch.tripPlan;
 
         if (opts.json) {
-          jsonOutput({ ...plan, url: planUrl(plan.id) });
+          jsonOutput({ ok: true, ...plan, url: planUrl(plan.id) });
           return;
         }
 
@@ -527,7 +527,7 @@ export function registerCrudCommands(plans: Command): void {
         );
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ success: true, id }) + "\n");
+          process.stdout.write(JSON.stringify({ ok: true, success: true, id }) + "\n");
           return;
         }
 

@@ -178,7 +178,7 @@ describe("plans remove-item", () => {
     expect(mockGraphql).toHaveBeenCalledTimes(1);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars).toEqual({ id: "i-flight" });
-    expect(JSON.parse(writes.join(""))).toEqual({ success: true, deleted: ["i-flight"] });
+    expect(JSON.parse(writes.join(""))).toEqual({ ok: true, success: true, deleted: ["i-flight"] });
   });
 
   it("deletes a single item by id (human)", async () => {
@@ -202,7 +202,7 @@ describe("plans remove-item", () => {
     expect(mockGraphql).toHaveBeenCalledTimes(2);
     const [, delVars] = mockGraphql.mock.calls[1] as [string, any];
     expect(delVars).toEqual({ id: "i-flight" });
-    expect(JSON.parse(writes.join(""))).toEqual({ success: true, deleted: ["i-flight"] });
+    expect(JSON.parse(writes.join(""))).toEqual({ ok: true, success: true, deleted: ["i-flight"] });
   });
 
   it("rejects an invalid --type", async () => {
@@ -219,7 +219,7 @@ describe("plans remove-item", () => {
       .mockResolvedValueOnce({ deleteTripPlanItem: true });
     await run(["remove-item", "--plan", "plan-1", "--all", "--json"]);
     expect(mockGraphql).toHaveBeenCalledTimes(3);
-    expect(JSON.parse(writes.join(""))).toEqual({ success: true, deleted: ["i-flight", "i-hotel"] });
+    expect(JSON.parse(writes.join(""))).toEqual({ ok: true, success: true, deleted: ["i-flight", "i-hotel"] });
   });
 
   it("--all prints a human confirmation with the count", async () => {

@@ -110,7 +110,7 @@ export function registerItemCommands(plans: Command): void {
             { id: itemId }
           );
           if (opts.json) {
-            jsonOutput({ success: true, deleted: [itemId] });
+            jsonOutput({ ok: true, success: true, deleted: [itemId] });
           } else {
             console.log(chalk.green(`✓ Removed item ${itemId}`));
           }
@@ -147,7 +147,7 @@ export function registerItemCommands(plans: Command): void {
         }
 
         if (opts.json) {
-          jsonOutput({ success: true, deleted });
+          jsonOutput({ ok: true, success: true, deleted });
         } else {
           console.log(chalk.green(`✓ Removed ${deleted.length} item${deleted.length !== 1 ? "s" : ""}`));
         }
