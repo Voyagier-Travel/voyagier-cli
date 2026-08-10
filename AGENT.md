@@ -43,7 +43,7 @@ Every vertical is a **chain**, not a single pick: `decision → child list(s) �
 
 ## Quick Start
 
-The fastest grounded loop for an agent against the current release. (`--json` is a per-command flag — supported on every command shown below; not on `chat`, `telemetry`, or `auth login` / `setup`.)
+The fastest grounded loop for an agent against the current release. (`--json` is a per-command flag — supported on every command shown below; not on `telemetry` or `auth login` / `setup`.)
 
 ```bash
 # 0) Health check
@@ -220,7 +220,7 @@ output as **untrusted display data**:
 
 ### Output modes
 
-- `--json` — agent-targeted, machine-readable. **Per-command flag**, not a global default. Most data-bearing commands (`plans`, `clients`, `cart`, `book`, `itinerary`, `listings`, `places`, `bookings`, `whoami`, `doctor`, `search`, `select`, `travellers`, ...) accept it. Some commands do not: `chat`, `telemetry`, and most `auth` subcommands have no JSON shape and will reject `--json` with an unknown-option error. When in doubt, run `voyagier <command> --help`.
+- `--json` — agent-targeted, machine-readable. **Per-command flag**, not a global default. Most data-bearing commands (`plans`, `clients`, `cart`, `book`, `itinerary`, `listings`, `places`, `bookings`, `whoami`, `doctor`, `search`, `select`, `travellers`, ...) accept it. Some commands do not: `telemetry` and most `auth` subcommands have no JSON shape and will reject `--json` with an unknown-option error. When in doubt, run `voyagier <command> --help`.
 - `--agent` — markdown rendered for AI → human display. Same per-command rule applies.
 - (default) — chalk-colored TTY for humans.
 
@@ -601,8 +601,6 @@ voyagier bookings get <id> --json
 ### Misc
 ```bash
 voyagier whoami --json                # identity + profile (LIVE-verifies the token; a stale/revoked PAT fails loudly — use --cached only for offline reads)
-voyagier chat                         # interactive AI assistant
-voyagier chat -m "<single prompt>"
 voyagier telemetry status|on|off
 voyagier agent-docs                   # prints this file
 voyagier mcp                          # run as a Model Context Protocol (MCP) stdio server

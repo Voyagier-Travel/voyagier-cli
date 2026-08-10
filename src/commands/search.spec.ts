@@ -44,7 +44,6 @@ jest.unstable_mockModule("../api.js", () => ({
   // Rest of api.js's surface, stubbed so the full command tree pulled in by
   // build-program.js (imported below for the real hook) links cleanly.
   graphqlWithFieldFallback: jest.fn(),
-  streamChat: jest.fn(),
   __resetFieldFallbackCache: jest.fn(),
   AuthError: class AuthError extends Error {},
 }));

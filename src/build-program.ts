@@ -2,7 +2,6 @@ import { Command } from "commander";
 
 import { CliErrorCode } from "./errors.js";
 import { registerAuthCommands } from "./commands/auth.js";
-import { registerChatCommands } from "./commands/chat.js";
 import { registerPlanCommands } from "./commands/plans/index.js";
 import { registerSearchCommands } from "./commands/search.js";
 import { registerSelectCommands } from "./commands/select.js";
@@ -131,7 +130,6 @@ Full reference: voyagier agent-docs`,
   registerSendCommand(program);
   registerBookCommands(program);
   registerBookingsCommands(program);
-  registerChatCommands(program);
   registerWhoamiCommand(program);
   registerTelemetryCommands(program);
   registerAgentDocsCommand(program);
