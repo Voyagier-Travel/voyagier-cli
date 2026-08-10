@@ -118,8 +118,13 @@ async function fetchAllClients(): Promise<TripPlanClient[]> {
  */
 function parsePositiveInt(raw: string | undefined, flag: string, fallback: number): number {
   if (raw === undefined) return fallback;
+  // Digits-only guard (rather than round-trip equality) so zero-padded values
+  // like "01" are accepted while "1abc"/"1.5"/"-2" are still hard errors.
+  if (!/^\d+$/.test(raw.trim())) {
+    fatal(`Invalid ${flag} "${raw}". Must be a positive integer.`);
+  }
   const n = parseInt(raw, 10);
-  if (Number.isNaN(n) || n < 1 || String(n) !== raw.trim()) {
+  if (n < 1) {
     fatal(`Invalid ${flag} "${raw}". Must be a positive integer.`);
   }
   return n;
@@ -309,8 +314,8 @@ export function registerClientsCommands(program: Command): void {
   clients
     .command("list")
     .description("List all trip plan clients on this account")
-    .option("--status <status>", "Filter by status (active|archived); with --page, filters within the fetched page only")
-    .option("--type <type>", "Filter by client type (individual|company|group); with --page, filters within the fetched page only")
+    .option("--status <status>", "Filter by status (active|archived); with --page/--limit, filters within the fetched page only")
+    .option("--type <type>", "Filter by client type (individual|company|group); with --page/--limit, filters within the fetched page only")
     .option("--page <n>", "Fetch a single page (1-based) instead of the whole roster")
     .option("--limit <n>", "Page size when --page/--limit is given (default 20)")
     .option("--json", "Output raw JSON")

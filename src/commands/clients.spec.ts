@@ -229,6 +229,18 @@ describe("clients list — pagination (--page/--limit)", () => {
       p.parseAsync(["node", "test", "clients", "list", "--page", "0", "--json"])
     ).rejects.toThrow(/Invalid --page/);
   });
+
+  it("rejects a non-numeric --limit but accepts a zero-padded one", async () => {
+    await expect(
+      buildProgram().parseAsync(["node", "test", "clients", "list", "--limit", "5x", "--json"])
+    ).rejects.toThrow(/Invalid --limit/);
+
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: { items: [sampleClient], count: 1, page: 2, limit: 5 },
+    });
+    await buildProgram().parseAsync(["node", "test", "clients", "list", "--page", "02", "--limit", "5", "--json"]);
+    expect(mockGraphql).toHaveBeenCalledWith(expect.any(String), { page: 2, limit: 5 });
+  });
 });
 
 describe("clients get", () => {
