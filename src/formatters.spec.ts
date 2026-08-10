@@ -253,3 +253,37 @@ describe("formatActivities", () => {
     expect(formatActivities([])).toBe("");
   });
 });
+
+describe("formatFlights — duplicate collapse/annotation (VOY-1877)", () => {
+  const legs = {
+    flights: [
+      {
+        flightLegs: [
+          { origin: "BWI", destination: "AUS", departureTime: "2026-06-15T07:15:00", arrivalTime: "2026-06-15T10:05:00", carrier: "DL", flightNumber: "1043" },
+        ],
+      },
+    ],
+  };
+
+  it("collapses an indistinguishable twin into one row noting the alternate", () => {
+    const out = stripAnsi(formatFlights([
+      { id: "opt-a", name: "DL1043", price: 412, airline: "DL", duration: "2h50m", bookingData: legs },
+      { id: "opt-b", name: "DL1043", price: 412, airline: "DL", duration: "2h50m", bookingData: legs },
+    ]));
+    // Only the primary row is rendered; it names the folded alternate.
+    expect(out).toContain("[1]");
+    expect(out).not.toContain("[2]");
+    expect(out).toContain("+1 identical option: opt-b");
+  });
+
+  it("keeps both rows and annotates the fare when a difference is detectable", () => {
+    const out = stripAnsi(formatFlights([
+      { id: "opt-a", name: "DL1043", price: 412, airline: "DL", duration: "2h50m", bookingData: { ...legs, fareBrand: "Main Cabin" } },
+      { id: "opt-b", name: "DL1043", price: 412, airline: "DL", duration: "2h50m", bookingData: { ...legs, fareBrand: "Basic Economy" } },
+    ]));
+    expect(out).toContain("[1]");
+    expect(out).toContain("[2]");
+    expect(out).toContain("fare: Main Cabin");
+    expect(out).toContain("fare: Basic Economy");
+  });
+});

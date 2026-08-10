@@ -1,7 +1,8 @@
 import chalk from "chalk";
 import { formatPrice } from "./utils.js";
 import { hotelStayLabel, deriveHotelFacts } from "./hotel-format.js";
-import { deriveFlightDetail, flightRouteLabel, extractRankScore, rankScoreLabel } from "./flight-format.js";
+import { deriveFlightDetail, flightRouteLabel, extractRankScore, rankScoreLabel, analyzeFlightDuplicates, collapsedAlternatesLabel } from "./flight-format.js";
+import type { FlightDupRole } from "./flight-format.js";
 
 interface FlightOption {
   id?: string;
@@ -46,9 +47,22 @@ function extractRoute(opt: FlightOption): string {
   return opt.name;
 }
 
-export function formatFlights(options: FlightOption[], overrideRoute?: { origin: string; destination: string }): string {
+export function formatFlights(
+  options: FlightOption[],
+  overrideRoute?: { origin: string; destination: string },
+  roles?: FlightDupRole[],
+): string {
+  // VOY-1877: fold/annotate display-identical rows. Roles are aligned to the
+  // option order; when not supplied we derive them here so the human render
+  // matches the JSON/agent surfaces (analyzeFlightDuplicates is deterministic).
+  const dupRoles = roles ?? analyzeFlightDuplicates(options);
   return options
     .map((opt, i) => {
+      const role = dupRoles[i] ?? {};
+      // Collapsed duplicates are folded into their primary — omit the row. The
+      // option keeps its number in saved state, so `select <n>` still resolves
+      // it (it is identical to the shown primary anyway).
+      if (role.collapsed) return null;
       const idx = chalk.bold.cyan(`[${i + 1}]`);
       // VOY-1783: prefer leg detail (flight number + timed route + stops); fall
       // back to airline + searchQuery route when the legs aren't in the payload.
@@ -75,9 +89,16 @@ export function formatFlights(options: FlightOption[], overrideRoute?: { origin:
       let line = `  ✈️  ${idx}  ${parts.join("  ")}`;
       if (details) line += `  ·  ${details}`;
       if (rank !== undefined) line += `  ·  ${chalk.dim(rankScoreLabel(rank))}`;
+      // VOY-1877: annotate a distinguishable identical-schedule row with its
+      // fare, or note the identical options folded into this primary.
+      if (role.annotate) line += `  ·  ${chalk.dim(`fare: ${role.annotate}`)}`;
+      if (role.collapsedAlternates?.length) {
+        line += `  ·  ${chalk.dim(collapsedAlternatesLabel(role.collapsedAlternates))}`;
+      }
       if (time) line += `\n       ${time}`;
       return line;
     })
+    .filter((line): line is string => line !== null)
     .join("\n\n");
 }
 

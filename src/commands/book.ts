@@ -54,7 +54,7 @@ import chalk from "chalk";
 import { graphql } from "../api.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { getApiUrl } from "../config.js";
-import { formatPrice, openBrowser, deriveBaseUrl, shellArg, cents } from "../utils.js";
+import { formatPrice, openBrowser, deriveBaseUrl, shellArg, cents, money } from "../utils.js";
 import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { resolvePlanArg } from "../resolve-plan-arg.js";
 import { hintCheckoutCreated, hintBookingConfirmed, hintBookingPending, hintDryRun } from "../hints.js";
@@ -417,11 +417,13 @@ export function registerBookCommands(program: Command): void {
             ok: true,
             data: {
               dryRun: true,
+              // VOY-1877: emit money through integer-cents rounding so summed
+              // values never leak a float artifact (comparisons stay in cents).
               items: workingSet.map((i) => ({
-                name: i.name, type: i.type, price: i.price, isBookable: i.isBookable, source: i.source,
+                name: i.name, type: i.type, price: money(i.price), isBookable: i.isBookable, source: i.source,
               })),
-              subtotal,
-              chargeableSubtotal,
+              subtotal: money(subtotal),
+              chargeableSubtotal: money(chargeableSubtotal),
               currency: cart.currency,
               blockers,
               existingCheckouts,
@@ -539,9 +541,11 @@ export function registerBookCommands(program: Command): void {
       const gateDetails = {
         expectedTotal: expectTotal,
         maxTotal,
-        actualTotal: chargeableSubtotal,
+        // VOY-1877: emitted money is cents-rounded; the gate verdict above is
+        // computed separately in integer cents and is unaffected.
+        actualTotal: money(chargeableSubtotal),
         currency: cart.currency,
-        items: bookableInSet.map((i) => ({ name: i.name, type: i.type, price: i.price })),
+        items: bookableInSet.map((i) => ({ name: i.name, type: i.type, price: money(i.price) })),
       };
       if (expectFails) {
         throw new CliError(
@@ -620,8 +624,9 @@ export function registerBookCommands(program: Command): void {
           ok: true,
           data: {
             checkoutUrl,
-            subtotal,
-            chargeableSubtotal,
+            // VOY-1877: cents-rounded on emission (gate comparisons stay in cents).
+            subtotal: money(subtotal),
+            chargeableSubtotal: money(chargeableSubtotal),
             currency: cart.currency,
             itemCount: workingSet.length,
             bookableCount: bookableInSet.length,

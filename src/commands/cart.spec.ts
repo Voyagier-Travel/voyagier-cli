@@ -172,4 +172,48 @@ describe("voyagier cart", () => {
     expect(captured).toBeInstanceOf(CliError);
     expect((captured as CliError).code).toBe(CliErrorCode.API_ERROR);
   });
+
+  // VOY-1877: money fields are emitted through integer-cents rounding, so a
+  // float-summed subtotal (the 0.1 + 0.2 class of artifact) never leaks its raw
+  // representation onto the JSON surface. Numbers stay numbers; no field renamed.
+  it("emits every money value at exactly 2 decimals even when prices float-sum dirty (4c)", async () => {
+    const dirty = {
+      tripPlan: {
+        id: "plan-1",
+        title: "Float Trip",
+        cart: {
+          itemCount: 2,
+          total: 0.1 + 0.2, // 0.30000000000000004
+          currency: "USD",
+          items: [
+            { id: "ci-1", name: "Item A", price: 0.1, currency: "USD", type: "Activity", selectionId: "sel-a", optionId: "opt-a", metadata: {} },
+            { id: "ci-2", name: "Item B", price: 0.2, currency: "USD", type: "Activity", selectionId: "sel-a", optionId: "opt-b", metadata: {} },
+          ],
+        },
+        goals: [
+          {
+            id: "g-a", name: "Activities", sortOrder: 1,
+            items: [{
+              id: "i-a", title: "Activities", goalId: "g-a",
+              selections: [{
+                id: "sel-a", type: "Activity", isLocked: false,
+                options: [
+                  { id: "opt-a", name: "A", isBookable: true, status: "ACTIVE", blueprintListingId: null, externalId: "viator:a" },
+                  { id: "opt-b", name: "B", isBookable: true, status: "ACTIVE", blueprintListingId: null, externalId: "viator:b" },
+                ],
+              }],
+            }],
+          },
+        ],
+      },
+    };
+    mockGraphql.mockResolvedValue(dirty);
+    await runCart(["plan-1", "--json"]);
+    const out = JSON.parse(stdoutOutput.join(""));
+    expect(out.data.cart.total).toBe(0.3);
+    const goal = out.data.cart.byGoal[0];
+    expect(goal.subtotal).toBe(0.3);
+    // The raw float artifact must not survive in the serialized JSON text.
+    expect(stdoutOutput.join("")).not.toContain("0.30000000000000004");
+  });
 });
