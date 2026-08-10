@@ -688,31 +688,6 @@ export const GET_BOOKING_RECORD = `
   }
 `;
 
-// --- Chat ---
-
-export const CREATE_CHAT_SESSION = `
-  mutation CreateChatSession($input: CreateSessionInput) {
-    createChatSession(input: $input) {
-      id
-      title
-    }
-  }
-`;
-
-export const LIST_CHAT_SESSIONS = `
-  query ChatSessions($page: Int, $limit: Int) {
-    chatSessions(page: $page, limit: $limit) {
-      items {
-        id
-        title
-        updatedAt
-      }
-      count
-      page
-    }
-  }
-`;
-
 // --- Clients (v2.0.0 — TripPlanClient surface) ---
 
 // Legacy clients-list query — the field set that predates

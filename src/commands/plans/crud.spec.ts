@@ -43,7 +43,6 @@ jest.unstable_mockModule("../../api.js", () => ({
   // Rest of api.js's surface, stubbed so the full command tree pulled in by
   // build-program.js (imported below for the real routeParseErrorsToJson hook)
   // links cleanly.
-  streamChat: jest.fn(),
   __resetFieldFallbackCache: jest.fn(),
 }));
 

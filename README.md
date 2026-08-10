@@ -96,12 +96,11 @@ The cart materializes only bookable, fare/room-level options — the per-item `i
 | `voyagier send` | Email the client an invite link to the live trip (self-serve close; requires confirmation / `--yes`) |
 | `voyagier book` | Stripe checkout gated by `--expect-total` / `--max-total`; `--validate`, server-side `--only-bookable` / `--types`, `--rebook` |
 | `voyagier bookings` | View booking records |
-| `voyagier chat` | Interactive AI trip planning |
 | `voyagier whoami` | Identity + profile (live-verifies the token; `--cached` for offline reads) |
 | `voyagier auth` | Manage PAT / API URL |
 | `voyagier agent-docs` | Print full AI agent integration reference |
 
-Most data-bearing commands accept `--json` for structured output (notable exceptions: `chat`, `telemetry`, several `auth` subcommands). Use `--plan <id>` on `select` to prevent cross-plan state corruption when running parallel workflows.
+Most data-bearing commands accept `--json` for structured output (notable exceptions: `telemetry`, several `auth` subcommands). Use `--plan <id>` on `select` to prevent cross-plan state corruption when running parallel workflows.
 
 ## For AI Agents
 
