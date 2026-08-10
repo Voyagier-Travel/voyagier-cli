@@ -583,6 +583,12 @@ describe("buildPlanStatus — divergent picks are valid (demmersong 2026-07-20)"
     expect(sel.chosenOptionId).toBeNull();
     expect(s.blockers).toEqual([]);
     expect(s.readiness).toBe("READY_TO_BOOK");
+    // VOY-1875: selection object exposes both selectionId (canonical) and id
+    // (additive alias), equal; the goal object exposes both goalId and id, equal.
+    expect(sel.id).toBe(sel.selectionId);
+    expect(typeof sel.selectionId).toBe("string");
+    expect(s.goals[0].id).toBe(s.goals[0].goalId);
+    expect(typeof s.goals[0].goalId).toBe("string");
   });
 
   it("partial picks → PICK_PENDING naming the count still to pick", () => {

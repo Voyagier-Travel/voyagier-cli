@@ -31,7 +31,7 @@ export function registerSocialCommands(plans: Command): void {
             { id: opts.delete }
           );
           if (opts.json) {
-            process.stdout.write(JSON.stringify({ success: true, deleted: opts.delete }, null, 2) + "\n");
+            process.stdout.write(JSON.stringify({ ok: true, success: true, deleted: opts.delete }, null, 2) + "\n");
           } else {
             console.log(chalk.green(`\n  ✓ Comment deleted\n`));
           }
@@ -49,7 +49,7 @@ export function registerSocialCommands(plans: Command): void {
           );
 
           if (opts.json) {
-            process.stdout.write(JSON.stringify(data.createTripPlanItemComment, null, 2) + "\n");
+            process.stdout.write(JSON.stringify({ ok: true, ...data.createTripPlanItemComment }, null, 2) + "\n");
           } else {
             console.log(chalk.green(`\n  ✓ Comment added\n`));
           }
@@ -131,7 +131,7 @@ export function registerSocialCommands(plans: Command): void {
             { itemId }
           );
           if (opts.json) {
-            process.stdout.write(JSON.stringify({ success: true, action: "removed" }, null, 2) + "\n");
+            process.stdout.write(JSON.stringify({ ok: true, success: true, action: "removed" }, null, 2) + "\n");
           } else {
             console.log(chalk.green("\n  ✓ Vote removed\n"));
           }
@@ -164,7 +164,7 @@ export function registerSocialCommands(plans: Command): void {
         }
 
         if (opts.json) {
-          process.stdout.write(JSON.stringify({ success: true, action: feedbackType.toLowerCase(), itemId }, null, 2) + "\n");
+          process.stdout.write(JSON.stringify({ ok: true, success: true, action: feedbackType.toLowerCase(), itemId }, null, 2) + "\n");
         } else {
           const emoji = feedbackType === "Upvote" ? "👍" : "👎";
           console.log(chalk.green(`\n  ${emoji} ${feedbackType}d\n`));

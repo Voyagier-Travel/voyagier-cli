@@ -615,6 +615,10 @@ export function buildPlanStatus(
         (chosenOptionId && options.find((o) => o.id === chosenOptionId)?.name) || null;
 
       return {
+        // VOY-1875: `selectionId` is canonical; `id` is an additive alias so
+        // consumers keyed on either name (goal view / selection-options use `id`)
+        // can read this selection object generically.
+        id: sel.id,
         selectionId: sel.id,
         type: sel.type ?? null,
         mode: sel.mode ?? null,
@@ -645,6 +649,9 @@ export function buildPlanStatus(
       }));
 
     return {
+      // VOY-1875: `goalId` is canonical; `id` is an additive alias so consumers
+      // keyed on either name (goal view uses `id`) can read this goal generically.
+      id: g.id,
       goalId: g.id,
       name: g.name ?? null,
       type: g.type ?? null,

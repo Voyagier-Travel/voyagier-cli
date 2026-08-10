@@ -106,6 +106,8 @@ describe("travellers add", () => {
     expect(vars.input).toMatchObject({ firstName: "John", lastName: "Doe", declaredTravellerType: "Adult" });
     const out = JSON.parse(writes.join(""));
     expect(out.id).toBe("trv_01");
+    // VOY-1875: additive uniform success marker on the mutation envelope.
+    expect(out.ok).toBe(true);
     // Pin the planUrls(...) trio and the current routes (VOY-1795): url aliases
     // clientUrl for back-compat; the retired /plans/{id} route must not return.
     expect(out.url).toBe("https://dev.voyagier.com/me/trips/plans/plan-1");
@@ -304,7 +306,7 @@ describe("travellers remove", () => {
     await run(["remove", "trv_01", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars).toEqual({ id: "trv_01" });
-    expect(JSON.parse(writes.join(""))).toEqual({ success: true, id: "trv_01" });
+    expect(JSON.parse(writes.join(""))).toEqual({ ok: true, success: true, id: "trv_01" });
   });
 
   it("human mode prints a confirmation", async () => {
@@ -342,7 +344,8 @@ describe("travellers update", () => {
       declaredTravellerType: "Infant",
       contactNumbers: [{ useType: "H", phone: "+1-555-1111" }],
     });
-    expect(mockJsonOutput).toHaveBeenCalled();
+    // VOY-1875: additive uniform success marker on the mutation envelope.
+    expect(mockJsonOutput).toHaveBeenCalledWith(expect.objectContaining({ ok: true, id: "trv_01" }));
   });
 
   it("builds a passport input when passport flags are given", async () => {

@@ -403,7 +403,25 @@ export function registerGoalCommands(plans: Command): void {
         }
 
         if (opts.json) {
-          jsonOutput({ ok: true, data: { goal } });
+          // VOY-1875: canonical id naming is goalId/selectionId. Add them as
+          // additive aliases (keeping `id`) on the goal and its nested selection
+          // objects, so a consumer keyed on either name — plan-status uses
+          // goalId/selectionId — can read this goal view generically.
+          const aliasedGoal = {
+            ...goal,
+            goalId: goal.id,
+            ...(goal.items
+              ? {
+                  items: goal.items.map((item) => ({
+                    ...item,
+                    ...(item.selections
+                      ? { selections: item.selections.map((s) => ({ ...s, selectionId: s.id })) }
+                      : {}),
+                  })),
+                }
+              : {}),
+          };
+          jsonOutput({ ok: true, data: { goal: aliasedGoal } });
           return;
         }
 

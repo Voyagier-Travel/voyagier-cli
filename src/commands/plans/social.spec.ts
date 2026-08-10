@@ -67,7 +67,7 @@ describe("plans comments", () => {
     await run(["comments", "item-1", "--delete", "cmt_9", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars).toEqual({ id: "cmt_9" });
-    expect(JSON.parse(writes.join(""))).toEqual({ success: true, deleted: "cmt_9" });
+    expect(JSON.parse(writes.join(""))).toEqual({ ok: true, success: true, deleted: "cmt_9" });
   });
 
   it("delete prints a confirmation in human mode", async () => {
@@ -81,7 +81,7 @@ describe("plans comments", () => {
     await run(["comments", "item-1", "--add", "Nice", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars).toEqual({ itemId: "item-1", input: { content: "Nice" } });
-    expect(JSON.parse(writes.join(""))).toEqual({ id: "cmt_1", text: "Nice" });
+    expect(JSON.parse(writes.join(""))).toEqual({ ok: true, id: "cmt_1", text: "Nice" });
   });
 
   it("adds a threaded reply with --reply-to", async () => {
@@ -158,7 +158,7 @@ describe("plans vote", () => {
     await run(["vote", "item-1", "--up", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars).toEqual({ itemId: "item-1", input: { feedbackType: "Upvote" } });
-    expect(JSON.parse(writes.join(""))).toEqual({ success: true, action: "upvote", itemId: "item-1" });
+    expect(JSON.parse(writes.join(""))).toEqual({ ok: true, success: true, action: "upvote", itemId: "item-1" });
   });
 
   it("downvotes (--down, --json)", async () => {
@@ -180,7 +180,7 @@ describe("plans vote", () => {
     await run(["vote", "item-1", "--remove", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars).toEqual({ itemId: "item-1" });
-    expect(JSON.parse(writes.join(""))).toEqual({ success: true, action: "removed" });
+    expect(JSON.parse(writes.join(""))).toEqual({ ok: true, success: true, action: "removed" });
   });
 
   it("falls back to update when the first vote already exists", async () => {

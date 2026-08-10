@@ -103,6 +103,7 @@ describe("plans share", () => {
       input: { invitedUserId: "usr_1", roleId: "role-viewer" },
     });
     expect(mockJsonOutput).toHaveBeenCalledWith({
+      ok: true,
       success: true,
       planId: "plan-1",
       invitedUser: "Bob Jones",
@@ -146,7 +147,7 @@ describe("plans share", () => {
     const [, inviteVars] = mockGraphql.mock.calls[1] as [string, any];
     expect(inviteVars).toEqual({ input: { email: "new@example.com" } });
     expect(mockJsonOutput).toHaveBeenCalledWith(
-      expect.objectContaining({ invited: true, email: "new@example.com" }),
+      expect.objectContaining({ ok: true, invited: true, email: "new@example.com" }),
     );
   });
 
@@ -229,7 +230,7 @@ describe("plans unshare", () => {
     await run(["unshare", "plan-1", "--collaborator-id", "col_1", "--json"]);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars).toEqual({ collaboratorId: "col_1" });
-    expect(JSON.parse(writes.join(""))).toEqual({ success: true, removed: "col_1" });
+    expect(JSON.parse(writes.join(""))).toEqual({ ok: true, success: true, removed: "col_1" });
   });
 
   it("human mode prints a confirmation", async () => {

@@ -1406,9 +1406,80 @@ describe("registerSearchCommands", () => {
       ]);
       const out = JSON.parse(stdout());
       expect(out.requestedParams).toEqual({ destination: "Paris", checkin: "2026-09-01", checkout: "2026-09-05", partySize: 1 });
-      expect(out.effectiveParams.checkin).toBe("2026-08-01");
+      // VOY-1875: hotels now match the flights contract — effectiveParams reflects
+      // the NEW (just-wired) params; the stored original moves to previousSearchParams.
+      expect(out.effectiveParams).toEqual({ destination: "Paris", checkin: "2026-09-01", checkout: "2026-09-05", partySize: 1 });
+      expect(out.previousSearchParams).toEqual({ destination: "Paris", checkin: "2026-08-01", checkout: "2026-08-05", partySize: 1 });
       expect(out.warnings[0]).toContain("SELECTION_REUSED_PARAMS_MISMATCH");
       expect(out.warnings[0]).toContain("check-in");
+    });
+
+    it("hotels --json: effectiveParams is always present on a first search (no previous, no warning) (VOY-1875)", async () => {
+      installRouter({ goals: buildHotelGoals() });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-09-01", "--checkout", "2026-09-05", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.effectiveParams).toEqual({ destination: "Paris", checkin: "2026-09-01", checkout: "2026-09-05", partySize: 1 });
+      expect(out.previousSearchParams).toBeUndefined();
+      expect(out.warnings).toBeUndefined();
+    });
+
+    it("hotels --json: matching reused params echo previousSearchParams but emit no warning (VOY-1875)", async () => {
+      installRouter({ goals: buildHotelGoals() });
+      mockGetSelectionSearchParams.mockReturnValue({ destination: "Paris", checkin: "2026-09-01", checkout: "2026-09-05", partySize: 1 });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "hotels",
+        "--plan", "plan-1", "--location", "Paris", "--checkin", "2026-09-01", "--checkout", "2026-09-05", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      // Middle case: reuse with MATCHING params — previousSearchParams is still
+      // echoed (a stored record exists) but no mismatch warning fires.
+      expect(out.warnings).toBeUndefined();
+      expect(out.effectiveParams).toEqual({ destination: "Paris", checkin: "2026-09-01", checkout: "2026-09-05", partySize: 1 });
+      expect(out.previousSearchParams).toEqual({ destination: "Paris", checkin: "2026-09-01", checkout: "2026-09-05", partySize: 1 });
+      // Matching reuse must not overwrite the stored original either.
+      expect(mockRememberSelectionSearchParams).not.toHaveBeenCalled();
+    });
+
+    it("activities --json echoes requestedParams + effectiveParams and records the original on a first search (no warning) (VOY-1875)", async () => {
+      installRouter({ goals: buildActivityGoals(), options: [{ id: "act-1", name: "Tour", price: 50, sortOrder: 1 }] });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "activities",
+        "--plan", "plan-1", "--destination", "Bali", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      expect(out.requestedParams).toEqual({ destination: "Bali", depart: "2026-08-01", partySize: 1 });
+      // effectiveParams is ALWAYS present and mirrors the wired params; the
+      // reused-selection's ORIGINAL params live under previousSearchParams
+      // (absent on a first search — no stored record).
+      expect(out.effectiveParams).toEqual({ destination: "Bali", depart: "2026-08-01", partySize: 1 });
+      expect(out.previousSearchParams).toBeUndefined();
+      expect(out.warnings).toBeUndefined();
+      expect(mockRememberSelectionSearchParams).toHaveBeenCalledWith(
+        "sel-adec",
+        expect.objectContaining({ destination: "Bali", depart: "2026-08-01", partySize: 1 }),
+      );
+    });
+
+    it("activities --json warns + echoes previousSearchParams when the reused selection was searched with a different date (VOY-1875)", async () => {
+      installRouter({ goals: buildActivityGoals(), options: [{ id: "act-1", name: "Tour", price: 50, sortOrder: 1 }] });
+      mockGetSelectionSearchParams.mockReturnValue({ destination: "Bali", depart: "2026-07-01", partySize: 1 });
+      await buildProgram().parseAsync([
+        "node", "v", "search", "activities",
+        "--plan", "plan-1", "--destination", "Bali", "--date", "2026-08-01", "--json",
+      ]);
+      const out = JSON.parse(stdout());
+      // effectiveParams reflects the NEW (just-wired) date; the stored original is
+      // surfaced separately as previousSearchParams, exactly like flights/hotels.
+      expect(out.effectiveParams).toEqual({ destination: "Bali", depart: "2026-08-01", partySize: 1 });
+      expect(out.previousSearchParams).toEqual({ destination: "Bali", depart: "2026-07-01", partySize: 1 });
+      expect(out.warnings).toHaveLength(1);
+      expect(out.warnings[0]).toContain("SELECTION_REUSED_PARAMS_MISMATCH");
+      expect(out.warnings[0]).toContain("departure date");
+      // Reuse must NOT overwrite the stored original.
+      expect(mockRememberSelectionSearchParams).not.toHaveBeenCalled();
     });
   });
 
