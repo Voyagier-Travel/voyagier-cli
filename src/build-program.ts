@@ -23,6 +23,7 @@ import { registerListingsCommands } from "./commands/listings.js";
 import { registerPlacesCommands } from "./commands/places.js";
 import { registerTravellerGroupsCommands } from "./commands/traveller-groups.js";
 import { registerTravellerChoicesCommands } from "./commands/traveller-choices.js";
+import { registerParticipantChoicesCommands } from "./commands/participant-choices.js";
 import { registerQuoteCommand } from "./commands/quote.js";
 import { registerSendCommand } from "./commands/send.js";
 import { registerMcpCommand } from "./commands/mcp.js";
@@ -141,6 +142,7 @@ Full reference: voyagier agent-docs`,
   registerPlacesCommands(program);
   registerTravellerGroupsCommands(program);
   registerTravellerChoicesCommands(program);
+  registerParticipantChoicesCommands(program);
   registerMcpCommand(program);
 
   // Applied after the whole tree is built so every subcommand is covered

@@ -155,14 +155,18 @@ It's a thin adapter: each tool call self-spawns the CLI as a subprocess with `--
 | Tool | Maps to | Notes |
 |------|---------|-------|
 | `doctor` | `doctor` | Health check: auth, schema, state, version. |
-| `create_client` | `clients upsert` | Idempotent by email; a plan needs a client. |
+| `clients_list` | `clients list` | Roster of CRM clients; `page`/`limit` page through it. |
+| `client_create` | `clients upsert` | Idempotent by email; a plan needs a client. |
 | `plan_trip` | `plan-trip` | Scaffold a plan + goal graph; returns `nextSteps`. |
-| `add_traveller` | `travellers add` | Required before search. |
+| `travellers_add` | `travellers add` | Required before search. |
 | `search_flights` | `search flights` | Async — `optionCount 0` means poll options. |
 | `search_hotels` | `search hotels` | Prices are stay totals, not nightly. |
 | `search_activities` | `search activities` | Bookable per slot. |
 | `get_selection_options` | `selection-options` | `wait` (default true) polls the async fetch to completion. |
+| `refresh_options` | `refresh-options` | Re-fetch a selection's options; `force` after a fetch error. |
 | `select_option` | `select` | Explicit-id mode; `wait` (default true) settles readiness. |
+| `choices_view` | `choices-view` | Flat participant-choice view; source of room-slot ids. |
+| `choose_room_slot` | `choose-room-slot` | Upsert a room/rate participant choice. |
 | `plan_status` | `plan-status` | One-call "what's left before booking?". |
 | `quote` | `quote` | Advisor offer snapshot + acceptance block. |
 | `book_dry_run` | `book --dry-run` | Chargeable subtotal + blockers; no gate needed. |
@@ -170,6 +174,8 @@ It's a thin adapter: each tool call self-spawns the CLI as a subprocess with `--
 | `booking_status` | `book --status` | Post-payment confirmation lookup. |
 | `agent_docs` | `agent-docs` | The full agent reference as markdown. |
 
+> **Deprecated aliases.** `create_client` and `add_traveller` remain registered as deprecated aliases of `client_create` and `travellers_add` (same behaviour) for one release. Prefer the canonical names, which align with the Voyagier platform's first-party MCP tool registry.
+>
 > **`send` is intentionally excluded from the MCP surface.** `voyagier send` emails a real client an invite link and is not idempotent — every call re-emails. That side effect is too consequential to expose behind an autonomous tool call; use the CLI directly (`voyagier send <planId> --yes`) when you mean it. The MCP close path is `quote` → `book`.
 >
 > **`book` cannot be retried safely.** Unpaid Stripe sessions are invisible to the pre-flight, so a retry mints a duplicate payable link. Treat a successful `book` as terminal.

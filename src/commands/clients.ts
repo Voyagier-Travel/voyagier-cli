@@ -110,6 +110,21 @@ async function fetchAllClients(): Promise<TripPlanClient[]> {
   return out;
 }
 
+/**
+ * Parse a positive-integer CLI flag, falling back to `fallback` when the flag
+ * was omitted. A present-but-invalid value (non-numeric, ≤0) is a hard
+ * VALIDATION error rather than a silent default — the caller asked for a
+ * specific page/size and a typo must not quietly return page 1.
+ */
+function parsePositiveInt(raw: string | undefined, flag: string, fallback: number): number {
+  if (raw === undefined) return fallback;
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n) || n < 1 || String(n) !== raw.trim()) {
+    fatal(`Invalid ${flag} "${raw}". Must be a positive integer.`);
+  }
+  return n;
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function looksLikeClientId(s: string): boolean {
@@ -296,8 +311,47 @@ export function registerClientsCommands(program: Command): void {
     .description("List all trip plan clients on this account")
     .option("--status <status>", "Filter by status (active|archived)")
     .option("--type <type>", "Filter by client type (individual|company|group)")
+    .option("--page <n>", "Fetch a single page (1-based) instead of the whole roster")
+    .option("--limit <n>", "Page size when --page/--limit is given (default 20)")
     .option("--json", "Output raw JSON")
     .action(async (opts) => {
+      // Single-page mode: when either --page or --limit is given, fetch exactly
+      // that page (bounds output for paginated agent callers) instead of walking
+      // the whole roster. Status/type filters still apply, scoped to the page.
+      if (opts.page !== undefined || opts.limit !== undefined) {
+        const page = parsePositiveInt(opts.page, "--page", 1);
+        const limit = parsePositiveInt(opts.limit, "--limit", 20);
+        const data = await graphqlWithFieldFallback<{
+          tripPlanClients: { items: TripPlanClient[]; count: number; page: number; limit: number };
+        }>(LIST_TRIP_PLAN_CLIENTS_WITH_SELF, LIST_TRIP_PLAN_CLIENTS, /isSelf/, { page, limit });
+        let items = data.tripPlanClients.items ?? [];
+        if (opts.status) {
+          const statusFilter = normalizeStatus(opts.status);
+          items = items.filter((c) => c.status === statusFilter);
+        }
+        if (opts.type) {
+          const typeFilter = normalizeType(opts.type);
+          items = items.filter((c) => c.clientType === typeFilter);
+        }
+        if (opts.json) {
+          jsonOutput({
+            clients: items,
+            total: items.length,
+            page: data.tripPlanClients.page,
+            limit: data.tripPlanClients.limit,
+            count: data.tripPlanClients.count,
+          });
+          return;
+        }
+        if (items.length === 0) {
+          console.log(chalk.dim("No clients on this page."));
+          return;
+        }
+        items.forEach((c) => console.log(formatClientLine(c)));
+        console.log(chalk.dim(`\nPage ${data.tripPlanClients.page} · ${items.length} shown · ${data.tripPlanClients.count} total`));
+        return;
+      }
+
       let list = await fetchAllClients();
       if (opts.status) {
         const statusFilter = normalizeStatus(opts.status);

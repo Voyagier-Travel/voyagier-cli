@@ -1,8 +1,8 @@
 /**
  * MCP server construction for `voyagier mcp`.
  *
- * A thin adapter over the CLI's `--json` agent surface: it registers the 22
- * tools from tools.ts, and each handler self-spawns the CLI (via the exec seam)
+ * A thin adapter over the CLI's `--json` agent surface: it registers the tools
+ * from tools.ts, and each handler self-spawns the CLI (via the exec seam)
  * and returns the child's output normalised into one canonical `{ok,data}` /
  * `{ok:false,error}` envelope (see toToolResult). The server holds no tokens,
  * no network clients, and no shared state — that all lives in the child.
@@ -23,7 +23,7 @@ import { runCli, toToolResult, type CliResult } from "./exec.js";
 export const INSTRUCTIONS = [
   "Voyagier is an agent-ready travel platform. This server exposes the CLI's agent surface as tools. Every tool returns ONE canonical JSON envelope: on success { ok: true, data: <object>, planContext?: <object> } (agent_docs arrives as data.content markdown); on failure { ok: false, error: { code, message, details? } } with isError=true.",
   "",
-  "Compose loop: create_client → plan_trip → (add_traveller) → search_flights/search_hotels/search_activities → get_selection_options → select_option → plan_status → quote → book.",
+  "Compose loop: client_create → plan_trip → (travellers_add) → search_flights/search_hotels/search_activities → get_selection_options → select_option → plan_status → quote → book. (The old create_client / add_traveller tool names remain as deprecated aliases.)",
   "",
   "Visibility tools verify the real state: travellers_list (discover traveller ids + missing checkout fields), itinerary (the actual composed trip — per-leg routing and times — after selecting flights/hotels), and bookings_list (booking records + status after a checkout, before telling a user their trip is secured).",
   "",
