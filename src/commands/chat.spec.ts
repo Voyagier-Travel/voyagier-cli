@@ -189,6 +189,65 @@ describe("chat --message (single turn)", () => {
   });
 });
 
+// ── chat --model (per-session model selection) ───────────────────────────────
+
+describe("chat --model", () => {
+  const CATALOG = {
+    availableChatModels: [
+      { provider: "Anthropic", modelId: "claude-opus-4-8", displayName: "Opus", isProviderDefault: true, isUserDefault: false, source: "user" },
+      { provider: "Gemini", modelId: "gemini-2.5-pro", displayName: "Gemini", isProviderDefault: true, isUserDefault: false, source: "house-env" },
+    ],
+  };
+
+  it("resolves provider from the catalog and updates the session before a single turn", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createChatSession: { id: "sess-new", title: "" } }) // create
+      .mockResolvedValueOnce(CATALOG) // availableChatModels (resolve)
+      .mockResolvedValueOnce({ updateChatSessionModel: { id: "sess-new", aiProvider: "Gemini", aiModelId: "gemini-2.5-pro" } });
+    mockStreamChat.mockResolvedValue(undefined);
+
+    await buildProgram().parseAsync(["node", "v", "chat", "-m", "hi", "--model", "gemini-2.5-pro"]);
+
+    const [query, vars] = mockGraphql.mock.calls[2];
+    expect(String(query)).toContain("updateChatSessionModel");
+    expect(vars).toEqual({ sessionId: "sess-new", provider: "Gemini", modelId: "gemini-2.5-pro" });
+    expect(mockStreamChat).toHaveBeenCalledWith("sess-new", "hi", expect.any(Object));
+  });
+
+  it("applies the model on a resumed --session without creating one", async () => {
+    mockGraphql
+      .mockResolvedValueOnce(CATALOG) // availableChatModels
+      .mockResolvedValueOnce({ updateChatSessionModel: { id: "sess-x", aiProvider: "Anthropic", aiModelId: "claude-opus-4-8" } });
+    mockStreamChat.mockResolvedValue(undefined);
+
+    await buildProgram().parseAsync(["node", "v", "chat", "--session", "sess-x", "-m", "hi", "--model", "claude-opus-4-8"]);
+
+    // First call is the catalog lookup (no createChatSession), second the update.
+    expect(String(mockGraphql.mock.calls[0][0])).toContain("availableChatModels");
+    expect(mockGraphql.mock.calls[1][1]).toEqual({ sessionId: "sess-x", provider: "Anthropic", modelId: "claude-opus-4-8" });
+  });
+
+  it("errors with valid ids and never streams when the model is unknown", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createChatSession: { id: "sess-new", title: "" } })
+      .mockResolvedValueOnce(CATALOG);
+    await expect(
+      buildProgram().parseAsync(["node", "v", "chat", "-m", "hi", "--model", "bogus"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.NOT_FOUND, message: expect.stringContaining("claude-opus-4-8") });
+    expect(mockStreamChat).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an older-server rejection as a clear unsupported error", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createChatSession: { id: "sess-new", title: "" } })
+      .mockRejectedValueOnce(new CliError(CliErrorCode.SCHEMA_DRIFT, 'Cannot query field "availableChatModels" on type "Query".'));
+    await expect(
+      buildProgram().parseAsync(["node", "v", "chat", "-m", "hi", "--model", "gemini-2.5-pro"]),
+    ).rejects.toMatchObject({ code: CliErrorCode.API_ERROR, message: expect.stringContaining("not supported by this server yet") });
+    expect(mockStreamChat).not.toHaveBeenCalled();
+  });
+});
+
 // ── piped stdin (non-TTY, no --message) ──────────────────────────────────────
 
 describe("chat via piped stdin", () => {

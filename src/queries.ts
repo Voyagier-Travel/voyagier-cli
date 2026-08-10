@@ -713,6 +713,61 @@ export const LIST_CHAT_SESSIONS = `
   }
 `;
 
+// --- Chat models (VOY-1897 — bring-your-own-key provider/model selection) ---
+//
+// availableChatModels reflects the models the caller can actually use, and where
+// the key comes from: `source` is 'user' (the caller's own stored key),
+// 'house-stored' or 'house-env' (a Voyagier-provided key). `provider` is the
+// AiProvider enum (Anthropic | Gemini | OpenAi). isProviderDefault marks the
+// provider's default model; isUserDefault marks the caller's saved default.
+//
+// These documents are BYOK-only surface: a deployment that predates it rejects
+// them as unknown-field schema drift. The models command / chat --model map that
+// rejection to a clear "not supported by this server yet" message rather than a
+// raw drift error (see byokUnsupported in commands/models.ts).
+export const AVAILABLE_CHAT_MODELS = `
+  query AvailableChatModels {
+    availableChatModels {
+      provider
+      modelId
+      displayName
+      isProviderDefault
+      isUserDefault
+      source
+    }
+  }
+`;
+
+export const UPDATE_CHAT_SESSION_MODEL = `
+  mutation UpdateChatSessionModel($sessionId: String!, $provider: AiProvider!, $modelId: String!) {
+    updateChatSessionModel(sessionId: $sessionId, provider: $provider, modelId: $modelId) {
+      id
+      aiProvider
+      aiModelId
+    }
+  }
+`;
+
+export const SET_MY_DEFAULT_CHAT_MODEL = `
+  mutation SetMyDefaultChatModel($provider: AiProvider!, $modelId: String!) {
+    setMyDefaultChatModel(provider: $provider, modelId: $modelId) {
+      userId
+      defaultAiProvider
+      defaultAiModelId
+    }
+  }
+`;
+
+export const CLEAR_MY_DEFAULT_CHAT_MODEL = `
+  mutation ClearMyDefaultChatModel {
+    clearMyDefaultChatModel {
+      userId
+      defaultAiProvider
+      defaultAiModelId
+    }
+  }
+`;
+
 // --- Clients (v2.0.0 — TripPlanClient surface) ---
 
 // Legacy clients-list query — the field set that predates

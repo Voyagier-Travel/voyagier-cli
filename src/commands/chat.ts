@@ -5,6 +5,7 @@ import { graphql, streamChat } from "../api.js";
 import { gracefulExit } from "../exit.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { CREATE_CHAT_SESSION, LIST_CHAT_SESSIONS } from "../queries.js";
+import { applySessionModel } from "./models.js";
 
 export function registerChatCommands(program: Command): void {
   program
@@ -14,7 +15,8 @@ export function registerChatCommands(program: Command): void {
     .option("-p, --plan <id>", "Chat about a specific trip plan")
     .option("-l, --list", "List existing sessions")
     .option("-m, --message <text>", "Send a single message non-interactively")
-    .action(async (opts: { session?: string; plan?: string; list?: boolean; message?: string }) => {
+    .option("--model <modelId>", "Use a specific chat model for this session (see: voyagier models)")
+    .action(async (opts: { session?: string; plan?: string; list?: boolean; message?: string; model?: string }) => {
       if (opts.list) {
         await listSessions();
         return;
@@ -42,6 +44,22 @@ export function registerChatCommands(program: Command): void {
         } catch (err) {
           if (err instanceof CliError) throw err;
           throw new CliError(CliErrorCode.API_ERROR, `Failed to create session: ${err}`);
+        }
+      }
+
+      // Resolve the requested model from the catalog and set it on the session
+      // before the first message — same path for created and resumed sessions,
+      // REPL and single-turn. Provider is looked up in availableChatModels, never
+      // guessed. An older server surfaces a clear "not supported yet" error.
+      if (opts.model) {
+        try {
+          const applied = await applySessionModel(sessionId, opts.model);
+          if (!nonInteractiveMessage) {
+            console.log(chalk.dim(`Model: ${applied.modelId} (${applied.provider})`));
+          }
+        } catch (err) {
+          if (err instanceof CliError) throw err;
+          throw new CliError(CliErrorCode.API_ERROR, `Failed to set model: ${err}`);
         }
       }
 
