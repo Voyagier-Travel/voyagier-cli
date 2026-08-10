@@ -8,6 +8,7 @@
  * "--json on everything but agent_docs" rule.
  */
 import { describe, it, expect } from "@jest/globals";
+import { z } from "zod";
 import { SELECTION_SCOPES } from "../commands/plans/types.js";
 import {
   TOOLS,
@@ -103,6 +104,17 @@ describe("TOOLS table", () => {
     // Same annotations + timeout as the canonical tool.
     expect(a.annotations).toEqual(c.annotations);
     expect(a.timeoutMs).toBe(c.timeoutMs);
+    // Schema parity: alias input schema must not drift from the canonical's.
+    // Compares key sets plus each field's zod type + description, so an edit
+    // to the canonical schema fails here until the alias is updated too.
+    expect(Object.keys(a.inputSchema).sort()).toEqual(Object.keys(c.inputSchema).sort());
+    for (const key of Object.keys(c.inputSchema)) {
+      const av = a.inputSchema[key as keyof typeof a.inputSchema] as z.ZodTypeAny;
+      const cv = c.inputSchema[key as keyof typeof c.inputSchema] as z.ZodTypeAny;
+      expect(av._def.typeName).toBe(cv._def.typeName);
+      expect(av.description).toBe(cv.description);
+      expect(av.isOptional()).toBe(cv.isOptional());
+    }
   });
 
   it("does NOT expose `send` (emails a real client — CLI-only)", () => {

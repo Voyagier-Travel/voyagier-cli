@@ -309,8 +309,8 @@ export function registerClientsCommands(program: Command): void {
   clients
     .command("list")
     .description("List all trip plan clients on this account")
-    .option("--status <status>", "Filter by status (active|archived)")
-    .option("--type <type>", "Filter by client type (individual|company|group)")
+    .option("--status <status>", "Filter by status (active|archived); with --page, filters within the fetched page only")
+    .option("--type <type>", "Filter by client type (individual|company|group); with --page, filters within the fetched page only")
     .option("--page <n>", "Fetch a single page (1-based) instead of the whole roster")
     .option("--limit <n>", "Page size when --page/--limit is given (default 20)")
     .option("--json", "Output raw JSON")

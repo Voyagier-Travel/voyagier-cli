@@ -96,14 +96,15 @@ export function registerParticipantChoicesCommands(program: Command): void {
       if (opts.travellers !== undefined && (!travellerIds || travellerIds.length === 0)) {
         throw new CliError(CliErrorCode.VALIDATION, "--travellers requires a comma-separated list of traveller ids.");
       }
-      // Send only the variables the caller supplied — optional args stay absent
-      // (never explicit null), matching the platform MCP's compact() behaviour.
+      // Send only the variables the caller supplied — optional arguments are
+      // omitted rather than sent as explicit null, so server-side defaults and
+      // "absent vs null" distinctions are preserved.
       const variables: Record<string, unknown> = { selectionId: id };
       if (opts.optionId !== undefined) variables.optionId = validateId(opts.optionId, "--option-id");
       if (travellerIds) variables.travellerIds = travellerIds;
       if (opts.forAll) variables.forAll = true;
-      if (opts.group !== undefined) variables.groupId = opts.group;
-      if (opts.participantChoiceId !== undefined) variables.participantChoiceId = opts.participantChoiceId;
+      if (opts.group !== undefined) variables.groupId = validateId(opts.group, "--group");
+      if (opts.participantChoiceId !== undefined) variables.participantChoiceId = validateId(opts.participantChoiceId, "--participant-choice-id");
       if (opts.replaceExisting) variables.replaceExisting = true;
       if (opts.createNewChoice) variables.createNewChoice = true;
 
