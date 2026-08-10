@@ -96,22 +96,24 @@ export async function resolveModel(modelId: string): Promise<ChatModel> {
 }
 
 /**
- * Resolve `modelId` from the catalog and set it on a chat session before the
+ * Resolve a model from the catalog and set it on a chat session before the
  * first message. Used by both `chat --model` (REPL) and `chat -m --model`
- * (single turn). Returns the applied provider + modelId for confirmation.
+ * (single turn). Accepts a pre-resolved ChatModel so callers can validate the
+ * id BEFORE creating a session (avoids orphaning a fresh session on an
+ * unknown id). Returns the applied provider + modelId for confirmation.
  */
 export async function applySessionModel(
   sessionId: string,
-  modelId: string,
+  modelOrId: string | ChatModel,
 ): Promise<{ provider: AiProvider; modelId: string }> {
-  const model = await resolveModel(modelId);
+  const model = typeof modelOrId === "string" ? await resolveModel(modelOrId) : modelOrId;
   await byokUnsupported(() =>
     graphql<{ updateChatSessionModel: { id: string; aiProvider: string; aiModelId: string } }>(
       UPDATE_CHAT_SESSION_MODEL,
-      { sessionId, provider: model.provider, modelId },
+      { sessionId, provider: model.provider, modelId: model.modelId },
     ),
   );
-  return { provider: model.provider, modelId };
+  return { provider: model.provider, modelId: model.modelId };
 }
 
 /** Render a model's key source for humans: 'user' → "your key", house-* → "Voyagier". */

@@ -199,15 +199,19 @@ describe("chat --model", () => {
     ],
   };
 
-  it("resolves provider from the catalog and updates the session before a single turn", async () => {
+  it("resolves provider from the catalog BEFORE creating the session, then updates it", async () => {
     mockGraphql
+      .mockResolvedValueOnce(CATALOG) // availableChatModels (resolve — must precede create)
       .mockResolvedValueOnce({ createChatSession: { id: "sess-new", title: "" } }) // create
-      .mockResolvedValueOnce(CATALOG) // availableChatModels (resolve)
       .mockResolvedValueOnce({ updateChatSessionModel: { id: "sess-new", aiProvider: "Gemini", aiModelId: "gemini-2.5-pro" } });
     mockStreamChat.mockResolvedValue(undefined);
 
     await buildProgram().parseAsync(["node", "v", "chat", "-m", "hi", "--model", "gemini-2.5-pro"]);
 
+    // Catalog lookup first, session create second — an invalid id must fail
+    // before any session exists.
+    expect(String(mockGraphql.mock.calls[0][0])).toContain("availableChatModels");
+    expect(String(mockGraphql.mock.calls[1][0])).toContain("createChatSession");
     const [query, vars] = mockGraphql.mock.calls[2];
     expect(String(query)).toContain("updateChatSessionModel");
     expect(vars).toEqual({ sessionId: "sess-new", provider: "Gemini", modelId: "gemini-2.5-pro" });
@@ -227,24 +231,29 @@ describe("chat --model", () => {
     expect(mockGraphql.mock.calls[1][1]).toEqual({ sessionId: "sess-x", provider: "Anthropic", modelId: "claude-opus-4-8" });
   });
 
-  it("errors with valid ids and never streams when the model is unknown", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ createChatSession: { id: "sess-new", title: "" } })
-      .mockResolvedValueOnce(CATALOG);
+  it("errors with valid ids, never streams, and never creates a session when the model is unknown", async () => {
+    mockGraphql.mockResolvedValueOnce(CATALOG);
     await expect(
       buildProgram().parseAsync(["node", "v", "chat", "-m", "hi", "--model", "bogus"]),
     ).rejects.toMatchObject({ code: CliErrorCode.NOT_FOUND, message: expect.stringContaining("claude-opus-4-8") });
     expect(mockStreamChat).not.toHaveBeenCalled();
+    // No orphaned session: createChatSession must never have been attempted.
+    for (const call of mockGraphql.mock.calls) {
+      expect(String(call[0])).not.toContain("createChatSession");
+    }
   });
 
-  it("surfaces an older-server rejection as a clear unsupported error", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ createChatSession: { id: "sess-new", title: "" } })
-      .mockRejectedValueOnce(new CliError(CliErrorCode.SCHEMA_DRIFT, 'Cannot query field "availableChatModels" on type "Query".'));
+  it("surfaces an older-server rejection as a clear unsupported error (before any session is created)", async () => {
+    mockGraphql.mockRejectedValueOnce(
+      new CliError(CliErrorCode.SCHEMA_DRIFT, 'Cannot query field "availableChatModels" on type "Query".'),
+    );
     await expect(
       buildProgram().parseAsync(["node", "v", "chat", "-m", "hi", "--model", "gemini-2.5-pro"]),
     ).rejects.toMatchObject({ code: CliErrorCode.API_ERROR, message: expect.stringContaining("not supported by this server yet") });
     expect(mockStreamChat).not.toHaveBeenCalled();
+    for (const call of mockGraphql.mock.calls) {
+      expect(String(call[0])).not.toContain("createChatSession");
+    }
   });
 });
 

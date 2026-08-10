@@ -5,7 +5,7 @@ import { graphql, streamChat } from "../api.js";
 import { gracefulExit } from "../exit.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import { CREATE_CHAT_SESSION, LIST_CHAT_SESSIONS } from "../queries.js";
-import { applySessionModel } from "./models.js";
+import { applySessionModel, resolveModel, type ChatModel } from "./models.js";
 
 export function registerChatCommands(program: Command): void {
   program
@@ -30,6 +30,19 @@ export function registerChatCommands(program: Command): void {
 
       let sessionId = opts.session;
 
+      // Resolve the requested model from the catalog BEFORE creating a session
+      // so an unknown model id (or an older server) fails without orphaning a
+      // freshly created, never-used session server-side.
+      let resolvedModel: ChatModel | undefined;
+      if (opts.model && !sessionId) {
+        try {
+          resolvedModel = await resolveModel(opts.model);
+        } catch (err) {
+          if (err instanceof CliError) throw err;
+          throw new CliError(CliErrorCode.API_ERROR, `Failed to set model: ${err}`);
+        }
+      }
+
       if (!sessionId) {
         try {
           const input = opts.plan ? { tripPlanId: opts.plan } : undefined;
@@ -47,13 +60,14 @@ export function registerChatCommands(program: Command): void {
         }
       }
 
-      // Resolve the requested model from the catalog and set it on the session
-      // before the first message — same path for created and resumed sessions,
-      // REPL and single-turn. Provider is looked up in availableChatModels, never
-      // guessed. An older server surfaces a clear "not supported yet" error.
+      // Set the model on the session before the first message — same path for
+      // created and resumed sessions, REPL and single-turn. Provider is looked
+      // up in availableChatModels, never guessed. An older server surfaces a
+      // clear "not supported yet" error. New sessions reuse the pre-resolved
+      // catalog entry from above; resumed sessions resolve here.
       if (opts.model) {
         try {
-          const applied = await applySessionModel(sessionId, opts.model);
+          const applied = await applySessionModel(sessionId, resolvedModel ?? opts.model);
           if (!nonInteractiveMessage) {
             console.log(chalk.dim(`Model: ${applied.modelId} (${applied.provider})`));
           }

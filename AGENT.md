@@ -603,6 +603,10 @@ voyagier bookings get <id> --json
 voyagier whoami --json                # identity + profile (LIVE-verifies the token; a stale/revoked PAT fails loudly — use --cached only for offline reads)
 voyagier chat                         # interactive AI assistant
 voyagier chat -m "<single prompt>"
+voyagier chat --model <modelId>       # pin the AI model for this chat session (ids from `voyagier models`; works with -m and --session)
+voyagier models --json                # chat models you can run: provider, model id, whose key (yours vs Voyagier), default markers
+voyagier models set-default <modelId> # set your account-wide default chat model (used when a session has no override)
+voyagier models clear-default         # revert to the house default model
 voyagier telemetry status|on|off
 voyagier agent-docs                   # prints this file
 voyagier mcp                          # run as a Model Context Protocol (MCP) stdio server
