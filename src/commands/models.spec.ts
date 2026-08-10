@@ -126,6 +126,16 @@ describe("models (list)", () => {
       code: CliErrorCode.AUTH_FAILED,
     });
   });
+
+  it("rethrows schema drift that does not name a model-selection field (not masked as unsupported)", async () => {
+    mockGraphql.mockRejectedValueOnce(
+      new CliError(CliErrorCode.SCHEMA_DRIFT, 'Cannot query field "someUnrelatedField" on type "Query".'),
+    );
+    await expect(buildProgram().parseAsync(["node", "v", "models"])).rejects.toMatchObject({
+      code: CliErrorCode.SCHEMA_DRIFT,
+      message: expect.stringContaining("someUnrelatedField"),
+    });
+  });
 });
 
 // ── models set-default ───────────────────────────────────────────────────────

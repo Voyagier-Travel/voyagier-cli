@@ -51,16 +51,37 @@ interface UserDefaultChatModel {
 }
 
 /**
+ * The GraphQL operations and types that make up the model-selection surface.
+ * Drift errors naming one of these mean the server predates the surface; drift
+ * on anything else is a different CLI/server mismatch and must not be masked.
+ */
+const BYOK_SCHEMA_NAMES = [
+  "availableChatModels",
+  "updateChatSessionModel",
+  "setMyDefaultChatModel",
+  "clearMyDefaultChatModel",
+  "AvailableChatModel",
+  "AiProvider",
+  "UserAiPreference",
+];
+
+/**
  * Run a BYOK chat-model operation, mapping an older-deployment rejection to a
  * clear error. A backend that predates VOY-1897 rejects these documents as
- * SCHEMA_DRIFT ("Cannot query field …"); everything else (auth, network, a real
- * server error) propagates untouched, so the user never sees a stack trace.
+ * SCHEMA_DRIFT ("Cannot query field …") naming one of the model-selection
+ * fields/types; only that drift is mapped — unrelated drift and everything
+ * else (auth, network, a real server error) propagates untouched, so the user
+ * never sees a stack trace or a misleading "not supported" message.
  */
 async function byokUnsupported<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
-    if (err instanceof CliError && err.code === CliErrorCode.SCHEMA_DRIFT) {
+    if (
+      err instanceof CliError &&
+      err.code === CliErrorCode.SCHEMA_DRIFT &&
+      BYOK_SCHEMA_NAMES.some((name) => err.message.includes(name))
+    ) {
       throw new CliError(
         CliErrorCode.API_ERROR,
         "Chat model selection is not supported by this server yet.\n  This deployment predates the model-selection surface. Update the Voyagier server, or run `voyagier chat` without --model.",
@@ -107,13 +128,19 @@ export async function applySessionModel(
   modelOrId: string | ChatModel,
 ): Promise<{ provider: AiProvider; modelId: string }> {
   const model = typeof modelOrId === "string" ? await resolveModel(modelOrId) : modelOrId;
-  await byokUnsupported(() =>
+  const data = await byokUnsupported(() =>
     graphql<{ updateChatSessionModel: { id: string; aiProvider: string; aiModelId: string } }>(
       UPDATE_CHAT_SESSION_MODEL,
       { sessionId, provider: model.provider, modelId: model.modelId },
     ),
   );
-  return { provider: model.provider, modelId: model.modelId };
+  // The server's echo is the source of truth for what was actually applied
+  // (it may normalize the id); fall back to the request only if absent.
+  const applied = data.updateChatSessionModel;
+  return {
+    provider: (applied?.aiProvider as AiProvider) ?? model.provider,
+    modelId: applied?.aiModelId ?? model.modelId,
+  };
 }
 
 /** Render a model's key source for humans: 'user' → "your key", house-* → "Voyagier". */
