@@ -1153,6 +1153,70 @@ export const REFRESH_SELECTION_OPTIONS = `
   }
 `;
 
+// As REFRESH_SELECTION_OPTIONS, plus the optional `force` argument that bypasses
+// the monitor freshness window (used after a FETCH_ERROR). Kept separate from
+// the bare variant so the internal select-wait refresh path stays unchanged;
+// `force` is forwarded only when the caller sets it.
+export const REFRESH_SELECTION_OPTIONS_WITH_FORCE = `
+  mutation RefreshTripPlanSelectionOptions($selectionId: String!, $force: Boolean) {
+    refreshTripPlanSelectionOptions(selectionId: $selectionId, force: $force)
+  }
+`;
+
+// --- Participant choices (VOY-1896 — parity with the platform MCP registry) ---
+
+// Flat participant-choice view for a plan: every choice row (decided + open
+// slots) across ALL branches, including dormant sibling forks. Callers filter on
+// isActiveBranch to get the rows the cart actually counts. Backs `choices-view`.
+export const TRIP_PLAN_CHOICES_VIEW = `
+  query TripPlanChoicesView($tripPlanId: String!) {
+    tripPlanChoicesView(tripPlanId: $tripPlanId) {
+      id
+      selectionId
+      selectionType
+      isActiveBranch
+      goalId
+      optionId
+      optionStatus
+      isBookable
+      scope
+      travellerIds
+      travellerGroupId
+      locked
+      selectionIsLocked
+    }
+  }
+`;
+
+// Create or update a participant choice (room/rate slot) on a selection. The
+// selection id is echoed back on success. Backs `choose-room-slot`. Optional
+// variables are omitted (never sent as null) by the caller when unset.
+export const UPSERT_PARTICIPANT_CHOICE = `
+  mutation UpsertParticipantChoice(
+    $selectionId: String!
+    $optionId: String
+    $travellerIds: [String!]
+    $forAll: Boolean
+    $groupId: String
+    $participantChoiceId: String
+    $replaceExisting: Boolean
+    $createNewChoice: Boolean
+  ) {
+    upsertParticipantChoice(
+      selectionId: $selectionId
+      optionId: $optionId
+      travellerIds: $travellerIds
+      forAll: $forAll
+      groupId: $groupId
+      participantChoiceId: $participantChoiceId
+      replaceExisting: $replaceExisting
+      createNewChoice: $createNewChoice
+    ) {
+      id
+    }
+  }
+`;
+
 // --- Places (v2.0.0 — Section 7, geo/place surface) ---
 
 export const SEARCH_PLACES = `

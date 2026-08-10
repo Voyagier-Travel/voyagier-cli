@@ -14,10 +14,12 @@ import { createServer, type CliRunner, INSTRUCTIONS } from "./server.js";
 import type { CliResult } from "./exec.js";
 
 const EXPECTED_TOOL_NAMES = [
-  "doctor", "create_client", "plan_trip", "add_traveller",
+  "doctor", "clients_list", "client_create", "create_client",
+  "plan_trip", "travellers_add", "add_traveller",
   "travellers_update", "travellers_list", "goal_add",
   "search_flights", "search_hotels", "listings_list", "listings_add_to_selection", "search_activities",
-  "get_selection_options", "select_option", "itinerary", "plan_status",
+  "get_selection_options", "refresh_options", "select_option", "choices_view", "choose_room_slot",
+  "itinerary", "plan_status",
   "quote", "book_dry_run", "book", "booking_status", "bookings_list", "agent_docs",
 ];
 
@@ -44,10 +46,10 @@ describe("MCP server integration", () => {
     expect(client.getInstructions()).toBe(INSTRUCTIONS);
   });
 
-  it("tools/list returns exactly the 22 expected tools", async () => {
+  it("tools/list returns exactly the expected tools", async () => {
     const { client } = await connect();
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(22);
+    expect(tools).toHaveLength(EXPECTED_TOOL_NAMES.length);
     expect(tools.map((t) => t.name).sort()).toEqual([...EXPECTED_TOOL_NAMES].sort());
   });
 

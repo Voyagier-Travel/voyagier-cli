@@ -310,3 +310,33 @@ describe("deriveBlockedOn", () => {
     ]);
   });
 });
+
+// ── VOY-1896: refresh-options (backs the refresh_options MCP tool) ───────────
+describe("refresh-options", () => {
+  async function runRefresh(args: string[]) {
+    const program = new Command();
+    program.exitOverride();
+    registerSelectionOptionsCommands(program);
+    await program.parseAsync(["node", "voyagier", "refresh-options", ...args]);
+  }
+
+  it("sends selectionId only (no force) by default and reports started", async () => {
+    mockGraphql.mockResolvedValueOnce({ refreshTripPlanSelectionOptions: true });
+    await runRefresh([SEL_ID, "--json"]);
+    expect(mockGraphql).toHaveBeenCalledTimes(1);
+    expect(mockGraphql).toHaveBeenCalledWith(expect.any(String), { selectionId: SEL_ID });
+    expect(mockJsonOutput).toHaveBeenCalledWith({ ok: true, selectionId: SEL_ID, started: true });
+  });
+
+  it("forwards force:true only when --force is given", async () => {
+    mockGraphql.mockResolvedValueOnce({ refreshTripPlanSelectionOptions: true });
+    await runRefresh([SEL_ID, "--force", "--json"]);
+    expect(mockGraphql).toHaveBeenCalledWith(expect.any(String), { selectionId: SEL_ID, force: true });
+  });
+
+  it("reports started:false when the backend enqueues nothing", async () => {
+    mockGraphql.mockResolvedValueOnce({ refreshTripPlanSelectionOptions: false });
+    await runRefresh([SEL_ID, "--json"]);
+    expect(mockJsonOutput).toHaveBeenCalledWith({ ok: true, selectionId: SEL_ID, started: false });
+  });
+});

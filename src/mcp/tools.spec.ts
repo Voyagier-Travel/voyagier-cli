@@ -8,14 +8,19 @@
  * "--json on everything but agent_docs" rule.
  */
 import { describe, it, expect } from "@jest/globals";
+import { z } from "zod";
 import { SELECTION_SCOPES } from "../commands/plans/types.js";
 import {
   TOOLS,
   moneyArg,
   buildDoctorArgs,
   buildCreateClientArgs,
+  buildClientsListArgs,
   buildPlanTripArgs,
   buildAddTravellerArgs,
+  buildRefreshOptionsArgs,
+  buildChoicesViewArgs,
+  buildChooseRoomSlotArgs,
   buildUpdateTravellerArgs,
   buildTravellersListArgs,
   buildGoalAddArgs,
@@ -38,8 +43,11 @@ import {
 
 const EXPECTED_TOOL_NAMES = [
   "doctor",
+  "clients_list",
+  "client_create",
   "create_client",
   "plan_trip",
+  "travellers_add",
   "add_traveller",
   "travellers_update",
   "travellers_list",
@@ -50,7 +58,10 @@ const EXPECTED_TOOL_NAMES = [
   "listings_add_to_selection",
   "search_activities",
   "get_selection_options",
+  "refresh_options",
   "select_option",
+  "choices_view",
+  "choose_room_slot",
   "itinerary",
   "plan_status",
   "quote",
@@ -62,8 +73,48 @@ const EXPECTED_TOOL_NAMES = [
 ];
 
 describe("TOOLS table", () => {
-  it("exposes exactly the 22 expected tools, in order", () => {
+  it("exposes exactly the expected tools, in order", () => {
     expect(TOOLS.map((t) => t.name)).toEqual(EXPECTED_TOOL_NAMES);
+  });
+
+  it("registers the canonical names AND their deprecated aliases", () => {
+    const names = TOOLS.map((t) => t.name);
+    // Canonical (platform-registry) names.
+    expect(names).toContain("client_create");
+    expect(names).toContain("travellers_add");
+    // Old names kept as deprecated aliases for one release.
+    expect(names).toContain("create_client");
+    expect(names).toContain("add_traveller");
+  });
+
+  it.each([
+    ["create_client", "client_create"],
+    ["add_traveller", "travellers_add"],
+  ])("%s is a deprecated alias of %s: same builder + prefixed description", (alias, canonical) => {
+    const a = TOOLS.find((t) => t.name === alias)!;
+    const c = TOOLS.find((t) => t.name === canonical)!;
+    // Description carries the exact deprecation prefix pointing at the canonical.
+    expect(a.description.startsWith(`Deprecated alias of ${canonical}.`)).toBe(true);
+    // Alias delegates to the SAME implementation: identical argv on identical input.
+    const sample =
+      alias === "create_client"
+        ? { email: "a@b.co", name: "Al", type: "Company" }
+        : { plan_id: "p", first: "Jane", last: "Doe", gender: "F" };
+    expect(a.buildArgs(sample)).toEqual(c.buildArgs(sample));
+    // Same annotations + timeout as the canonical tool.
+    expect(a.annotations).toEqual(c.annotations);
+    expect(a.timeoutMs).toBe(c.timeoutMs);
+    // Schema parity: alias input schema must not drift from the canonical's.
+    // Compares key sets plus each field's zod type + description, so an edit
+    // to the canonical schema fails here until the alias is updated too.
+    expect(Object.keys(a.inputSchema).sort()).toEqual(Object.keys(c.inputSchema).sort());
+    for (const key of Object.keys(c.inputSchema)) {
+      const av = a.inputSchema[key as keyof typeof a.inputSchema] as z.ZodTypeAny;
+      const cv = c.inputSchema[key as keyof typeof c.inputSchema] as z.ZodTypeAny;
+      expect(av._def.typeName).toBe(cv._def.typeName);
+      expect(av.description).toBe(cv.description);
+      expect(av.isOptional()).toBe(cv.isOptional());
+    }
   });
 
   it("does NOT expose `send` (emails a real client — CLI-only)", () => {
@@ -109,6 +160,20 @@ describe("TOOLS table", () => {
       }
     }
   });
+
+  it.each([
+    ["clients_list", true],
+    ["choices_view", true],
+    ["choose_room_slot", false],
+    ["refresh_options", false],
+  ])("new tool %s has the required readOnlyHint=%s and a title, and no destructiveHint", (name, readOnly) => {
+    const t = TOOLS.find((x) => x.name === name)!;
+    expect(t).toBeDefined();
+    expect(t.title.trim().length).toBeGreaterThan(0);
+    expect(t.annotations.readOnlyHint).toBe(readOnly);
+    // Only `book` is destructive — none of the new tools are.
+    expect(t.annotations.destructiveHint).not.toBe(true);
+  });
 });
 
 describe("argv builders", () => {
@@ -136,6 +201,49 @@ describe("argv builders", () => {
       "clients", "upsert", "--email", "a@b.co", "--name", "Al", "--type", "Individual", "--json",
     ]);
     expect(buildCreateClientArgs({ email: "a@b.co", name: "Al", type: "Company" })).toContain("Company");
+  });
+
+  it("clients_list: no paging flags by default; page/limit forwarded when given", () => {
+    expect(buildClientsListArgs({})).toEqual(["clients", "list", "--json"]);
+    expect(buildClientsListArgs({ page: 2, limit: 50 })).toEqual([
+      "clients", "list", "--page", "2", "--limit", "50", "--json",
+    ]);
+    // Either flag alone is forwarded (single-page mode is triggered CLI-side).
+    expect(buildClientsListArgs({ limit: 10 })).toEqual(["clients", "list", "--limit", "10", "--json"]);
+  });
+
+  it("refresh_options: selection positional; --force only when true", () => {
+    expect(buildRefreshOptionsArgs({ selection_id: "s1" })).toEqual(["refresh-options", "s1", "--json"]);
+    expect(buildRefreshOptionsArgs({ selection_id: "s1", force: true })).toEqual([
+      "refresh-options", "s1", "--force", "--json",
+    ]);
+    expect(buildRefreshOptionsArgs({ selection_id: "s1", force: false })).not.toContain("--force");
+  });
+
+  it("choices_view: plan positional + --json", () => {
+    expect(buildChoicesViewArgs({ plan_id: "pl1" })).toEqual(["choices-view", "pl1", "--json"]);
+  });
+
+  it("choose_room_slot: selection positional; scope/slot flags only when present; traveller_ids → CSV", () => {
+    expect(buildChooseRoomSlotArgs({ selection_id: "s1" })).toEqual(["choose-room-slot", "s1", "--json"]);
+    const full = buildChooseRoomSlotArgs({
+      selection_id: "s1",
+      option_id: "o1",
+      traveller_ids: ["t1", "t2"],
+      for_all: false,
+      group_id: "g1",
+      participant_choice_id: "pc1",
+      replace_existing: true,
+      create_new_choice: true,
+    });
+    expect(full).toEqual([
+      "choose-room-slot", "s1", "--option-id", "o1", "--travellers", "t1,t2",
+      "--group", "g1", "--participant-choice-id", "pc1",
+      "--replace-existing", "--create-new-choice", "--json",
+    ]);
+    // for_all:false emits no flag; for_all:true does.
+    expect(full).not.toContain("--for-all");
+    expect(buildChooseRoomSlotArgs({ selection_id: "s1", for_all: true })).toContain("--for-all");
   });
 
   it("plan_trip omits absent optionals and false booleans; emits bare flags for true booleans", () => {
@@ -385,8 +493,11 @@ describe("--json discipline via the table (buildArgs on representative input)", 
   // Minimal valid input per tool so buildArgs runs; then assert the --json rule.
   const SAMPLE: Record<string, Record<string, unknown>> = {
     doctor: {},
+    clients_list: {},
+    client_create: { email: "a@b.co", name: "n" },
     create_client: { email: "a@b.co", name: "n" },
     plan_trip: { client: "c", title: "t" },
+    travellers_add: { plan_id: "p", first: "f", last: "l" },
     add_traveller: { plan_id: "p", first: "f", last: "l" },
     travellers_update: { traveller_id: "t", first: "f" },
     travellers_list: { plan_id: "p" },
@@ -397,7 +508,10 @@ describe("--json discipline via the table (buildArgs on representative input)", 
     listings_add_to_selection: { selection_id: "s", listing_id: "l" },
     search_activities: { plan_id: "p", destination: "D", date: "d" },
     get_selection_options: { selection_id: "s" },
+    refresh_options: { selection_id: "s" },
     select_option: { selection_id: "s", option_id: "o" },
+    choices_view: { plan_id: "p" },
+    choose_room_slot: { selection_id: "s" },
     itinerary: { plan_id: "p" },
     plan_status: { plan_id: "p" },
     quote: { plan_id: "p" },

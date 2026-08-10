@@ -190,6 +190,59 @@ describe("clients list", () => {
   });
 });
 
+// ── VOY-1896: single-page mode (backs the clients_list MCP tool) ─────────────
+describe("clients list — pagination (--page/--limit)", () => {
+  it("--page/--limit fetch a single page and echo page/limit/count", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: { items: [sampleClient], count: 42, page: 2, limit: 1 },
+    });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "clients", "list", "--page", "2", "--limit", "1", "--json"]);
+
+    // ONE query, with the page/limit variables (no full-roster walk).
+    expect(mockGraphql).toHaveBeenCalledTimes(1);
+    expect(mockGraphql).toHaveBeenCalledWith(expect.any(String), { page: 2, limit: 1 });
+    expect(mockJsonOutput).toHaveBeenCalledWith({
+      clients: [sampleClient],
+      total: 1,
+      page: 2,
+      limit: 1,
+      count: 42,
+    });
+  });
+
+  it("--limit alone defaults page to 1", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: { items: [sampleClient], count: 1, page: 1, limit: 5 },
+    });
+
+    const p = buildProgram();
+    await p.parseAsync(["node", "test", "clients", "list", "--limit", "5", "--json"]);
+
+    expect(mockGraphql).toHaveBeenCalledWith(expect.any(String), { page: 1, limit: 5 });
+  });
+
+  it("rejects a non-positive-integer --page", async () => {
+    const p = buildProgram();
+    await expect(
+      p.parseAsync(["node", "test", "clients", "list", "--page", "0", "--json"])
+    ).rejects.toThrow(/Invalid --page/);
+  });
+
+  it("rejects a non-numeric --limit but accepts a zero-padded one", async () => {
+    await expect(
+      buildProgram().parseAsync(["node", "test", "clients", "list", "--limit", "5x", "--json"])
+    ).rejects.toThrow(/Invalid --limit/);
+
+    mockGraphql.mockResolvedValueOnce({
+      tripPlanClients: { items: [sampleClient], count: 1, page: 2, limit: 5 },
+    });
+    await buildProgram().parseAsync(["node", "test", "clients", "list", "--page", "02", "--limit", "5", "--json"]);
+    expect(mockGraphql).toHaveBeenCalledWith(expect.any(String), { page: 2, limit: 5 });
+  });
+});
+
 describe("clients get", () => {
   it("returns the client in --json mode", async () => {
     mockGraphql.mockResolvedValueOnce({ tripPlanClient: sampleClient });

@@ -1,7 +1,8 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { graphql } from "../api.js";
-import { GET_HOTEL_OPTION_DATA } from "../queries.js";
+import { GET_HOTEL_OPTION_DATA, REFRESH_SELECTION_OPTIONS, REFRESH_SELECTION_OPTIONS_WITH_FORCE } from "../queries.js";
+import { validateId } from "../utils.js";
 import { deriveRoomStay, type RoomStay } from "../hotel-format.js";
 import { extractRankScore, rankScoreLabel } from "../flight-format.js";
 import { jsonOutput } from "../output.js";
@@ -214,6 +215,40 @@ export function registerSelectionOptionsCommands(program: Command): void {
         if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
         throw new CliError(CliErrorCode.API_ERROR, `Failed to load selection options: ${message}`);
+      }
+    });
+
+  program
+    .command("refresh-options <selectionId>")
+    .description(
+      "Re-fetch a selection's options from the supplier (enqueues a fresh fetch). Use --force to bypass the monitor freshness window after a FETCH_ERROR, then poll selection-options.",
+    )
+    .option("--force", "Bypass the monitor freshness window and force a live supplier re-fetch")
+    .option("--json", "Output raw JSON")
+    .action(async (selectionId: string, opts) => {
+      const id = validateId(selectionId, "selectionId");
+      try {
+        // Default path reuses the bare, already-shipped refresh mutation
+        // verbatim; only the opt-in --force path sends the `force` argument.
+        const useForce = opts.force === true;
+        const data = await graphql<{ refreshTripPlanSelectionOptions: boolean }>(
+          useForce ? REFRESH_SELECTION_OPTIONS_WITH_FORCE : REFRESH_SELECTION_OPTIONS,
+          useForce ? { selectionId: id, force: true } : { selectionId: id },
+        );
+        const started = data.refreshTripPlanSelectionOptions === true;
+        if (opts.json) {
+          jsonOutput({ ok: true, selectionId: id, started });
+          return;
+        }
+        console.log(
+          started
+            ? chalk.green(`✓ Refresh started for selection ${id}. Poll: voyagier selection-options ${id} --wait`)
+            : chalk.yellow(`No refresh started for selection ${id} (no monitor / not auto-fetchable).`),
+        );
+      } catch (err) {
+        if (err instanceof CliError) throw err;
+        const message = err instanceof Error ? err.message : String(err);
+        throw new CliError(CliErrorCode.API_ERROR, `Failed to refresh selection options: ${message}`);
       }
     });
 }
