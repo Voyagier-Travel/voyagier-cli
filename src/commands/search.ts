@@ -57,7 +57,7 @@ import { startSpinner, spinnerAnimates } from "../spinner.js";
 import type { SpinnerHandle } from "../spinner.js";
 import { isInteractive, promptText } from "../prompt.js";
 import { scaffoldPlan, generateTripTitle } from "./scaffold.js";
-import type { ShapeFlags } from "./scaffold.js";
+import type { TripPlanTemplate } from "./scaffold.js";
 import {
   parseClockMinutes,
   parseDurationMinutes,
@@ -239,7 +239,7 @@ export function resolvePlanId(opts: { plan?: string }, lastSearch?: SearchState 
  */
 async function resolvePlanForSearch(
   opts: { plan?: string; client?: string; json?: boolean; agent?: boolean; noInput?: boolean; input?: boolean; dryRun?: boolean },
-  scaffold: { title: string; shape: ShapeFlags },
+  scaffold: { title: string; template: TripPlanTemplate },
   quiet: boolean,
 ): Promise<{ tripPlanId: string; scaffolded: boolean }> {
   // Read the last-search state at most once (and, as before, not at all when
@@ -256,8 +256,7 @@ async function resolvePlanForSearch(
   const result = await scaffoldPlan({
     client: opts.client,
     title: scaffold.title,
-    shape: scaffold.shape,
-    ensureGoals: true,
+    template: scaffold.template,
     quiet,
     interactive: isInteractive(opts),
   });
@@ -1070,12 +1069,13 @@ export function registerSearchCommands(program: Command): void {
         const flightFilters = parseFlightFilters(opts);
 
         // Auto-scaffold a draft plan when no --plan/last-search exists (VOY-1761).
-        // Shape: flight-only (no hotel), and one-way unless --return is given.
+        // Flights only (this is a flight search — nothing has asked for a hotel),
+        // and one-way unless --return is given.
         const { tripPlanId, scaffolded } = await resolvePlanForSearch(
           opts,
           {
             title: generateTripTitle({ to: destination, depart: opts.date }),
-            shape: { oneWay: !opts.return, flightOnly: true, hotelOnly: false },
+            template: opts.return ? "RoundTripFlight" : "OneWayFlight",
           },
           quiet,
         );
@@ -1508,7 +1508,7 @@ export function registerSearchCommands(program: Command): void {
           opts,
           {
             title: generateTripTitle({ hotel: opts.location, checkin: opts.checkin }),
-            shape: { oneWay: false, flightOnly: false, hotelOnly: true },
+            template: "HotelOnly",
           },
           quietHotel,
         );

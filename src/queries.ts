@@ -180,9 +180,16 @@ export const GET_PAYMENT_CHECKOUTS = `
 
 // --- Plans ---
 
+// createTripPlan carries the whole brief: the goal-graph template, the party,
+// the destination and the dates. Travellers and goals come back on the plan
+// itself, so the CLI needs no follow-up reads to report what it created.
 export const CREATE_TRIP_PLAN = `
   mutation CreateTripPlan($input: CreateTripPlanInput!) {
-    createTripPlan(input: $input) { id title startDate endDate description }
+    createTripPlan(input: $input) {
+      id title startDate endDate description
+      travellers { id firstName lastName declaredTravellerType }
+      goals { id name type }
+    }
   }
 `;
 
@@ -420,9 +427,12 @@ export const CREATE_TRAVELLER = `
   }
 `;
 
-export const CREATE_TRAVELLER_BRIEF = `
-  mutation CreateTraveller($tripPlanId: String!, $input: CreateTripPlanTravellerInput!) {
-    createTripPlanTraveller(tripPlanId: $tripPlanId, input: $input) {
+// One call for the whole party. The server reuses anyone already on the plan by
+// name (an INDIVIDUAL client is seeded at creation), so this cannot duplicate
+// the client, and it checks the traveller cap against the whole batch first.
+export const ADD_TRIP_PLAN_TRAVELLERS = `
+  mutation AddTripPlanTravellers($tripPlanId: String!, $travellers: [CreateTripPlanTravellerBriefInput!]!) {
+    addTripPlanTravellers(tripPlanId: $tripPlanId, travellers: $travellers) {
       id firstName lastName
     }
   }

@@ -28,16 +28,16 @@ jest.unstable_mockModule("./clients.js", () => ({
 
 let scaffoldPlan: typeof import("./scaffold.js").scaffoldPlan;
 let generateTripTitle: typeof import("./scaffold.js").generateTripTitle;
-let desiredGoalShape: typeof import("./scaffold.js").desiredGoalShape;
+let resolveTemplate: typeof import("./scaffold.js").resolveTemplate;
 
 beforeAll(async () => {
   const mod = await import("./scaffold.js");
   scaffoldPlan = mod.scaffoldPlan;
   generateTripTitle = mod.generateTripTitle;
-  desiredGoalShape = mod.desiredGoalShape;
+  resolveTemplate = mod.resolveTemplate;
 });
 
-// Default scaffold goal graph (mirrors the server template) for prune tests.
+// The goal graph the server returns for the default (round-trip + hotel) template.
 const SCAFFOLD_GOALS = [
   { id: "g-trav", name: "Travelers", type: "TravellerList" },
   { id: "g-out", name: "Outbound Flights", type: "Flight" },
@@ -64,15 +64,40 @@ describe("scaffoldPlan — happy path", () => {
     expect(result.plan.title).toBe("Paris Trip");
     expect(result.client).toEqual({ id: "client-1", name: "Test Client", autoResolved: false, isSelf: undefined });
     expect(result.travellerIds).toEqual([]);
-    expect(result.prunedGoals).toEqual([]);
-    expect(result.pruneWarnings).toEqual([]);
+    expect(result.goals).toEqual([]);
 
-    // Only the create mutation — no traveller fetch, no goal list.
+    // ONE mutation for the whole thing — no goal list, no prune, no traveller
+    // fetch. The template makes the graph correct on creation.
     expect(mockGraphql).toHaveBeenCalledTimes(1);
     const [, vars] = mockGraphql.mock.calls[0] as [string, any];
     expect(vars).toEqual({ input: { clientId: "client-1", title: "Paris Trip" } });
+    // No template means the server default applies — don't pin it here.
+    expect(vars.input).not.toHaveProperty("template");
     expect(vars.input).not.toHaveProperty("startDate");
     expect(vars.input).not.toHaveProperty("description");
+  });
+
+  it("passes the template through and reports the goal graph the server built", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      createTripPlan: {
+        id: "plan-h",
+        title: "Nashville Stay",
+        travellers: [],
+        goals: [
+          { id: "g-trav", name: "Travelers", type: "TravellerList" },
+          { id: "g-hotel", name: "Accommodation", type: "Hotel" },
+        ],
+      },
+    });
+
+    const result = await scaffoldPlan({ client: "client-1", title: "Nashville Stay", template: "HotelOnly" });
+
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input).toMatchObject({ template: "HotelOnly" });
+    expect(result.template).toBe("HotelOnly");
+    expect(result.goals.map(g => g.type)).toEqual(["TravellerList", "Hotel"]);
+    // Still one call: no follow-up read to discover what was created.
+    expect(mockGraphql).toHaveBeenCalledTimes(1);
   });
 
   it("passes dryRun through to the createTripPlan mutation", async () => {
@@ -124,203 +149,89 @@ describe("generateTripTitle", () => {
 });
 
 describe("scaffoldPlan — travellers", () => {
-  it("adds each parsed traveller and returns their ids", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-2", title: "Trip" } })
-      .mockResolvedValueOnce({ createTripPlanTraveller: { id: "t1", firstName: "John", lastName: "Doe" } })
-      .mockResolvedValueOnce({ createTripPlanTraveller: { id: "t2", firstName: "Jane", lastName: "Smith" } });
+  /**
+   * The party goes in the CREATE call, not a follow-up. Two reasons: passing
+   * travellers makes the list authoritative so an INDIVIDUAL client is not
+   * auto-seeded on top of them (which would put the client on the plan twice),
+   * and the traveller cap is checked before the plan row exists.
+   */
+  it("sends the parsed party with the create and returns every traveller on the plan", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      createTripPlan: {
+        id: "plan-2",
+        title: "Trip",
+        travellers: [
+          { id: "t1", firstName: "John", lastName: "Doe" },
+          { id: "t2", firstName: "Jane", lastName: "Smith" },
+        ],
+        goals: [],
+      },
+    });
 
     const result = await scaffoldPlan({ client: "client-1", title: "Trip", travellers: "John Doe, Jane Smith" });
 
     expect(result.travellerIds).toEqual(["t1", "t2"]);
-    expect(mockGraphql).toHaveBeenCalledTimes(3);
-    // Second call adds the first traveller with the parsed first/last split.
-    const [, addVars] = mockGraphql.mock.calls[1] as [string, any];
-    expect(addVars).toEqual({
-      tripPlanId: "plan-2",
-      input: { firstName: "John", lastName: "Doe", declaredTravellerType: "Adult" },
-    });
-  });
-});
-
-describe("scaffoldPlan — shape pruning", () => {
-  it("--one-way --flight-only lists goals, deletes return + hotel, reports them", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-3", title: "OW" } }) // CREATE
-      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS }) // LIST goals
-      .mockResolvedValueOnce({ deleteTripPlanGoal: true }) // delete return
-      .mockResolvedValueOnce({ deleteTripPlanGoal: true }); // delete hotel
-
-    const result = await scaffoldPlan({
-      client: "client-1",
-      title: "OW",
-      shape: { oneWay: true, flightOnly: true },
-    });
-
-    expect(result.prunedGoals.map(g => g.id).sort()).toEqual(["g-hotel", "g-ret"]);
-    expect(result.pruneWarnings).toEqual([]);
-    // create + list + 2 deletes
-    expect(mockGraphql).toHaveBeenCalledTimes(4);
-  });
-
-  it("surfaces a warning (not a throw) when the server declines a delete", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-4", title: "F" } })
-      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
-      .mockResolvedValueOnce({ deleteTripPlanGoal: false }); // server declines the return-flight delete
-
-    const result = await scaffoldPlan({ client: "client-1", title: "F", shape: { oneWay: true } });
-
-    expect(result.prunedGoals).toEqual([]);
-    expect(result.pruneWarnings).toHaveLength(1);
-    expect(result.pruneWarnings[0]).toContain("plans goal-remove g-ret --force");
-    // Warnings are surfaced via warn(), not swallowed.
-    expect(mockWarn).toHaveBeenCalledWith(expect.stringContaining("g-ret"));
-  });
-
-  it("does not fetch goals when neither a shape flag nor ensureGoals is set (plans-create path)", async () => {
-    mockGraphql.mockResolvedValueOnce({ createTripPlan: { id: "plan-5", title: "P" } });
-    const result = await scaffoldPlan({ client: "client-1", title: "P" });
     expect(mockGraphql).toHaveBeenCalledTimes(1);
-    expect(result.prunedGoals).toEqual([]);
-    expect(result.addedGoals).toEqual([]);
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input.travellers).toEqual([
+      { firstName: "John", lastName: "Doe", type: "Adult" },
+      { firstName: "Jane", lastName: "Smith", type: "Adult" },
+    ]);
+  });
+
+  it("omits travellers entirely when none were named, so an individual client is still seeded", async () => {
+    mockGraphql.mockResolvedValueOnce({ createTripPlan: { id: "plan-3", title: "Trip", travellers: [], goals: [] } });
+
+    await scaffoldPlan({ client: "client-1", title: "Trip" });
+
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input).not.toHaveProperty("travellers");
   });
 });
 
-// ── VOY-1761: desiredGoalShape (the additive twin of selectGoalsToPrune) ─────
-describe("desiredGoalShape", () => {
-  it("full round-trip + hotel when no flags (plan-trip default)", () => {
-    expect(desiredGoalShape({ oneWay: false, flightOnly: false, hotelOnly: false })).toEqual({ flights: 2, hotels: 1 });
-  });
-  it("one-way flight-only → exactly one Flight goal, no hotel (flight search, no --return)", () => {
-    expect(desiredGoalShape({ oneWay: true, flightOnly: true, hotelOnly: false })).toEqual({ flights: 1, hotels: 0 });
-  });
-  it("round-trip flight-only → two Flight goals, no hotel (flight search, --return)", () => {
-    expect(desiredGoalShape({ oneWay: false, flightOnly: true, hotelOnly: false })).toEqual({ flights: 2, hotels: 0 });
-  });
-  it("hotel-only → one Hotel goal, no flights (hotel search)", () => {
-    expect(desiredGoalShape({ oneWay: false, flightOnly: false, hotelOnly: true })).toEqual({ flights: 0, hotels: 1 });
-  });
-  it("one-way alone still keeps the hotel (a one-way trip can still lodge)", () => {
-    expect(desiredGoalShape({ oneWay: true, flightOnly: false, hotelOnly: false })).toEqual({ flights: 1, hotels: 1 });
-  });
-});
-
-// ── VOY-1761: ensure-goals converges identically in BOTH worlds ──────────────
-// (a) server returns the round-trip + hotel TEMPLATE (today), (b) server returns
-// ZERO goals (post-1513 blank plans). Same resulting goal shape either way.
-describe("scaffoldPlan — ensure-goals both worlds", () => {
-  it("one-way flight-only: TEMPLATE world prunes return + hotel, adds nothing", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-t1", title: "T" } })
-      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
-      .mockResolvedValueOnce({ deleteTripPlanGoal: true }) // return
-      .mockResolvedValueOnce({ deleteTripPlanGoal: true }); // hotel
-
-    const result = await scaffoldPlan({
-      client: "client-1", title: "T", ensureGoals: true,
-      shape: { oneWay: true, flightOnly: true },
-    });
-
-    expect(result.prunedGoals.map(g => g.id).sort()).toEqual(["g-hotel", "g-ret"]);
-    expect(result.addedGoals).toEqual([]);
-    // create + list + 2 deletes (no adds).
-    expect(mockGraphql).toHaveBeenCalledTimes(4);
+/**
+ * --template replaced --one-way/--flight-only/--hotel-only. The old flags stay as
+ * aliases for one release so existing scripts keep working, but they map onto a
+ * template rather than driving a client-side prune.
+ */
+describe("resolveTemplate", () => {
+  it("returns nothing when no template or flag was given (server default applies)", () => {
+    expect(resolveTemplate({})).toEqual({});
   });
 
-  it("one-way flight-only: BLANK world prunes nothing, adds one Flight goal — same shape", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-b1", title: "B" } })
-      .mockResolvedValueOnce({ tripPlanGoals: [] }) // blank plan (VOY-1513)
-      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-out", name: "Outbound Flights", type: "Flight" } });
-
-    const result = await scaffoldPlan({
-      client: "client-1", title: "B", ensureGoals: true,
-      shape: { oneWay: true, flightOnly: true },
-    });
-
-    expect(result.prunedGoals).toEqual([]);
-    expect(result.addedGoals).toEqual([{ id: "ng-out", name: "Outbound Flights", type: "Flight" }]);
-    // create + list + 1 add.
-    expect(mockGraphql).toHaveBeenCalledTimes(3);
-    const addCall = mockGraphql.mock.calls[2] as [string, any];
-    expect(addCall[1].input).toMatchObject({ tripPlanId: "plan-b1", type: "Flight" });
+  it("accepts a template case-insensitively", () => {
+    expect(resolveTemplate({ template: "hotelonly" })).toEqual({ template: "HotelOnly" });
+    expect(resolveTemplate({ template: " OneWayFlight " })).toEqual({ template: "OneWayFlight" });
   });
 
-  it("round-trip flight-only: BLANK world adds TWO Flight goals (outbound + return)", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-b2", title: "RT" } })
-      .mockResolvedValueOnce({ tripPlanGoals: [] })
-      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-out", name: "Outbound Flights", type: "Flight" } })
-      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-ret", name: "Return Flights", type: "Flight" } });
-
-    const result = await scaffoldPlan({
-      client: "client-1", title: "RT", ensureGoals: true,
-      shape: { oneWay: false, flightOnly: true },
-    });
-
-    expect(result.addedGoals.map(g => g.id)).toEqual(["ng-out", "ng-ret"]);
-    expect(result.prunedGoals).toEqual([]);
+  it("rejects an unknown template, listing the valid ones", () => {
+    expect(() => resolveTemplate({ template: "RoundTrip" })).toThrow(/Unknown --template "RoundTrip"/);
+    expect(() => resolveTemplate({ template: "RoundTrip" })).toThrow(/RoundTripFlightAndHotel/);
   });
 
-  it("hotel-only: BLANK world adds one Hotel goal, no flights", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-b3", title: "H" } })
-      .mockResolvedValueOnce({ tripPlanGoals: [] })
-      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-hotel", name: "Accommodation", type: "Hotel" } });
-
-    const result = await scaffoldPlan({
-      client: "client-1", title: "H", ensureGoals: true,
-      shape: { hotelOnly: true },
-    });
-
-    expect(result.addedGoals).toEqual([{ id: "ng-hotel", name: "Accommodation", type: "Hotel" }]);
-    const addCall = mockGraphql.mock.calls[2] as [string, any];
-    expect(addCall[1].input).toMatchObject({ type: "Hotel" });
+  it("rejects mixing --template with the deprecated flags", () => {
+    expect(() => resolveTemplate({ template: "HotelOnly", hotelOnly: true })).toThrow(/--template replaces/);
   });
 
-  it("ensureGoals with no shape flags: TEMPLATE world already complete → no adds/prunes", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-t2", title: "D" } })
-      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS });
+  it.each([
+    [{ oneWay: true, flightOnly: true }, "OneWayFlight"],
+    [{ oneWay: true }, "OneWayFlightAndHotel"],
+    [{ flightOnly: true }, "RoundTripFlight"],
+    [{ hotelOnly: true }, "HotelOnly"],
+  ])("maps the legacy flags %j onto %s with a deprecation warning", (flags, expected) => {
+    const result = resolveTemplate(flags);
 
-    const result = await scaffoldPlan({ client: "client-1", title: "D", ensureGoals: true });
-
-    expect(result.prunedGoals).toEqual([]);
-    expect(result.addedGoals).toEqual([]);
-    // create + list only.
-    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    expect(result.template).toBe(expected);
+    expect(result.deprecationWarning).toContain(`--template ${expected}`);
   });
 
-  it("ensureGoals with no shape flags: BLANK world adds the full default (2 flights + 1 hotel)", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-b4", title: "D" } })
-      .mockResolvedValueOnce({ tripPlanGoals: [] })
-      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-out", name: "Outbound Flights", type: "Flight" } })
-      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-ret", name: "Return Flights", type: "Flight" } })
-      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-hotel", name: "Accommodation", type: "Hotel" } });
-
-    const result = await scaffoldPlan({ client: "client-1", title: "D", ensureGoals: true });
-
-    expect(result.addedGoals.map(g => g.type)).toEqual(["Flight", "Flight", "Hotel"]);
+  it("rejects --hotel-only combined with a flight flag", () => {
+    expect(() => resolveTemplate({ hotelOnly: true, oneWay: true })).toThrow(/hotel-only conflicts/);
+    expect(() => resolveTemplate({ hotelOnly: true, flightOnly: true })).toThrow(/hotel-only conflicts/);
   });
 
-  it("surfaces a warning (not a throw) when adding a missing goal fails", async () => {
-    // No shape flags → no "nothing to prune" warnings, so the only warning is the
-    // add failure. The failed Flight add doesn't abort the remaining adds.
-    mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-b5", title: "B" } })
-      .mockResolvedValueOnce({ tripPlanGoals: [] })
-      .mockRejectedValueOnce(new Error("server boom")) // outbound Flight add fails
-      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-ret", name: "Return Flights", type: "Flight" } })
-      .mockResolvedValueOnce({ createTripPlanGoal: { id: "ng-hotel", name: "Accommodation", type: "Hotel" } });
-
-    const result = await scaffoldPlan({ client: "client-1", title: "B", ensureGoals: true });
-
-    expect(result.addedGoals.map(g => g.id)).toEqual(["ng-ret", "ng-hotel"]);
-    expect(result.pruneWarnings).toHaveLength(1);
-    expect(result.pruneWarnings[0]).toMatch(/Failed to add a Flight goal/);
-    expect(mockWarn).toHaveBeenCalledWith(expect.stringContaining("Failed to add a Flight goal"));
+  it("rejects the legacy flags on an existing plan — there is nothing to template", () => {
+    expect(() => resolveTemplate({ oneWay: true, plan: "plan-1" })).toThrow(/only apply when creating a NEW plan/);
   });
 });
 
@@ -362,12 +273,11 @@ describe("scaffoldPlan — auto-resolved client note", () => {
     expect(mockProgress).not.toHaveBeenCalled();
   });
 
-  it("progress:false silences traveller-add and prune progress too", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-d", title: "D" } }) // create
-      .mockResolvedValueOnce({ createTripPlanTraveller: { id: "trav-1" } }) // traveller add
-      .mockResolvedValueOnce({ tripPlanGoals: [] }); // prune listing
-    await scaffoldPlan({ title: "D", travellers: "Ada", shape: { oneWay: true }, progress: false });
+  it("progress:false stays silent even with a party and a template", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      createTripPlan: { id: "plan-d", title: "D", travellers: [{ id: "trav-1" }], goals: SCAFFOLD_GOALS },
+    });
+    await scaffoldPlan({ title: "D", travellers: "Ada", template: "OneWayFlight", progress: false });
     expect(mockProgress).not.toHaveBeenCalled();
   });
 });

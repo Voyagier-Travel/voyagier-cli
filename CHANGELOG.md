@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **Trip shape is now a TEMPLATE chosen at creation, not a prune afterwards.** `plan-trip --template <name>` takes `RoundTripFlightAndHotel` (default), `RoundTripFlight`, `OneWayFlight`, `OneWayFlightAndHotel`, `HotelOnly` or `Blank`, and the server builds exactly that goal graph. Previously the CLI created the full round-trip + hotel graph and then deleted the goals the brief didn't want (`--one-way`/`--flight-only`/`--hotel-only`), which meant a failed delete left a plan holding goals that block booking — an unpruned Return Flights goal stops one-way inventory from ever fetching AND stops the fare from carting. The client-side prune/ensure logic (`selectGoalsToPrune`, `desiredGoalShape`, `validateShapeFlags`, and the `createTripPlanGoal` top-ups) is gone, along with the six conflict rules between the three flags.
+  - `--one-way` / `--flight-only` / `--hotel-only` still work as **deprecated aliases** and map onto the equivalent template with a warning. They will be removed in a future release.
+  - `plan-trip --json` gains `template` and `goals[]`; it loses `shape[]`, `prunedGoals[]`, `addedGoals[]` and `pruneWarnings[]` (there is nothing to prune, so nothing to warn about).
+  - `plan-trip` and `plans create` now issue ONE mutation for the plan, its goal graph and its party, instead of create → list goals → delete/add → add travellers one at a time.
+- **`--travellers` is sent with the create.** The party is part of `createTripPlan`, so an INDIVIDUAL client is no longer auto-seeded on top of the names you gave (which used to put the client on the plan twice), and the traveller limit is checked against the whole batch before the plan row exists. Adding to an EXISTING plan (`plan-trip --plan <id> --travellers ...`) uses the new `addTripPlanTravellers` batch mutation, which reuses anyone already on the plan by name rather than duplicating them.
+
+### Fixed
+- **Traveller age bands are now defined and documented by the server.** Adult 18+, Youth 12–17, Child 2–11, Infant under 2 — previously three places in the platform disagreed (a 15-year-old was a child by date of birth and an adult by declared type). A date of birth now overrides a stale declared type wherever pricing needs an exact age, and activity searches ask for a YOUTH age band where the product sells one.
+
 ## [2.11.0] — 2026-07-23
 
 ### Added

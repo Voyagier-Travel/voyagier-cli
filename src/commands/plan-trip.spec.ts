@@ -47,9 +47,11 @@ jest.unstable_mockModule("../config.js", () => ({
   getHomeAirports: jest.fn().mockReturnValue(["DCA"]),
 }));
 
+const mockWarn = jest.fn();
+
 jest.unstable_mockModule("../output.js", () => ({
   progress: jest.fn(),
-  warn: jest.fn(),
+  warn: mockWarn,
   fatal: jest.fn().mockImplementation((msg: unknown) => {
     throw new Error(String(msg));
   }),
@@ -378,7 +380,6 @@ describe("plan-trip scaffold (VOY-1414)", () => {
   it("creates a plan and emits compose next-steps (JSON)", async () => {
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-1", title: "Paris Trip" } }) // CREATE_TRIP_PLAN (via scaffoldPlan)
-      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS }) // ensure-goals list (template → no adds/prunes)
       .mockResolvedValueOnce({ tripPlanTravellers: [] }); // GET_TRAVELLERS_BRIEF
 
     await runPlanTrip(["--client", "client-1", "--title", "Paris Trip", "--json"]);
@@ -387,8 +388,8 @@ describe("plan-trip scaffold (VOY-1414)", () => {
     expect(out).toBeTruthy();
     expect(out.tripPlanId).toBe("plan-1");
     expect(out.scaffolded).toBe(true);
-    // It must NOT auto-search/select: only create + ensure-goals list + travellers.
-    expect(mockGraphql).toHaveBeenCalledTimes(3);
+    // It must NOT auto-search/select: only create + the traveller roster read.
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
     expect(out.nextSteps.some((s: string) => s.includes("selection-options"))).toBe(true);
     expect(out.nextSteps.some((s: string) => s.includes("select --selection-id"))).toBe(true);
   });
@@ -398,7 +399,6 @@ describe("plan-trip scaffold (VOY-1414)", () => {
     mockPromptText.mockResolvedValue("Prompted Title");
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-i", title: "Prompted Title" } })
-      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
       .mockResolvedValueOnce({ tripPlanTravellers: [] });
     try {
       // No --json: the real isInteractive() gate disables prompting under
@@ -417,20 +417,18 @@ describe("plan-trip scaffold (VOY-1414)", () => {
   it("suggests a search flights next-step when --to/--depart given (but does not run it)", async () => {
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-2", title: "Trip" } })
-      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
       .mockResolvedValueOnce({ tripPlanTravellers: [{ id: "t1", firstName: "A", lastName: "B" }] });
 
     await runPlanTrip(["--client", "client-1", "--title", "Trip", "--to", "MCO", "--depart", "2026-09-01", "--json"]);
 
     const out = jsonOutputCalls();
-    expect(mockGraphql).toHaveBeenCalledTimes(3); // create + ensure-goals list + travellers
+    expect(mockGraphql).toHaveBeenCalledTimes(2); // create + traveller roster read
     expect(out.nextSteps.some((s: string) => s.includes("search flights") && s.includes("--to MCO"))).toBe(true);
   });
 
   it("shell-quotes next-step values that contain spaces (thread 7)", async () => {
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-q", title: "Trip" } })
-      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
       .mockResolvedValueOnce({ tripPlanTravellers: [] });
 
     await runPlanTrip([
@@ -451,7 +449,6 @@ describe("plan-trip scaffold (VOY-1414)", () => {
   it("hotel next-step ALWAYS carries --checkin/--checkout, deriving checkout when missing (thread 8)", async () => {
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-h", title: "Trip" } })
-      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
       .mockResolvedValueOnce({ tripPlanTravellers: [] });
 
     // --hotel given with a depart date but NO checkout/return: command must still
@@ -466,7 +463,6 @@ describe("plan-trip scaffold (VOY-1414)", () => {
   it("hotel next-step uses placeholders when there is no date context at all (thread 8)", async () => {
     mockGraphql
       .mockResolvedValueOnce({ createTripPlan: { id: "plan-h2", title: "Trip" } })
-      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
       .mockResolvedValueOnce({ tripPlanTravellers: [] });
 
     await runPlanTrip(["--client", "client-1", "--title", "Trip", "--hotel", "Marriott", "--json"]);
@@ -491,7 +487,7 @@ describe("plan-trip scaffold (VOY-1414)", () => {
   it("--plan with --travellers adds them to the existing plan (no fallback fetch)", async () => {
     mockGraphql
       .mockResolvedValueOnce({ tripPlan: { id: "plan-X", title: "Existing" } }) // GET_TRIP_PLAN_BASIC
-      .mockResolvedValueOnce({ createTripPlanTraveller: { id: "t1", firstName: "Ann", lastName: "Lee" } }); // add
+      .mockResolvedValueOnce({ addTripPlanTravellers: [{ id: "t1", firstName: "Ann", lastName: "Lee" }] }); // batch add
 
     await runPlanTrip(["--plan", "plan-X", "--travellers", "Ann Lee", "--json"]);
 
@@ -503,119 +499,16 @@ describe("plan-trip scaffold (VOY-1414)", () => {
   });
 });
 
-// ── Unit tests: trip-shape pruning (VOY-1727) ──────────────────────────────
+// ── Trip templates: the goal graph is chosen at creation ────────────────────
+//
+// These replace the shape-flag pruning tests. The CLI used to create the full
+// round-trip + hotel graph and then delete what the brief did not want, which
+// meant a failed delete left a plan holding goals that block booking (an
+// unpruned return leg stops one-way inventory fetching and the fare carting).
+// The server now builds the requested shape directly, so there is nothing to
+// prune and no partial state to report.
 
-const SCAFFOLD_GOALS = [
-  { id: "g-trav", name: "Travelers", type: "TravellerList" },
-  { id: "g-curr", name: "Choose Currency", type: "Currency" },
-  { id: "g-dur", name: "Choose Duration", type: "Duration" },
-  { id: "g-date", name: "Choose Date", type: "Date" },
-  { id: "g-dest", name: "Choose Destination", type: "Destination" },
-  { id: "g-out", name: "Outbound Flights", type: "Flight" },
-  { id: "g-hotel", name: "Accommodation", type: "Hotel" },
-  { id: "g-ret", name: "Return Flights", type: "Flight" },
-  { id: "g-manifest", name: "Traveler Manifest", type: "TravellerList" },
-  { id: "g-journey", name: "Flight Booking Details", type: "FlightJourney" },
-];
-
-describe("selectGoalsToPrune (VOY-1727)", () => {
-  let selectGoalsToPrune: typeof import("./plan-trip.js").selectGoalsToPrune;
-
-  beforeAll(async () => {
-    const mod = await import("./plan-trip.js");
-    selectGoalsToPrune = mod.selectGoalsToPrune;
-  });
-
-  it("--one-way prunes only the return-flight goal", () => {
-    const { prune, warnings } = selectGoalsToPrune(SCAFFOLD_GOALS, { oneWay: true, flightOnly: false, hotelOnly: false });
-    expect(prune.map(g => g.id)).toEqual(["g-ret"]);
-    expect(warnings).toEqual([]);
-  });
-
-  it("--flight-only prunes only Hotel-type goals", () => {
-    const { prune, warnings } = selectGoalsToPrune(SCAFFOLD_GOALS, { oneWay: false, flightOnly: true, hotelOnly: false });
-    expect(prune.map(g => g.id)).toEqual(["g-hotel"]);
-    expect(warnings).toEqual([]);
-  });
-
-  it("--one-way --flight-only prunes both, no duplicates", () => {
-    const { prune } = selectGoalsToPrune(SCAFFOLD_GOALS, { oneWay: true, flightOnly: true, hotelOnly: false });
-    expect(prune.map(g => g.id).sort()).toEqual(["g-hotel", "g-ret"]);
-  });
-
-  it("--hotel-only prunes all Flight and FlightJourney goals, keeps Hotel", () => {
-    const { prune } = selectGoalsToPrune(SCAFFOLD_GOALS, { oneWay: false, flightOnly: false, hotelOnly: true });
-    expect(prune.map(g => g.id).sort()).toEqual(["g-journey", "g-out", "g-ret"]);
-  });
-
-  it("matches the return goal case-insensitively and does NOT touch non-Flight goals named 'return'", () => {
-    const goals = [
-      { id: "g1", name: "RETURN flights", type: "Flight" },
-      { id: "g2", name: "Return policy", type: "Hotel" },
-    ];
-    const { prune } = selectGoalsToPrune(goals, { oneWay: true, flightOnly: false, hotelOnly: false });
-    expect(prune.map(g => g.id)).toEqual(["g1"]);
-  });
-
-  it("warns (does not throw) when a shape flag matches nothing", () => {
-    const noMatch = SCAFFOLD_GOALS.filter(g => g.type !== "Flight" && g.type !== "Hotel" && g.type !== "FlightJourney");
-    const oneWay = selectGoalsToPrune(noMatch, { oneWay: true, flightOnly: false, hotelOnly: false });
-    expect(oneWay.prune).toEqual([]);
-    expect(oneWay.warnings.length).toBe(1);
-    expect(oneWay.warnings[0]).toContain("--one-way");
-    const hotelOnly = selectGoalsToPrune(noMatch, { oneWay: false, flightOnly: true, hotelOnly: true });
-    expect(hotelOnly.prune).toEqual([]);
-    expect(hotelOnly.warnings.length).toBe(2);
-  });
-
-  it("handles null goal names", () => {
-    const goals = [{ id: "g1", name: null, type: "Flight" }];
-    const { prune, warnings } = selectGoalsToPrune(goals, { oneWay: true, flightOnly: false, hotelOnly: false });
-    expect(prune).toEqual([]);
-    expect(warnings.length).toBe(1);
-  });
-});
-
-describe("validateShapeFlags (VOY-1727)", () => {
-  let validateShapeFlags: typeof import("./plan-trip.js").validateShapeFlags;
-
-  beforeAll(async () => {
-    const mod = await import("./plan-trip.js");
-    validateShapeFlags = mod.validateShapeFlags;
-  });
-
-  it("passes with no shape flags regardless of other opts", () => {
-    expect(() => validateShapeFlags({ plan: "p1", return: "2026-09-08", hotel: "Paris" })).not.toThrow();
-  });
-
-  it("rejects shape flags on an existing plan (--plan)", () => {
-    expect(() => validateShapeFlags({ oneWay: true, plan: "p1" })).toThrow(/existing/i);
-    expect(() => validateShapeFlags({ hotelOnly: true, plan: "p1" })).toThrow(/goal-remove/);
-  });
-
-  it("rejects --one-way with --return", () => {
-    expect(() => validateShapeFlags({ oneWay: true, return: "2026-09-08" })).toThrow(/--one-way conflicts with --return/);
-  });
-
-  it("rejects --hotel-only with --one-way or flight flags", () => {
-    expect(() => validateShapeFlags({ hotelOnly: true, oneWay: true })).toThrow(/conflicts/);
-    expect(() => validateShapeFlags({ hotelOnly: true, to: "MCO" })).toThrow(/flight flags/);
-    expect(() => validateShapeFlags({ hotelOnly: true, depart: "2026-09-01" })).toThrow(/flight flags/);
-  });
-
-  it("rejects --flight-only with --hotel", () => {
-    expect(() => validateShapeFlags({ flightOnly: true, hotel: "Paris" })).toThrow(/--flight-only conflicts with hotel flags/);
-    expect(() => validateShapeFlags({ flightOnly: true, checkin: "2026-09-01" })).toThrow(/hotel flags/);
-    expect(() => validateShapeFlags({ hotelOnly: true, flightOnly: true })).toThrow(/--hotel-only conflicts with --flight-only/);
-  });
-
-  it("accepts valid combos", () => {
-    expect(() => validateShapeFlags({ oneWay: true, flightOnly: true, to: "DEN", depart: "2026-10-20" })).not.toThrow();
-    expect(() => validateShapeFlags({ hotelOnly: true, hotel: "Nashville" })).not.toThrow();
-  });
-});
-
-describe("plan-trip shape flags integration (VOY-1727)", () => {
+describe("plan-trip templates", () => {
   let stdout: string;
   let writeSpy: ReturnType<typeof jest.spyOn>;
 
@@ -624,8 +517,14 @@ describe("plan-trip shape flags integration (VOY-1727)", () => {
     return line ? JSON.parse(line) : null;
   };
 
+  const HOTEL_ONLY_GOALS = [
+    { id: "g-trav", name: "Travelers", type: "TravellerList" },
+    { id: "g-hotel", name: "Accommodation", type: "Hotel" },
+  ];
+
   beforeEach(() => {
     mockGraphql.mockReset();
+    mockWarn.mockReset();
     stdout = "";
     writeSpy = jest.spyOn(process.stdout, "write").mockImplementation((c: any) => {
       stdout += typeof c === "string" ? c : c.toString();
@@ -637,16 +536,46 @@ describe("plan-trip shape flags integration (VOY-1727)", () => {
     writeSpy.mockRestore();
   });
 
-  it("--one-way --flight-only: fetches goals, deletes return + hotel, reports prunedGoals", async () => {
-    // Call order: scaffoldPlan runs create → prune (list + deletes); plan-trip
-    // then does its own traveller-fetch fallback (scaffold only returns the IDs
-    // it added, and none were added here).
+  it("sends --template on the create and reports the goals it produced", async () => {
     mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-ow", title: "OW" } }) // CREATE
-      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS }) // LIST goals
-      .mockResolvedValueOnce({ deleteTripPlanGoal: true }) // delete return
-      .mockResolvedValueOnce({ deleteTripPlanGoal: true }) // delete hotel
-      .mockResolvedValueOnce({ tripPlanTravellers: [{ id: "t1", firstName: "A", lastName: "B" }] }); // TRAVELLERS fallback
+      .mockResolvedValueOnce({
+        createTripPlan: { id: "plan-h", title: "Nashville", travellers: [], goals: HOTEL_ONLY_GOALS },
+      })
+      .mockResolvedValueOnce({ tripPlanTravellers: [] });
+
+    await runPlanTrip([
+      "--client", "client-1", "--title", "Nashville",
+      "--hotel", "Nashville", "--checkin", "2026-09-01", "--checkout", "2026-09-05",
+      "--template", "HotelOnly", "--json",
+    ]);
+
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input).toMatchObject({ template: "HotelOnly" });
+
+    const out = lastJson();
+    expect(out.ok).toBe(true);
+    expect(out.template).toBe("HotelOnly");
+    expect(out.goals.map((g: any) => g.type)).toEqual(["TravellerList", "Hotel"]);
+    // create + traveller roster read. No goal listing, no deletes.
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+  });
+
+  it("omits template from the JSON when none was given (the server default applies)", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-p", title: "P", travellers: [], goals: [] } })
+      .mockResolvedValueOnce({ tripPlanTravellers: [] });
+
+    await runPlanTrip(["--client", "client-1", "--title", "P", "--json"]);
+
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input).not.toHaveProperty("template");
+    expect(lastJson().template).toBeUndefined();
+  });
+
+  it("maps the deprecated shape flags onto a template and warns", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-ow", title: "OW", travellers: [], goals: [] } })
+      .mockResolvedValueOnce({ tripPlanTravellers: [{ id: "t1", firstName: "A", lastName: "B" }] });
 
     await runPlanTrip([
       "--client", "client-1", "--title", "OW",
@@ -654,59 +583,26 @@ describe("plan-trip shape flags integration (VOY-1727)", () => {
       "--one-way", "--flight-only", "--json",
     ]);
 
-    const out = lastJson();
-    expect(out.ok).toBe(true);
-    expect(out.shape).toEqual(["one-way", "flight-only"]);
-    expect(out.prunedGoals.map((g: any) => g.id).sort()).toEqual(["g-hotel", "g-ret"]);
-    expect(out.pruneWarnings).toBeUndefined();
-    // 2 scaffold calls + 1 goals list + 2 deletes
-    expect(mockGraphql).toHaveBeenCalledTimes(5);
-    // The flight search next-step must NOT carry --return.
-    const flightStep = out.nextSteps.find((s: string) => s.includes("search flights"));
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input).toMatchObject({ template: "OneWayFlight" });
+    expect(mockWarn).toHaveBeenCalledWith(expect.stringContaining("--template OneWayFlight"));
+    // The flight search next-step must not carry --return on a one-way.
+    const flightStep = lastJson().nextSteps.find((s: string) => s.includes("search flights"));
     expect(flightStep).toBeTruthy();
     expect(flightStep).not.toContain("--return");
   });
 
-  it("delete failure is a warning, not a fatal — surfaces manual goal-remove fallback", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-f", title: "F" } })
-      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS })
-      .mockResolvedValueOnce({ deleteTripPlanGoal: false }) // server declines
-      .mockResolvedValueOnce({ tripPlanTravellers: [] }); // TRAVELLERS fallback
-
-    await runPlanTrip(["--client", "client-1", "--title", "F", "--one-way", "--json"]);
-
-    const out = lastJson();
-    expect(out.ok).toBe(true);
-    expect(out.prunedGoals).toEqual([]);
-    expect(out.pruneWarnings.length).toBe(1);
-    expect(out.pruneWarnings[0]).toContain("plans goal-remove g-ret --force");
-  });
-
-  // VOY-1761: no shape flags still CONVERGES the goal graph (ensure-goals fixes
-  // the latent 1513 break where a blank plan would have no flight goal), but on
-  // the template world it adds/prunes nothing, so the --json contract is
-  // unchanged: no shape/prunedGoals/addedGoals fields.
-  it("no shape flags: converges silently on a template plan (no shape/prunedGoals/addedGoals fields)", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ createTripPlan: { id: "plan-p", title: "P" } })
-      .mockResolvedValueOnce({ tripPlanGoals: SCAFFOLD_GOALS }) // template already complete → no adds/prunes
-      .mockResolvedValueOnce({ tripPlanTravellers: [] });
-
-    await runPlanTrip(["--client", "client-1", "--title", "P", "--json"]);
-
-    const out = lastJson();
-    // create + ensure-goals list + travellers (no deletes, no adds).
-    expect(mockGraphql).toHaveBeenCalledTimes(3);
-    expect(out.shape).toBeUndefined();
-    expect(out.prunedGoals).toBeUndefined();
-    expect(out.addedGoals).toBeUndefined();
-  });
-
-  it("--one-way with --return fails validation before any API call", async () => {
+  it("rejects an unknown --template before any API call", async () => {
     await expect(
-      runPlanTrip(["--client", "client-1", "--title", "X", "--one-way", "--return", "2026-10-26", "--json"]),
-    ).rejects.toThrow(/--one-way conflicts with --return/);
+      runPlanTrip(["--client", "client-1", "--title", "X", "--template", "RoundTrip", "--json"]),
+    ).rejects.toThrow(/Unknown --template "RoundTrip"/);
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("rejects mixing --template with a deprecated flag before any API call", async () => {
+    await expect(
+      runPlanTrip(["--client", "client-1", "--title", "X", "--template", "HotelOnly", "--hotel-only", "--json"]),
+    ).rejects.toThrow(/--template replaces/);
     expect(mockGraphql).not.toHaveBeenCalled();
   });
 });

@@ -10,14 +10,14 @@ import { validateDate, warnPastDate, validateIata, deriveBaseUrl, shellArg } fro
 import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { progress, warn, fatal, jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
-import { scaffoldPlan, addTravellers, validateShapeFlags, selectGoalsToPrune, generateTripTitle } from "./scaffold.js";
+import { scaffoldPlan, addTravellers, resolveTemplate, generateTripTitle, TRIP_PLAN_TEMPLATES } from "./scaffold.js";
 import { isInteractive, promptText } from "../prompt.js";
-import type { PrunableGoal, ShapeFlags } from "./scaffold.js";
+import type { ScaffoldedGoal, TripPlanTemplate } from "./scaffold.js";
 
-// Re-exported so existing specs (which import them from ./plan-trip) keep
-// working after these pruning/shape helpers moved to scaffold.ts.
-export { validateShapeFlags, selectGoalsToPrune };
-export type { PrunableGoal, ShapeFlags };
+// Re-exported so callers and specs can reach the template helpers from either
+// module (they used to import the shape/prune helpers from here).
+export { resolveTemplate, TRIP_PLAN_TEMPLATES };
+export type { ScaffoldedGoal, TripPlanTemplate };
 
 interface TripPlan {
   id: string;
@@ -99,25 +99,27 @@ export function registerPlanTripCommand(program: Command): void {
     .description("Scaffold a trip plan (plan + travellers + goal graph), then compose it with search / selection-options / select. Use --plan <id> to add to an existing plan.")
     .addHelpText("after", `
 Examples:
-  # Scaffold a round-trip flight + hotel plan; prints the compose next-steps:
+  # Round-trip flight + hotel (the default template); prints the compose next-steps:
   voyagier plan-trip --client "Smith Family" --title "Paris Trip" \\
     --from DCA --to Paris --depart <YYYY-MM-DD> --return <YYYY-MM-DD> \\
     --hotel Paris --travellers "John Doe" --json
 
-  # One-way, no hotel: pass --one-way --flight-only so the scaffold's default
-  # Return Flights + hotel goals are pruned (otherwise they block readiness
-  # and the fare never carts). Omitting --return alone does NOT make the
-  # plan one-way — the default goal graph still expects a return leg.
+  # One-way, no hotel:
   voyagier plan-trip --title "London" --from JFK --to London \\
-    --depart <YYYY-MM-DD> --one-way --flight-only --travellers "Jane Smith" --json
+    --depart <YYYY-MM-DD> --template OneWayFlight --travellers "Jane Smith" --json
 
   # Hotel-only (no flights at all):
   voyagier plan-trip --title "Nashville Stay" --hotel Nashville \\
-    --checkin <YYYY-MM-DD> --checkout <YYYY-MM-DD> --hotel-only --json
+    --checkin <YYYY-MM-DD> --checkout <YYYY-MM-DD> --template HotelOnly --json
 
-  The default goal graph is a round-trip + hotel TEMPLATE. Prune goals your
-  brief doesn't need — via these shape flags at scaffold time, or any time
-  with: voyagier plans goals <planId>  →  voyagier plans goal-remove <goalId> --force
+  PICK THE TEMPLATE THAT MATCHES THE TRIP. Goals the trip doesn't need are not
+  inert: an unwanted return leg blocks one-way inventory from ever fetching AND
+  stops the fare from carting, and unwanted goals hold readiness at BLOCKED.
+  Omitting --return does NOT make a trip one-way — the template does.
+  Change goals later with: voyagier plans goals <planId>
+                        →  voyagier plans goal-remove <goalId> --force
+
+  Templates: ${TRIP_PLAN_TEMPLATES.join(" | ")}
 
   Then follow the printed next-steps: search → selection-options --wait → select.
   Full agent reference: voyagier agent-docs
@@ -134,9 +136,10 @@ Examples:
     .option("--checkout <date>", "Hotel check-out date (defaults to --return or --depart + 1 day)")
     .option("--guests <n>", "Number of guests (defaults to traveller count)")
     .option("--travellers <names>", "Comma-separated traveller names, e.g. \"John Doe, Jane Doe\"")
-    .option("--one-way", "One-way trip: prune the scaffold's default Return Flights goal (conflicts with --return)")
-    .option("--flight-only", "No lodging: prune the scaffold's default hotel goal (conflicts with --hotel)")
-    .option("--hotel-only", "Lodging only: prune ALL flight goals from the scaffold (conflicts with flight flags)")
+    .option("--template <name>", `Goal graph to create: ${TRIP_PLAN_TEMPLATES.join(" | ")} (default: RoundTripFlightAndHotel)`)
+    .option("--one-way", "DEPRECATED: use --template OneWayFlightAndHotel")
+    .option("--flight-only", "DEPRECATED: use --template RoundTripFlight (or OneWayFlight with --one-way)")
+    .option("--hotel-only", "DEPRECATED: use --template HotelOnly")
     .option("--json", "Output raw JSON")
     .option("--agent", "Output plain markdown for AI agents")
     .option("--no-input", "Never prompt for missing input; fail instead (for scripts, agents, CI)")
@@ -157,8 +160,10 @@ Examples:
           }
         }
 
-        // Validate trip-shape flag combinations early (cheap, no API calls).
-        validateShapeFlags(opts);
+        // Resolve the template (and reject conflicting flags) early — cheap, no
+        // API calls.
+        const { template, deprecationWarning } = resolveTemplate(opts);
+        if (deprecationWarning) warn(deprecationWarning);
 
         // Validate inputs
         if (opts.depart) {
@@ -183,25 +188,10 @@ Examples:
           validateIata(opts.from, "--from");
         }
 
-        // ── Trip shape (VOY-1727) ───────────────────────────────────────
-        // The scaffold's default goal graph is a round-trip + hotel TEMPLATE.
-        // Un-pruned goals the brief doesn't need are not inert: an unpruned
-        // Return Flights goal blocks one-way inventory fetch AND fare carting;
-        // unpruned hotel/flight goals pin `plan-status` readiness at BLOCKED
-        // forever. Shape flags prune at scaffold time so partial-scope plans
-        // can genuinely reach READY_TO_BOOK.
-        const shape: ShapeFlags = {
-          oneWay: !!opts.oneWay,
-          flightOnly: !!opts.flightOnly,
-          hotelOnly: !!opts.hotelOnly,
-        };
-
         // Step 1: Create (via the shared scaffold) or fetch an existing plan.
         let plan: TripPlan;
         let travellerIds: string[] = [];
-        let prunedGoals: { id: string; name?: string; type: string }[] = [];
-        let addedGoals: { id: string; name?: string; type: string }[] = [];
-        let pruneWarnings: string[] = [];
+        let goals: ScaffoldedGoal[] = [];
         if (opts.plan) {
           if (!json && !agent) progress("Fetching existing trip plan...");
           const planData = await graphql<{ tripPlan: TripPlan }>(
@@ -214,32 +204,26 @@ Examples:
             travellerIds = await addTravellers(plan.id, opts.travellers, { quiet: json || agent });
           }
         } else {
-          // The create path — client resolve → createTripPlan → add travellers
-          // → shape pruning — lives in scaffoldPlan, shared with `plans create`
-          // (and search's auto-draft, VOY-1761). Progress + the auto-resolved
-          // note are suppressed for --json/--agent consumers via `quiet`.
+          // The create path — client resolve → createTripPlan (template + party
+          // in one call) — lives in scaffoldPlan, shared with `plans create` and
+          // search's auto-draft. Progress + the auto-resolved note are
+          // suppressed for --json/--agent consumers via `quiet`.
           const scaffolded = await scaffoldPlan({
             client: opts.client,
             title: opts.title as string,
             travellers: opts.travellers,
-            shape,
-            // Always converge the goal graph: prunes the template's extras (as
-            // before) AND — on a post-1513 blank plan — adds the flight/hotel
-            // goal that plan-trip's own "next step: search" hint depends on.
-            ensureGoals: true,
+            template,
             quiet: json || agent,
             interactive: isInteractive(opts),
             clientHintFlags: buildClientHintFlags(opts),
           });
           plan = scaffolded.plan;
           travellerIds = scaffolded.travellerIds;
-          prunedGoals = scaffolded.prunedGoals;
-          addedGoals = scaffolded.addedGoals;
-          pruneWarnings = scaffolded.pruneWarnings;
+          goals = scaffolded.goals;
         }
 
-        // Resolve traveller IDs for existing plans, and for new plans created
-        // without --travellers (scaffold only returns the IDs it added).
+        // Existing plans (and any create that came back without them) still
+        // need a roster read.
         if (travellerIds.length === 0) {
           const tData = await graphql<{ tripPlanTravellers: Traveller[] }>(
             GET_TRAVELLERS_BRIEF,
@@ -255,10 +239,10 @@ Examples:
         // ── Demoted to scaffold (VOY-1414) ──────────────────────────────
         // plan-trip no longer auto-searches/auto-selects through the deleted
         // flight/sub-selection mutations. In the Goals/Blueprint model the
-        // plan is created with a default goal graph; the agent then composes
-        // the trip with the shape-agnostic primitives. plan-trip just gives a
-        // starting point and hands off — it is NOT the only door and must not
-        // push agents down a fixed shape.
+        // plan is created with the template's goal graph; the agent then
+        // composes the trip with the shape-agnostic primitives. plan-trip just
+        // gives a starting point and hands off — it is NOT the only door and
+        // must not push agents down a fixed shape.
         const baseUrl2 = deriveBaseUrl(getApiUrl());
         const planUrl = clientPlanUrl(plan.id, baseUrl2);
 
@@ -286,33 +270,20 @@ Examples:
         nextSteps.push(`voyagier selection-options <selectionId> --wait --json   # poll options for a selection`);
         nextSteps.push(`voyagier select --selection-id <id> --option-id <id>   # choose an option`);
 
-        const shapeLabels = [
-          shape.oneWay ? "one-way" : null,
-          shape.flightOnly ? "flight-only" : null,
-          shape.hotelOnly ? "hotel-only" : null,
-        ].filter((s): s is string => s !== null);
-
         const result = {
           ok: true,
           tripPlanId: plan.id,
           title: plan.title,
           travellerIds,
           scaffolded: true,
-          note: "plan-trip creates a starting plan + default goal graph (a round-trip + hotel TEMPLATE); compose the trip with the primitives below. Prune goals your brief doesn't need — shape flags (--one-way/--flight-only/--hotel-only) at scaffold time, or `plans goal-remove <goalId> --force` any time.",
+          note: "plan-trip creates a starting plan with the template's goal graph; compose the trip with the primitives below. Pass --template to pick a different shape at creation, or change goals any time with `plans goal-add` / `plans goal-remove <goalId> --force`.",
           ...planUrls(plan.id, baseUrl2),
-          ...(shapeLabels.length > 0
-            ? {
-                shape: shapeLabels,
-                prunedGoals: prunedGoals.map(g => ({ id: g.id, name: g.name ?? null, type: g.type })),
-              }
+          // The template applied and the graph it produced — never be silent
+          // about which goals now exist, since that decides what can be booked.
+          ...(template ? { template } : {}),
+          ...(goals.length > 0
+            ? { goals: goals.map(g => ({ id: g.id, name: g.name ?? null, type: g.type })) }
             : {}),
-          // Additive (absent in the template world, so back-compat holds): on a
-          // blank plan (VOY-1513) the ensure step ADDS goals — never be silent
-          // about that mutation, and surface any ensure warnings too.
-          ...(addedGoals.length > 0
-            ? { addedGoals: addedGoals.map(g => ({ id: g.id, name: g.name ?? null, type: g.type })) }
-            : {}),
-          ...(pruneWarnings.length > 0 ? { pruneWarnings } : {}),
           nextSteps,
         };
 
@@ -320,15 +291,17 @@ Examples:
           jsonOutput(result);
           return;
         }
+
+        const goalSummary = goals.length > 0 ? goals.map(g => g.name ?? g.type).join(", ") : null;
+
         if (agent) {
           const lines = [
             `### Plan ready: ${plan.title}`,
             "",
             `Plan ID: \`${plan.id}\``,
             `👉 ${planUrl}`,
-            ...(prunedGoals.length > 0
-              ? ["", `**Shape:** ${shapeLabels.join(" + ")} — pruned ${prunedGoals.length} default goal(s): ${prunedGoals.map(g => g.name ?? g.id).join(", ")}`]
-              : []),
+            ...(template ? ["", `**Template:** ${template}`] : []),
+            ...(goalSummary ? [`**Goals:** ${goalSummary}`] : []),
             "",
             "**Compose the trip:**",
             ...nextSteps.map((s) => `- \`${s}\``),
@@ -339,8 +312,11 @@ Examples:
 
         console.log(chalk.green(`\n✓ Plan ready: ${plan.title}`));
         console.log(chalk.dim(`  ${plan.id}`));
-        if (prunedGoals.length > 0) {
-          console.log(chalk.dim(`  shape: ${shapeLabels.join(" + ")} — pruned ${prunedGoals.map(g => g.name ?? g.id).join(", ")}`));
+        if (template) {
+          console.log(chalk.dim(`  template: ${template}`));
+        }
+        if (goalSummary) {
+          console.log(chalk.dim(`  goals: ${goalSummary}`));
         }
         console.log(chalk.bold("\nCompose the trip:"));
         for (const s of nextSteps) console.log(`  ${chalk.cyan(s)}`);
