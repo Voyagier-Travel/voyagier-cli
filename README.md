@@ -158,6 +158,7 @@ It's a thin adapter: each tool call self-spawns the CLI as a subprocess with `--
 | `doctor` | `doctor` | Health check: auth, schema, state, version. |
 | `clients_list` | `clients list` | Roster of CRM clients; `page`/`limit` page through it. |
 | `client_create` | `clients upsert` | Idempotent by email; a plan needs a client. |
+| `plans_list` | `plans list` | Owned + shared plans in one list, each tagged `relationship` `owner`/`shared`; the plan-discovery entry point. `relationship`/`active`/`page`/`limit` filter and page it. |
 | `plan_trip` | `plan-trip` | Scaffold a plan + goal graph from a `template`; returns `nextSteps`. |
 | `travellers_add` | `travellers add` | Adds the whole party in one call; required before search. |
 | `search_flights` | `search flights` | Async — `optionCount 0` means poll options. |

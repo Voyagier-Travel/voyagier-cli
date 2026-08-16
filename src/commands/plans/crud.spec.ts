@@ -589,54 +589,157 @@ describe("plans list", () => {
   const iso = (offsetDays: number) => new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10);
   const planA = { ...samplePlan, id: "plan-a", title: "Alpha", startDate: iso(-30), endDate: iso(-25) };
   const planB = { ...samplePlan, id: "plan-b", title: "Beta", startDate: iso(30), endDate: iso(40) };
+  const sharedC = { ...samplePlan, id: "plan-c", title: "Gamma (shared)", startDate: iso(10), endDate: iso(15) };
+  const sharedD = { ...samplePlan, id: "plan-d", title: "Delta (shared, past)", startDate: iso(-60), endDate: iso(-55) };
 
-  it("--json returns items enriched with url + paging metadata", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlans: { items: [planA, planB], count: 2, page: 1, limit: 20 } });
+  // The list now fetches BOTH tripPlans (owned) and sharedTripPlans (shared),
+  // page 1 / limit 100 each, then merges + tags + sorts + paginates client-side.
+  // Helper: queue the owned response then the shared response, in call order.
+  const mockOwnedAndShared = (owned: any[], shared: any[]): void => {
+    mockGraphql
+      .mockResolvedValueOnce({ tripPlans: { items: owned, count: owned.length, page: 1, limit: 100 } })
+      .mockResolvedValueOnce({ sharedTripPlans: { count: shared.length, items: shared } });
+  };
+
+  it("fetches page 1 / limit 100 of BOTH tripPlans and sharedTripPlans", async () => {
+    mockOwnedAndShared([planB], [sharedC]);
+    await runPlans(["list", "--json"]);
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    const [, ownedVars] = mockGraphql.mock.calls[0] as [string, any];
+    const [, sharedVars] = mockGraphql.mock.calls[1] as [string, any];
+    expect(ownedVars).toEqual({ page: 1, limit: 100 });
+    expect(sharedVars).toEqual({ limit: 100, page: 1 });
+  });
+
+  it("--json merges owned + shared and tags each item's relationship", async () => {
+    mockOwnedAndShared([planB], [sharedC]);
     await runPlans(["list", "--json"]);
     const out = JSON.parse(writes.join(""));
     expect(out.total).toBe(2);
     expect(out.page).toBe(1);
     expect(out.limit).toBe(20);
     expect(out.items).toHaveLength(2);
-    expect(out.items[0].url).toContain("/plans/plan-a");
-    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
-    expect(vars).toEqual({ page: 1, limit: 20 });
+    const byId = Object.fromEntries(out.items.map((p: any) => [p.id, p]));
+    expect(byId["plan-b"].relationship).toBe("owner");
+    expect(byId["plan-c"].relationship).toBe("shared");
   });
 
-  it("--active filters out past plans and marks the result filtered", async () => {
-    // planA ended 25 days ago (past); planB starts in 30 days (future).
-    mockGraphql.mockResolvedValueOnce({ tripPlans: { items: [planA, planB], count: 2, page: 1, limit: 20 } });
+  it("--json own item carries the full url trio; shared item carries only url", async () => {
+    mockOwnedAndShared([planB], [sharedC]);
+    await runPlans(["list", "--json"]);
+    const out = JSON.parse(writes.join(""));
+    const own = out.items.find((p: any) => p.id === "plan-b");
+    const shared = out.items.find((p: any) => p.id === "plan-c");
+    // Own keeps the existing planUrls spread (url/clientUrl/advisorUrl).
+    expect(own.url).toContain("/me/trips/plans/plan-b");
+    expect(own.clientUrl).toContain("/me/trips/plans/plan-b");
+    expect(own.advisorUrl).toContain("/advisor/plans/plan-b");
+    // Shared gets a client plan url and NO advisor url.
+    expect(shared.url).toContain("/me/trips/plans/plan-c");
+    expect(shared).not.toHaveProperty("advisorUrl");
+  });
+
+  it("--relationship owner filters to owned plans only", async () => {
+    mockOwnedAndShared([planB], [sharedC]);
+    await runPlans(["list", "--relationship", "owner", "--json"]);
+    const out = JSON.parse(writes.join(""));
+    expect(out.items).toHaveLength(1);
+    expect(out.items[0].id).toBe("plan-b");
+    expect(out.items[0].relationship).toBe("owner");
+  });
+
+  it("--relationship shared filters to shared plans only", async () => {
+    mockOwnedAndShared([planB], [sharedC]);
+    await runPlans(["list", "--relationship", "shared", "--json"]);
+    const out = JSON.parse(writes.join(""));
+    expect(out.items).toHaveLength(1);
+    expect(out.items[0].id).toBe("plan-c");
+    expect(out.items[0].relationship).toBe("shared");
+  });
+
+  it("rejects an invalid --relationship with a VALIDATION error", async () => {
+    await expect(runPlans(["list", "--relationship", "everyone", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.VALIDATION,
+    });
+  });
+
+  it("paginates the merged list client-side with --page/--limit", async () => {
+    // Two owned + one shared = 3 merged. limit 2 → page 1 has 2, page 2 has 1.
+    mockOwnedAndShared([planA, planB], [sharedC]);
+    await runPlans(["list", "--limit", "2", "--page", "2", "--json"]);
+    const out = JSON.parse(writes.join(""));
+    expect(out.total).toBe(3);
+    expect(out.page).toBe(2);
+    expect(out.limit).toBe(2);
+    expect(out.items).toHaveLength(1);
+    // Sort is startDate DESC (undated last): page 2 must hold the OLDEST dated plan.
+    const all = [planA, planB, sharedC];
+    const oldest = [...all].sort((a, b) => (a.startDate ?? "9999").localeCompare(b.startDate ?? "9999"))[0];
+    expect(out.items[0].id).toBe(oldest.id);
+    expect(out.truncated).toBeUndefined();
+  });
+
+  it("flags truncation when the server holds more than the fetched 100 of a kind", async () => {
+    // Server reports 250 owned plans but returns only the fetched page.
+    mockGraphql
+      .mockResolvedValueOnce({ tripPlans: { items: [planA, planB], count: 250, page: 1, limit: 100 } })
+      .mockResolvedValueOnce({ sharedTripPlans: { count: 1, items: [sharedC] } });
+    await runPlans(["list", "--json"]);
+    const out = JSON.parse(writes.join(""));
+    expect(out.truncated).toBe(true);
+  });
+
+  it("--active filters the merged list and marks it filtered", async () => {
+    // Own: planA past, planB future. Shared: sharedC future, sharedD past.
+    mockOwnedAndShared([planA, planB], [sharedC, sharedD]);
     await runPlans(["list", "--active", "--json"]);
     const out = JSON.parse(writes.join(""));
     expect(out.filtered).toBe(true);
-    expect(out.total).toBe(1);
-    expect(out.items).toHaveLength(1);
-    expect(out.items[0].id).toBe("plan-b");
-    // --active always fetches page 1, limit 100 regardless of paging flags.
-    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
-    expect(vars).toEqual({ page: 1, limit: 100 });
+    expect(out.total).toBe(2);
+    const ids = out.items.map((p: any) => p.id).sort();
+    expect(ids).toEqual(["plan-b", "plan-c"]);
   });
 
-  it("--agent renders a markdown list with plan links", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlans: { items: [planB], count: 1, page: 1, limit: 20 } });
+  it("owned-only account: empty shared list leaves owned behaviour intact (plus relationship tag)", async () => {
+    mockOwnedAndShared([planA, planB], []);
+    await runPlans(["list", "--json"]);
+    const out = JSON.parse(writes.join(""));
+    expect(out.total).toBe(2);
+    expect(out.items).toHaveLength(2);
+    for (const item of out.items) expect(item.relationship).toBe("owner");
+    // planB (future) sorts before planA (past) — startDate DESC.
+    expect(out.items[0].id).toBe("plan-b");
+    expect(out.items[1].id).toBe("plan-a");
+  });
+
+  it("--agent renders a markdown list with own + shared, tagging shared plans", async () => {
+    mockOwnedAndShared([planB], [sharedC]);
     await runPlans(["list", "--agent"]);
     const out = writes.join("");
     expect(out).toContain("## Your Trip Plans");
     expect(out).toContain("**Beta**");
-    expect(out).toContain("/plans/plan-b");
+    expect(out).toContain("/me/trips/plans/plan-b");
+    // Shared plan carries the (shared with you) marker and a client plan url.
+    expect(out).toContain("**Gamma (shared)**");
+    expect(out).toContain("shared with you");
+    expect(out).toContain("/me/trips/plans/plan-c");
   });
 
   it("--agent shows an empty-state line when there are no plans", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlans: { items: [], count: 0, page: 1, limit: 20 } });
+    mockOwnedAndShared([], []);
     await runPlans(["list", "--agent"]);
     expect(writes.join("")).toContain("_No trip plans found._");
   });
 
-  it("human mode prints a heading with the plan count", async () => {
-    mockGraphql.mockResolvedValueOnce({ tripPlans: { items: [planA, planB], count: 2, page: 1, limit: 20 } });
+  it("human mode prints a heading with the merged plan count and per-relationship icons", async () => {
+    mockOwnedAndShared([planA, planB], [sharedC]);
     await runPlans(["list"]);
-    expect(logJoined()).toContain("2 trip plans");
-    expect(logJoined()).toContain("Alpha");
+    const out = logJoined();
+    expect(out).toContain("3 trip plans");
+    expect(out).toContain("Alpha");
+    expect(out).toContain("Gamma (shared)");
+    expect(out).toContain("🤝"); // shared icon
+    expect(out).toContain("📋"); // own icon
   });
 
   it("rejects --page below 1 with a VALIDATION error", async () => {
