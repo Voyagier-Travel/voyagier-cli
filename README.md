@@ -31,11 +31,13 @@ A trip plan is a **goal graph**: the plan ships with goals (flights, hotel, date
 voyagier clients upsert --email "smith@example.com" --name "Smith Family" \
   --type Individual --json
 
-# 2) Scaffold a plan (creates the plan + default goal graph; optionally adds
-#    travellers if you pass --travellers)
+# 2) Scaffold a plan (creates the plan + the goal graph its template names;
+#    optionally adds the party if you pass --travellers)
 voyagier plan-trip --client "Smith Family" --title "Smith — Tokyo" --json
+# --template picks the shape: RoundTripFlightAndHotel (default) | RoundTripFlight
+#   | OneWayFlight | OneWayFlightAndHotel | HotelOnly | Blank
 # Returns a scaffold summary: { ok, tripPlanId, title, travellerIds, scaffolded,
-# note, url, nextSteps } — the nextSteps are the compose commands for this plan.
+# template, goals, note, url, nextSteps } — nextSteps are the compose commands.
 
 # 3) Add a traveller
 voyagier travellers add --plan <PLAN_ID> --first John --last Smith \
@@ -80,7 +82,7 @@ The cart materializes only bookable, fare/room-level options — the per-item `i
 | `voyagier doctor` | Self-check: auth, schema, reachability, state, version |
 | `voyagier clients` | Advisor CRM (`list`, `get`, `create`, `update`, `archive`, `upsert`) |
 | `voyagier plans` | `create`, `list`, `get`, `summary`, `delete`; `plans goals` for the goal graph + readiness; `plans bookable` for pre-flight |
-| `voyagier plan-trip` | Scaffold a plan (plan + default goal graph; adds travellers only if `--travellers` is given) and print compose next-steps |
+| `voyagier plan-trip` | Scaffold a plan (plan + the goal graph its `--template` names; adds the party only if `--travellers` is given) and print compose next-steps |
 | `voyagier plan-status <planId>` | One-shot readiness: BOOKED / READY_TO_BOOK / BLOCKED / IN_PROGRESS, ordered blockers, runnable next steps |
 | `voyagier travellers` | Add, list, update, remove travellers |
 | `voyagier traveller-groups` | Manage traveller groups (list, create, update, delete, members) |
@@ -156,8 +158,8 @@ It's a thin adapter: each tool call self-spawns the CLI as a subprocess with `--
 | `doctor` | `doctor` | Health check: auth, schema, state, version. |
 | `clients_list` | `clients list` | Roster of CRM clients; `page`/`limit` page through it. |
 | `client_create` | `clients upsert` | Idempotent by email; a plan needs a client. |
-| `plan_trip` | `plan-trip` | Scaffold a plan + goal graph; returns `nextSteps`. |
-| `travellers_add` | `travellers add` | Required before search. |
+| `plan_trip` | `plan-trip` | Scaffold a plan + goal graph from a `template`; returns `nextSteps`. |
+| `travellers_add` | `travellers add` | Adds the whole party in one call; required before search. |
 | `search_flights` | `search flights` | Async — `optionCount 0` means poll options. |
 | `search_hotels` | `search hotels` | Prices are stay totals, not nightly. |
 | `search_activities` | `search activities` | Bookable per slot. |

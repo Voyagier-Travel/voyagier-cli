@@ -8,13 +8,13 @@
 
 ## The model
 
-A trip plan is a **goal graph**. When you create a plan it ships with a default set of goals (flights, hotel, dates, destination, travellers). You compose the trip by **searching against those goals** and **selecting options** on the resulting selections.
+A trip plan is a **goal graph**. When you create a plan you pick a **template**, and it ships with the goals that template names (flights, hotel, dates, destination, travellers). You compose the trip by **searching against those goals** and **selecting options** on the resulting selections.
 
-> ✂️ **The default goal graph is a round-trip + hotel TEMPLATE — prune what the brief doesn't need.** Default goals are not inert: an un-pruned **Return Flights** goal blocks one-way flight inventory from ever fetching AND stops the fare from carting (the fare item generates only when every leg in the journey is picked); un-pruned hotel/flight goals pin `plan-status` readiness at `BLOCKED` forever on decisions the client never asked for. Prune at scaffold time with `plan-trip --one-way` / `--flight-only` / `--hotel-only`, or any time with `voyagier plans goals <planId>` (find the goal id) → `voyagier plans goal-remove <goalId> --force`. A correctly pruned partial-scope plan (one-way, flight-only, hotel-only) reaches a genuine bookable state like any other.
+> 🎯 **Pick the template that matches the brief at creation time.** `plan-trip --template <name>`: `RoundTripFlightAndHotel` (default), `RoundTripFlight`, `OneWayFlight`, `OneWayFlightAndHotel`, `HotelOnly`, `Blank`. Goals the brief doesn't need are not inert: an unwanted **Return Flights** goal blocks one-way flight inventory from ever fetching AND stops the fare from carting (the fare item generates only when every leg in the journey is picked); unwanted hotel/flight goals pin `plan-status` readiness at `BLOCKED` forever on decisions the client never asked for. Omitting `--return` does NOT make a trip one-way — the template does. Add or remove goals later with `voyagier plans goals <planId>` (find the goal id) → `voyagier plans goal-remove <goalId> --force` / `plans goal-add`. A partial-scope plan (one-way, flight-only, hotel-only) reaches a genuine bookable state like any other.
 
 - **Search returns a compact envelope.** `voyagier search ... --json` responds with `{selectionId, optionCount, topOptions[≤10]}` (round trips add `returnSelectionId`) — one-line summaries, not the raw provider dump. Pass `--full` only if you need the complete option objects (large: a real flight search is multi-MB of raw `bookingData`). When search reuses a selection that already has inventory, options are inline immediately; when `optionCount` is 0 the fetch is still running — poll with `voyagier selection-options <selectionId> --wait` until the status is terminal.
 - **Selecting** is done by selection + option ID: `voyagier select --selection-id <id> --option-id <id>`.
-- **`plan-trip` is a scaffold.** It creates the plan + default goal graph (and adds travellers only when you pass `--travellers`), then prints the compose next-steps. It does not search or select for you. Shape flags `--one-way`, `--flight-only`, `--hotel-only` prune the template's default goals to match the brief.
+- **`plan-trip` is a scaffold.** It creates the plan with the template's goal graph (and the party, when you pass `--travellers`), then prints the compose next-steps. It does not search or select for you. `--template <name>` picks the shape; the old `--one-way`/`--flight-only`/`--hotel-only` flags still work as deprecated aliases.
 - **`plans goals <planId>`** is your readiness view — it shows the goal graph and what still needs a decision. **`plans goal-remove <goalId> --force`** deletes a goal the brief doesn't need.
 - **Multi-source bookability.** The cart materializes only BOOKABLE options (fare/room-level items — e.g. a Fare & Cabin item for flights, generated once all legs are picked; a baseline room-rate for hotels, generated once a room is picked). Activities are bookable per slot. Every vertical is a [decision chain](#decision-chains): the bookable item is the leaf, never the parent. Check the cart's per-item `isBookable` (or `plan-status`'s `cart.bookableCount`) — don't assume by type. Cart items from live-rate suppliers may report `source: "OTHER"` — that's normal, not an error.
 - **Computed itinerary.** `voyagier itinerary <planId>` reads the platform's `tripPlanEvents` resolver.
@@ -55,19 +55,18 @@ voyagier doctor --json
 voyagier clients upsert --email "smith@example.com" --name "Smith Family" --type Individual --json
 # Returns: { client: { id, name, ... }, ok: true, created: true|false }
 
-# 2) Scaffold the plan + default goal graph. clientId is required; --client
+# 2) Scaffold the plan + its goal graph. clientId is required; --client
 #    accepts id, email, or name. Omit it to auto-pick when you have exactly
 #    one active client (the CLI logs `auto-resolved client: ...` to stderr).
 voyagier plan-trip --client "Smith Family" --title "Smith — Tokyo" --json
 # Optional scaffold shortcuts: --from/--to/--depart/--return pre-bind the
 # flight search inputs, --hotel/--checkin/--checkout/--guests the hotel ones,
-# --travellers "John Doe, Jane Doe" adds travellers inline.
-# Trip-shape flags prune default goals the brief doesn't need (see the
-# template note above): --one-way (drops Return Flights), --flight-only (drops
-# the hotel goal), --hotel-only (drops ALL flight goals). Omitting --return
-# alone does NOT make a plan one-way — pass --one-way.
-# Returns a scaffold summary: { ok, tripPlanId, title, travellerIds, scaffolded, note, url, nextSteps }
-# (travellerIds is empty unless you passed --travellers).
+# --travellers "John Doe, Jane Doe" adds the party inline.
+# --template picks the goal graph (see the template note above):
+#   RoundTripFlightAndHotel (default) | RoundTripFlight | OneWayFlight
+#   | OneWayFlightAndHotel | HotelOnly | Blank
+# Omitting --return alone does NOT make a plan one-way — the template does.
+# Returns a scaffold summary: { ok, tripPlanId, title, travellerIds, scaffolded, template, goals, note, url, nextSteps }
 # Read nextSteps — they are the exact compose commands for this plan.
 
 # 3) Add travellers (required before search)
@@ -376,7 +375,7 @@ voyagier clients upsert --email <e> --name <n> --type <t> [--phone] --json
 
 ### Plans (Style B JSON)
 
-To create a plan with its default goal graph, prefer `voyagier plan-trip --client <ref> --title <t>` (scaffold). `plans create` makes a bare plan record.
+To create a plan with a goal graph, prefer `voyagier plan-trip --client <ref> --title <t> [--template <name>]` (scaffold). `plans create` takes the default template with no travellers.
 
 ```bash
 voyagier plans create [--client <ref>] --title <title> --json
@@ -616,7 +615,7 @@ voyagier mcp                          # run as a Model Context Protocol (MCP) st
 |---|---|---|---|
 | Activity | ✅ per slot | Activity supplier | Pre-check via cart `isBookable` flag. |
 | Hotel | ✅ via room-rate item | Accommodation supplier (advisor inventory) | Pick hotel → pick room; the baseline HotelRoomRate is auto-carted (`isBookable: true`). The parent Hotel/room picks are never carted. Rate-less listings stay display-only. |
-| Flight | ✅ via Fare & Cabin item | Air supplier (GDS) | The cart materializes a fare-level (FlightClass) item once ALL legs **in the journey's goal graph** are picked (prune the Return Flights goal for one-way, or the fare never generates). Often defaults to Economy, but can require an explicit pick — verify via the cart. The parent Flight pick itself is never carted. |
+| Flight | ✅ via Fare & Cabin item | Air supplier (GDS) | The cart materializes a fare-level (FlightClass) item once ALL legs **in the journey's goal graph** are picked (use a one-way template so there is no return leg, or the fare never generates). Often defaults to Economy, but can require an explicit pick — verify via the cart. The parent Flight pick itself is never carted. |
 | Ride | ❌ | — | Selection type exists; no booking source wired. |
 | Restaurant | ❌ | — | Selection type exists; booking path unclear. |
 
@@ -643,8 +642,8 @@ Manual lookup: `voyagier search airports "tokyo" --json`.
 
 - **JSON shape is not uniform across commands** (see Output Conventions above).
 - **Search options may lag.** When the reused selection already has inventory, `search --json` returns priced `topOptions` inline; when `optionCount` is 0 the fetch is still running — poll `voyagier selection-options <selectionId> --wait` until the status is terminal before selecting.
-- **`plan-trip` is a scaffold.** It creates the plan + default goal graph (travellers only with `--travellers`) and prints compose next-steps; it does not search or select. Follow its `nextSteps`.
-- **Un-pruned default goals break partial-scope plans.** The scaffold template is round-trip + hotel. One-way brief? An un-pruned Return Flights goal means `search flights` returns `optionCount: 0` forever (looks like `blockedOnUnavailable: true` / a dead `AWAITING_INPUT`) and the cart never fills. Flight-only or hotel-only brief? Un-pruned goals hold `readiness: BLOCKED` even when `book --dry-run` is clean. Prune with `plan-trip` shape flags or `plans goal-remove <goalId> --force` (see the template note at the top).
+- **`plan-trip` is a scaffold.** It creates the plan with the template's goal graph (travellers only with `--travellers`) and prints compose next-steps; it does not search or select. Follow its `nextSteps`.
+- **The wrong template breaks partial-scope plans.** The default is round-trip + hotel. One-way brief? A Return Flights goal you didn't want means `search flights` returns `optionCount: 0` forever (looks like `blockedOnUnavailable: true` / a dead `AWAITING_INPUT`) and the cart never fills. Flight-only or hotel-only brief? Unwanted goals hold `readiness: BLOCKED` even when `book --dry-run` is clean. Pass the right `--template` at creation, or fix it after with `plans goal-remove <goalId> --force` (see the template note at the top).
 - **`plan-trip` requires a client.** Pass `--client <id|email|name>`. With exactly one active client the flag is optional and the CLI auto-picks (logs `auto-resolved client: ...` to stderr). With zero active clients you get `NO_CLIENTS`; with multiple, `MULTIPLE_CLIENTS`.
 - **`book` always pins the checkout to the gated bookable set via `itemIds`** — `--types` / `--only-bookable` narrow that set server-side. You do not need to curate the cart to control what's charged.
 - **Unpaid (Pending) checkout sessions are invisible to `book --status` and the pre-flight** — the server excludes them. Never retry a successful `book`; you'd mint a second payable link.
