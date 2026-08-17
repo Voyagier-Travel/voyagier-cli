@@ -252,7 +252,7 @@ The CLI has two payload styles. Pick the right shape for the command you're call
 // clients get:     { "client": { id, name, ... } }
 // clients upsert:  { "client": { ... }, "ok": true, "created": false }
 // plans create:    { "id": "...", "title": "...", "url": "...", "clientUrl": "...", "advisorUrl": "...", "planSummary": "..." }
-// plans list:      { "items": [...], "total": 12, "page": 1, "limit": 20 }   (each item carries url/clientUrl/advisorUrl)
+// plans list:      { "items": [...], "total": 12, "page": 1, "limit": 20 }   (each item carries relationship "owner"|"shared"; owned items carry url/clientUrl/advisorUrl, shared items carry url only; covers the 100 most recent plans of each kind — "truncated": true appears when an account holds more)
 // search flights:  { "tripPlanId": "...", "selectionId": "...", "optionCount": N, "topOptions": [≤10 summaries], "callouts": { cheapest/fastest/earliest }, "facets": { priceRange, airlines, nonstop, stops, earliest/latestDeparture }, "url": "...", "clientUrl": "...", "advisorUrl": "..." }   (--full swaps topOptions for the complete options[] dump and omits facets; callouts index the post-filter/sort list; when a --filter drops everything: "filteredToZero": { eliminatedBy, detail, inputCount })
 // select:          { "ok": true, "success": true, "type": "option_selected", ... }
 // selection-options: { "selectionId": "...", "status": "...", "optionCount": N, "options": [...] }
@@ -383,7 +383,14 @@ voyagier plans create [--client <ref>] --title <title> --json
 # required when you have zero or multiple clients.
 # Returns: { ...plan, url, planSummary }
 
-voyagier plans list [--active] [--page <n>] [--limit <n>] --json
+voyagier plans list [--active] [--relationship owner|shared] [--page <n>] [--limit <n>] --json
+# Lists plans you OWN and plans SHARED with you in one merged, client-side-paginated
+# list. Every item carries a relationship: "owner" | "shared" tag; --relationship filters
+# to one side. Owned items carry the full url/clientUrl/advisorUrl trio; shared items
+# carry a client-facing url only. --active output is paginated like any other list
+# (default limit 20) — page through it. The merged list covers the 100 most recent
+# plans of each kind; "truncated": true in the JSON flags a larger account.
+# See "Shared plans & collaborators" below.
 voyagier plans get <id> --json
 voyagier plans summary <id> --json
 # `summary` iterates plan.items; for the canonical time-sorted view use voyagier itinerary <id>.
@@ -396,6 +403,37 @@ voyagier plans bookable <id> --json
 
 voyagier plans delete <id> --force --json   # --force required: also removes the plan's goals, selections, and cart
 ```
+
+### Shared plans & collaborators
+
+Plans use a collaborator model: an owner can invite other users onto a plan as
+`viewer`, `editor`, or `agent`. `voyagier plans list` returns BOTH the plans you
+own AND the plans shared with you, each tagged `relationship: "owner" | "shared"`
+— it is the plan-discovery entry point. Use `--relationship owner|shared` to filter
+one side. `voyagier plans shared` remains as a shared-only convenience view.
+
+```bash
+# The unified list (owned + shared, relationship-tagged):
+voyagier plans list --json
+voyagier plans list --relationship shared --json   # only plans shared with you
+voyagier plans list --relationship owner --json       # only plans you own
+
+# Shared-only convenience view (client-facing url per plan):
+voyagier plans shared [--page <n>] [--limit <n>] --json
+
+# Manage collaborators on a plan you own:
+voyagier plans share <planId> --user <username> --role editor --json   # or --email <addr>
+voyagier plans collaborators <planId> --json                            # who's on the plan
+voyagier plans unshare <planId> --collaborator-id <id> --json           # id from `plans collaborators`
+```
+
+Roles for `plans share --role`: `viewer` (default), `editor`, `agent`. Plan-level
+reads work on shared plans too — `voyagier plans get <id>` and
+`voyagier plan-status <id>` resolve for a shared plan because plan permissions
+admit collaborators, so you can read and act on a shared plan just as on your own
+(subject to your role). Shared plans link via the client plan url
+(`<base>/me/trips/plans/<id>`), the traveller-facing view — not the advisor
+workspace url, which is owner-only.
 
 ### Itinerary (Style A JSON)
 ```bash

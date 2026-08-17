@@ -16,6 +16,7 @@ import {
   buildDoctorArgs,
   buildCreateClientArgs,
   buildClientsListArgs,
+  buildPlansListArgs,
   buildPlanTripArgs,
   buildAddTravellerArgs,
   buildRefreshOptionsArgs,
@@ -46,6 +47,7 @@ const EXPECTED_TOOL_NAMES = [
   "clients_list",
   "client_create",
   "create_client",
+  "plans_list",
   "plan_trip",
   "travellers_add",
   "add_traveller",
@@ -210,6 +212,38 @@ describe("argv builders", () => {
     ]);
     // Either flag alone is forwarded (single-page mode is triggered CLI-side).
     expect(buildClientsListArgs({ limit: 10 })).toEqual(["clients", "list", "--limit", "10", "--json"]);
+  });
+
+  it("plans_list: no flags by default; page/limit/relationship/active forwarded when given; always --json", () => {
+    // Defaults: bare list + --json (no paging/filter flags).
+    expect(buildPlansListArgs({})).toEqual(["plans", "list", "--json"]);
+    // page/limit forwarded and rendered with String().
+    expect(buildPlansListArgs({ page: 2, limit: 50 })).toEqual([
+      "plans", "list", "--page", "2", "--limit", "50", "--json",
+    ]);
+    // relationship forwarded verbatim.
+    expect(buildPlansListArgs({ relationship: "shared" })).toEqual([
+      "plans", "list", "--relationship", "shared", "--json",
+    ]);
+    expect(buildPlansListArgs({ relationship: "owner" })).toEqual([
+      "plans", "list", "--relationship", "owner", "--json",
+    ]);
+    // active is a bare flag, only when true.
+    expect(buildPlansListArgs({ active: true })).toEqual(["plans", "list", "--active", "--json"]);
+    expect(buildPlansListArgs({ active: false })).not.toContain("--active");
+    // All together.
+    expect(buildPlansListArgs({ page: 1, limit: 20, relationship: "owner", active: true })).toEqual([
+      "plans", "list", "--page", "1", "--limit", "20", "--relationship", "owner", "--active", "--json",
+    ]);
+  });
+
+  it("plans_list tool: read-only, snake_case, relationship enum owner|shared", () => {
+    const t = TOOLS.find((x) => x.name === "plans_list")!;
+    expect(t).toBeDefined();
+    expect(t.annotations.readOnlyHint).toBe(true);
+    expect(t.annotations.destructiveHint).not.toBe(true);
+    const relSchema: any = (t as any).inputSchema.relationship;
+    expect(relSchema.unwrap().options).toEqual(["owner", "shared"]);
   });
 
   it("refresh_options: selection positional; --force only when true", () => {
@@ -496,6 +530,7 @@ describe("--json discipline via the table (buildArgs on representative input)", 
     clients_list: {},
     client_create: { email: "a@b.co", name: "n" },
     create_client: { email: "a@b.co", name: "n" },
+    plans_list: {},
     plan_trip: { client: "c", title: "t" },
     travellers_add: { plan_id: "p", first: "f", last: "l" },
     add_traveller: { plan_id: "p", first: "f", last: "l" },
