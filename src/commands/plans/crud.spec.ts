@@ -689,6 +689,19 @@ describe("plans list", () => {
     expect(out.truncated).toBe(true);
   });
 
+  it("does not flag truncation when only the filtered-out side is truncated", async () => {
+    // Owned side truncated (250 > 2 fetched), but --relationship shared shows
+    // only the shared side, which is complete — no truncated flag.
+    mockGraphql
+      .mockResolvedValueOnce({ tripPlans: { items: [planA, planB], count: 250, page: 1, limit: 100 } })
+      .mockResolvedValueOnce({ sharedTripPlans: { count: 1, items: [sharedC] } });
+    await runPlans(["list", "--relationship", "shared", "--json"]);
+    const out = JSON.parse(writes.join(""));
+    expect(out.truncated).toBeUndefined();
+    expect(out.items).toHaveLength(1);
+    expect(out.items[0].relationship).toBe("shared");
+  });
+
   it("--active filters the merged list and marks it filtered", async () => {
     // Own: planA past, planB future. Shared: sharedC future, sharedD past.
     mockOwnedAndShared([planA, planB], [sharedC, sharedD]);

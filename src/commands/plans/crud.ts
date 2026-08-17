@@ -136,9 +136,14 @@ export function registerCrudCommands(plans: Command): void {
             { limit: 100, page: 1 }
           ),
         ]);
+        // Truncation is tracked per side so a --relationship filter only reports
+        // truncation of the side actually shown.
+        const ownTruncated = ownData.tripPlans.count > ownData.tripPlans.items.length;
+        const sharedTruncated = sharedData.sharedTripPlans.count > sharedData.sharedTripPlans.items.length;
         const truncated =
-          ownData.tripPlans.count > ownData.tripPlans.items.length ||
-          sharedData.sharedTripPlans.count > sharedData.sharedTripPlans.items.length;
+          opts.relationship === "owner" ? ownTruncated :
+          opts.relationship === "shared" ? sharedTruncated :
+          ownTruncated || sharedTruncated;
 
         let merged: ListedPlan[] = [
           ...ownData.tripPlans.items.map((p) => ({ ...p, relationship: "owner" as const })),
@@ -205,7 +210,7 @@ export function registerCrudCommands(plans: Command): void {
             });
             if (total > page * limit) {
               lines.push("");
-              lines.push(`_Page ${page} of ${Math.ceil(total / limit)}. Next: \`voyagier plans list${hintFlags} --page ${page + 1}\`_`);
+              lines.push(`_Page ${page} of ${Math.ceil(total / limit)}. Next: \`voyagier plans list --agent${hintFlags} --page ${page + 1}\`_`);
             }
             if (truncated) {
               lines.push("");
