@@ -502,6 +502,19 @@ describe("argv builders", () => {
     expect(args).toEqual(["book", "p", "--expect-total", "339.10", "--json"]);
   });
 
+  it("book: expect_total_cents schema rejects floats and non-safe integers", () => {
+    // zod's .int() only accepts safe integers, which is what keeps the
+    // integer-arithmetic cents→dollars rendering exact. Pin that here so a
+    // schema change can't silently reopen float-precision territory.
+    const book = TOOLS.find((x) => x.name === "book")!;
+    const cents: any = (book as any).inputSchema.expect_total_cents;
+    expect(cents.safeParse(33910).success).toBe(true);
+    expect(cents.safeParse(Number.MAX_SAFE_INTEGER).success).toBe(true);
+    expect(cents.safeParse(339.1).success).toBe(false);
+    expect(cents.safeParse(2 ** 53).success).toBe(false);
+    expect(cents.safeParse(Number.MAX_SAFE_INTEGER + 2).success).toBe(false);
+  });
+
   it("book: max_total alone is a valid gate (CLI parity) — no --expect-total emitted", () => {
     expect(buildBookArgs({ plan_id: "p", max_total: 450 })).toEqual([
       "book", "p", "--max-total", "450.00", "--json",

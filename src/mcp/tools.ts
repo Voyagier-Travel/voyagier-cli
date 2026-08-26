@@ -926,13 +926,13 @@ export const TOOLS: ToolDef[] = [
     name: "book",
     title: "Book the trip",
     description:
-      "Create a real Stripe checkout for the bookable items. REQUIRES a price gate — pass expect_total_cents (integer cents, e.g. 33910) or expect_total (dollars, e.g. 339.10). Prefer expect_total_cents: it is the same form the remote Voyagier MCP server's book tool takes and it cannot lose precision. Both express the same hard gate: the checkout is created only if the chargeable subtotal equals it exactly (cents-compared), else it fails closed with PRICE_CHANGED and NO checkout is created. Get the current subtotal from book_dry_run first. Never retry a successful book (unpaid sessions are invisible and a retry mints a duplicate link).",
+      "Create a real Stripe checkout for the bookable items. REQUIRES a price gate — pass expect_total_cents (integer cents, e.g. 33910) or expect_total (dollars, e.g. 339.10), or max_total alone as a cap-only gate (book unless chargeable exceeds it). Prefer expect_total_cents: it is the same form the remote Voyagier MCP server's book tool takes and it cannot lose precision. Both express the same hard gate: the checkout is created only if the chargeable subtotal equals it exactly (cents-compared), else it fails closed with PRICE_CHANGED and NO checkout is created. Get the current subtotal from book_dry_run first. Never retry a successful book (unpaid sessions are invisible and a retry mints a duplicate link).",
     timeoutMs: T.medium,
     inputSchema: {
       plan_id: z.string().describe("Trip plan id."),
       expect_total_cents: z.number().int().optional().describe("PREFERRED price gate: exact chargeable subtotal in CENTS (e.g. 33910 for $339.10) — parity with the remote Voyagier MCP server. Takes precedence over expect_total when both are given."),
       expect_total: money.optional().describe("Price gate in DOLLARS (e.g. 339.10 or \"339.10\") — the same gate as expect_total_cents. Pass the exact string from book_dry_run output when possible. Give this or expect_total_cents."),
-      max_total: money.optional().describe("Alternative/added cap gate: fail unless chargeable ≤ this."),
+      max_total: money.optional().describe("Alternative/added cap gate: fail unless chargeable ≤ this. Valid on its own — the only gate that does not require an exact total."),
       validate: z.boolean().optional().describe("Fail with BOOKING_BLOCKED if any cart item is non-bookable."),
       only_bookable: z.boolean().optional().describe("Restrict checkout to bookable items (server-side via itemIds)."),
       types: z.array(z.string()).optional().describe("CartItemType filter (e.g. [\"Activity\",\"Hotel\"]) — narrows the charged set server-side."),

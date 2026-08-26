@@ -172,7 +172,7 @@ It's a thin adapter: each tool call self-spawns the CLI as a subprocess with `--
 | `plan_status` | `plan-status` | One-call "what's left before booking?". |
 | `quote` | `quote` | Advisor offer snapshot + acceptance block. |
 | `book_dry_run` | `book --dry-run` | Chargeable subtotal + blockers; no gate needed. |
-| `book` | `book` | **Requires a price gate** — `expect_total_cents` (integer cents, preferred) or `expect_total` (dollars); fails closed with `PRICE_CHANGED`. |
+| `book` | `book` | **Requires a price gate** — `expect_total_cents` (integer cents, preferred) or `expect_total` (dollars), or `max_total` alone as a cap; fails closed with `PRICE_CHANGED`. |
 | `booking_status` | `book --status` | Post-payment confirmation lookup. |
 | `agent_docs` | `agent-docs` | The full agent reference as markdown. |
 
