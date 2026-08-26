@@ -110,7 +110,7 @@ export function registerParticipantChoicesCommands(program: Command): void {
       if (opts.createNewChoice) variables.createNewChoice = true;
 
       try {
-        const data = await graphql<{ upsertParticipantChoice: { id: string } }>(
+        const data = await graphql<{ upsertParticipantChoice: { id: string } | null }>(
           UPSERT_PARTICIPANT_CHOICE,
           variables,
         );
