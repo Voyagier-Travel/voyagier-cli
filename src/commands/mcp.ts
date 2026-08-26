@@ -1,6 +1,11 @@
 /**
  * `voyagier mcp` — run the Model Context Protocol stdio server.
  *
+ * The command doubles as a group: `voyagier mcp install <client>` (see
+ * mcp-install.ts) wires an AI client to the hosted MCP server. Running `mcp`
+ * with no subcommand still starts the stdio server, which is what the client
+ * configs written by `install` invoke.
+ *
  * stdout discipline: in this process stdout belongs to JSON-RPC. Nothing else
  * may write to it — diagnostics go to stderr. (The welcome banner in index.ts
  * only fires for zero-arg unauthenticated invocations, which `mcp` is not; and
@@ -12,9 +17,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createServer } from "../mcp/server.js";
 import { TOOLS } from "../mcp/tools.js";
 import { gracefulExit } from "../exit.js";
+import { registerMcpInstallCommand } from "./mcp-install.js";
 
 export function registerMcpCommand(program: Command): void {
-  program
+  const mcp = program
     .command("mcp")
     .description("Run the Model Context Protocol (MCP) stdio server exposing the agent surface")
     .action(async () => {
@@ -49,4 +55,6 @@ export function registerMcpCommand(program: Command): void {
       // Diagnostics to stderr ONLY — stdout is reserved for JSON-RPC.
       process.stderr.write(`voyagier mcp: stdio server ready (${TOOLS.length} tools)\n`);
     });
+
+  registerMcpInstallCommand(mcp);
 }

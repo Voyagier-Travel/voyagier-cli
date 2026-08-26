@@ -113,6 +113,22 @@ npx @voyagier/cli agent-docs   # zero-install variant
 
 Or read [AGENT.md](./AGENT.md) directly. It covers the goal-graph compose model, async option fetch, per-command JSON shapes, the error code table, and the bookability matrix.
 
+## Connect an AI agent
+
+Voyagier runs a hosted MCP server at `https://mcp.voyagier.com/api/mcp`. It is the recommended way for AI agents and assistants to use Voyagier: the client connects to it over HTTP with your Personal Access Token and gets the whole tool surface, with no local install to manage. The CLI itself remains the tool for command-line workflows, scripting, and CI.
+
+`voyagier mcp install <client>` sets this up in one step:
+
+```bash
+voyagier mcp install claude-code      # writes ./.mcp.json (--global writes ~/.claude.json)
+voyagier mcp install cursor           # writes ~/.cursor/mcp.json (--project writes ./.cursor/mcp.json)
+voyagier mcp install claude-desktop   # writes claude_desktop_config.json
+```
+
+It uses your saved token (`voyagier login`), merges a `voyagier` entry into the client's existing config, and leaves every other server in that file untouched. Pass `--dry-run` to see the resolved path and the exact entry before anything is written, or `--token <pat>` to install a specific token. The token is masked in all output and is only ever written into the config file. Restart the client afterwards to pick up the change.
+
+Claude Desktop's config format describes stdio servers only, so that client is pointed at the CLI's local server (`voyagier mcp`) instead. Voyagier can also be added through the remote connectors section of the app settings, which uses the hosted endpoint directly.
+
 ## MCP server
 
 The CLI ships an [MCP](https://modelcontextprotocol.io) stdio server that exposes the agent surface as tools, for hosts that speak the Model Context Protocol (Claude Desktop, Cursor, etc.):
