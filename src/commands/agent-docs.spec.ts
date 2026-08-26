@@ -184,6 +184,23 @@ describe("agent-docs", () => {
       }
     });
 
+    it("should carry a Pricing semantics note: totals, dry-run truth, id lifecycle (VOY-2044)", () => {
+      const { content, fromFallback } = loadAgentDocs();
+      if (!fromFallback) {
+        expect(content).toContain("### Pricing semantics");
+        const section = content.split("### Pricing semantics")[1].split("\n### ")[0];
+        // 1) Prices are whole-stay/whole-party totals, not per-night/per-person.
+        expect(section.toLowerCase()).toMatch(/never a per-night or a per-person/);
+        expect(section.toLowerCase()).toMatch(/whole traveller party/);
+        // 2) book --dry-run is the authoritative bookable price.
+        expect(section).toContain("book --dry-run");
+        expect(section).toContain("chargeableSubtotal");
+        // 3) Option ids are used in full and are regenerated on re-search.
+        expect(section).toMatch(/36-character uuid/i);
+        expect(section.toLowerCase()).toMatch(/regenerated when a search is re-run/);
+      }
+    });
+
     it("should document quote/send honestly (VOY-1212: two closes, no doc rendering, no embedded pay links)", () => {
       const { content, fromFallback } = loadAgentDocs();
       if (!fromFallback) {
