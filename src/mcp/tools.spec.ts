@@ -13,6 +13,7 @@ import { SELECTION_SCOPES } from "../commands/plans/types.js";
 import {
   TOOLS,
   moneyArg,
+  centsToMoneyArg,
   buildDoctorArgs,
   buildCreateClientArgs,
   buildClientsListArgs,
@@ -466,7 +467,7 @@ describe("argv builders", () => {
     expect(gated).toEqual(["book", "p", "--dry-run", "--expect-total", "339.10", "--json"]);
   });
 
-  it("book: expect_total required + rendered via moneyArg; array types → CSV; false booleans omitted", () => {
+  it("book: expect_total rendered via moneyArg; array types → CSV; false booleans omitted", () => {
     const args = buildBookArgs({ plan_id: "p", expect_total: 1297.06, validate: false, only_bookable: true, types: ["Activity", "Hotel"], rebook: false });
     expect(args).toEqual([
       "book", "p", "--expect-total", "1297.06", "--only-bookable", "--types", "Activity,Hotel", "--json",
@@ -487,6 +488,30 @@ describe("argv builders", () => {
     expect(args).toEqual(expect.arrayContaining(["--expect-total", "400.00", "--max-total", "450.00"]));
   });
 
+  it("book: expect_total_cents drives the same --expect-total gate (remote MCP parity)", () => {
+    expect(buildBookArgs({ plan_id: "p", expect_total_cents: 33910 })).toEqual([
+      "book", "p", "--expect-total", "339.10", "--json",
+    ]);
+    // Whole dollars and sub-dollar totals both pad to two decimals.
+    expect(buildBookArgs({ plan_id: "p", expect_total_cents: 40000 })).toContain("400.00");
+    expect(buildBookArgs({ plan_id: "p", expect_total_cents: 5 })).toContain("0.05");
+  });
+
+  it("book: expect_total_cents wins over expect_total when both are given", () => {
+    const args = buildBookArgs({ plan_id: "p", expect_total_cents: 33910, expect_total: "999.99" });
+    expect(args).toEqual(["book", "p", "--expect-total", "339.10", "--json"]);
+  });
+
+  it("book: max_total alone is a valid gate (CLI parity) — no --expect-total emitted", () => {
+    expect(buildBookArgs({ plan_id: "p", max_total: 450 })).toEqual([
+      "book", "p", "--max-total", "450.00", "--json",
+    ]);
+  });
+
+  it("book: no gate at all throws — a gate-less book never reaches the CLI", () => {
+    expect(() => buildBookArgs({ plan_id: "p" })).toThrow(/requires a price gate/);
+  });
+
   describe("moneyArg", () => {
     it("forwards strings verbatim (trimmed) — exact passthrough, no float round-trip", () => {
       expect(moneyArg("339.10")).toBe("339.10");
@@ -497,6 +522,16 @@ describe("argv builders", () => {
       expect(moneyArg(339.1)).toBe("339.10");
       expect(moneyArg(100.1 + 0.2)).toBe("100.30"); // String() would emit 100.30000000000000004
       expect(moneyArg(400)).toBe("400.00");
+    });
+
+    it("centsToMoneyArg renders integer cents exactly, with no float round-trip", () => {
+      expect(centsToMoneyArg(33910)).toBe("339.10");
+      expect(centsToMoneyArg(0)).toBe("0.00");
+      expect(centsToMoneyArg(7)).toBe("0.07");
+      expect(centsToMoneyArg(129706)).toBe("1297.06");
+      // (cents / 100).toFixed(2) is fine here too, but integer maths keeps
+      // large totals exact rather than relying on binary-float rounding.
+      expect(centsToMoneyArg(1000000000001)).toBe("10000000000.01");
     });
 
     it("book schema accepts string money and forwards it verbatim", () => {

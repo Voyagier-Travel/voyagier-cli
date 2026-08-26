@@ -11,10 +11,13 @@
  *  - `select_option` uses ONLY explicit-id mode (`--selection-id`/`--option-id`),
  *    never index mode, so concurrent tool calls can't collide via the CLI's
  *    global last-search.json / last-options.json state files.
- *  - `book` requires `expect_total` at the SCHEMA level, mirroring the CLI's
- *    hard price gate (fails closed with PRICE_CHANGED). Money values accept
- *    string OR number and render via `moneyArg()`: strings forward verbatim
- *    (exact passthrough), numbers normalise with `toFixed(2)` — see moneyArg.
+ *  - `book` never reaches the CLI without a price gate: its builder throws when
+ *    none of `expect_total_cents` / `expect_total` / `max_total` is present,
+ *    mirroring the CLI's hard gate (which fails closed with PRICE_CHANGED).
+ *    `expect_total_cents` is integer cents (the form the remote Voyagier MCP
+ *    server's `book` tool takes) and wins when both totals are given. Dollar
+ *    money values accept string OR number and render via `moneyArg()`: strings
+ *    forward verbatim (exact passthrough), numbers normalise with `toFixed(2)`.
  *  - `send` is intentionally absent (it emails a real client) — see README.
  */
 import { z } from "zod";
@@ -379,6 +382,25 @@ export function moneyArg(v: number | string): string {
   return typeof v === "string" ? v.trim() : v.toFixed(2);
 }
 
+/**
+ * Render integer CENTS as the decimal dollar literal the CLI's `--expect-total`
+ * flag parses (`parseMoney`, src/commands/book.ts: /^\d+(\.\d{1,2})?$/).
+ *
+ * Integer arithmetic only — 33910 → "339.10" with no float round-tripping,
+ * which is the whole reason the cents form exists. The tool schema constrains
+ * the input to an integer (`z.number().int()`); a fractional value reaching this
+ * helper directly is truncated toward zero, and a negative one renders a signed
+ * literal the CLI rejects with its own VALIDATION error rather than being
+ * silently coerced — the same fail-closed posture as `moneyArg`.
+ */
+export function centsToMoneyArg(cents: number): string {
+  const sign = cents < 0 ? "-" : "";
+  const abs = Math.abs(Math.trunc(cents));
+  const whole = Math.trunc(abs / 100);
+  const frac = abs % 100;
+  return `${sign}${whole}.${String(frac).padStart(2, "0")}`;
+}
+
 export function buildBookDryRunArgs(i: { plan_id: string; expect_total?: number | string }): string[] {
   const args = ["book", i.plan_id, "--dry-run"];
   if (i.expect_total !== undefined) args.push("--expect-total", moneyArg(i.expect_total));
@@ -388,7 +410,10 @@ export function buildBookDryRunArgs(i: { plan_id: string; expect_total?: number 
 
 export interface BookInput {
   plan_id: string;
-  expect_total: number | string;
+  /** Price gate in integer cents — parity with the remote MCP server's `book`. */
+  expect_total_cents?: number;
+  /** Price gate in dollars (string forwards verbatim, number via toFixed(2)). */
+  expect_total?: number | string;
   max_total?: number | string;
   validate?: boolean;
   only_bookable?: boolean;
@@ -404,7 +429,26 @@ export interface BookInput {
 // would reject violates the "CLI surface IS the contract" invariant, so it's out
 // of v1 — reintroduce here only once the CLI actually accepts it.
 export function buildBookArgs(i: BookInput): string[] {
-  const args = ["book", i.plan_id, "--expect-total", moneyArg(i.expect_total)];
+  // Both totals drive the SAME `--expect-total` gate. Cents win when both are
+  // present: they are the exact form the remote MCP server hands out, so
+  // preferring them keeps a host that passes both from booking at the dollar
+  // value it may have rounded.
+  const expectTotal =
+    i.expect_total_cents !== undefined
+      ? centsToMoneyArg(i.expect_total_cents)
+      : i.expect_total !== undefined
+        ? moneyArg(i.expect_total)
+        : undefined;
+  // Fail closed at the MCP boundary: neither total nor a cap means no price
+  // gate, and a book without a gate must never reach the CLI. The thrown
+  // message is what the MCP client sees (the SDK turns it into isError).
+  if (expectTotal === undefined && i.max_total === undefined) {
+    throw new Error(
+      "book requires a price gate: pass expect_total_cents (preferred, integer cents), expect_total (dollars), or max_total (cap). Get the current chargeable subtotal from book_dry_run.",
+    );
+  }
+  const args = ["book", i.plan_id];
+  if (expectTotal !== undefined) args.push("--expect-total", expectTotal);
   if (i.max_total !== undefined) args.push("--max-total", moneyArg(i.max_total));
   bool(args, "--validate", i.validate);
   bool(args, "--only-bookable", i.only_bookable);
@@ -882,11 +926,12 @@ export const TOOLS: ToolDef[] = [
     name: "book",
     title: "Book the trip",
     description:
-      "Create a real Stripe checkout for the bookable items. REQUIRES expect_total — this is the price hard-gate: the checkout is created only if the chargeable subtotal equals expect_total exactly (cents-compared), else it fails closed with PRICE_CHANGED and NO checkout is created. Get the current subtotal from book_dry_run first. Never retry a successful book (unpaid sessions are invisible and a retry mints a duplicate link).",
+      "Create a real Stripe checkout for the bookable items. REQUIRES a price gate — pass expect_total_cents (integer cents, e.g. 33910) or expect_total (dollars, e.g. 339.10). Prefer expect_total_cents: it is the same form the remote Voyagier MCP server's book tool takes and it cannot lose precision. Both express the same hard gate: the checkout is created only if the chargeable subtotal equals it exactly (cents-compared), else it fails closed with PRICE_CHANGED and NO checkout is created. Get the current subtotal from book_dry_run first. Never retry a successful book (unpaid sessions are invisible and a retry mints a duplicate link).",
     timeoutMs: T.medium,
     inputSchema: {
       plan_id: z.string().describe("Trip plan id."),
-      expect_total: money.describe("REQUIRED price gate: exact chargeable subtotal in dollars (e.g. 339.10 or \"339.10\"). Pass the exact string from book_dry_run output when possible."),
+      expect_total_cents: z.number().int().optional().describe("PREFERRED price gate: exact chargeable subtotal in CENTS (e.g. 33910 for $339.10) — parity with the remote Voyagier MCP server. Takes precedence over expect_total when both are given."),
+      expect_total: money.optional().describe("Price gate in DOLLARS (e.g. 339.10 or \"339.10\") — the same gate as expect_total_cents. Pass the exact string from book_dry_run output when possible. Give this or expect_total_cents."),
       max_total: money.optional().describe("Alternative/added cap gate: fail unless chargeable ≤ this."),
       validate: z.boolean().optional().describe("Fail with BOOKING_BLOCKED if any cart item is non-bookable."),
       only_bookable: z.boolean().optional().describe("Restrict checkout to bookable items (server-side via itemIds)."),
