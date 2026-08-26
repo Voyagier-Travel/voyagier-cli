@@ -16,9 +16,13 @@
  *    string OR number and render via `moneyArg()`: strings forward verbatim
  *    (exact passthrough), numbers normalise with `toFixed(2)` — see moneyArg.
  *  - `send` is intentionally absent (it emails a real client) — see README.
+ *  - Option ids (`select_option`, `choose_room_slot`) are constrained to a FULL
+ *    36-character uuid at the SCHEMA level, mirroring the CLI's `--option-id`
+ *    validation — the builders stay pure. See the `optionId` schema below.
  */
 import { z } from "zod";
 import { SELECTION_SCOPES, DEFAULT_SELECTION_SCOPE } from "../commands/plans/types.js";
+import { OPTION_ID_PATTERN, OPTION_ID_ERROR } from "../utils.js";
 
 /**
  * MCP tool annotation hints — the subset of the SDK's `ToolAnnotations` we set.
@@ -83,6 +87,14 @@ const T = { quick: 30_000, short: 60_000, medium: 120_000, search: 300_000 } as 
 // float round-tripping); numbers are rendered via moneyArg's toFixed(2). See
 // moneyArg for the full rationale.
 const money = z.union([z.number(), z.string()]);
+
+// Option ids are full 36-character uuids, exactly as returned by search /
+// get_selection_options. A truncated id is a valid String to the API but
+// matches no option, so the mutation comes back empty and nothing is selected.
+// Enforcing the shape at the schema boundary fails the tool call immediately,
+// with the same pattern and message as the CLI's own --option-id validation
+// (utils.ts) — one source of truth, not two (VOY-2044).
+const optionId = z.string().regex(OPTION_ID_PATTERN, OPTION_ID_ERROR);
 
 // ── argv builders (pure, exported for table tests) ──────────────────────────
 
@@ -783,7 +795,7 @@ export const TOOLS: ToolDef[] = [
     timeoutMs: T.search,
     inputSchema: {
       selection_id: z.string().describe("Selection id to pick on."),
-      option_id: z.string().describe("Option id to choose."),
+      option_id: optionId.describe("Option id to choose — the FULL 36-character uuid from search / get_selection_options. Ids are regenerated when a search is re-run, so re-fetch options rather than reusing a stale id."),
       wait: z.boolean().optional().describe("Wait for the pick to reflect + readiness to settle. Default true."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
@@ -812,7 +824,7 @@ export const TOOLS: ToolDef[] = [
     timeoutMs: T.medium,
     inputSchema: {
       selection_id: z.string().describe("Selection id to choose on."),
-      option_id: z.string().optional().describe("Option id to choose for the slot."),
+      option_id: optionId.optional().describe("Option id to choose for the slot — the FULL 36-character uuid."),
       traveller_ids: z.array(z.string()).optional().describe("Traveller ids the choice applies to (subset scope)."),
       for_all: z.boolean().optional().describe("Apply the choice to all assigned travellers."),
       group_id: z.string().optional().describe("Apply the choice to a traveller group."),

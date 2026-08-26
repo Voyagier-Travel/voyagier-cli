@@ -16,7 +16,7 @@ import { graphql } from "../api.js";
 import { TRIP_PLAN_CHOICES_VIEW, UPSERT_PARTICIPANT_CHOICE } from "../queries.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
-import { validateId } from "../utils.js";
+import { validateId, validateOptionId } from "../utils.js";
 
 /** One row of the flat participant-choice view. Optional/nullable throughout —
  * the CLI reports what the backend exposes and never invents fields. */
@@ -100,7 +100,8 @@ export function registerParticipantChoicesCommands(program: Command): void {
       // omitted rather than sent as explicit null, so server-side defaults and
       // "absent vs null" distinctions are preserved.
       const variables: Record<string, unknown> = { selectionId: id };
-      if (opts.optionId !== undefined) variables.optionId = validateId(opts.optionId, "--option-id");
+      // Option ids must be full uuids — a truncated one matches no option (VOY-2044).
+      if (opts.optionId !== undefined) variables.optionId = validateOptionId(opts.optionId, "--option-id");
       if (travellerIds) variables.travellerIds = travellerIds;
       if (opts.forAll) variables.forAll = true;
       if (opts.group !== undefined) variables.groupId = validateId(opts.group, "--group");
@@ -113,7 +114,16 @@ export function registerParticipantChoicesCommands(program: Command): void {
           UPSERT_PARTICIPANT_CHOICE,
           variables,
         );
-        const resultId = data.upsertParticipantChoice?.id ?? id;
+        // An empty payload means the upsert matched nothing server-side; report
+        // that instead of echoing the input id back as a success (VOY-2044).
+        const resultId = data.upsertParticipantChoice?.id;
+        if (!resultId) {
+          throw new CliError(
+            CliErrorCode.API_ERROR,
+            `The choice was not recorded: the server returned no participant choice for selection ${id}.\n` +
+              `  Re-read the plan's slots and target a current id: voyagier choices-view <planId> --json`,
+          );
+        }
         if (opts.json) {
           jsonOutput({ ok: true, selectionId: resultId });
           return;

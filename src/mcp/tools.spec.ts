@@ -446,6 +446,26 @@ describe("argv builders", () => {
     expect(buildSelectOptionArgs({ selection_id: "s1", option_id: "o1", wait: false })).not.toContain("--wait");
   });
 
+  // VOY-2044: option ids are constrained to a FULL uuid at the schema boundary,
+  // so a truncated id fails the tool call instead of reaching the API and
+  // coming back empty. Mirrors the CLI's own --option-id validation.
+  it.each(["select_option", "choose_room_slot"])(
+    "%s: option_id accepts only a full 36-character uuid",
+    (name) => {
+      const schema: any = (TOOLS.find((t) => t.name === name) as any).inputSchema.option_id;
+      const full = "550e8400-e29b-41d4-a716-446655440000";
+      expect(schema.safeParse(full).success).toBe(true);
+      expect(schema.safeParse(full.toUpperCase()).success).toBe(true);
+      for (const bad of [full.slice(0, 8), full.slice(0, 35), "o1", full.replace(/-/g, "")]) {
+        const parsed = schema.safeParse(bad);
+        expect(parsed.success).toBe(false);
+        expect(parsed.error.issues[0].message).toBe(
+          "Option id must be the full id shown in search results (a 36-character UUID).",
+        );
+      }
+    },
+  );
+
   it("itinerary: plan id positional + --json", () => {
     expect(buildItineraryArgs({ plan_id: "p" })).toEqual(["itinerary", "p", "--json"]);
   });

@@ -151,8 +151,8 @@ export function validateIata(value: string, flagName: string): void {
  * API_ERROR ("invalid input syntax for type uuid") instead of a clean
  * client-side VALIDATION error. Returns the trimmed id on success.
  *
- * Deliberately NOT a strict UUID-format check: real id shapes have not been
- * audited and spec fixtures legitimately use ids like "opt-1".
+ * Deliberately NOT a strict UUID-format check: this guard covers every id flag,
+ * and not all of them are UUIDs. Option ids ARE — see validateOptionId.
  */
 export function validateId(value: string, flagName: string): string {
   const trimmed = value.trim();
@@ -162,6 +162,34 @@ export function validateId(value: string, flagName: string): string {
       CliErrorCode.VALIDATION,
       `Invalid ${flagName}: "${value}". Pass a real id (an empty or "null"/"undefined" value usually means a broken script or jq extraction).`,
     );
+  }
+  return trimmed;
+}
+
+/**
+ * A full 36-character option id: a UUID in 8-4-4-4-12 hex groups. Single source
+ * of truth — the MCP `option_id` schemas (src/mcp/tools.ts) reuse this rather
+ * than restating the pattern.
+ */
+export const OPTION_ID_PATTERN =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/** The message every option-id rejection carries, CLI and MCP alike. */
+export const OPTION_ID_ERROR =
+  "Option id must be the full id shown in search results (a 36-character UUID).";
+
+/**
+ * Validate an option id flag. Option ids are full UUIDs as printed by search
+ * results and `selection-options`. A shortened id (e.g. the first 8 characters)
+ * still satisfies the mutation's String argument but matches no option, so the
+ * server returns an empty result and nothing is selected — reject it here,
+ * before the request is sent. Runs validateId first so empty/"null" values keep
+ * their existing message. Returns the trimmed id on success.
+ */
+export function validateOptionId(value: string, flagName: string): string {
+  const trimmed = validateId(value, flagName);
+  if (!OPTION_ID_PATTERN.test(trimmed)) {
+    throw new CliError(CliErrorCode.VALIDATION, `${OPTION_ID_ERROR} Received: ${value}`);
   }
   return trimmed;
 }

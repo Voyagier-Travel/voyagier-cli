@@ -73,6 +73,23 @@ jest.unstable_mockModule("../utils.js", () => ({
     }
     return trimmed;
   }),
+  // Mirrors the real validateOptionId contract (utils.ts): validateId's garbage
+  // check first, then the full-uuid shape. Unit-tested exhaustively in
+  // utils.spec.ts; exercised end-to-end through `select` here.
+  validateOptionId: jest.fn().mockImplementation((value: unknown, flagName: string) => {
+    const trimmed = String(value).trim();
+    const lowered = trimmed.toLowerCase();
+    if (trimmed === "" || lowered === "null" || lowered === "undefined") {
+      throw new CliError(CliErrorCode.VALIDATION, `Invalid ${flagName}: "${value}".`);
+    }
+    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(trimmed)) {
+      throw new CliError(
+        CliErrorCode.VALIDATION,
+        `Option id must be the full id shown in search results (a 36-character UUID). Received: ${value}`,
+      );
+    }
+    return trimmed;
+  }),
   // resolvePlanArg is not mocked: it lives in resolve-plan-arg.ts (own
   // module) so the real contract is always in play here.
 }));
@@ -96,6 +113,13 @@ beforeAll(async () => {
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
+// Option ids are full 36-character uuids (VOY-2044): direct mode rejects
+// anything shorter before it reaches the API. Index mode is exempt — its ids
+// come from cached search state — but the fixtures use real shapes throughout.
+const OPT_UUID = "3f2a1b4c-5d6e-4f70-8a91-b2c3d4e5f607";
+const OPT_UUID_2 = "7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f";
+const FOREIGN_OPT_UUID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+
 const MOCK_ONEWAY_STATE = {
   type: "flights" as const,
   tripPlanId: "plan-123",
@@ -105,8 +129,8 @@ const MOCK_ONEWAY_STATE = {
   origin: "LAX",
   destination: "NRT",
   results: [
-    { index: 1, optionId: "opt-1", flightToken: "tok-f1", summary: "LAX→NRT · AA · $1,200" },
-    { index: 2, optionId: "opt-2", flightToken: "tok-f2", summary: "LAX→NRT · UA · $1,500" },
+    { index: 1, optionId: OPT_UUID, flightToken: "tok-f1", summary: "LAX→NRT · AA · $1,200" },
+    { index: 2, optionId: OPT_UUID_2, flightToken: "tok-f2", summary: "LAX→NRT · UA · $1,500" },
   ],
   timestamp: new Date().toISOString(),
 };
@@ -120,7 +144,7 @@ const MOCK_ROUNDTRIP_DEPARTURE_STATE = {
   origin: "LAX",
   destination: "NRT",
   results: [
-    { index: 1, optionId: "opt-1", flightToken: "tok-f1", summary: "LAX→NRT · AA · $1,200" },
+    { index: 1, optionId: OPT_UUID, flightToken: "tok-f1", summary: "LAX→NRT · AA · $1,200" },
   ],
   timestamp: new Date().toISOString(),
 };
@@ -171,8 +195,8 @@ const MOCK_RETURN_RESULT = {
 const MOCK_SET_SELECTED = {
   setTripPlanSelectedOption: {
     id: "sel-456",
-    parentOptionId: "opt-1",
-    parentOption: { id: "opt-1", name: "AA Flight", price: 1200 },
+    parentOptionId: OPT_UUID,
+    parentOption: { id: OPT_UUID, name: "AA Flight", price: 1200 },
   },
 };
 
@@ -252,7 +276,7 @@ describe("select --info", () => {
     await runSelect(["--info", "1", "--json"]);
     const output = stdoutOutput.join("");
     const parsed = JSON.parse(output);
-    expect(parsed.optionId).toBe("opt-1");
+    expect(parsed.optionId).toBe(OPT_UUID);
   });
 
   it("does not call API for --info mode", async () => {
@@ -408,7 +432,7 @@ describe("select: one-way flight (indexed mode)", () => {
     await runSelect(["1"]);
     expect(mockGraphql).toHaveBeenCalledWith(
       expect.stringContaining("setTripPlanSelectedOption"),
-      expect.objectContaining({ optionId: "opt-1" })
+      expect.objectContaining({ optionId: OPT_UUID })
     );
   });
 
@@ -521,7 +545,7 @@ describe("select: flight round-trip chain guidance (VOY-1718)", () => {
       tripPlanId: "plan-123",
       selectionId: "sel-out",
       returnSelectionId: "sel-ret",
-      results: [{ index: 1, optionId: "opt-1", summary: "LAX→NRT · AA · $1,200" }],
+      results: [{ index: 1, optionId: OPT_UUID, summary: "LAX→NRT · AA · $1,200" }],
       timestamp: new Date().toISOString(),
     });
     mockIsSearchStateStale.mockReturnValue(false);
@@ -574,15 +598,15 @@ describe("select: direct mode (--selection-id + --option-id)", () => {
   });
 
   it("calls SET_TRIP_PLAN_SELECTED_OPTION in direct mode", async () => {
-    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1"]);
+    await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID]);
     expect(mockGraphql).toHaveBeenCalledWith(
       expect.stringContaining("setTripPlanSelectedOption"),
-      expect.objectContaining({ selectionId: "sel-1", optionId: "opt-1" })
+      expect.objectContaining({ selectionId: "sel-1", optionId: OPT_UUID })
     );
   });
 
   it("JSON output has success=true and type=option_selected", async () => {
-    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--json"]);
+    await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID, "--json"]);
     const output = stdoutOutput.join("");
     const parsed = JSON.parse(output);
     expect(parsed.success).toBe(true);
@@ -590,7 +614,7 @@ describe("select: direct mode (--selection-id + --option-id)", () => {
   });
 
   it("agent output has selected name", async () => {
-    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--agent"]);
+    await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID, "--agent"]);
     const output = stdoutOutput.join("");
     expect(output).toContain("AA Flight");
   });
@@ -624,7 +648,7 @@ describe("select: direct mode (--selection-id + --option-id)", () => {
   it("rejects a literal \"undefined\" --selection-id (case-insensitive) with VALIDATION, no API call", async () => {
     let err: unknown;
     try {
-      await runSelect(["--selection-id", "UNDEFINED", "--option-id", "opt-1"]);
+      await runSelect(["--selection-id", "UNDEFINED", "--option-id", OPT_UUID]);
     } catch (e) {
       err = e;
     }
@@ -637,7 +661,7 @@ describe("select: direct mode (--selection-id + --option-id)", () => {
   it("rejects an empty --selection-id with VALIDATION and makes no API call", async () => {
     let err: unknown;
     try {
-      await runSelect(["--selection-id", "", "--option-id", "opt-1"]);
+      await runSelect(["--selection-id", "", "--option-id", OPT_UUID]);
     } catch (e) {
       err = e;
     }
@@ -647,11 +671,86 @@ describe("select: direct mode (--selection-id + --option-id)", () => {
   });
 
   it("lets valid-looking ids pass through to the API", async () => {
-    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1"]);
+    await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID]);
     expect(mockGraphql).toHaveBeenCalledWith(
       expect.stringContaining("setTripPlanSelectedOption"),
-      expect.objectContaining({ selectionId: "sel-1", optionId: "opt-1" })
+      expect.objectContaining({ selectionId: "sel-1", optionId: OPT_UUID })
     );
+  });
+
+  // ── VOY-2044: --option-id must be a FULL uuid, and an empty mutation
+  // payload is an error, not a success ─────────────────────────────────────
+
+  it.each([
+    ["the first 8 characters of a uuid", OPT_UUID.slice(0, 8)],
+    ["a uuid missing its last group", OPT_UUID.slice(0, 23)],
+    ["a short opaque id", "opt-1"],
+    ["a uuid with a non-hex character", "3f2a1b4c-5d6e-4f70-8a91-b2c3d4e5f60z"],
+  ])("rejects %s as --option-id with VALIDATION and makes no API call", async (_label, value) => {
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-1", "--option-id", value]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+    expect((err as CliError).message).toBe(
+      `Option id must be the full id shown in search results (a 36-character UUID). Received: ${value}`,
+    );
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("accepts a full 36-character uuid --option-id and forwards it verbatim", async () => {
+    expect(OPT_UUID).toHaveLength(36);
+    await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID]);
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("setTripPlanSelectedOption"),
+      expect.objectContaining({ optionId: OPT_UUID })
+    );
+  });
+
+  it("accepts an UPPERCASE uuid --option-id (hex case is not significant)", async () => {
+    await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID.toUpperCase()]);
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("setTripPlanSelectedOption"),
+      expect.objectContaining({ optionId: OPT_UUID.toUpperCase() })
+    );
+  });
+
+  it.each([
+    ["a null payload", { setTripPlanSelectedOption: null }],
+    ["an empty payload", {}],
+    ["a payload with no selection id", { setTripPlanSelectedOption: { parentOptionId: null } }],
+  ])("surfaces %s from the pick mutation as an error, not a success", async (_label, payload) => {
+    mockGraphql.mockReset();
+    mockGraphql.mockResolvedValue(payload);
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID, "--json"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.API_ERROR);
+    expect((err as CliError).message).toContain("The pick was not recorded");
+    expect((err as CliError).message).toContain("selection-options sel-1");
+    // Nothing success-shaped was printed.
+    expect(stdoutOutput.join("")).toBe("");
+  });
+
+  it("surfaces an empty scoped-pick payload as an error too", async () => {
+    mockGraphql.mockReset();
+    mockGraphql.mockResolvedValue({ setTripPlanSelectionTravellerChoice: null });
+    let err: unknown;
+    try {
+      await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID, "--traveller", "trav-a"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).code).toBe(CliErrorCode.API_ERROR);
+    expect((err as CliError).message).toContain("The pick was not recorded");
   });
 });
 
@@ -661,7 +760,7 @@ describe("select: participant-choice scope flags (VOY-1692)", () => {
   let stdoutSpy: ReturnType<typeof jest.spyOn>;
   let stderrSpy: ReturnType<typeof jest.spyOn>;
 
-  const CHOICE_RESULT = { id: "sel-1", parentOptionId: "opt-1", parentOption: { id: "opt-1", name: "AA Flight", price: 900 } };
+  const CHOICE_RESULT = { id: "sel-1", parentOptionId: OPT_UUID, parentOption: { id: OPT_UUID, name: "AA Flight", price: 900 } };
 
   beforeEach(() => {
     process.env.VOYAGIER_TOKEN = "test-token";
@@ -677,16 +776,16 @@ describe("select: participant-choice scope flags (VOY-1692)", () => {
 
   it("--traveller routes to setTripPlanSelectionTravellerChoice", async () => {
     mockGraphql.mockResolvedValue({ setTripPlanSelectionTravellerChoice: CHOICE_RESULT });
-    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--traveller", "trav-a"]);
+    await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID, "--traveller", "trav-a"]);
     expect(mockGraphql).toHaveBeenCalledWith(
       expect.stringContaining("setTripPlanSelectionTravellerChoice"),
-      expect.objectContaining({ selectionId: "sel-1", optionId: "opt-1", travellerId: "trav-a" })
+      expect.objectContaining({ selectionId: "sel-1", optionId: OPT_UUID, travellerId: "trav-a" })
     );
   });
 
   it("--travellers routes to ForSubset with parsed IDs and replaceExisting=true", async () => {
     mockGraphql.mockResolvedValue({ setTripPlanTravellerChoiceForSubset: CHOICE_RESULT });
-    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--travellers", "trav-a, trav-b"]);
+    await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID, "--travellers", "trav-a, trav-b"]);
     expect(mockGraphql).toHaveBeenCalledWith(
       expect.stringContaining("setTripPlanTravellerChoiceForSubset"),
       expect.objectContaining({ travellerIds: ["trav-a", "trav-b"], replaceExisting: true })
@@ -695,26 +794,26 @@ describe("select: participant-choice scope flags (VOY-1692)", () => {
 
   it("--group routes to ForGroup", async () => {
     mockGraphql.mockResolvedValue({ setTripPlanTravellerChoiceForGroup: CHOICE_RESULT });
-    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--group", "grp-1"]);
+    await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID, "--group", "grp-1"]);
     expect(mockGraphql).toHaveBeenCalledWith(
       expect.stringContaining("setTripPlanTravellerChoiceForGroup"),
-      expect.objectContaining({ groupId: "grp-1", optionId: "opt-1" })
+      expect.objectContaining({ groupId: "grp-1", optionId: OPT_UUID })
     );
   });
 
   it("no scope flag defaults to setTripPlanSelectedOption (for-all alias)", async () => {
     mockGraphql.mockResolvedValue(MOCK_SET_SELECTED);
-    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1"]);
+    await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID]);
     expect(mockGraphql).toHaveBeenCalledWith(
       expect.stringContaining("setTripPlanSelectedOption"),
-      expect.objectContaining({ selectionId: "sel-1", optionId: "opt-1" })
+      expect.objectContaining({ selectionId: "sel-1", optionId: OPT_UUID })
     );
   });
 
   it("throws VALIDATION when multiple scope flags are combined", async () => {
     let err: unknown;
     try {
-      await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--traveller", "t1", "--group", "g1"]);
+      await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID, "--traveller", "t1", "--group", "g1"]);
     } catch (e) {
       err = e;
     }
@@ -731,7 +830,7 @@ describe("select: participant-choice scope flags (VOY-1692)", () => {
   ])("rejects an empty %s value instead of silently selecting for ALL travellers", async (flag, value) => {
     let err: unknown;
     try {
-      await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", flag, value]);
+      await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID, flag, value]);
     } catch (e) {
       err = e;
     }
@@ -744,7 +843,7 @@ describe("select: participant-choice scope flags (VOY-1692)", () => {
   it("mutual exclusion fires even when one of the combined flags is empty", async () => {
     let err: unknown;
     try {
-      await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--traveller", "", "--group", "g1"]);
+      await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID, "--traveller", "", "--group", "g1"]);
     } catch (e) {
       err = e;
     }
@@ -755,7 +854,7 @@ describe("select: participant-choice scope flags (VOY-1692)", () => {
 
   it("trims whitespace around a scope flag value before sending", async () => {
     mockGraphql.mockResolvedValue({ setTripPlanSelectionTravellerChoice: CHOICE_RESULT });
-    await runSelect(["--selection-id", "sel-1", "--option-id", "opt-1", "--traveller", "  trav-a  "]);
+    await runSelect(["--selection-id", "sel-1", "--option-id", OPT_UUID, "--traveller", "  trav-a  "]);
     expect(mockGraphql).toHaveBeenCalledWith(
       expect.stringContaining("setTripPlanSelectionTravellerChoice"),
       expect.objectContaining({ travellerId: "trav-a" })
@@ -766,7 +865,7 @@ describe("select: participant-choice scope flags (VOY-1692)", () => {
     mockGraphql.mockRejectedValue(new Error("Cannot set traveller choices on a list-mode selection"));
     let err: unknown;
     try {
-      await runSelect(["--selection-id", "sel-list", "--option-id", "opt-1"]);
+      await runSelect(["--selection-id", "sel-list", "--option-id", OPT_UUID]);
     } catch (e) {
       err = e;
     }
@@ -778,7 +877,7 @@ describe("select: participant-choice scope flags (VOY-1692)", () => {
     mockGraphql.mockRejectedValue(new Error("Option not found or does not belong to this selection"));
     let err: unknown;
     try {
-      await runSelect(["--selection-id", "sel-1", "--option-id", "opt-foreign"]);
+      await runSelect(["--selection-id", "sel-1", "--option-id", FOREIGN_OPT_UUID]);
     } catch (e) {
       err = e;
     }
@@ -804,8 +903,8 @@ describe("select: fork-template selections (VOY-1872)", () => {
   const PICK_RESULT = {
     setTripPlanSelectedOption: {
       id: "sel-sibling",
-      parentOptionId: "opt-1",
-      parentOption: { id: "opt-1", name: "AA Flight", price: 1200 },
+      parentOptionId: OPT_UUID,
+      parentOption: { id: OPT_UUID, name: "AA Flight", price: 1200 },
     },
   };
 
@@ -866,7 +965,7 @@ describe("select: fork-template selections (VOY-1872)", () => {
 
     let err: unknown;
     try {
-      await runSelect(["--selection-id", "sel-template", "--option-id", "opt-1"]);
+      await runSelect(["--selection-id", "sel-template", "--option-id", OPT_UUID]);
     } catch (e) {
       err = e;
     }
@@ -893,7 +992,7 @@ describe("select: fork-template selections (VOY-1872)", () => {
       .mockResolvedValueOnce(goalTree(["sel-sibling"])) // exactly one sibling
       .mockResolvedValueOnce(PICK_RESULT); // retry pick succeeds
 
-    await runSelect(["--selection-id", "sel-template", "--option-id", "opt-1", "--json"]);
+    await runSelect(["--selection-id", "sel-template", "--option-id", OPT_UUID, "--json"]);
     const parsed = JSON.parse(stdoutOutput.join(""));
     expect(parsed.success).toBe(true);
     expect(parsed.selectionId).toBe("sel-sibling");
@@ -901,7 +1000,7 @@ describe("select: fork-template selections (VOY-1872)", () => {
     // The retry must target the sibling, still on the for-all mutation.
     expect(mockGraphql).toHaveBeenLastCalledWith(
       expect.stringContaining("setTripPlanSelectedOption"),
-      expect.objectContaining({ selectionId: "sel-sibling", optionId: "opt-1" }),
+      expect.objectContaining({ selectionId: "sel-sibling", optionId: OPT_UUID }),
     );
   });
 
@@ -913,12 +1012,12 @@ describe("select: fork-template selections (VOY-1872)", () => {
       .mockResolvedValueOnce(goalTree(["sel-sibling"]))
       .mockResolvedValueOnce({ setTripPlanSelectionTravellerChoice: PICK_RESULT.setTripPlanSelectedOption });
 
-    await runSelect(["--selection-id", "sel-template", "--option-id", "opt-1", "--traveller", "trav-a", "--json"]);
+    await runSelect(["--selection-id", "sel-template", "--option-id", OPT_UUID, "--traveller", "trav-a", "--json"]);
     const parsed = JSON.parse(stdoutOutput.join(""));
     expect(parsed.routedFrom).toBe("sel-template");
     expect(mockGraphql).toHaveBeenLastCalledWith(
       expect.stringContaining("setTripPlanSelectionTravellerChoice"),
-      expect.objectContaining({ selectionId: "sel-sibling", optionId: "opt-1", travellerId: "trav-a" }),
+      expect.objectContaining({ selectionId: "sel-sibling", optionId: OPT_UUID, travellerId: "trav-a" }),
     );
   });
 
@@ -931,7 +1030,7 @@ describe("select: fork-template selections (VOY-1872)", () => {
 
     let err: unknown;
     try {
-      await runSelect(["--selection-id", "sel-template", "--option-id", "opt-1"]);
+      await runSelect(["--selection-id", "sel-template", "--option-id", OPT_UUID]);
     } catch (e) {
       err = e;
     }
@@ -950,7 +1049,7 @@ describe("select: fork-template selections (VOY-1872)", () => {
 
     let err: unknown;
     try {
-      await runSelect(["--selection-id", "sel-template", "--option-id", "opt-1"]);
+      await runSelect(["--selection-id", "sel-template", "--option-id", OPT_UUID]);
     } catch (e) {
       err = e;
     }
@@ -975,7 +1074,7 @@ describe("select: fork-template selections (VOY-1872)", () => {
 
     let err: unknown;
     try {
-      await runSelect(["--selection-id", "sel-template", "--option-id", "opt-1"]);
+      await runSelect(["--selection-id", "sel-template", "--option-id", OPT_UUID]);
     } catch (e) {
       err = e;
     }
@@ -1007,7 +1106,7 @@ describe("select: one-way flight — chain guidance has no 'both legs' claim", (
       tripPlanId: "plan-123",
       selectionId: "sel-out",
       // NO returnSelectionId — one-way itinerary.
-      results: [{ index: 1, optionId: "opt-1", summary: "BWI→SIN · SQ · $900" }],
+      results: [{ index: 1, optionId: OPT_UUID, summary: "BWI→SIN · SQ · $900" }],
       timestamp: new Date().toISOString(),
     });
     mockIsSearchStateStale.mockReturnValue(false);
