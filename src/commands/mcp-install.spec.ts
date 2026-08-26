@@ -47,8 +47,10 @@ beforeAll(async () => {
 
 // ── Harness ────────────────────────────────────────────────────────────────
 
-const TOKEN = "voy_pat_abcdefghijkl9876";
-const MASKED = "voy_…9876";
+// Deliberately NOT shaped like a real credential — keeps secret scanners quiet
+// and makes it unmistakable in logs that this is fixture data.
+const TOKEN = "test_fixture_token_9876";
+const MASKED = "test…9876";
 
 const tempDirs: string[] = [];
 let env: InstallEnv;
@@ -306,7 +308,7 @@ describe("mcp install — fresh file creation", () => {
 
   it("mentions the in-app remote connector route for claude-desktop", async () => {
     await run("claude-desktop");
-    expect(stdout.join("\n")).toMatch(/remote connectors/i);
+    expect(stdout.join("\n")).toMatch(/a remote connector/i);
   });
 });
 
@@ -393,9 +395,9 @@ describe("mcp install — dry run", () => {
 
 describe("mcp install — token handling", () => {
   it("uses --token in preference to the stored credential", async () => {
-    await run("claude-code", "--token", "voy_pat_overridden0000");
+    await run("claude-code", "--token", "test_override_token_0000");
     const config = readJson(join(env.cwd, ".mcp.json"));
-    expect(config.mcpServers.voyagier.headers.Authorization).toBe("Bearer voy_pat_overridden0000");
+    expect(config.mcpServers.voyagier.headers.Authorization).toBe("Bearer test_override_token_0000");
     expect(mockGetToken).not.toHaveBeenCalled();
   });
 

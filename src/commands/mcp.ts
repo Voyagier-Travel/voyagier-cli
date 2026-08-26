@@ -6,8 +6,11 @@
  * with no subcommand still starts the stdio server, which is what the client
  * configs written by `install` invoke.
  *
- * stdout discipline: in this process stdout belongs to JSON-RPC. Nothing else
- * may write to it — diagnostics go to stderr. (The welcome banner in index.ts
+ * stdout discipline: when the stdio server is running (`voyagier mcp` with no
+ * subcommand), stdout belongs to JSON-RPC and nothing else may write to it —
+ * diagnostics go to stderr. Subcommands like `mcp install` are ordinary CLI
+ * commands and print to stdout normally; the restriction is the server's, not
+ * the command group's. (The welcome banner in index.ts
  * only fires for zero-arg unauthenticated invocations, which `mcp` is not; and
  * every tool handler runs the CLI as a PIPED child, so its spinner/progress
  * output is silent-safe.)

@@ -322,7 +322,7 @@ export function clientNotes(client: ClientId, scope: Scope): string[] {
   const notes: string[] = [];
   if (client === "claude-desktop") {
     notes.push(
-      "Claude Desktop can also reach Voyagier through remote connectors in the app's settings, which uses the hosted endpoint directly.",
+      "Claude Desktop can also reach Voyagier through a remote connector in the app's settings, which uses the hosted endpoint directly.",
     );
   }
   if (scope === "project") {
