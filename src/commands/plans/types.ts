@@ -35,7 +35,8 @@ export interface DeepSelection {
 
 export interface DeepItem {
   id: string;
-  type: string;
+  /** The item's kind — TripPlanItem.selectionType (enum SelectionType). */
+  selectionType: string;
   title: string;
   selections?: DeepSelection[];
 }
@@ -70,9 +71,11 @@ export interface TripPlan {
 
 // NOTE: date/startTime/endTime/day were dropped from TripPlanItem in API PR #386
 // (timing now lives on tripPlanEvents). Do not re-add them here — see VOY-1407.
+// The item's kind is `selectionType` (enum SelectionType); TripPlanItem has no
+// `type` field. TripPlanSelection.type is a separate field — see SelectionInfo.
 export interface TripPlanItem {
   id: string;
-  type: string;
+  selectionType: string;
   title: string;
 }
 
@@ -161,9 +164,10 @@ export function itemStatus(item: DeepItem): "selected" | "pending" | "needs_sub_
   return hasPendingSub ? "needs_sub_selection" : "selected";
 }
 
-export function typeIcon(type: string, title?: string): string {
-  const t = (type ?? "").toLowerCase();
-  // API returns "Selection" for all search-created items — infer from title
+/** Icon for an item's kind — takes a TripPlanItem.selectionType value. */
+export function typeIcon(selectionType: string, title?: string): string {
+  const t = (selectionType ?? "").toLowerCase();
+  // A generic "Selection" carries no kind of its own — infer it from the title.
   if (t === "selection" && title) {
     const inferred = inferTypeFromTitle(title);
     if (inferred === "hotel") return "🏨";

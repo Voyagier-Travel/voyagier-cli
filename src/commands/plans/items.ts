@@ -32,7 +32,7 @@ export function registerItemCommands(plans: Command): void {
               const selections = item.selections ?? [];
               return {
                 id: item.id,
-                type: item.type,
+                selectionType: item.selectionType,
                 title: item.title,
                 inferredType,
                 status,
@@ -67,7 +67,7 @@ export function registerItemCommands(plans: Command): void {
           return;
         }
         for (const item of plan.items) {
-          const icon = typeIcon(item.type, item.title);
+          const icon = typeIcon(item.selectionType, item.title);
           const status = itemStatus(item);
           const statusLabel = status === "selected"
             ? chalk.green("✓ selected")

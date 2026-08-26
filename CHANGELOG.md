@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **`--travellers` is sent with the create.** The party is part of `createTripPlan`, so an INDIVIDUAL client is no longer auto-seeded on top of the names you gave (which used to put the client on the plan twice), and the traveller limit is checked against the whole batch before the plan row exists. Adding to an EXISTING plan (`plan-trip --plan <id> --travellers ...`) uses the new `addTripPlanTravellers` batch mutation, which reuses anyone already on the plan by name rather than duplicating them.
 
 ### Fixed
+- **Plan item reads use `TripPlanItem.selectionType`.** The item's kind is `selectionType` (enum `SelectionType!`); `GET_TRIP_PLAN` (`plans get`), `GET_TRIP_PLAN_SUMMARY` (`plans summary`) and `GET_PLAN_DEEP` (`plans items`) were selecting a `type` field that the schema does not define, so the request was rejected. `plans summary --json` and `plans items --json` now report the item kind under `selectionType` (`plans get --json` is a raw passthrough and follows the API). `TripPlanSelection.type` is a separate field and is unchanged.
 - **Traveller age bands are now defined and documented by the server.** Adult 18+, Youth 12–17, Child 2–11, Infant under 2 — previously three places in the platform disagreed (a 15-year-old was a child by date of birth and an adult by declared type). A date of birth now overrides a stale declared type wherever pricing needs an exact age, and activity searches ask for a YOUTH age band where the product sells one.
 
 ## [2.11.0] — 2026-07-23
