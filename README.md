@@ -14,7 +14,7 @@ voyagier auth set-token <your-token>
 voyagier doctor   # confirm auth + schema reachability
 ```
 
-`voyagier` is a convenience alias that tracks the latest compatible `@voyagier/cli` release (currently `^2`). Pinning an exact version? Use the canonical package: `npm install -g @voyagier/cli@<version>`.
+`voyagier` is a convenience alias that tracks the latest compatible `@voyagier/cli` release (currently `^3`). Pinning an exact version? Use the canonical package: `npm install -g @voyagier/cli@<version>`.
 
 No install permissions (sandboxed agent, CI)? Every command works zero-install via `npx`:
 

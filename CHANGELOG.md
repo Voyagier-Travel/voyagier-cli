@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [3.0.0] — 2026-08-27
+
 ### Changed
 - **Trip shape is now a TEMPLATE chosen at creation, not a prune afterwards.** `plan-trip --template <name>` takes `RoundTripFlightAndHotel` (default), `RoundTripFlight`, `OneWayFlight`, `OneWayFlightAndHotel`, `HotelOnly` or `Blank`, and the server builds exactly that goal graph. Previously the CLI created the full round-trip + hotel graph and then deleted the goals the brief didn't want (`--one-way`/`--flight-only`/`--hotel-only`), which meant a failed delete left a plan holding goals that block booking — an unpruned Return Flights goal stops one-way inventory from ever fetching AND stops the fare from carting. The client-side prune/ensure logic (`selectGoalsToPrune`, `desiredGoalShape`, `validateShapeFlags`, and the `createTripPlanGoal` top-ups) is gone, along with the six conflict rules between the three flags.
   - `--one-way` / `--flight-only` / `--hotel-only` still work as **deprecated aliases** and map onto the equivalent template with a warning. They will be removed in a future release.
