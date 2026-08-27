@@ -1,6 +1,6 @@
 {
   "name": "voyagier",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Book real travel from your terminal. Convenience alias for @voyagier/cli — search flights, hotels & activities, plan trips, and check out with a price-gated booking.",
   "type": "module",
   "bin": {
@@ -14,7 +14,7 @@
     "README.md"
   ],
   "dependencies": {
-    "@voyagier/cli": "^2"
+    "@voyagier/cli": "^3"
   },
   "keywords": [
     "travel",

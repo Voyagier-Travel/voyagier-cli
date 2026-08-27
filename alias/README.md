@@ -2,7 +2,7 @@
 
 Convenience alias so that `npm install -g voyagier` and `npx voyagier` just work.
 
-**The canonical package is [`@voyagier/cli`](https://www.npmjs.com/package/@voyagier/cli)** — this package is a thin wrapper that depends on `@voyagier/cli@^2` and delegates the `voyagier` bin to it. All documentation, versioning, and release notes live there.
+**The canonical package is [`@voyagier/cli`](https://www.npmjs.com/package/@voyagier/cli)** — this package is a thin wrapper that depends on `@voyagier/cli@^3` and delegates the `voyagier` bin to it. All documentation, versioning, and release notes live there.
 
 ```bash
 npm install -g voyagier
