@@ -294,7 +294,7 @@ export function registerCrudCommands(plans: Command): void {
             lines.push("");
             lines.push("### Items");
             for (const item of plan.items) {
-              const icon = typeIcon(item.type, item.title);
+              const icon = typeIcon(item.selectionType, item.title);
               const selections = item.selections ?? [];
               if (selections.length === 0) {
                 lines.push(`- ${icon} **${item.title}**`);
@@ -339,7 +339,7 @@ export function registerCrudCommands(plans: Command): void {
         if (plan.items?.length) {
           console.log(chalk.bold(`\n  Items (${plan.items.length}):`));
           for (const item of plan.items) {
-            const icon = typeIcon(item.type, item.title);
+            const icon = typeIcon(item.selectionType, item.title);
             const selections = item.selections ?? [];
             if (selections.length === 0) {
               console.log(`    ${icon}  ${item.title}`);
@@ -393,7 +393,7 @@ export function registerCrudCommands(plans: Command): void {
             dates: plan.startDate && plan.endDate ? `${plan.startDate} → ${plan.endDate}` : null,
             travellers: (plan.travellers ?? []).map((t) => `${t.firstName} ${t.lastName} (${t.declaredTravellerType ?? "ADULT"})`),
             items: (plan.items ?? []).map((item) => ({
-              type: item.type,
+              selectionType: item.selectionType,
               title: item.title,
               selections: (item.selections ?? []).map((s) => {
                 const opt = chosenOption(s);
@@ -429,7 +429,7 @@ export function registerCrudCommands(plans: Command): void {
           }
 
           for (const item of items) {
-            const icon = typeIcon(item.type, item.title);
+            const icon = typeIcon(item.selectionType, item.title);
             const selections = item.selections ?? [];
             const chosen = selections
               .map((s) => chosenOption(s))
@@ -472,7 +472,7 @@ export function registerCrudCommands(plans: Command): void {
         if (items.length > 0) {
           console.log();
           for (const item of items) {
-            const icon = typeIcon(item.type, item.title);
+            const icon = typeIcon(item.selectionType, item.title);
             const selections = item.selections ?? [];
             const chosen = selections
               .map((s) => chosenOption(s))

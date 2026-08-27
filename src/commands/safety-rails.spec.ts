@@ -69,6 +69,21 @@ jest.unstable_mockModule("../utils.js", () => ({
     }
     return trimmed;
   }),
+  // Same, for the full-uuid option-id guard (VOY-2044).
+  validateOptionId: jest.fn().mockImplementation((value: unknown, flagName: string) => {
+    const trimmed = String(value).trim();
+    const lowered = trimmed.toLowerCase();
+    if (trimmed === "" || lowered === "null" || lowered === "undefined") {
+      throw new CliError(CliErrorCode.VALIDATION, `Invalid ${flagName}: "${value}".`);
+    }
+    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(trimmed)) {
+      throw new CliError(
+        CliErrorCode.VALIDATION,
+        `Option id must be the full id shown in search results (a 36-character UUID). Received: ${value}`,
+      );
+    }
+    return trimmed;
+  }),
   // resolvePlanArg is not mocked: it lives in resolve-plan-arg.ts (own
   // module) so the real contract is always in play here.
 }));

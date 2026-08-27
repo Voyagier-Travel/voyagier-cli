@@ -89,7 +89,7 @@ export const GET_PLAN_DEEP = `
       items {
         id
         title
-        type
+        selectionType
         selections {
           id
           type
@@ -212,6 +212,9 @@ export const GET_TRIP_PLANS = `
 // outage caused by this drift — keep these queries aligned to the live schema.
 // Selections carry travellerOptionChoices (participant-choice model) — chosen
 // state derives from consensus; parentOptionId is a legacy fallback (VOY-1701).
+// The item's own kind is TripPlanItem.selectionType (enum SelectionType); there
+// is no `type` field on TripPlanItem. TripPlanSelection.type (below) is a
+// DIFFERENT field and is still correct — don't rename it too (VOY-2044).
 const PLAN_SELECTION_FIELDS = `selections { id type isLocked parentOptionId travellerOptionChoices { traveller { id } selectedOption { id } } options { id name price status } }`;
 
 export const GET_TRIP_PLAN = `
@@ -219,7 +222,7 @@ export const GET_TRIP_PLAN = `
     tripPlan(id: $id) {
       id title description startDate endDate
       items {
-        id type title
+        id selectionType title
         ${PLAN_SELECTION_FIELDS}
       }
       travellers { id firstName lastName declaredTravellerType }
@@ -232,7 +235,7 @@ export const GET_TRIP_PLAN_SUMMARY = `
     tripPlan(id: $id) {
       id title startDate endDate
       items {
-        id type title
+        id selectionType title
         ${PLAN_SELECTION_FIELDS}
       }
       travellers { id firstName lastName declaredTravellerType }

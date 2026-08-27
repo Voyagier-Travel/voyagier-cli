@@ -342,7 +342,7 @@ const planWithSelections = {
   items: [
     {
       id: "item-flight",
-      type: "Selection",
+      selectionType: "Selection",
       title: "Flight to Paris",
       selections: [
         {
@@ -360,7 +360,7 @@ const planWithSelections = {
     },
     {
       id: "item-hotel",
-      type: "Selection",
+      selectionType: "Selection",
       title: "Hotel in Paris",
       selections: [
         // No parentOptionId => nothing chosen yet (awaiting selection).
@@ -428,7 +428,7 @@ describe("VOY-1407 — plans get/summary schema alignment", () => {
       endDate: null,
       items: [
         {
-          id: "i1", type: "Selection", title: "Flights",
+          id: "i1", selectionType: "Selection", title: "Flights",
           selections: [
             { id: "s-dep", type: "Flight", isLocked: false, parentOptionId: "o1", options: [{ id: "o1", name: "Outbound B6", price: 200, status: "None" }] },
             { id: "s-ret", type: "Flight", isLocked: false, parentOptionId: null, options: [{ id: "o2", name: "Return UA", price: 250, status: "None" }] },
@@ -456,6 +456,67 @@ describe("VOY-1407 — plans get/summary schema alignment", () => {
     // hotel selection has no parentOptionId => nothing chosen yet
     const hotel = out.items.find((i: any) => i.title === "Hotel in Paris");
     expect(hotel.selections[0].selected).toBeNull();
+  });
+});
+
+// --- VOY-2044: TripPlanItem's kind is `selectionType`, not `type` ---
+//
+// TripPlanItem exposes `selectionType` (enum SelectionType!). Selecting `type`
+// on an item is rejected by the API, so every plan-item read must use
+// `selectionType`. TripPlanSelection.type is a DIFFERENT field and stays.
+
+/** The item's OWN field set: everything between `items {` and its `selections`. */
+function itemFieldSet(doc: string): string {
+  const start = doc.indexOf("items {");
+  expect(start).toBeGreaterThan(-1);
+  const sel = doc.indexOf("selections", start);
+  expect(sel).toBeGreaterThan(start);
+  return doc.slice(start + "items {".length, sel);
+}
+
+describe("VOY-2044 — plan item kind is selectionType", () => {
+  it.each([
+    ["GET_TRIP_PLAN", GET_TRIP_PLAN],
+    ["GET_TRIP_PLAN_SUMMARY", GET_TRIP_PLAN_SUMMARY],
+    ["GET_PLAN_DEEP", GET_PLAN_DEEP],
+  ])("%s selects selectionType on items and never a bare item-level type", (_name, doc) => {
+    const fields = itemFieldSet(doc);
+    expect(fields).toMatch(/\bselectionType\b/);
+    expect(fields.replace(/\bselectionType\b/g, "")).not.toMatch(/\btype\b/);
+  });
+
+  it("TripPlanSelection.type is untouched — the rename is item-level only", () => {
+    expect(GET_TRIP_PLAN).toMatch(/selections \{ id type\b/);
+    expect(GET_PLAN_DEEP).toContain("selections {");
+    expect(GET_PLAN_DEEP).toMatch(/\btype\b/);
+  });
+
+  it("plans get --agent derives the item icon from selectionType, not the title", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlan: {
+        id: "plan-st", title: "Kinds", description: null, startDate: null, endDate: null,
+        items: [
+          // Titles carry no kind hint — the icon can only come from selectionType.
+          { id: "i-h", selectionType: "Hotel", title: "Riad stay", selections: [] },
+          { id: "i-a", selectionType: "Activity", title: "Cooking class", selections: [] },
+        ],
+        travellers: [],
+      },
+    });
+    await runPlans(["get", "plan-st", "--agent"]);
+    const out = writes.join("");
+    expect(out).toContain("🏨");
+    expect(out).toContain("🎯");
+    expect(out).not.toContain("📌");
+  });
+
+  it("plans summary --json reports each item's selectionType", async () => {
+    mockGraphql.mockResolvedValueOnce({ tripPlan: planWithSelections });
+    await runPlans(["summary", "plan-1", "--json"]);
+    const out = JSON.parse(writes.join(""));
+    expect(out.items.map((i: { selectionType: string }) => i.selectionType)).toEqual(["Selection", "Selection"]);
+    // The old key is gone — consumers read selectionType.
+    expect(out.items[0]).not.toHaveProperty("type");
   });
 });
 
@@ -513,7 +574,7 @@ describe("VOY-1412 — GET_PLAN_DEEP schema alignment", () => {
 
   it("deepSubSelections finds childSelections hanging off the chosen option", () => {
     const item: DeepItem = {
-      id: "i", type: "Selection", title: "Flight",
+      id: "i", selectionType: "Selection", title: "Flight",
       selections: [{
         id: "s1", type: "Flight", isLocked: false, parentOptionId: "opt-1",
         options: [{
@@ -532,7 +593,7 @@ describe("VOY-1412 — GET_PLAN_DEEP schema alignment", () => {
 
   it("itemStatus is pending when a selection has no chosen option", () => {
     const item: DeepItem = {
-      id: "i", type: "Selection", title: "Hotel",
+      id: "i", selectionType: "Selection", title: "Hotel",
       selections: [{ id: "s", type: "Hotel", parentOptionId: null, options: [{ id: "h1", name: "Hotel" }] }],
     };
     expect(itemStatus(item)).toBe("pending");
@@ -804,9 +865,9 @@ describe("plans get — human & error paths", () => {
       startDate: "2026-09-15",
       endDate: "2026-09-22",
       items: [
-        { id: "i-empty", type: "Selection", title: "Dinner reservation", selections: [] },
+        { id: "i-empty", selectionType: "Selection", title: "Dinner reservation", selections: [] },
         {
-          id: "i-flight", type: "Selection", title: "Flight to Paris",
+          id: "i-flight", selectionType: "Selection", title: "Flight to Paris",
           selections: [
             { id: "s1", type: "Flight", isLocked: false, parentOptionId: "o1", options: [{ id: "o1", name: "B6", price: 200, status: "None" }] },
           ],
@@ -829,7 +890,7 @@ describe("plans get — human & error paths", () => {
   it("human mode renders items without selections as bare rows", async () => {
     const plan = {
       id: "plan-4", title: "Bare", description: null, startDate: null, endDate: null,
-      items: [{ id: "i-empty", type: "Selection", title: "Museum visit", selections: [] }],
+      items: [{ id: "i-empty", selectionType: "Selection", title: "Museum visit", selections: [] }],
       travellers: [],
     };
     mockGraphql.mockResolvedValueOnce({ tripPlan: plan });

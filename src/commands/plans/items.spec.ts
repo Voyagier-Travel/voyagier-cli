@@ -35,7 +35,7 @@ beforeAll(async () => {
 
 const flightItem = {
   id: "i-flight",
-  type: "Selection",
+  selectionType: "Selection",
   title: "Flight to Paris",
   selections: [
     {
@@ -50,7 +50,7 @@ const flightItem = {
 
 const hotelItem = {
   id: "i-hotel",
-  type: "Selection",
+  selectionType: "Selection",
   title: "Hotel in Paris",
   selections: [
     { id: "s2", type: "Hotel", isLocked: false, parentOptionId: null, options: [{ id: "h1", name: "Le Marais", price: 150 }] },
@@ -113,6 +113,21 @@ describe("plans items", () => {
     expect(hotel.inferredType).toBe("hotel");
     expect(hotel.status).toBe("pending");
     expect(hotel.selections[0].selectedOption).toBeNull();
+  });
+
+  // VOY-2044: TripPlanItem's kind is `selectionType` (enum SelectionType), not
+  // `type` — the payload reports it under that name, and the selection-level
+  // `type` (a different field) is unaffected.
+  it("--json reports each item's selectionType and keeps selection-level type", async () => {
+    mockGraphql.mockResolvedValueOnce({
+      tripPlan: { id: "plan-1", title: "Paris", items: [flightItem, hotelItem] },
+    });
+    await run(["items", "plan-1", "--json"]);
+    const out = JSON.parse(writes.join(""));
+    const flight = out.items.find((i: any) => i.id === "i-flight");
+    expect(flight.selectionType).toBe("Selection");
+    expect(flight).not.toHaveProperty("type");
+    expect(flight.selections[0].type).toBe("Flight");
   });
 
   it("human mode lists items with status labels and chosen option", async () => {

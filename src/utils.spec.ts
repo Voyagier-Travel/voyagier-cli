@@ -10,6 +10,8 @@ import {
   validateDate,
   validateIata,
   validateId,
+  validateOptionId,
+  OPTION_ID_ERROR,
   subSelectionLabel,
   deriveBaseUrl,
   openBrowser,
@@ -347,6 +349,60 @@ describe("validateId (VOY-1828)", () => {
   it("does NOT enforce strict UUID format (spec-style ids like opt-1 pass)", () => {
     expect(() => validateId("opt-1", "--option-id")).not.toThrow();
     expect(() => validateId("sel-abc", "--selection-id")).not.toThrow();
+  });
+});
+
+describe("validateOptionId (VOY-2044)", () => {
+  const FULL = "550e8400-e29b-41d4-a716-446655440000";
+
+  it("returns the id for a full 36-character uuid", () => {
+    expect(FULL).toHaveLength(36);
+    expect(validateOptionId(FULL, "--option-id")).toBe(FULL);
+  });
+
+  it("accepts either hex case and trims surrounding whitespace", () => {
+    expect(validateOptionId(FULL.toUpperCase(), "--option-id")).toBe(FULL.toUpperCase());
+    expect(validateOptionId(`  ${FULL}\t`, "--option-id")).toBe(FULL);
+  });
+
+  it.each([
+    ["truncated to the first group", FULL.slice(0, 8)],
+    ["missing the final group", FULL.slice(0, 23)],
+    ["one character short", FULL.slice(0, 35)],
+    ["one character long", `${FULL}0`],
+    ["a short opaque id", "opt-1"],
+    ["a uuid with no hyphens", FULL.replace(/-/g, "")],
+    ["a non-hex character", "550e8400-e29b-41d4-a716-44665544000z"],
+    ["internal whitespace", "550e8400-e29b-41d4-a716 446655440000"],
+  ])("rejects %s with a VALIDATION CliError naming the received value", (_label, bad) => {
+    try {
+      validateOptionId(bad, "--option-id");
+      throw new Error("expected validateOptionId to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+      expect((err as CliError).message).toBe(`${OPTION_ID_ERROR} Received: ${bad}`);
+    }
+  });
+
+  it("keeps validateId's message for empty / null / undefined values", () => {
+    for (const bad of ["", "   ", "null", "UNDEFINED"]) {
+      try {
+        validateOptionId(bad, "--option-id");
+        throw new Error("expected validateOptionId to throw");
+      } catch (err) {
+        expect(err).toBeInstanceOf(CliError);
+        expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+        expect((err as CliError).message).toContain("--option-id");
+        expect((err as CliError).message).not.toContain("36-character");
+      }
+    }
+  });
+
+  it("OPTION_ID_ERROR is the shared message the CLI and MCP schemas both use", () => {
+    expect(OPTION_ID_ERROR).toBe(
+      "Option id must be the full id shown in search results (a 36-character UUID).",
+    );
   });
 });
 

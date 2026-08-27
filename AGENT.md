@@ -123,6 +123,12 @@ voyagier book <PLAN_ID> --expect-total <subtotal> --json   # creates the Stripe 
 
 Pass `--plan <id>` on `select` to assert the cached search belongs to that plan — it guards against cross-plan state corruption when you run multiple workflows in parallel. (Not needed in direct `--selection-id`/`--option-id` mode.)
 
+### Pricing semantics
+
+- **Every option price is a TOTAL** — for the whole stay/journey and the whole traveller party. Search results and selection options both work this way. It is never a per-night or a per-person figure, so do not multiply by nights or by traveller count.
+- **`book --dry-run` returns the authoritative bookable price.** Confirm the total there (`data.chargeableSubtotal`, bookable items only) before gating a real `book`; `quote` is the client-facing equivalent. On any disagreement with a displayed option price, the dry-run wins.
+- **Use option ids in full.** An option id is the whole 36-character uuid printed by `search` / `selection-options` — a shortened id is rejected client-side (`VALIDATION`). Ids are **regenerated when a search is re-run**, so re-fetch the options and pick a current id rather than reusing a stale one.
+
 ### Picks are per-traveller (participant-choice model)
 
 The backend records every pick as per-traveller choices on the goal's single

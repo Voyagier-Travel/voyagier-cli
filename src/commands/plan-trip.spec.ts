@@ -213,7 +213,7 @@ const MOCK_PLAN_DEEP_WITH_SUBS = {
       {
         id: "item-1",
         title: "Flight DCA→CDG",
-        type: "Selection",
+        selectionType: "Selection",
         selections: [
           {
             id: "sel-1",

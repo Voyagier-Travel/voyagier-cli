@@ -12,7 +12,7 @@ import {
   LIST_TRIP_PLAN_GOALS_DEEP,
 } from "../queries.js";
 import { loadSearchState, clearSearchState, isSearchStateStale } from "../state.js";
-import { deriveBaseUrl, shellArg, validateId } from "../utils.js";
+import { deriveBaseUrl, shellArg, validateId, validateOptionId } from "../utils.js";
 import { clientPlanUrl, planUrls } from "../plan-urls.js";
 import { GET_PLAN_STATUS } from "../queries.js";
 import { resolveHotelCodes, buildPlanStatus, type PlanStatusQueryResult } from "./plan-status.js";
@@ -98,6 +98,28 @@ interface PickOutcome {
 }
 
 /**
+ * Guard the pick mutations' payload (VOY-2044). All four return the updated
+ * selection; a null/empty payload means the mutation matched nothing server-side
+ * even though the request itself was accepted. Reporting that as an error keeps
+ * `select` from printing a success-shaped result with no selection in it.
+ */
+function requirePickResult(
+  result: SelectionResponse | null | undefined,
+  selectionId: string,
+  optionId: string,
+): SelectionResponse {
+  if (!result || !result.id) {
+    throw new CliError(
+      CliErrorCode.API_ERROR,
+      `The pick was not recorded: the server returned no selection for option ${optionId} on selection ${selectionId}.\n` +
+        `  Option ids are regenerated when a search is re-run — re-fetch this selection's options and pick a current id:\n` +
+        `    voyagier selection-options ${shellArg(selectionId)} --wait --json`,
+    );
+  }
+  return result;
+}
+
+/**
  * Send the pick to the backend for the resolved scope. No error mapping here —
  * the caller owns the catch so a single mapper/router covers both the initial
  * attempt and the fork-template retry (VOY-1872), keeping the scope identical
@@ -109,35 +131,35 @@ async function performPick(
   scope: ChoiceScopeOpts,
 ): Promise<SelectionResponse> {
   if (scope.traveller) {
-    const data = await graphql<{ setTripPlanSelectionTravellerChoice: SelectionResponse }>(
+    const data = await graphql<{ setTripPlanSelectionTravellerChoice: SelectionResponse | null }>(
       SET_SELECTION_TRAVELLER_CHOICE,
       { selectionId, travellerId: scope.traveller, optionId },
     );
-    return data.setTripPlanSelectionTravellerChoice;
+    return requirePickResult(data.setTripPlanSelectionTravellerChoice, selectionId, optionId);
   }
   if (scope.travellers) {
     const travellerIds = scope.travellers.split(",").map((s: string) => s.trim()).filter(Boolean);
     if (travellerIds.length === 0) {
       throw new CliError(CliErrorCode.VALIDATION, "--travellers requires a comma-separated list of traveller IDs.");
     }
-    const data = await graphql<{ setTripPlanTravellerChoiceForSubset: SelectionResponse }>(
+    const data = await graphql<{ setTripPlanTravellerChoiceForSubset: SelectionResponse | null }>(
       SET_TRAVELLER_CHOICE_FOR_SUBSET,
       { selectionId, travellerIds, optionId, replaceExisting: true },
     );
-    return data.setTripPlanTravellerChoiceForSubset;
+    return requirePickResult(data.setTripPlanTravellerChoiceForSubset, selectionId, optionId);
   }
   if (scope.group) {
-    const data = await graphql<{ setTripPlanTravellerChoiceForGroup: SelectionResponse }>(
+    const data = await graphql<{ setTripPlanTravellerChoiceForGroup: SelectionResponse | null }>(
       SET_TRAVELLER_CHOICE_FOR_GROUP,
       { selectionId, groupId: scope.group, optionId },
     );
-    return data.setTripPlanTravellerChoiceForGroup;
+    return requirePickResult(data.setTripPlanTravellerChoiceForGroup, selectionId, optionId);
   }
-  const data = await graphql<{ setTripPlanSelectedOption: SelectionResponse }>(
+  const data = await graphql<{ setTripPlanSelectedOption: SelectionResponse | null }>(
     SET_TRIP_PLAN_SELECTED_OPTION,
     { selectionId, optionId },
   );
-  return data.setTripPlanSelectedOption;
+  return requirePickResult(data.setTripPlanSelectedOption, selectionId, optionId);
 }
 
 async function setSelectedOption(
@@ -465,8 +487,11 @@ export function registerSelectCommands(program: Command): void {
         // Reject empty/"null"/"undefined" ids client-side (VOY-1828) — index
         // mode is exempt: its ids come from trusted cached search state, never
         // from these user-supplied flags, so there is nothing to duplicate.
+        // --option-id additionally has to be a FULL uuid (VOY-2044): a truncated
+        // id is a valid String to the API but matches no option, which the
+        // server answers with an empty result rather than an error.
         const selectionId = validateId(opts.selectionId, "--selection-id");
-        const optionId = validateId(opts.optionId, "--option-id");
+        const optionId = validateOptionId(opts.optionId, "--option-id");
         try {
           if (!opts.json) progress("Selecting option...");
           const { result, routedFrom } = await setSelectedOption(selectionId, optionId, opts);
