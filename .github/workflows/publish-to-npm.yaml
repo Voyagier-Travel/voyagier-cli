@@ -152,6 +152,27 @@ jobs:
             npm publish --access public --provenance
           fi
 
+      # The `voyagier` alias package (alias/) publishes from the same run so
+      # `npm install -g voyagier` keeps resolving the canonical package. It
+      # needs its own Trusted Publisher entry on npmjs.com (package `voyagier`
+      # -> Settings -> Trusted Publisher -> this repo + this workflow file).
+      # Guarded for idempotent re-runs, and non-fatal: an alias failure must
+      # not strand canonical-release finalization (tag/release/PR below),
+      # because a re-dispatch after finalization would mint a new version.
+      - name: Publish voyagier Alias (if version is new)
+        continue-on-error: true
+        working-directory: alias
+        run: |
+          ALIAS_VERSION=$(node -p "require('./package.json').version")
+          if npm view "voyagier@${ALIAS_VERSION}" version >/dev/null 2>&1; then
+            echo "voyagier@${ALIAS_VERSION} already on npm — skipping"
+          else
+            npm publish --access public --provenance || {
+              echo "::warning::voyagier alias publish failed (is the Trusted Publisher entry configured for the 'voyagier' package?) — publish manually from alias/ or re-check npm settings"
+              exit 1
+            }
+          fi
+
       # main is protected by the "Protect main (PRs only)" ruleset (no bypass actors),
       # so the version-bump commit lands via a release PR instead of a direct push.
       # The tag and GitHub release point at the release-branch commit, which becomes
