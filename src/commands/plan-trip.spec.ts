@@ -1,5 +1,6 @@
 import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals";
 import { Command } from "commander";
+import { CliError, CliErrorCode } from "../errors.js";
 
 // ── Mocks (must be declared before dynamic imports) ────────────────────────
 
@@ -123,6 +124,10 @@ let registerPlanTripCommand: (program: Command) => void;
 let parseDurationMinutes: (d?: string) => number;
 let parseStops: (bd?: Record<string, unknown>) => number;
 let nextDay: (d?: string) => string | undefined;
+let resolveDestination: (opts: { destination?: string; destinationId?: string; plan?: string }) => {
+  travelDestinationId?: string;
+  destinationName?: string;
+};
 
 beforeAll(async () => {
   const mod = await import("./plan-trip.js");
@@ -130,6 +135,7 @@ beforeAll(async () => {
   parseDurationMinutes = mod.parseDurationMinutes as (d?: string) => number;
   parseStops = mod.parseStops as (bd?: Record<string, unknown>) => number;
   nextDay = mod.nextDay as (d?: string) => string | undefined;
+  resolveDestination = mod.resolveDestination as typeof resolveDestination;
 });
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
@@ -604,5 +610,155 @@ describe("plan-trip templates", () => {
       runPlanTrip(["--client", "client-1", "--title", "X", "--template", "HotelOnly", "--hotel-only", "--json"]),
     ).rejects.toThrow(/--template replaces/);
     expect(mockGraphql).not.toHaveBeenCalled();
+  });
+});
+
+// ── Structured destination (VOY-2082) ──────────────────────────────────────
+
+describe("resolveDestination", () => {
+  it("maps --destination-id onto travelDestinationId", () => {
+    expect(resolveDestination({ destinationId: "dst_42" })).toEqual({ travelDestinationId: "dst_42" });
+  });
+
+  it("maps --destination onto destinationName", () => {
+    expect(resolveDestination({ destination: "the Dolomites" })).toEqual({ destinationName: "the Dolomites" });
+  });
+
+  it("returns neither field when no destination flag was given", () => {
+    expect(resolveDestination({})).toEqual({});
+  });
+
+  it("trims both values", () => {
+    expect(resolveDestination({ destinationId: "  dst_42  " })).toEqual({ travelDestinationId: "dst_42" });
+    expect(resolveDestination({ destination: "  Split  " })).toEqual({ destinationName: "Split" });
+  });
+
+  it("rejects both destination flags at once rather than picking a winner", () => {
+    expect(() => resolveDestination({ destinationId: "dst_42", destination: "Georgia" }))
+      .toThrow(/not both/);
+  });
+
+  it("points at destinations search in the both-given message", () => {
+    expect(() => resolveDestination({ destinationId: "dst_42", destination: "Georgia" }))
+      .toThrow(/destinations search/);
+  });
+
+  it("rejects a destination flag combined with --plan (add-to-existing mode)", () => {
+    expect(() => resolveDestination({ destinationId: "dst_42", plan: "plan-1" }))
+      .toThrow(/only apply when creating a NEW plan/);
+    expect(() => resolveDestination({ destination: "Georgia", plan: "plan-1" }))
+      .toThrow(/only apply when creating a NEW plan/);
+  });
+
+  it("rejects an explicit-but-empty flag instead of silently ignoring it", () => {
+    expect(() => resolveDestination({ destinationId: "" })).toThrow(/--destination-id was provided but empty/);
+    expect(() => resolveDestination({ destinationId: "   " })).toThrow(/--destination-id was provided but empty/);
+    expect(() => resolveDestination({ destination: "" })).toThrow(/--destination was provided but empty/);
+  });
+
+  it("throws VALIDATION-coded CliErrors", () => {
+    try {
+      resolveDestination({ destinationId: "a", destination: "b" });
+      throw new Error("expected a throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+    }
+  });
+});
+
+describe("plan-trip --destination-id / --destination", () => {
+  let stdout: string;
+  let writeSpy: ReturnType<typeof jest.spyOn>;
+
+  beforeEach(() => {
+    mockGraphql.mockReset();
+    stdout = "";
+    writeSpy = jest.spyOn(process.stdout, "write").mockImplementation((c: any) => {
+      stdout += typeof c === "string" ? c : c.toString();
+      return true;
+    });
+  });
+
+  afterEach(() => {
+    writeSpy.mockRestore();
+  });
+
+  it("sends travelDestinationId on the create when --destination-id is given", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-d", title: "Tbilisi", travellers: [], goals: [] } })
+      .mockResolvedValueOnce({ tripPlanTravellers: [] });
+
+    await runPlanTrip(["--client", "client-1", "--title", "Tbilisi", "--destination-id", "dst_ge", "--json"]);
+
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input).toMatchObject({ travelDestinationId: "dst_ge" });
+    expect(vars.input).not.toHaveProperty("destinationName");
+  });
+
+  it("sends destinationName on the create when the freeform --destination is given", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-f", title: "Dolomites", travellers: [], goals: [] } })
+      .mockResolvedValueOnce({ tripPlanTravellers: [] });
+
+    await runPlanTrip(["--client", "client-1", "--title", "Dolomites", "--destination", "the Dolomites", "--json"]);
+
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input).toMatchObject({ destinationName: "the Dolomites" });
+    expect(vars.input).not.toHaveProperty("travelDestinationId");
+  });
+
+  it("sends neither field when no destination flag was given", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ createTripPlan: { id: "plan-n", title: "N", travellers: [], goals: [] } })
+      .mockResolvedValueOnce({ tripPlanTravellers: [] });
+
+    await runPlanTrip(["--client", "client-1", "--title", "N", "--json"]);
+
+    const [, vars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(vars.input).not.toHaveProperty("travelDestinationId");
+    expect(vars.input).not.toHaveProperty("destinationName");
+  });
+
+  it("rejects --destination-id together with --destination BEFORE any API call", async () => {
+    await expect(
+      runPlanTrip([
+        "--client", "client-1", "--title", "X",
+        "--destination-id", "dst_ge", "--destination", "Georgia", "--json",
+      ]),
+    ).rejects.toThrow(/not both/);
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it("rejects a destination flag in add-to-existing (--plan) mode before any API call", async () => {
+    await expect(
+      runPlanTrip(["--plan", "plan-1", "--destination-id", "dst_ge", "--json"]),
+    ).rejects.toThrow(/only apply when creating a NEW plan/);
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildClientHintFlags destination carry-through", () => {
+  let buildClientHintFlags: (opts: Record<string, unknown>) => string;
+
+  beforeAll(async () => {
+    const mod = await import("./plan-trip.js");
+    buildClientHintFlags = mod.buildClientHintFlags as typeof buildClientHintFlags;
+  });
+
+  it("carries --destination-id into the MULTIPLE_CLIENTS retry hint", () => {
+    expect(buildClientHintFlags({ title: "T", destinationId: "dst_42" })).toBe(
+      "--title T --destination-id dst_42",
+    );
+  });
+
+  it("carries --destination (shell-quoted) into the retry hint", () => {
+    expect(buildClientHintFlags({ destination: "the Dolomites" })).toBe(
+      "--destination 'the Dolomites'",
+    );
+  });
+
+  it("omits destination flags when neither was given", () => {
+    expect(buildClientHintFlags({ title: "T" })).toBe("--title T");
   });
 });

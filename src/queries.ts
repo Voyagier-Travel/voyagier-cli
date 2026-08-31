@@ -1205,6 +1205,29 @@ export const UPSERT_PARTICIPANT_CHOICE = `
   }
 `;
 
+// --- Travel destinations (structured destination resolution) ---
+
+/**
+ * Resolve freeform destination text to ranked TravelDestination candidates.
+ *
+ * `type` is one of City | Country | Region | Continent | Area. `addressCountry`
+ * is an ISO alpha-2 code, empty for a multi-country Area (whose members are
+ * listed in `countries`). A place that is not a travel destination resolves to
+ * zero candidates — an empty list, not an error.
+ */
+export const SEARCH_TRAVEL_DESTINATIONS = `
+  query SearchTravelDestinations($input: SearchTravelDestinationsInput!) {
+    searchTravelDestinations(input: $input) {
+      id
+      name
+      type
+      addressCountry
+      addressRegion
+      countries
+    }
+  }
+`;
+
 // --- Places (v2.0.0 — Section 7, geo/place surface) ---
 
 export const SEARCH_PLACES = `

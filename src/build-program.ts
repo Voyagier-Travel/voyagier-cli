@@ -16,6 +16,7 @@ import { registerPlanTripCommand } from "./commands/plan-trip.js";
 import { registerPlanStatusCommand } from "./commands/plan-status.js";
 import { registerAgentDocsCommand } from "./commands/agent-docs.js";
 import { registerClientsCommands } from "./commands/clients.js";
+import { registerDestinationsCommands } from "./commands/destinations.js";
 import { registerDoctorCommand } from "./commands/doctor.js";
 import { registerItineraryCommand } from "./commands/itinerary.js";
 import { registerListingsCommands } from "./commands/listings.js";
@@ -118,6 +119,9 @@ Full reference: voyagier agent-docs`,
 
   // Commands ordered by workflow: auth → plan → search → select → book
   registerAuthCommands(program);
+  // Destination resolution comes before plan creation: plan-trip takes the id
+  // this returns via --destination-id.
+  registerDestinationsCommands(program);
   registerPlanTripCommand(program);
   registerPlanStatusCommand(program);
   registerPlanCommands(program);

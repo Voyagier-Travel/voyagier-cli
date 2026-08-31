@@ -81,8 +81,9 @@ The cart materializes only bookable, fare/room-level options — the per-item `i
 |---------|-------------|
 | `voyagier doctor` | Self-check: auth, schema, reachability, state, version |
 | `voyagier clients` | Advisor CRM (`list`, `get`, `create`, `update`, `archive`, `upsert`) |
+| `voyagier destinations` | `search <query>` — resolve freeform destination text to structured candidates (id, type, country, region) |
 | `voyagier plans` | `create`, `list`, `get`, `summary`, `delete`; `plans goals` for the goal graph + readiness; `plans bookable` for pre-flight |
-| `voyagier plan-trip` | Scaffold a plan (plan + the goal graph its `--template` names; adds the party only if `--travellers` is given) and print compose next-steps |
+| `voyagier plan-trip` | Scaffold a plan (plan + the goal graph its `--template` names; adds the party only if `--travellers` is given) and print compose next-steps. `--destination-id <id>` from `destinations search` pins the destination; `--destination <name>` is the freeform fallback |
 | `voyagier plan-status <planId>` | One-shot readiness: BOOKED / READY_TO_BOOK / BLOCKED / IN_PROGRESS, ordered blockers, runnable next steps |
 | `voyagier travellers` | Add, list, update, remove travellers |
 | `voyagier traveller-groups` | Manage traveller groups (list, create, update, delete, members) |
@@ -175,7 +176,8 @@ It's a thin adapter: each tool call self-spawns the CLI as a subprocess with `--
 | `clients_list` | `clients list` | Roster of CRM clients; `page`/`limit` page through it. |
 | `client_create` | `clients upsert` | Idempotent by email; a plan needs a client. |
 | `plans_list` | `plans list` | Owned + shared plans in one list, each tagged `relationship` `owner`/`shared`; the plan-discovery entry point. `relationship`/`active`/`page`/`limit` filter and page it. |
-| `plan_trip` | `plan-trip` | Scaffold a plan + goal graph from a `template`; returns `nextSteps`. |
+| `search_destinations` | `destinations search` | Freeform text → ranked structured destinations; run before `plan_trip`. |
+| `plan_trip` | `plan-trip` | Scaffold a plan + goal graph from a `template`; returns `nextSteps`. `travel_destination_id` (from `search_destinations`) is preferred over the freeform `destination`. |
 | `travellers_add` | `travellers add` | Adds the whole party in one call; required before search. |
 | `search_flights` | `search flights` | Async — `optionCount 0` means poll options. |
 | `search_hotels` | `search hotels` | Prices are stay totals, not nightly. |
