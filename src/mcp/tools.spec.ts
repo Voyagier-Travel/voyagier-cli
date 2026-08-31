@@ -18,6 +18,7 @@ import {
   buildCreateClientArgs,
   buildClientsListArgs,
   buildPlansListArgs,
+  buildSearchDestinationsArgs,
   buildPlanTripArgs,
   buildAddTravellerArgs,
   buildRefreshOptionsArgs,
@@ -49,6 +50,7 @@ const EXPECTED_TOOL_NAMES = [
   "client_create",
   "create_client",
   "plans_list",
+  "search_destinations",
   "plan_trip",
   "travellers_add",
   "add_traveller",
@@ -166,6 +168,7 @@ describe("TOOLS table", () => {
 
   it.each([
     ["clients_list", true],
+    ["search_destinations", true],
     ["choices_view", true],
     ["choose_room_slot", false],
     ["refresh_options", false],
@@ -279,6 +282,48 @@ describe("argv builders", () => {
     // for_all:false emits no flag; for_all:true does.
     expect(full).not.toContain("--for-all");
     expect(buildChooseRoomSlotArgs({ selection_id: "s1", for_all: true })).toContain("--for-all");
+  });
+
+  it("search_destinations passes the query as a POSITIONAL, not a flag", () => {
+    expect(buildSearchDestinationsArgs({ query: "the Dolomites" })).toEqual([
+      "destinations", "search", "the Dolomites", "--json",
+    ]);
+  });
+
+  it("search_destinations forwards the query verbatim (no quoting, no normalisation)", () => {
+    // The builder is pure argv: spawning passes each element as one argv slot,
+    // so a query with spaces/quotes must NOT be pre-quoted here.
+    const args = buildSearchDestinationsArgs({ query: '  Georgia "the country"  ' });
+    expect(args[2]).toBe('  Georgia "the country"  ');
+  });
+
+  it("plan_trip forwards travel_destination_id as --destination-id via the tool entry", () => {
+    const tool = TOOLS.find((t) => t.name === "plan_trip")!;
+    const args = tool.buildArgs({ client: "c", title: "t", travel_destination_id: "dst_42" });
+    expect(args).toEqual(["plan-trip", "--client", "c", "--title", "t", "--destination-id", "dst_42", "--json"]);
+    expect(args).not.toContain("--destination");
+  });
+
+  it("plan_trip forwards the freeform destination as --destination", () => {
+    const tool = TOOLS.find((t) => t.name === "plan_trip")!;
+    const args = tool.buildArgs({ client: "c", title: "t", destination: "the Dolomites" });
+    expect(args).toEqual(["plan-trip", "--client", "c", "--title", "t", "--destination", "the Dolomites", "--json"]);
+    expect(args).not.toContain("--destination-id");
+  });
+
+  it("plan_trip forwards BOTH destination inputs when given both — the CLI is the one gate", () => {
+    // Precedence must not be invented in the builder: the CLI rejects the pair
+    // with VALIDATION, and that error is what the caller needs to see.
+    const tool = TOOLS.find((t) => t.name === "plan_trip")!;
+    const args = tool.buildArgs({ client: "c", title: "t", travel_destination_id: "dst_42", destination: "Georgia" });
+    expect(args).toContain("--destination-id");
+    expect(args).toContain("--destination");
+  });
+
+  it("plan_trip omits both destination flags when neither is given", () => {
+    const args = buildPlanTripArgs({ client: "c", title: "t" });
+    expect(args).not.toContain("--destination-id");
+    expect(args).not.toContain("--destination");
   });
 
   it("plan_trip omits absent optionals and false booleans; emits bare flags for true booleans", () => {
@@ -599,6 +644,7 @@ describe("--json discipline via the table (buildArgs on representative input)", 
     client_create: { email: "a@b.co", name: "n" },
     create_client: { email: "a@b.co", name: "n" },
     plans_list: {},
+    search_destinations: { query: "Georgia" },
     plan_trip: { client: "c", title: "t" },
     travellers_add: { plan_id: "p", first: "f", last: "l" },
     add_traveller: { plan_id: "p", first: "f", last: "l" },

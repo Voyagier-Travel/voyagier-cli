@@ -57,6 +57,61 @@ export function buildClientHintFlags(opts: {
   return parts.join(" ");
 }
 
+/** The destination flags plan-trip accepts, as Commander hands them over. */
+export interface DestinationFlags {
+  destination?: string;
+  destinationId?: string;
+  plan?: string;
+}
+
+/**
+ * Resolve `--destination` / `--destination-id` into the createTripPlan input
+ * fields, rejecting the combinations the API cannot honour. Pure, so the rules
+ * are testable without running the command.
+ *
+ * `--destination-id` is PREFERRED over `--destination`: a structured
+ * destination carries the country/region that downstream airport and hotel
+ * resolution needs to tell Georgia the country from Georgia the US state.
+ * Passing both is an error rather than a silent precedence rule — the caller
+ * would otherwise never learn which one took effect.
+ */
+export function resolveDestination(opts: DestinationFlags): {
+  travelDestinationId?: string;
+  destinationName?: string;
+} {
+  const destinationId = opts.destinationId?.trim();
+  const destination = opts.destination?.trim();
+
+  if (destinationId && destination) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      "Give --destination-id or --destination, not both. Prefer --destination-id: resolve the name first with `voyagier destinations search \"<text>\"`, then pass the chosen id.",
+    );
+  }
+  if ((destinationId || destination) && opts.plan) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      "--destination-id/--destination only apply when creating a NEW plan; --plan adds to an existing one, whose destination is already set.",
+    );
+  }
+  if (opts.destinationId !== undefined && !destinationId) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      "--destination-id was provided but empty. Pass an id from `voyagier destinations search`, or drop the flag.",
+    );
+  }
+  if (opts.destination !== undefined && !destination) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      "--destination was provided but empty. Pass a destination name, or drop the flag.",
+    );
+  }
+
+  if (destinationId) return { travelDestinationId: destinationId };
+  if (destination) return { destinationName: destination };
+  return {};
+}
+
 interface Traveller {
   id: string;
   firstName: string;
@@ -131,6 +186,8 @@ Examples:
     .option("--to <code>", "Destination airport code")
     .option("--depart <date>", "Departure date (YYYY-MM-DD)")
     .option("--return <date>", "Return date (YYYY-MM-DD, makes round-trip)")
+    .option("--destination-id <id>", "Structured destination id from `voyagier destinations search` — preferred over --destination, since it carries the country/region that disambiguates same-named places (new plans only)")
+    .option("--destination <name>", "Freeform destination name, when no structured destination matches. Give this or --destination-id, not both (new plans only)")
     .option("--hotel <location>", "Hotel location (triggers hotel search)")
     .option("--checkin <date>", "Hotel check-in date (defaults to --depart)")
     .option("--checkout <date>", "Hotel check-out date (defaults to --return or --depart + 1 day)")
@@ -164,6 +221,9 @@ Examples:
         // API calls.
         const { template, deprecationWarning } = resolveTemplate(opts);
         if (deprecationWarning) warn(deprecationWarning);
+
+        // Same shape: cheap, pure, and rejected before any API call.
+        const { travelDestinationId, destinationName } = resolveDestination(opts);
 
         // Validate inputs
         if (opts.depart) {
@@ -213,6 +273,8 @@ Examples:
             title: opts.title as string,
             travellers: opts.travellers,
             template,
+            travelDestinationId,
+            destinationName,
             quiet: json || agent,
             interactive: isInteractive(opts),
             clientHintFlags: buildClientHintFlags(opts),

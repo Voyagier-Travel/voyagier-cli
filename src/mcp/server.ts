@@ -23,7 +23,7 @@ import { runCli, toToolResult, type CliResult } from "./exec.js";
 export const INSTRUCTIONS = [
   "Voyagier is an agent-ready travel platform. This server exposes the CLI's agent surface as tools. Every tool returns ONE canonical JSON envelope: on success { ok: true, data: <object>, planContext?: <object> } (agent_docs arrives as data.content markdown); on failure { ok: false, error: { code, message, details? } } with isError=true.",
   "",
-  "Compose loop: client_create → plan_trip → (travellers_add) → search_flights/search_hotels/search_activities → get_selection_options → select_option → plan_status → quote → book. (The old create_client / add_traveller tool names remain as deprecated aliases.)",
+  "Compose loop: client_create → search_destinations → plan_trip → (travellers_add) → search_flights/search_hotels/search_activities → get_selection_options → select_option → plan_status → quote → book. (The old create_client / add_traveller tool names remain as deprecated aliases.) Resolve the destination with search_destinations first and pass the chosen id to plan_trip as travel_destination_id — a bare name cannot tell Georgia the country from the US state.",
   "",
   "Visibility tools verify the real state: travellers_list (discover traveller ids + missing checkout fields), itinerary (the actual composed trip — per-leg routing and times — after selecting flights/hotels), and bookings_list (booking records + status after a checkout, before telling a user their trip is secured).",
   "",

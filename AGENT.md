@@ -379,9 +379,26 @@ voyagier clients upsert --email <e> --name <n> --type <t> [--phone] --json
 
 `upsert` is the agent-friendly idempotency primitive: returns existing match by email or creates new. Lowercase input (`individual`) is normalized to PascalCase (`Individual`) for the schema.
 
+### Destinations (Style A JSON — structured destination resolution)
+```bash
+voyagier destinations search <query> --json
+# Returns: { ok, data: { destinations[], total, query } }
+```
+
+Resolves freeform destination text — a city, country, region, continent, or named area — to ranked structured candidates. Each candidate carries `id`, `name`, `type` (`City` | `Country` | `Region` | `Continent` | `Area`), `addressCountry` (ISO alpha-2, empty string for a multi-country `Area`), `addressRegion`, and `countries` (the ISO codes an `Area` spans).
+
+Run it BEFORE `plan-trip` and pass the chosen `id` as `--destination-id`. A bare name is ambiguous — Georgia the country vs Georgia the US state — and the structured destination carries the country/region that downstream airport and hotel resolution needs to tell them apart. When nothing matches, the result is an empty `destinations` array, not an error; fall back to `plan-trip --destination "<name>"`.
+
+```bash
+voyagier destinations search "Georgia" --json
+voyagier plan-trip --client <ref> --title "Tbilisi" --destination-id <id> --json
+```
+
 ### Plans (Style B JSON)
 
 To create a plan with a goal graph, prefer `voyagier plan-trip --client <ref> --title <t> [--template <name>]` (scaffold). `plans create` takes the default template with no travellers.
+
+`plan-trip` also takes the trip's destination at creation: `--destination-id <id>` (from `destinations search`) is PREFERRED, `--destination <name>` is the freeform fallback. Give one or the other, not both — passing both is a `VALIDATION` error rather than a silent precedence rule. Both apply to NEW plans only; in `--plan <id>` add-to-existing mode they are rejected.
 
 ```bash
 voyagier plans create [--client <ref>] --title <title> --json
@@ -648,6 +665,8 @@ voyagier telemetry status|on|off
 voyagier agent-docs                   # prints this file
 voyagier mcp                          # run as a Model Context Protocol (MCP) stdio server
 ```
+
+**Hosted MCP server.** Voyagier runs a hosted MCP server at `https://mcp.voyagier.com/api/mcp`; it is the recommended way for an agent to connect, since the client speaks HTTP with a Personal Access Token and needs no local install. `voyagier mcp install <client>` wires it up.
 
 **MCP server.** The CLI is also an MCP stdio server (`voyagier mcp`): it exposes the agent surface — plan, search, selection-options, select, plan-status, quote, book — as MCP tools. Each tool call self-spawns the CLI with `--json` (except `agent_docs`), so it's the SAME surface with the SAME error codes and the SAME price-gated `book` (still requires a gate — `expect_total_cents` in integer cents, `expect_total` in dollars, or `max_total` alone as a cap). Unlike the CLI's two payload styles, the MCP layer normalises every result into ONE canonical envelope: success `{ ok: true, data, planContext? }` (agent_docs markdown arrives as `data.content`), failure `{ ok: false, error: { code, message, details? } }` with `isError: true`. In shell-less or MCP-native environments, prefer it over hand-rolling `child_process` calls. (`send` is intentionally not exposed — it emails a real client; close via `quote` → `book`.)
 

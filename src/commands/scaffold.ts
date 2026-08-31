@@ -160,6 +160,15 @@ export interface ScaffoldOptions {
   travellers?: string;
   /** Goal graph to scaffold. Omit to take the server's default (round trip + hotel). */
   template?: TripPlanTemplate;
+  /**
+   * Structured destination id from `voyagier destinations search`. PREFERRED
+   * over destinationName: it carries the country/region downstream airport and
+   * hotel resolution needs to tell same-named places apart. Mutually exclusive
+   * with destinationName — callers reject the conflict before getting here.
+   */
+  travelDestinationId?: string;
+  /** Freeform destination name, when no structured destination matches. */
+  destinationName?: string;
   /** Suppress progress output + the auto-resolved-client note (for --json callers). */
   quiet?: boolean;
   /**
@@ -288,6 +297,8 @@ export async function scaffoldPlan(opts: ScaffoldOptions): Promise<ScaffoldResul
     clientId: resolved.id,
     title: opts.title,
     ...(opts.template ? { template: opts.template } : {}),
+    ...(opts.travelDestinationId ? { travelDestinationId: opts.travelDestinationId } : {}),
+    ...(opts.destinationName ? { destinationName: opts.destinationName } : {}),
     ...(parsedTravellers.length > 0
       ? { travellers: parsedTravellers.map(t => ({ ...t, type: "Adult" })) }
       : {}),

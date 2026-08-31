@@ -15,7 +15,7 @@ import type { CliResult } from "./exec.js";
 
 const EXPECTED_TOOL_NAMES = [
   "doctor", "clients_list", "client_create", "create_client",
-  "plans_list", "plan_trip", "travellers_add", "add_traveller",
+  "plans_list", "search_destinations", "plan_trip", "travellers_add", "add_traveller",
   "travellers_update", "travellers_list", "goal_add",
   "search_flights", "search_hotels", "listings_list", "listings_add_to_selection", "search_activities",
   "get_selection_options", "refresh_options", "select_option", "choices_view", "choose_room_slot",

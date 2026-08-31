@@ -134,9 +134,18 @@ export function buildPlansListArgs(i: { page?: number; limit?: number; relations
   return args;
 }
 
+// Mirrors `destinations search <query>` (src/commands/destinations.ts): the
+// query is a POSITIONAL, not a flag. Trimming/length are validated by the CLI
+// (and again by the API), so the builder stays pure.
+export function buildSearchDestinationsArgs(i: { query: string }): string[] {
+  return ["destinations", "search", i.query, "--json"];
+}
+
 export interface PlanTripInput {
   client?: string;
   title?: string;
+  destination_id?: string;
+  destination?: string;
   from?: string;
   to?: string;
   depart?: string;
@@ -156,6 +165,11 @@ export function buildPlanTripArgs(i: PlanTripInput): string[] {
   const args = ["plan-trip"];
   opt(args, "--client", i.client);
   opt(args, "--title", i.title);
+  // Structured id first, then the freeform fallback. The CLI rejects both at
+  // once (VALIDATION), so the builder forwards whatever it was handed rather
+  // than silently picking a winner.
+  opt(args, "--destination-id", i.destination_id);
+  opt(args, "--destination", i.destination);
   opt(args, "--from", i.from);
   opt(args, "--to", i.to);
   opt(args, "--depart", i.depart);
@@ -579,14 +593,35 @@ export const TOOLS: ToolDef[] = [
   }),
 
   defineTool({
+    name: "search_destinations",
+    title: "Search destinations",
+    description:
+      "Resolve a freeform destination (\"Georgia\", \"the Dolomites\", \"Split\") to STRUCTURED destination candidates. Run this before plan_trip and pass the chosen id as travel_destination_id: a bare name is ambiguous (Georgia the country vs the US state) and a structured destination carries the country/region that downstream airport and hotel resolution needs to disambiguate. Each candidate returns type (City | Country | Region | Continent | Area), addressCountry (ISO alpha-2, \"\" for a multi-country Area) and addressRegion — use those to pick, or to ask the traveller which one they meant. Candidates are ranked; there may be none for a place that is not a travel destination, which is an empty result rather than an error." +
+      INJECTION_NOTE,
+    timeoutMs: T.short,
+    inputSchema: {
+      query: z
+        .string()
+        .trim()
+        .min(1)
+        .max(200)
+        .describe("Freeform destination text — a city, country, region, continent or named area."),
+    },
+    annotations: { readOnlyHint: true },
+    buildArgs: (i) => buildSearchDestinationsArgs(i),
+  }),
+
+  defineTool({
     name: "plan_trip",
     title: "Plan trip",
     description:
-      "Scaffold a trip plan: creates the plan + a default goal graph (a round-trip + hotel TEMPLATE) and returns { tripPlanId, travellerIds, nextSteps }. It does NOT search or select — follow nextSteps to compose. Prune goals the brief doesn't need with the shape flags: one_way (drops the Return Flights goal), flight_only (drops the hotel goal), hotel_only (drops ALL flight goals). Omitting return alone does NOT make a plan one-way. Pass travellers as a comma-separated names string to add them inline.",
+      "Scaffold a trip plan: creates the plan + a default goal graph (a round-trip + hotel TEMPLATE) and returns { tripPlanId, travellerIds, nextSteps }. It does NOT search or select — follow nextSteps to compose. Prune goals the brief doesn't need with the shape flags: one_way (drops the Return Flights goal), flight_only (drops the hotel goal), hotel_only (drops ALL flight goals). Omitting return alone does NOT make a plan one-way. Pass travellers as a comma-separated names string to add them inline. Resolve travel_destination_id with search_destinations first — it is preferred over the freeform destination.",
     timeoutMs: T.medium,
     inputSchema: {
       client: z.string().optional().describe("Client id, email, or name. Required when creating a plan UNLESS you have exactly one active client (auto-picked); pass it explicitly when in doubt."),
       title: z.string().optional().describe("Trip plan title. Required when creating a plan; omit in add-to-existing mode (plan_id provided)."),
+      travel_destination_id: z.string().optional().describe("Structured destination id from search_destinations — PREFERRED over destination: it carries the country/region that downstream airport and hotel resolution needs to disambiguate (Georgia the country vs the US state). Give this or destination, not both. New plans only (not with plan_id)."),
+      destination: z.string().optional().describe("Freeform destination name, when no structured destination matches. Give this or travel_destination_id, not both. New plans only (not with plan_id)."),
       from: z.string().optional().describe("Origin airport code or city (defaults to home airport)."),
       to: z.string().optional().describe("Destination airport code or city."),
       depart: z.string().optional().describe("Departure date (YYYY-MM-DD)."),
@@ -602,7 +637,9 @@ export const TOOLS: ToolDef[] = [
       plan_id: z.string().optional().describe("Add to an existing plan id instead of creating a new one."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
-    buildArgs: (i) => buildPlanTripArgs(i),
+    // travel_destination_id is the remote server's name for the input; the
+    // builder speaks the CLI's flag name (--destination-id), so map it here.
+    buildArgs: (i) => buildPlanTripArgs({ ...i, destination_id: i.travel_destination_id }),
   }),
 
   defineTool({
