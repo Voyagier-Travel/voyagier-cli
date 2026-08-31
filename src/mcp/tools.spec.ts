@@ -683,3 +683,24 @@ describe("--json discipline via the table (buildArgs on representative input)", 
 });
 
 
+
+describe("plan_trip destination inputs reject empty strings at the MCP boundary", () => {
+  // opt() silently drops empty strings when building CLI args, so a bare ""
+  // would bypass the CLI's explicit-empty VALIDATION error and create the plan
+  // with NO destination. The zod schema must reject it first.
+  const planTrip = TOOLS.find((t) => t.name === "plan_trip")!;
+
+  it.each(["travel_destination_id", "destination"])("%s: rejects empty and whitespace-only", (key) => {
+    const schema: any = (planTrip as any).inputSchema[key];
+    expect(schema.safeParse("").success).toBe(false);
+    expect(schema.safeParse("   ").success).toBe(false);
+    expect(schema.safeParse(undefined).success).toBe(true);
+  });
+
+  it("still accepts real values (trimmed)", () => {
+    const schema: any = (planTrip as any).inputSchema.travel_destination_id;
+    const parsed = schema.safeParse(" dst_42 ");
+    expect(parsed.success).toBe(true);
+    expect(parsed.data).toBe("dst_42");
+  });
+});

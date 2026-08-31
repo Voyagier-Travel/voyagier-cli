@@ -737,3 +737,28 @@ describe("plan-trip --destination-id / --destination", () => {
     expect(mockGraphql).not.toHaveBeenCalled();
   });
 });
+
+describe("buildClientHintFlags destination carry-through", () => {
+  let buildClientHintFlags: (opts: Record<string, unknown>) => string;
+
+  beforeAll(async () => {
+    const mod = await import("./plan-trip.js");
+    buildClientHintFlags = mod.buildClientHintFlags as typeof buildClientHintFlags;
+  });
+
+  it("carries --destination-id into the MULTIPLE_CLIENTS retry hint", () => {
+    expect(buildClientHintFlags({ title: "T", destinationId: "dst_42" })).toBe(
+      "--title T --destination-id dst_42",
+    );
+  });
+
+  it("carries --destination (shell-quoted) into the retry hint", () => {
+    expect(buildClientHintFlags({ destination: "the Dolomites" })).toBe(
+      "--destination 'the Dolomites'",
+    );
+  });
+
+  it("omits destination flags when neither was given", () => {
+    expect(buildClientHintFlags({ title: "T" })).toBe("--title T");
+  });
+});

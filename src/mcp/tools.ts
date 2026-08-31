@@ -620,8 +620,11 @@ export const TOOLS: ToolDef[] = [
     inputSchema: {
       client: z.string().optional().describe("Client id, email, or name. Required when creating a plan UNLESS you have exactly one active client (auto-picked); pass it explicitly when in doubt."),
       title: z.string().optional().describe("Trip plan title. Required when creating a plan; omit in add-to-existing mode (plan_id provided)."),
-      travel_destination_id: z.string().optional().describe("Structured destination id from search_destinations — PREFERRED over destination: it carries the country/region that downstream airport and hotel resolution needs to disambiguate (Georgia the country vs the US state). Give this or destination, not both. New plans only (not with plan_id)."),
-      destination: z.string().optional().describe("Freeform destination name, when no structured destination matches. Give this or travel_destination_id, not both. New plans only (not with plan_id)."),
+      // .trim().min(1): opt() drops empty strings when building CLI args, so a
+      // bare "" would silently create the plan with NO destination instead of
+      // hitting the CLI's explicit-empty VALIDATION error. Reject it here.
+      travel_destination_id: z.string().trim().min(1).optional().describe("Structured destination id from search_destinations — PREFERRED over destination: it carries the country/region that downstream airport and hotel resolution needs to disambiguate (Georgia the country vs the US state). Give this or destination, not both. New plans only (not with plan_id)."),
+      destination: z.string().trim().min(1).optional().describe("Freeform destination name, when no structured destination matches. Give this or travel_destination_id, not both. New plans only (not with plan_id)."),
       from: z.string().optional().describe("Origin airport code or city (defaults to home airport)."),
       to: z.string().optional().describe("Destination airport code or city."),
       depart: z.string().optional().describe("Departure date (YYYY-MM-DD)."),

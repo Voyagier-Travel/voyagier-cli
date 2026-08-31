@@ -33,6 +33,8 @@ interface TripPlan {
  */
 export function buildClientHintFlags(opts: {
   title?: string;
+  destinationId?: string;
+  destination?: string;
   from?: string;
   to?: string;
   depart?: string;
@@ -45,6 +47,9 @@ export function buildClientHintFlags(opts: {
 }): string {
   const parts: string[] = [];
   if (opts.title) parts.push(`--title ${shellArg(opts.title)}`);
+  // Mutually exclusive by validation, so at most one of these is present.
+  if (opts.destinationId) parts.push(`--destination-id ${shellArg(opts.destinationId)}`);
+  if (opts.destination) parts.push(`--destination ${shellArg(opts.destination)}`);
   if (opts.from) parts.push(`--from ${shellArg(opts.from)}`);
   if (opts.to) parts.push(`--to ${shellArg(opts.to)}`);
   if (opts.depart) parts.push(`--depart ${shellArg(opts.depart)}`);
