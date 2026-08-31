@@ -112,6 +112,82 @@ const ANNOTATION_EXCEPTIONS: Record<string, Record<string, string>> = {
   },
 };
 
+/**
+ * Every parameter the remote server declares, per tool — the REVIEWED baseline.
+ *
+ * The required-input check above only sees parameters the remote server
+ * REQUIRES, so a new OPTIONAL remote parameter used to arrive silently: the
+ * fixture refresh would pick it up and nothing forced anyone to decide whether
+ * the CLI tool should accept it. This table closes that hole. When the remote
+ * server adds, removes or renames a declared parameter, the baseline test
+ * fails until the change is reviewed: either surface the parameter on the CLI
+ * tool in src/mcp/tools.ts, or update this baseline — both are conscious,
+ * reviewable decisions.
+ */
+const REMOTE_PARAM_BASELINE: Record<string, string[]> = {
+  book: ["expect_total_cents", "idempotency_key", "item_ids", "plan_id"],
+  bookings_list: ["plan_id"],
+  choices_view: ["plan_id"],
+  choose_room_slot: [
+    "create_new_choice",
+    "for_all",
+    "group_id",
+    "option_id",
+    "participant_choice_id",
+    "replace_existing",
+    "selection_id",
+    "traveller_ids",
+  ],
+  client_create: ["client_type", "email", "name"],
+  clients_list: ["query"],
+  get_selection_options: ["selection_id"],
+  goal_add: [
+    "attach_to_journey_selection_id",
+    "departure_date",
+    "include_all_travellers",
+    "name",
+    "plan_id",
+    "return_date",
+    "round_trip",
+    "scope",
+    "sort_order",
+    "type",
+  ],
+  itinerary: ["plan_id"],
+  plan_status: ["plan_id"],
+  plan_trip: [
+    "client_id",
+    "days",
+    "destination",
+    "end_date",
+    "start_date",
+    "template",
+    "title",
+    "travel_destination_id",
+    "travellers",
+  ],
+  plans_list: ["limit", "page", "relationship"],
+  quote: ["plan_id"],
+  refresh_options: ["force", "selection_id"],
+  search_activities: ["date", "destination", "goal_id", "plan_id", "query"],
+  search_destinations: ["query"],
+  search_flights: ["date", "from", "goal_id", "plan_id", "return", "to"],
+  search_hotels: ["checkin", "checkout", "goal_id", "location", "plan_id"],
+  select_option: ["option_id", "selection_id"],
+  set_airport: ["apply_to_counterpart", "groups", "selection_id"],
+  travellers_add: ["plan_id", "travellers"],
+  travellers_list: ["plan_id"],
+  travellers_update: [
+    "date_of_birth",
+    "email",
+    "first_name",
+    "gender",
+    "last_name",
+    "passport",
+    "traveller_id",
+  ],
+};
+
 // ---- Structured views of both sides ----------------------------------------
 
 const cliByName = new Map(TOOLS.map((t) => [t.name, t]));
@@ -259,6 +335,43 @@ describe("MCP tool-registry contract (CLI table vs remote server snapshot)", () 
           }
         }
       }
+      expect(stale).toEqual([]);
+    });
+  });
+
+  describe("the remote registry's declared parameters match the reviewed baseline", () => {
+    it("covers every remote tool with a baseline entry", () => {
+      const missing = REMOTE_TOOLS.map((t) => t.name)
+        .filter((n) => !(n in REMOTE_PARAM_BASELINE))
+        .map(
+          (n) =>
+            `${n}: the remote server exposes it but REMOTE_PARAM_BASELINE has no entry. Review its parameters, surface what the CLI tool should accept in src/mcp/tools.ts, then add the baseline entry.`,
+        );
+      expect(missing).toEqual([]);
+    });
+
+    it.each(REMOTE_TOOLS.map((t) => t.name).filter((n) => n in REMOTE_PARAM_BASELINE))("%s", (name) => {
+      const declared = remoteProps(name).sort();
+      const baseline = [...REMOTE_PARAM_BASELINE[name]].sort();
+      const added = declared.filter((p) => !baseline.includes(p));
+      const removed = baseline.filter((p) => !declared.includes(p));
+      const drift = [
+        ...added.map(
+          (p) =>
+            `${name}.${p}: the remote server now declares it but the baseline does not. Decide whether the CLI tool should accept it (src/mcp/tools.ts), then add it to REMOTE_PARAM_BASELINE.`,
+        ),
+        ...removed.map(
+          (p) =>
+            `${name}.${p}: in the baseline but the remote server no longer declares it. Drop it from REMOTE_PARAM_BASELINE (and from the CLI tool if it only existed to mirror the remote server).`,
+        ),
+      ];
+      expect(drift).toEqual([]);
+    });
+
+    it("keeps the baseline free of tools the remote server no longer exposes", () => {
+      const stale = Object.keys(REMOTE_PARAM_BASELINE)
+        .filter((n) => !remoteByName.has(n))
+        .map((n) => `REMOTE_PARAM_BASELINE.${n}: no longer in the remote snapshot — remove the entry.`);
       expect(stale).toEqual([]);
     });
   });
