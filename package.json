@@ -15,7 +15,8 @@
     "test": "NODE_OPTIONS=\"--experimental-vm-modules\" jest",
     "test:watch": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --watch",
     "test:cov": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --coverage",
-    "refresh:mcp-fixture": "node scripts/refresh-mcp-fixture.mjs"
+    "refresh:mcp-fixture": "node scripts/refresh-mcp-fixture.mjs",
+    "refresh:plan-schema": "tsx scripts/refresh-plan-schema.mts"
   },
   "keywords": [
     "voyagier",
