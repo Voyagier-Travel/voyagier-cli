@@ -15,7 +15,7 @@
  * re-validates every document against the API schema before writing.
  */
 import { readFileSync } from "node:fs";
-import { buildSchema, parse, validate } from "graphql";
+import { buildSchema, isObjectType, parse, validate } from "graphql";
 import { PLAN_READ_DOCUMENTS } from "./plan-read-documents.js";
 
 const schema = buildSchema(
@@ -44,9 +44,12 @@ describe("plan-read documents conform to the API schema", () => {
 
 describe("TripPlanItem's kind is selectionType", () => {
   const tripPlanItem = schema.getType("TripPlanItem");
+  if (!isObjectType(tripPlanItem)) {
+    throw new Error("TripPlanItem is missing from the schema snapshot or is not an object type");
+  }
 
   it("the schema defines selectionType and no item-level type", () => {
-    const fields = Object.keys((tripPlanItem as { getFields(): object }).getFields());
+    const fields = Object.keys(tripPlanItem.getFields());
     expect(fields).toContain("selectionType");
     expect(fields).not.toContain("type");
   });
