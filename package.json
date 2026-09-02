@@ -48,7 +48,7 @@
     "chalk": "^6.0.0",
     "commander": "^15.0.0",
     "graphql": "^17.0.2",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@golevelup/ts-jest": "^3.0.0",
