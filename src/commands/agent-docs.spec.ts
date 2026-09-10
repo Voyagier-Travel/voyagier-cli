@@ -147,6 +147,17 @@ describe("agent-docs", () => {
       expect(sent).toHaveLength(0);
     });
 
+    it("identifies the CLI by its real version on the remote handshake (production client path)", async () => {
+      process.env.VOYAGIER_TOKEN = "***";
+      process.env.VOYAGIER_MCP_URL = DEFAULT_MCP_URL;
+      const { sent, fetchImpl } = makeMockRemote({ instructions: REMOTE_INSTRUCTIONS });
+      const result = await loadServerInstructions({ version: "7.7.7", fetchImpl, now: NOW });
+      expect(result.source).toBe("network");
+      const init = sent.find((s) => s.body.method === "initialize")!;
+      expect((init.body.params as { clientInfo: { name: string; version: string } }).clientInfo).toEqual({ name: "voyagier-cli", version: "7.7.7" });
+      delete process.env.VOYAGIER_MCP_URL;
+    });
+
     it("fetches when the cache is stale or has no instructions, and stores them in the tools cache", async () => {
       process.env.VOYAGIER_TOKEN = "pat_placeholder";
       writeToolsCache({ url: DEFAULT_MCP_URL, fetchedAt: new Date(NOW - 60_000).toISOString(), tools: [] }, CONFIG_DIR);

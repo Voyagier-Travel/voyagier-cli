@@ -13,7 +13,7 @@ import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import type { McpToolDescriptor } from "../mcp-client/client.js";
 import { makeMockRemote, jsonResponse, MOCK_REMOTE_URL, type MockRemoteOptions } from "../../test/mock-remote.js";
-import { cliErrorToMcpError, createProxyServer, PROXY_ERROR_CODES, SET_TOKEN_HINT, unavailableInstructions } from "./server.js";
+import { cliErrorToMcpError, createProxyServer, PROXY_ERROR_CODES, SET_TOKEN_HINT, startupFixHint, unavailableInstructions } from "./server.js";
 
 const FIXTURE_TOOLS: McpToolDescriptor[] = JSON.parse(
   readFileSync(new URL("./fixtures/remote-tools.json", import.meta.url), "utf-8"),
@@ -36,11 +36,13 @@ async function connect(remoteOpts: MockRemoteOptions = {}, extra: { instructions
 }
 
 describe("voyagier mcp — stdio proxy", () => {
-  it("initialize: local serverInfo, the remote's instructions and tools capability passed through", async () => {
+  it("initialize: local serverInfo and the remote's instructions passed through; tools advertised WITHOUT listChanged", async () => {
     const { client, proxy, sent } = await connect();
     expect(client.getServerVersion()).toEqual({ name: "voyagier", version: "9.9.9" });
     expect(client.getInstructions()).toBe(INSTRUCTIONS);
-    expect(client.getServerCapabilities()).toEqual({ tools: { listChanged: true } });
+    // The remote says listChanged: true, but a stateless HTTP upstream never
+    // delivers notifications to this proxy, so it must not promise to relay them.
+    expect(client.getServerCapabilities()).toEqual({ tools: {} });
     expect(proxy.remote?.serverInfo).toEqual({ name: "voyagier", version: "1.0.0" });
     expect(proxy.startupError).toBeNull();
     // Exactly one remote handshake happened at startup: initialize + initialized.
@@ -180,6 +182,37 @@ describe("voyagier mcp — stdio proxy", () => {
     expect((err as McpError).code).toBe(PROXY_ERROR_CODES.AUTH_FAILED);
   });
 
+  it("no client at startup, then credentials appear: the first request builds the client and succeeds", async () => {
+    const { client: upstream } = makeMockRemote({ tools: FIXTURE_TOOLS, instructions: INSTRUCTIONS });
+    let hasToken = false;
+    const logs: string[] = [];
+    const proxy = await createProxyServer({
+      version: "9.9.9",
+      log: (l) => logs.push(l),
+      createClient: () => {
+        if (!hasToken) throw new CliError(CliErrorCode.AUTH_FAILED, "Not authenticated.");
+        return upstream;
+      },
+    });
+    expect(proxy.startupError?.code).toBe(CliErrorCode.AUTH_FAILED);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const host = new Client({ name: "test-host", version: "0" });
+    await Promise.all([proxy.server.connect(serverTransport), host.connect(clientTransport)]);
+
+    // Still no token: the request fails with the auth error (not a stale cached one).
+    const first = await host.listTools().catch((e: unknown) => e);
+    expect((first as McpError).code).toBe(PROXY_ERROR_CODES.AUTH_FAILED);
+
+    // `voyagier auth login` happened meanwhile: the next request constructs the client and works.
+    hasToken = true;
+    const { tools } = await host.listTools();
+    expect(tools).toEqual(FIXTURE_TOOLS);
+    expect(logs.some((l) => l.includes("client created on first request"))).toBe(true);
+    // And it is reused afterwards.
+    await host.listTools();
+    expect(logs.filter((l) => l.includes("client created on first request"))).toHaveLength(1);
+  });
+
   it("tools/list with a malformed remote result is an internal error, not a crash", async () => {
     const { client } = await connect({
       intercept: (sent) => (sent.body.method === "tools/list" ? jsonResponse({ jsonrpc: "2.0", id: sent.body.id, result: { nope: true } }) : undefined),
@@ -214,5 +247,18 @@ describe("cliErrorToMcpError", () => {
     expect(text).toContain("https://mcp.example.test/api/mcp");
     expect(text).toContain("timed out");
     expect(text).toContain("retry");
+  });
+
+  it("startupFixHint gives guidance specific to the failure", () => {
+    expect(startupFixHint(new CliError(CliErrorCode.AUTH_FAILED, "x"))).toBe(SET_TOKEN_HINT);
+    expect(startupFixHint(new CliError(CliErrorCode.PERMISSION_DENIED, "x"))).toMatch(/not allowed|workspace admin/);
+    expect(startupFixHint(new CliError(CliErrorCode.PERMISSION_DENIED, "x"))).not.toMatch(/connection/);
+    const limited = startupFixHint(new CliError(CliErrorCode.RATE_LIMITED, "x", { retryAfterSeconds: 12 }));
+    expect(limited).toContain("rate limiting");
+    expect(limited).toContain("Wait 12s");
+    expect(limited).not.toMatch(/connection/);
+    expect(startupFixHint(new CliError(CliErrorCode.RATE_LIMITED, "x"))).toContain("Wait, then retry");
+    expect(startupFixHint(new CliError(CliErrorCode.NETWORK, "x"))).toMatch(/network connection.*VOYAGIER_MCP_URL/);
+    expect(startupFixHint(new CliError(CliErrorCode.API_ERROR, "x"))).toContain("voyagier doctor");
   });
 });

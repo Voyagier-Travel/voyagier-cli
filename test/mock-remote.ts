@@ -34,7 +34,7 @@ export function jsonResponse(body: unknown, init: { status?: number; headers?: R
   });
 }
 
-export function makeMockRemote(opts: MockRemoteOptions = {}): { client: McpClient; sent: Sent[] } {
+export function makeMockRemote(opts: MockRemoteOptions = {}): { client: McpClient; sent: Sent[]; fetchImpl: typeof fetch } {
   const tools = opts.tools ?? [];
   const sent: Sent[] = [];
   const fetchImpl = jest.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -87,5 +87,5 @@ export function makeMockRemote(opts: MockRemoteOptions = {}): { client: McpClien
     clientInfo: { name: "spec", version: "0.0.0" },
     timeoutMs: 5000,
   });
-  return { client, sent };
+  return { client, sent, fetchImpl: fetchImpl as unknown as typeof fetch };
 }

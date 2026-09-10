@@ -31,6 +31,13 @@ import { getMcpUrl } from "../mcp-client/url.js";
 export interface CreateProxyServerDeps {
   /** MCP client to forward through; defaults to the hosted URL + stored PAT. */
   client?: McpClient;
+  /**
+   * Client factory, called at startup and again on the first request after a
+   * startup without a client (e.g. no token yet). Defaults to the hosted
+   * URL + the credentials on disk at call time, so `voyagier auth login`
+   * while the host stays open takes effect on the next request.
+   */
+  createClient?: () => McpClient;
   /** Server version; defaults to package.json version. */
   version?: string;
   /** Diagnostic sink; never stdout (stdout is the JSON-RPC channel). */
@@ -114,10 +121,27 @@ export function cliErrorToMcpError(err: unknown): McpError {
   }
 }
 
+/** What to do about a failed remote handshake, by the error the client raised. */
+export function startupFixHint(err: CliError): string {
+  switch (err.code) {
+    case CliErrorCode.AUTH_FAILED:
+      return SET_TOKEN_HINT;
+    case CliErrorCode.PERMISSION_DENIED:
+      return "The token is valid but this account is not allowed to use the MCP server. Ask a workspace admin for access, or use a token from an account that has it, then retry.";
+    case CliErrorCode.RATE_LIMITED: {
+      const wait = typeof err.details?.retryAfterSeconds === "number" ? ` Wait ${err.details.retryAfterSeconds}s` : " Wait";
+      return `The hosted server is rate limiting this token.${wait}, then retry; requests re-attempt the handshake.`;
+    }
+    case CliErrorCode.NETWORK:
+      return "Check the network connection and VOYAGIER_MCP_URL, then retry; each request re-attempts the handshake.";
+    default:
+      return "Retry; each request re-attempts the handshake. Run `voyagier doctor` on this machine for details.";
+  }
+}
+
 /** The `instructions` the local host sees when the remote handshake failed. */
 export function unavailableInstructions(url: string, err: CliError): string {
-  const fix = err.code === CliErrorCode.AUTH_FAILED ? SET_TOKEN_HINT : "Fix the connection, then retry; each request re-attempts the handshake.";
-  return `This proxy could not complete the handshake with the Voyagier MCP server at ${url}: ${err.message}\n${fix}`;
+  return `This proxy could not complete the handshake with the Voyagier MCP server at ${url}: ${err.message}\n${startupFixHint(err)}`;
 }
 
 /**
@@ -130,19 +154,26 @@ export async function createProxyServer(deps: CreateProxyServerDeps = {}): Promi
   const log = deps.log ?? (() => {});
   const url = getMcpUrl();
 
+  const createClient = deps.createClient ?? (deps.client ? () => deps.client as McpClient : () => createDefaultClient(version));
+  const toCliError = (err: unknown): CliError =>
+    err instanceof CliError ? err : new CliError(CliErrorCode.NETWORK, err instanceof Error ? err.message : String(err));
+
   let client: McpClient | null = null;
   let remote: McpInitializeResult | null = null;
   let startupError: CliError | null = null;
   try {
-    client = deps.client ?? createDefaultClient(version);
+    client = createClient();
     remote = await client.initialize();
   } catch (err) {
-    startupError = err instanceof CliError ? err : new CliError(CliErrorCode.NETWORK, err instanceof Error ? err.message : String(err));
+    startupError = toCliError(err);
     log(`mcp proxy: remote initialize failed (${startupError.code}): ${startupError.message}`);
   }
 
-  const remoteTools = remote?.capabilities?.tools;
-  const capabilities = { tools: remoteTools && typeof remoteTools === "object" ? (remoteTools as Record<string, unknown>) : {} };
+  // The remote advertises `tools.listChanged`, but this proxy speaks to a
+  // stateless HTTP upstream and receives no server notifications, so it could
+  // never relay `notifications/tools/list_changed`. Advertising a capability
+  // that never fires would make hosts wait for it: advertise plain `tools`.
+  const capabilities = { tools: {} };
   const instructions = remote
     ? typeof remote.instructions === "string" && remote.instructions.trim()
       ? remote.instructions
@@ -153,7 +184,14 @@ export async function createProxyServer(deps: CreateProxyServerDeps = {}): Promi
 
   const forward = async (method: string, params: Record<string, unknown>): Promise<unknown> => {
     if (!client) {
-      throw cliErrorToMcpError(startupError ?? new CliError(CliErrorCode.AUTH_FAILED, "Not authenticated."));
+      // Startup had no client (typically: no token yet). Re-read credentials
+      // now, so a login performed while the host stays open is picked up.
+      try {
+        client = createClient();
+        log("mcp proxy: client created on first request");
+      } catch (err) {
+        throw cliErrorToMcpError(toCliError(err));
+      }
     }
     try {
       return await client.request(method, params);

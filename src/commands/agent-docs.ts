@@ -47,7 +47,10 @@ export interface ServerInstructions {
 
 export interface AgentDocsDeps {
   createClient?: () => McpClient;
+  /** CLI version, sent as clientInfo.version on the remote handshake. */
   version?: string;
+  /** Transport for the default client (tests script it). */
+  fetchImpl?: typeof fetch;
   now?: number;
 }
 
@@ -87,7 +90,7 @@ export async function loadServerInstructions(deps: AgentDocsDeps = {}): Promise<
   }
 
   try {
-    const client = (deps.createClient ?? (() => createDefaultClient(deps.version ?? "0.0.0")))();
+    const client = (deps.createClient ?? (() => createDefaultClient(deps.version ?? "0.0.0", { fetchImpl: deps.fetchImpl })))();
     const fresh = await refreshToolsCache(client, url, now);
     if (typeof fresh.instructions === "string" && fresh.instructions.trim()) {
       return { instructions: fresh.instructions, source: "network" };
