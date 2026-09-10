@@ -177,7 +177,7 @@ function normalizeApiUrlWithWarning(url: string): string {
     // JSON.stringify: the raw value may come from an env var or a hand-edited
     // file and could carry quotes or control characters.
     process.stderr.write(
-      `Warning: API URL ${JSON.stringify(url)} normalized to ${JSON.stringify(normalized)} (the CLI needs the GraphQL API base, not the MCP endpoint).\n`,
+      `Warning: API URL ${JSON.stringify(url)} normalized to ${JSON.stringify(normalized)} (the CLI uses the GraphQL API base and appends /graphql).\n`,
     );
   }
   return normalized;
