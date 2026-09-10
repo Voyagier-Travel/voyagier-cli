@@ -175,7 +175,7 @@ export const GET_PAYMENT_CHECKOUTS = `
 // NOTE: setTripPlanSubSelectionOption + refreshTripPlanSubSelectionOptions were
 // DELETED from the schema in the Goals/Blueprint architecture migration. The
 // "sub-selection" model is gone; child selections are now ordinary selections
-// reached via childSelections[] and chosen via setTripPlanSelectedOption.
+// reached via childSelections[] and chosen via the standard choice mutations.
 // (Removed in VOY-1414. Polling lives in `selection-options` / VOY-1415.)
 
 // --- Plans ---
@@ -604,27 +604,16 @@ export const SET_DESTINATION_VALUE = `
 // --- Select ---
 
 // NOTE: selectDepartureFlight + selectReturnFlight were DELETED from the schema
-// in the Goals/Blueprint migration. Round-trip is no longer a two-phase
-// token dance — each leg/journey is an ordinary selection whose chosen option is
-// set via setTripPlanSelectedOption. (Removed in VOY-1414.)
-
-// The default "choose an option" verb. Since the participant-choice migration
-// (July 2026, "passing legs"), setTripPlanSelectedOption is a server-side ALIAS
-// for setTravellerChoiceForAll: it records the same choice for every assigned
-// traveller. It REJECTS list-mode selections ("Cannot set traveller choices on
-// a list-mode selection") — picks happen on the goal's single decision
-// selection, whose options resolve from its mirrored list. The option must
-// belong to the selection itself or its DIRECT mirrorListSelectionId (the
-// backend validates exactly one mirror hop). (VOY-1692)
-export const SET_TRIP_PLAN_SELECTED_OPTION = `
-  mutation SetSelected($selectionId: String!, $optionId: String!) {
-    setTripPlanSelectedOption(selectionId: $selectionId, optionId: $optionId) {
-      id
-      parentOptionId
-      parentOption { id name price }
-    }
-  }
-`;
+// in the Goals/Blueprint migration (VOY-1414), and the selectionId-keyed
+// coverage mutations (setTripPlanSelectedOption, setTripPlanTravellerChoiceFor*
+// and setTripPlanSelectionTravellerChoice) were DELETED with VOY-2173: a
+// selection legally holds several participant-choice ROWS (room slots,
+// per-group picks), and those mutations replaced or trimmed sibling rows the
+// caller never named. The choice surface is now decideParticipantChoice
+// (decide one row), upsertParticipantChoice (coverage + slot management) and
+// clearTripPlanSelectedOption. The documents below keep their old constant
+// names AND response keys via field aliases so the select command's routing
+// and its --json payload shapes are unchanged.
 
 // Decide ONE participant-choice row. A selection can hold several rows at once
 // (room slots, per-group picks), so this is the row-addressed verb: with
@@ -642,13 +631,30 @@ export const DECIDE_PARTICIPANT_CHOICE = `
   }
 `;
 
+// The default "choose an option" verb: an unresolved decide. One live row is
+// decided in place; zero rows seed a whole-selection choice; several rows are
+// rejected with the row list (retry with --participant-choice-id). It REJECTS
+// list-mode selections — picks happen on the goal's single decision selection,
+// whose options resolve from its mirrored list; the option must belong to the
+// selection itself or its DIRECT mirrorListSelectionId. (VOY-1692 / VOY-2173)
+export const SET_TRIP_PLAN_SELECTED_OPTION = `
+  mutation SetSelected($selectionId: String!, $optionId: String!) {
+    setTripPlanSelectedOption: decideParticipantChoice(selectionId: $selectionId, optionId: $optionId) {
+      id
+      parentOptionId
+      parentOption { id name price }
+    }
+  }
+`;
+
 // --- Participant-choice scopes (VOY-1692) ---
-// The webapp's traveller-choice mutation family. Same 1-mirror-hop option
-// validation as setTripPlanSelectedOption. All return the updated selection.
+// Coverage writes via upsertParticipantChoice's dispatcher — the same service
+// paths the removed standalone mutations used. Same 1-mirror-hop option
+// validation. All return the updated selection.
 
 export const SET_TRAVELLER_CHOICE_FOR_SUBSET = `
   mutation SetChoiceForSubset($selectionId: String!, $travellerIds: [String!]!, $optionId: String!, $replaceExisting: Boolean!) {
-    setTripPlanTravellerChoiceForSubset(selectionId: $selectionId, travellerIds: $travellerIds, optionId: $optionId, replaceExisting: $replaceExisting) {
+    setTripPlanTravellerChoiceForSubset: upsertParticipantChoice(selectionId: $selectionId, travellerIds: $travellerIds, optionId: $optionId, replaceExisting: $replaceExisting) {
       id
       parentOptionId
       parentOption { id name price }
@@ -658,7 +664,7 @@ export const SET_TRAVELLER_CHOICE_FOR_SUBSET = `
 
 export const SET_TRAVELLER_CHOICE_FOR_GROUP = `
   mutation SetChoiceForGroup($selectionId: String!, $groupId: String!, $optionId: String!) {
-    setTripPlanTravellerChoiceForGroup(selectionId: $selectionId, groupId: $groupId, optionId: $optionId) {
+    setTripPlanTravellerChoiceForGroup: upsertParticipantChoice(selectionId: $selectionId, groupId: $groupId, optionId: $optionId) {
       id
       parentOptionId
       parentOption { id name price }
@@ -668,7 +674,7 @@ export const SET_TRAVELLER_CHOICE_FOR_GROUP = `
 
 export const SET_SELECTION_TRAVELLER_CHOICE = `
   mutation SetChoiceForTraveller($selectionId: String!, $travellerId: String!, $optionId: String!) {
-    setTripPlanSelectionTravellerChoice(selectionId: $selectionId, travellerId: $travellerId, optionId: $optionId) {
+    setTripPlanSelectionTravellerChoice: upsertParticipantChoice(selectionId: $selectionId, travellerIds: [$travellerId], optionId: $optionId) {
       id
       parentOptionId
       parentOption { id name price }

@@ -33,10 +33,16 @@ import { waitForPickSettle, type PickWaitOutcome, type PickScope } from "./selec
  *     decide; roster kept, or restated with --travellers). Row ids come from
  *     choices-view. On multi-row selections the other modes are rejected
  *     server-side with the row list — retry with this flag.
- *   - default            -> setTripPlanSelectedOption (alias for "for ALL travellers")
- *   - --travellers a,b   -> setTripPlanTravellerChoiceForSubset (replaceExisting)
- *   - --group <id>       -> setTripPlanTravellerChoiceForGroup
- *   - --traveller <id>   -> setTripPlanSelectionTravellerChoice (one traveller)
+ *   - default            -> decideParticipantChoice with no row id: the server
+ *     resolves the selection's only live row (zero rows seed a whole-selection
+ *     choice; several rows are rejected with the row list)
+ *   - --travellers a,b   -> upsertParticipantChoice(travellerIds, replaceExisting)
+ *   - --group <id>       -> upsertParticipantChoice(groupId)
+ *   - --traveller <id>   -> upsertParticipantChoice(travellerIds: [id]) (one traveller)
+ *
+ * The removed selectionId-keyed mutations' response keys survive as field
+ * aliases in queries.ts (VOY-2173), so the routing below and the --json
+ * payload shapes are unchanged.
  *
  * Picks land on a goal's SINGLE decision selection (list-mode selections are
  * rejected server-side), and the option must come from that selection's own
