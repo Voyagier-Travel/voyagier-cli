@@ -119,9 +119,71 @@ function loadFileCredentials(): Credentials | null {
   }
 }
 
-export function saveCredentials(token: string, apiUrl: string = "https://travel.voyagier.com/api"): void {
+const DEFAULT_API_URL = "https://travel.voyagier.com/api";
+
+/**
+ * Resolve any configured Voyagier URL to the GraphQL API base the CLI needs.
+ *
+ * Every request is `POST ${apiUrl}/graphql`, so the value must be the API
+ * base (`https://travel.voyagier.com/api`). Users regularly configure a
+ * neighbouring URL instead — the bare origin, the `/graphql` endpoint itself,
+ * or the remote MCP connector URL (`.../api/mcp`, which is for claude.ai
+ * connectors, not this CLI) — and every command then 404s. Normalize rather
+ * than fail:
+ *
+ *   https://travel.voyagier.com             → https://travel.voyagier.com/api
+ *   https://travel.voyagier.com/api/        → https://travel.voyagier.com/api
+ *   https://travel.voyagier.com/api/graphql → https://travel.voyagier.com/api
+ *   https://mcp.voyagier.com/api/mcp        → https://mcp.voyagier.com/api
+ *
+ * The backend mounts everything under `/api` (its global prefix), so an empty
+ * path always means `/api`. Any other path is left as-is. Unparseable input is
+ * returned untouched so `assertSecureApiUrl` can produce the proper error.
+ */
+export function normalizeApiUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  let path = parsed.pathname.replace(/\/+$/, "");
+  path = path.replace(/\/graphql$/, "");
+  path = path.replace(/\/mcp$/, "");
+  if (path === "") path = "/api";
+  parsed.pathname = path;
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+let warnedNormalizedUrl = false;
+
+/** Test-only: reset the warn-once flag for the normalized-URL warning. */
+export function resetNormalizedUrlWarningForTests(): void {
+  warnedNormalizedUrl = false;
+}
+
+/**
+ * Normalize and, the first time the value actually changes, say so on stderr
+ * so a misconfigured `VOYAGIER_API_URL` / saved URL is visible instead of
+ * silently corrected.
+ */
+function normalizeApiUrlWithWarning(url: string): string {
+  const normalized = normalizeApiUrl(url);
+  if (normalized !== url && !warnedNormalizedUrl) {
+    warnedNormalizedUrl = true;
+    process.stderr.write(
+      `Warning: API URL "${url}" normalized to "${normalized}" (the CLI needs the GraphQL API base, not the MCP endpoint).\n`,
+    );
+  }
+  return normalized;
+}
+
+export function saveCredentials(token: string, apiUrl: string = DEFAULT_API_URL): void {
   // Reject cleartext endpoints before persisting (M2) — the token is sent to
   // this URL on every request.
+  apiUrl = normalizeApiUrlWithWarning(apiUrl);
   assertSecureApiUrl(apiUrl);
   ensureConfigDir();
   // Preserve existing user context from file (not env vars)
@@ -209,13 +271,21 @@ export function clearCredentials(): void {
 
 export function getApiUrl(): string {
   const creds = loadCredentials();
-  const apiUrl = creds?.apiUrl ?? "https://travel.voyagier.com/api";
+  const apiUrl = normalizeApiUrlWithWarning(creds?.apiUrl ?? DEFAULT_API_URL);
   // Read-path enforcement (M2): a token from VOYAGIER_API_URL env or an
   // on-disk credentials.json written by an older/hand-edited version must not
   // be sent over cleartext. Throws a clear CliError (surfaced by the top-level
   // handler), never crashes.
   assertSecureApiUrl(apiUrl);
   return apiUrl;
+}
+
+/**
+ * The URL as configured (env or file), before normalization. Used by
+ * `doctor` to report when the configured value had to be corrected.
+ */
+export function getConfiguredApiUrl(): string {
+  return loadCredentials()?.apiUrl ?? DEFAULT_API_URL;
 }
 
 export function getToken(): string {

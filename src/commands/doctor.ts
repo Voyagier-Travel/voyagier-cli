@@ -31,7 +31,7 @@ import {
 } from "graphql";
 import { graphql, AuthError } from "../api.js";
 import { gracefulExit } from "../exit.js";
-import { CONFIG_DIR, credentialsExist, getApiUrl, getUserContext } from "../config.js";
+import { CONFIG_DIR, credentialsExist, getApiUrl, getConfiguredApiUrl, getUserContext } from "../config.js";
 import { sanitizeExternalText } from "../utils.js";
 import { jsonOutput } from "../output.js";
 import { CliError } from "../errors.js";
@@ -185,6 +185,34 @@ async function checkAuth(): Promise<DoctorCheck> {
  */
 /** Hard ceiling on doctor probes; doctor is meant to be a quick self-check primitive. */
 const DOCTOR_PROBE_TIMEOUT_MS = 5000;
+
+/**
+ * Report when the configured API URL (env or credentials file) is not the
+ * GraphQL API base and had to be normalized — e.g. the remote MCP connector
+ * URL (`.../api/mcp`) pasted where the API URL belongs. Requests still work
+ * (config.ts corrects it), but the user should fix the source so the warning
+ * stops and `doctor` stays honest about what is actually configured.
+ */
+export function checkApiUrlConfig(): DoctorCheck | null {
+  let configured: string;
+  let effective: string;
+  try {
+    configured = getConfiguredApiUrl();
+    effective = getApiUrl();
+  } catch {
+    // Insecure/unparseable URL — auth/reachability already surface that.
+    return null;
+  }
+  if (configured === effective) return null;
+  return {
+    name: "api-url",
+    status: "WARN",
+    message: `Configured API URL "${configured}" was normalized to "${effective}"`,
+    details: {
+      fix: "Set the GraphQL API base (e.g. https://travel.voyagier.com/api) via VOYAGIER_API_URL or: voyagier auth set-token - --url <url>. The .../api/mcp URL is for the claude.ai remote connector, not this CLI.",
+    },
+  };
+}
 
 async function checkReachability(): Promise<DoctorCheck> {
   const url = getApiUrl();
@@ -526,8 +554,9 @@ export function registerDoctorCommand(program: Command, currentVersion: string):
       };
       const stateFiles = checkStateFiles();
       const version = await checkVersion(currentVersion);
+      const apiUrlConfig = checkApiUrlConfig();
 
-      const checks = [auth, reachability, schema, stateFiles, version];
+      const checks = [auth, reachability, schema, stateFiles, version, ...(apiUrlConfig ? [apiUrlConfig] : [])];
       const overall = rollUpStatus(checks);
       const report: DoctorReport = { checks, overall };
 

@@ -66,6 +66,7 @@ jest.unstable_mockModule("../selection-wait.js", () => ({
 const mockGetHomeAirports = jest.fn<() => string[]>(() => []);
 jest.unstable_mockModule("../config.js", () => ({
   getApiUrl: jest.fn(() => "https://dev.voyagier.com/api"),
+  getConfiguredApiUrl: jest.fn(() => "https://dev.voyagier.com/api"),
   getHomeAirports: mockGetHomeAirports,
   CONFIG_DIR: "/tmp/voyagier-search-spec-config",
   // Rest of config.js's surface, stubbed so the full command tree pulled in by

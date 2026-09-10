@@ -737,7 +737,7 @@ Manual lookup: `voyagier search airports "tokyo" --json`.
 
 ```bash
 export VOYAGIER_TOKEN=voy_pat_xxxxx
-export VOYAGIER_API_URL=https://travel.voyagier.com/api   # optional; only honored alongside VOYAGIER_TOKEN; CLI appends /graphql
+export VOYAGIER_API_URL=https://travel.voyagier.com/api   # optional; only honored alongside VOYAGIER_TOKEN; CLI appends /graphql. Use the API base, not the hosted MCP URL (.../api/mcp) — that one is for MCP clients connecting directly; the CLI normalizes it and warns.
 ```
 
 PATs are created at voyagier.com → Settings → Personal Access Tokens.
