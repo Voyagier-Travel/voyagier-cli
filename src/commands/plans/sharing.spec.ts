@@ -207,6 +207,24 @@ describe("plans share", () => {
     expect(mockJsonOutput).toHaveBeenCalledWith(expect.objectContaining({ role: "Agent" }));
   });
 
+  it("fails with API_ERROR when the API returns no invite, instead of reporting success", async () => {
+    mockGraphql.mockResolvedValueOnce({ inviteTripPlanCollaborator: null });
+    await expect(run(["share", "plan-1", "--email", "new@example.com", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.API_ERROR,
+      message: expect.stringContaining("returned no invite"),
+    });
+    expect(mockJsonOutput).not.toHaveBeenCalled();
+  });
+
+  it("fails with API_ERROR when the returned invite has no id", async () => {
+    mockGraphql
+      .mockResolvedValueOnce({ userPublicProfile: { id: "usr_1", name: "Bob", username: "bob" } })
+      .mockResolvedValueOnce({ inviteTripPlanCollaborator: { status: "PENDING" } });
+    await expect(run(["share", "plan-1", "--user", "bob", "--json"])).rejects.toMatchObject({
+      code: CliErrorCode.API_ERROR,
+    });
+  });
+
   it("wraps a graphql failure as API_ERROR", async () => {
     mockGraphql.mockRejectedValueOnce(new Error("boom"));
     await expect(run(["share", "plan-1", "--user", "bob", "--json"])).rejects.toMatchObject({

@@ -83,7 +83,12 @@ export function registerSharingCommands(plans: Command): void {
           INVITE_COLLABORATOR,
           { tripPlanId: planId, input }
         );
-        const invite = data.inviteTripPlanCollaborator ?? ({} as CollaboratorInvite);
+        const invite = data.inviteTripPlanCollaborator;
+        // Fail fast rather than report success (or a pending signup) for an
+        // invite the API did not actually create.
+        if (!invite?.id) {
+          throw new CliError(CliErrorCode.API_ERROR, "Invite was not created; the API returned no invite.");
+        }
         const roleName = invite.role?.name ?? roleKey.charAt(0).toUpperCase() + roleKey.slice(1);
         // No account behind the address yet: the invite waits for their signup.
         const pending = Boolean(opts.email) && !invite.invitedUserId;
