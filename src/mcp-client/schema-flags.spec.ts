@@ -74,6 +74,15 @@ describe("flagSpecsFromSchema", () => {
     expect(attributeName("param-json")).toBe("paramJson");
   });
 
+  it("refuses property names outside the allowlist (remote keys are not sanitized as strings)", () => {
+    for (const bad of ["plan\u001b[31m_id", "with space", "1starts_with_digit", "dash-name", "a.b", ""]) {
+      expect(() => flagSpecsFromSchema({ type: "object", properties: { [bad]: { type: "string" } } })).toThrow(/not a valid flag name/);
+    }
+    for (const ok of ["plan_id", "_x", "Camel9", "children_ages"]) {
+      expect(flagSpecsFromSchema({ type: "object", properties: { [ok]: { type: "string" } } })).toHaveLength(1);
+    }
+  });
+
   it("handles an absent or empty schema", () => {
     expect(flagSpecsFromSchema(undefined)).toEqual([]);
     expect(flagSpecsFromSchema({ type: "object" })).toEqual([]);

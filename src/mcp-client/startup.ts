@@ -46,12 +46,29 @@ export interface StartupOptions {
   now?: number;
 }
 
+/** Flags that end the run by themselves: no command token follows. */
+const HELP_OR_VERSION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
+
+/**
+ * The command word in argv, skipping leading global flags
+ * (`voyagier --verbose plans_list` → `plans_list`). Null when there is no
+ * command word, or when a help/version flag comes first (Commander answers
+ * those without running a command).
+ */
+export function commandToken(userArgs: readonly string[]): string | null {
+  for (const token of userArgs) {
+    if (HELP_OR_VERSION_FLAGS.has(token)) return null;
+    if (token.startsWith("-")) continue; // --verbose, --stacktrace, --json …
+    return token;
+  }
+  return null;
+}
+
 /** True when argv means "no remote tools needed to run this". */
 export function isLocalInvocation(userArgs: readonly string[]): boolean {
-  const first = userArgs[0];
-  if (!first) return true;
-  if (first.startsWith("-")) return true; // --help, --version, -V …
-  return LOCAL_COMMANDS.has(first);
+  const command = commandToken(userArgs);
+  if (command === null) return true; // bare help/version/flags-only
+  return LOCAL_COMMANDS.has(command);
 }
 
 

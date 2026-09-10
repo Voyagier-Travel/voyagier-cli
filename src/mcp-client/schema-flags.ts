@@ -16,6 +16,7 @@
  * a parse error — which already flows through the CLI's VALIDATION envelope.
  */
 import { Command, InvalidArgumentError, Option } from "commander";
+import { CliError, CliErrorCode } from "../errors.js";
 import type { McpJsonSchema } from "./client.js";
 
 export type FlagKind = "string" | "number" | "integer" | "boolean" | "enum" | "array" | "json";
@@ -40,6 +41,16 @@ export interface FlagSpec {
 /** Flag names Commander or the CLI already own on every command. */
 const RESERVED_FLAGS = new Set(["json", "help", "version", "stacktrace", "verbose"]);
 
+/**
+ * Property names become Commander option names and appear in help and error
+ * text. They are remote object KEYS, which the string sanitizer does not
+ * touch, so they are checked against a strict allowlist instead: a name that
+ * fails makes the whole tool unusable (see registerGeneratedCommands).
+ */
+export const PARAM_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** Tool names become command words. */
+export const TOOL_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
 function primaryType(schema: McpJsonSchema): string | undefined {
   const t = schema.type;
   if (Array.isArray(t)) return t.find((x) => x !== "null");
@@ -52,6 +63,12 @@ export function flagSpecsFromSchema(schema: McpJsonSchema | undefined): FlagSpec
   const required = new Set(schema?.required ?? []);
   const specs: FlagSpec[] = [];
   for (const [param, prop] of Object.entries(properties)) {
+    if (!PARAM_NAME_PATTERN.test(param)) {
+      throw new CliError(
+        CliErrorCode.VALIDATION,
+        `Input property name ${JSON.stringify(param.slice(0, 40))} is not a valid flag name (allowed: letters, digits, underscore; must not start with a digit).`,
+      );
+    }
     const flag = RESERVED_FLAGS.has(param) ? `param-${param}` : param;
     const description = describe(prop);
     const type = primaryType(prop);

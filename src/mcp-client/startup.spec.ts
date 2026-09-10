@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from "@jest/globals";
 import { CliErrorCode } from "../errors.js";
 import { McpClient } from "./client.js";
-import { isLocalInvocation, resolveStartupTools } from "./startup.js";
+import { commandToken, isLocalInvocation, resolveStartupTools } from "./startup.js";
 import { clearToolsCache, readToolsCache, writeToolsCache } from "./tools-cache.js";
 import { getMcpUrl, DEFAULT_MCP_URL } from "./url.js";
 
@@ -61,6 +61,17 @@ describe("resolveStartupTools", () => {
     expect(calls).toEqual(["initialize", "notifications/initialized", "tools/list"]);
     expect(readToolsCache()).toMatchObject({ url: URL, server: { name: "voyagier", version: "9" }, tools: TOOLS });
     expect(readToolsCache()?.surfaceHash).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("treats a tool command preceded by global flags as a tool invocation (fetches with an empty cache)", async () => {
+    for (const argv of [["--verbose", "plans_list"], ["--json", "plans_list"], ["--stacktrace", "--verbose", "plans_list", "--limit", "1"]]) {
+      clearToolsCache();
+      const { client, calls } = scriptedClient("ok");
+      const res = await resolveStartupTools(argv, { createClient: () => client });
+      expect(res.source).toBe("network");
+      expect(res.tools).toEqual(TOOLS);
+      expect(calls).toContain("tools/list");
+    }
   });
 
   it("refetches when the cache is expired or for another endpoint", async () => {
@@ -132,10 +143,23 @@ describe("invocation classification", () => {
   it("isLocalInvocation", () => {
     expect(isLocalInvocation([])).toBe(true);
     expect(isLocalInvocation(["--help"])).toBe(true);
+    expect(isLocalInvocation(["--verbose"])).toBe(true);
+    expect(isLocalInvocation(["--verbose", "--help"])).toBe(true);
     expect(isLocalInvocation(["auth", "login"])).toBe(true);
     expect(isLocalInvocation(["login"])).toBe(true);
+    expect(isLocalInvocation(["--verbose", "doctor"])).toBe(true);
     expect(isLocalInvocation(["plans_list"])).toBe(false);
-    expect(isLocalInvocation(["plans", "list"])).toBe(false);
+    expect(isLocalInvocation(["--verbose", "plans_list"])).toBe(false);
+    expect(isLocalInvocation(["--json", "plans", "list"])).toBe(false);
+  });
+
+  it("commandToken skips leading global flags and stops at help/version", () => {
+    expect(commandToken(["--verbose", "plans_list", "--json"])).toBe("plans_list");
+    expect(commandToken(["plans_list"])).toBe("plans_list");
+    expect(commandToken(["--verbose", "--help", "plans_list"])).toBeNull();
+    expect(commandToken(["-V"])).toBeNull();
+    expect(commandToken(["--verbose"])).toBeNull();
+    expect(commandToken([])).toBeNull();
   });
 });
 

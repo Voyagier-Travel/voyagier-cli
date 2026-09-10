@@ -16,7 +16,9 @@ import { sanitizeExternalData, sanitizeExternalText } from "../utils.js";
 import { verbose } from "../verbose.js";
 import { McpClient, type McpToolDescriptor, type McpToolResult } from "./client.js";
 import { renderToolPayload } from "./render.js";
-import { applyFlagsToCommand, buildToolArguments, flagSpecsFromSchema, type FlagSpec } from "./schema-flags.js";
+import { applyFlagsToCommand, buildToolArguments, flagSpecsFromSchema, TOOL_NAME_PATTERN, type FlagSpec } from "./schema-flags.js";
+import { CliError } from "../errors.js";
+import { warn } from "../output.js";
 import { getMcpUrl } from "./url.js";
 
 export interface GeneratedCommandContext {
@@ -27,6 +29,8 @@ export interface GeneratedCommandContext {
   /** Output sinks (tests capture). */
   writeJson?: (data: unknown) => void;
   writeHuman?: (text: string) => void;
+  /** Warning sink (stderr by default). */
+  warn?: (message: string) => void;
 }
 
 /** Default client: hosted URL (or VOYAGIER_MCP_URL), stored PAT, trace header. */
@@ -61,7 +65,14 @@ export function parseToolContent(result: McpToolResult): unknown {
   return blocks;
 }
 
-/** Generated command names, in registration order. */
+/**
+ * Generated command names, in registration order.
+ *
+ * A tool whose name or input property names fail the allowlists in
+ * schema-flags.ts is skipped with one stderr warning (never stdout): remote
+ * keys are not sanitized as strings, so they are refused rather than
+ * registered as option names.
+ */
 export function registerGeneratedCommands(
   program: Command,
   tools: McpToolDescriptor[],
@@ -69,13 +80,25 @@ export function registerGeneratedCommands(
 ): string[] {
   const registered: string[] = [];
   const taken = new Set(program.commands.map((c) => c.name()));
+  const warnSink = ctx.warn ?? warn;
   for (const raw of tools) {
     // The client sanitizes tools/list at the boundary; the on-disk cache is
     // re-read without it, so strip escapes again before anything reaches
     // Commander help or the spinner.
     const tool = sanitizeExternalData(raw);
     if (!tool.name || taken.has(tool.name)) continue;
-    const specs = flagSpecsFromSchema(tool.inputSchema);
+    if (!TOOL_NAME_PATTERN.test(tool.name)) {
+      warnSink(`Skipped a server tool with an invalid name ${JSON.stringify(tool.name.slice(0, 40))} (allowed: letters, digits, underscore, dash).`);
+      continue;
+    }
+    let specs: FlagSpec[];
+    try {
+      specs = flagSpecsFromSchema(tool.inputSchema);
+    } catch (err) {
+      const reason = err instanceof CliError ? err.message : String(err);
+      warnSink(`Skipped server tool ${tool.name}: ${reason}`);
+      continue;
+    }
     const cmd = new Command(tool.name);
     const title = tool.title?.trim() || tool.name;
     const description = tool.description?.trim() || title;
@@ -131,5 +154,6 @@ export async function runTool(
     writeHuman(rendered);
     return;
   }
-  writeHuman(JSON.stringify(parsed, null, 2));
+  // Tools without a renderer: honour structured output when the server sent it.
+  writeHuman(JSON.stringify(forRender, null, 2));
 }

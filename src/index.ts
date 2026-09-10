@@ -6,7 +6,7 @@ import { trackCommand, getTraceId, isTelemetryEnabled, telemetryErrorCode } from
 import { gracefulExit } from "./exit.js";
 import { credentialsExist } from "./config.js";
 import { CliError, CliErrorCode } from "./errors.js";
-import { resolveStartupTools, refreshToolsCache, type StartupTools } from "./mcp-client/startup.js";
+import { resolveStartupTools, refreshToolsCache, commandToken, type StartupTools } from "./mcp-client/startup.js";
 import { createDefaultClient } from "./mcp-client/generated-commands.js";
 import { toolsSurfaceHash } from "./mcp-client/tools-cache.js";
 import { verbose } from "./verbose.js";
@@ -83,8 +83,8 @@ try {
   // The first word is neither a local command, a generated tool, nor a
   // removed-command stub. Either the tool list could not be loaded (say why),
   // or the cache predates a newly published tool (refresh once and retry).
-  const first = process.argv[2];
-  if (first && !first.startsWith("-") && !knowsCommand(program, first)) {
+  const first = commandToken(process.argv.slice(2));
+  if (first && !knowsCommand(program, first)) {
     if (startup.error) {
       throw new CliError(
         startup.error.code,

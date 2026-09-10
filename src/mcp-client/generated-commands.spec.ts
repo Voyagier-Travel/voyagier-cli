@@ -135,6 +135,38 @@ describe("generated commands", () => {
     expect(help).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
   });
 
+  it("skips a tool whose property or tool name fails the allowlist, with one stderr warning each", () => {
+    const warnings: string[] = [];
+    const tools: McpToolDescriptor[] = [
+      { name: "ok_tool", inputSchema: { type: "object", properties: { plan_id: { type: "string" } } } },
+      { name: "bad_param", inputSchema: { type: "object", properties: { "plan\u001b[31m_id": { type: "string" } } } },
+      { name: "bad\u001bname", inputSchema: { type: "object", properties: {} } },
+      { name: "spaced name", inputSchema: { type: "object", properties: {} } },
+    ];
+    const program = new Command();
+    const registered = registerGeneratedCommands(program, tools, { version: "0", warn: (m) => warnings.push(m) });
+    // Tool names are string values, so the sanitizer strips the escape and
+    // "badname" registers; the property KEY is refused, and so is a name with
+    // a space (which no sanitizer would touch).
+    expect(registered).toEqual(["ok_tool", "badname"]);
+    expect(program.commands.map((c) => c.name())).toEqual(["ok_tool", "badname"]);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toMatch(/Skipped server tool bad_param: Input property name .* is not a valid flag name/);
+    expect(warnings[1]).toMatch(/invalid name "spaced name"/);
+    // eslint-disable-next-line no-control-regex
+    expect(warnings.join("")).not.toMatch(/\u001b/);
+  });
+
+  it("serializes the sanitized structuredContent for tools without a renderer", async () => {
+    const { client } = clientReturning(() => ({
+      content: [{ type: "text", text: "summary text" }],
+      structuredContent: { tripPlanClients: [{ id: "c1", name: "Jane \u001b[31mDoe\u001b[0m" }] },
+    }));
+    const { run, human } = harness(client);
+    await run(["clients_list"]);
+    expect(JSON.parse(human[0])).toEqual({ tripPlanClients: [{ id: "c1", name: "Jane Doe" }] });
+  });
+
   it("sanitizes tools/list at the client boundary", async () => {
     const { McpClient: Client } = await import("./client.js");
     const fetchImpl = (async (_i: unknown, init?: RequestInit) => {
