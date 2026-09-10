@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from "@jest/globals";
 import { z } from "zod";
-import { SELECTION_SCOPES } from "../commands/plans/types.js";
+import { SELECTION_SCOPES } from "./selection-scopes.js";
 import {
   TOOLS,
   moneyArg,

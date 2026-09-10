@@ -1,7 +1,20 @@
 import { describe, it, expect, beforeAll } from "@jest/globals";
 import type { Command } from "commander";
+import { readFileSync } from "node:fs";
 import { buildProgram } from "./build-program.js";
 import { loadAgentDocs } from "./commands/agent-docs.js";
+import type { McpToolDescriptor } from "./mcp-client/client.js";
+
+/**
+ * The command surface is generated from the server's tools/list, so the guard
+ * builds the program from the checked-in snapshot of that list
+ * (src/mcp/fixtures/remote-tools.json, refreshed with `npm run
+ * refresh:mcp-fixture`). Docs are therefore checked against the tools the
+ * server published at the last refresh.
+ */
+const FIXTURE_TOOLS: McpToolDescriptor[] = JSON.parse(
+  readFileSync(new URL("./mcp/fixtures/remote-tools.json", import.meta.url), "utf-8"),
+) as McpToolDescriptor[];
 
 /**
  * Doc-drift guard (VOY-1437 follow-up)
@@ -31,6 +44,9 @@ function collectCommands(cmd: Command, prefix: string, out: Map<string, CommandM
   for (const sub of cmd.commands) {
     const name = sub.name();
     if (!name || name === "help") continue;
+    // Hidden stubs for removed 3.x commands accept anything and exit 1; a doc
+    // line naming one of them is drift, not a valid invocation.
+    if ((sub as unknown as { _hidden?: boolean })._hidden) continue;
     const path = prefix ? `${prefix} ${name}` : name;
 
     const flags = new Set<string>();
@@ -107,7 +123,7 @@ function extractInvocations(
     const flags: string[] = [];
     for (const rawTok of tokens) {
       const t = rawTok.replace(/^[[(`'"]+/, "");
-      const fm = t.match(/^(--[a-z][a-z0-9-]*)/i);
+      const fm = t.match(/^(--[a-z][a-z0-9_-]*)/i);
       if (fm) flags.push(fm[1]);
     }
     results.push({ raw: `voyagier ${rest}`, path, flags });
@@ -127,10 +143,13 @@ describe("doc-drift guard", () => {
   let invocations: Array<{ raw: string; path: string | null; flags: string[] }>;
 
   beforeAll(() => {
-    const program = buildProgram("0.0.0-test");
+    const program = buildProgram("0.0.0-test", FIXTURE_TOOLS);
     commands = new Map<string, CommandModel>();
     collectCommands(program, "", commands);
     knownPaths = new Set(commands.keys());
+    // `voyagier login` is a top-level shortcut the entrypoint rewrites to
+    // `auth login` before parsing (src/index.ts); it is not a Commander command.
+    knownPaths.add("login");
     globalFlags = collectGlobalFlags(program);
 
     ({ content, fromFallback } = loadAgentDocs());
@@ -144,8 +163,11 @@ describe("doc-drift guard", () => {
   it("builds a non-trivial command surface (sanity)", () => {
     // If this ever collapses, the extraction below would vacuously pass.
     expect(knownPaths.size).toBeGreaterThan(20);
-    expect(knownPaths.has("plans create")).toBe(true);
-    expect(knownPaths.has("selection-options")).toBe(true);
+    expect(knownPaths.has("plan_trip")).toBe(true);
+    expect(knownPaths.has("get_selection_options")).toBe(true);
+    expect(knownPaths.has("doctor")).toBe(true);
+    // Removed-command stubs are not part of the documented surface.
+    expect(knownPaths.has("plans")).toBe(false);
   });
 
   it("references at least one real voyagier command (extraction sanity)", () => {
@@ -174,7 +196,8 @@ describe("doc-drift guard", () => {
     const drift: Array<{ command: string; flag: string }> = [];
     for (const inv of invocations) {
       if (inv.path === null) continue;
-      const model = commands.get(inv.path)!;
+      const model = commands.get(inv.path);
+      if (!model) continue; // shortcut paths (login) carry no flags of their own
       for (const flag of inv.flags) {
         if (model.flags.has(flag)) continue;
         if (globalFlags.has(flag)) continue;

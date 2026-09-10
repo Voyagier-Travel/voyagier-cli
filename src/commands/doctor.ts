@@ -1,15 +1,17 @@
 /**
- * `voyagier doctor` (v2.0.0).
+ * `voyagier doctor`.
  *
  * Single self-check command for agents/humans to verify the CLI environment
- * before doing real work. Pulled forward from Phase 4 because schema drift
- * is a real risk during the v2 build window.
+ * before doing real work. In 4.0 the CLI is a client of the Voyagier MCP
+ * server, so the checks are about that connection:
  *
- * Checks:
- *   1. auth         — credentials exist + whoami query returns 200
- *   2. reachability — backend GraphQL endpoint responds
- *   3. schema       — known critical operations validate against introspection
- *   4. state-files  — ~/.voyagier/last-*.json are valid + not stale
+ *   1. auth         — credentials exist
+ *   2. mcp          — `initialize` + `tools/list` succeed; tool count; the
+ *                     local tool cache is refreshed (this is how the command
+ *                     surface picks up new server tools)
+ *   3. whoami       — the `whoami` tool, when the server publishes it,
+ *                     confirms the token resolves to an identity
+ *   4. state-files  — <CONFIG_DIR>/last-*.json are valid + not stale
  *   5. version      — CLI vs latest npm release (best-effort, soft-fail)
  *
  * Exit code: 0 if all PASS or WARN; 1 if any FAIL.
@@ -21,81 +23,17 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { readFileSync, existsSync, statSync, readdirSync } from "fs";
 import { join } from "path";
-import {
-  buildClientSchema,
-  getIntrospectionQuery,
-  parse,
-  validate,
-  type IntrospectionQuery,
-  type GraphQLSchema,
-} from "graphql";
-import { graphql, AuthError } from "../api.js";
 import { gracefulExit } from "../exit.js";
-import { CONFIG_DIR, credentialsExist, getApiUrl, getUserContext } from "../config.js";
+import { CONFIG_DIR, credentialsExist } from "../config.js";
 import { sanitizeExternalText } from "../utils.js";
 import { jsonOutput } from "../output.js";
-import { CliError } from "../errors.js";
-import { DOCTOR_IDENTITY } from "../queries.js";
-import * as queries from "../queries.js";
-
-/**
- * Every GraphQL operation the CLI ships, as `{ name, operation }`.
- *
- * Source of truth is `src/queries.ts` — every `export const NAME = \`...\``
- * string export is an operation we send to the backend. Iterating the module
- * (rather than a hand-maintained list) is deliberate: it guarantees `doctor`
- * validates the WHOLE surface and can never silently drift back to a
- * hardcoded subset (the original VOY-1411 bug).
- */
-/**
- * Operations OUTSIDE the core compose/close loop. Drift here breaks only its
- * own command (places/comments/booking-record reads — tracked as VOY-1417/
- * 1418/1419), never plan→search→select→quote→book. Name-pattern match so new
- * peripheral ops classify themselves; anything unmatched is treated as CORE
- * (fail-closed: unknown ops err on the side of blocking).
- */
-// Token-bounded on both sides (^/_ before, _/$ after) so substring hits inside
-// other words can't misclassify — e.g. a future REPLACE_HOTEL_SELECTION or
-// _PLACEMENT_FEE op must stay CORE (fail-closed), not match "PLACE". Optional
-// plural `S?` keeps real ops like GET_COMMENTS / SEARCH_PLACES /
-// GET_BOOKING_RECORDS_BY_USER classified as peripheral.
-export const PERIPHERAL_OP_PATTERN = /(^|_)(PLACES?|COMMENTS?|BOOKING_RECORDS?)(_|$)/;
-
-export function collectCliOperations(): Array<{ name: string; operation: string }> {
-  const ops: Array<{ name: string; operation: string }> = [];
-  for (const [name, value] of Object.entries(queries as Record<string, unknown>)) {
-    if (typeof value !== "string") continue;
-    const op = value.trim();
-    // Must look like a GraphQL operation document.
-    if (!/^(query|mutation|subscription|fragment|\{)/.test(op)) continue;
-    ops.push({ name, operation: op });
-  }
-  return ops;
-}
-
-/**
- * Validate every CLI operation against a live schema, field-by-field.
- * Pure (no I/O) so it is trivially unit-testable with a fixture schema.
- * Returns per-operation drift diagnostics (empty array => all valid).
- */
-export function validateOperationsAgainstSchema(
-  schema: GraphQLSchema,
-  ops: Array<{ name: string; operation: string }>,
-): Array<{ name: string; errors: string[] }> {
-  const drifted: Array<{ name: string; errors: string[] }> = [];
-  for (const { name, operation } of ops) {
-    let errors: string[] = [];
-    try {
-      const ast = parse(operation);
-      errors = validate(schema, ast).map((e) => e.message);
-    } catch (e) {
-      // A parse error is a malformed op we ship — treat as drift, not a crash.
-      errors = [`parse error: ${e instanceof Error ? e.message : String(e)}`];
-    }
-    if (errors.length > 0) drifted.push({ name, errors });
-  }
-  return drifted;
-}
+import { CliError, CliErrorCode } from "../errors.js";
+import type { McpClient, McpToolDescriptor } from "../mcp-client/client.js";
+import { createDefaultClient, parseToolContent } from "../mcp-client/generated-commands.js";
+import { readToolsCache, toolsCacheAgeMs, TOOLS_CACHE_TTL_MS } from "../mcp-client/tools-cache.js";
+import { refreshToolsCache } from "../mcp-client/startup.js";
+import { getMcpUrl } from "../mcp-client/url.js";
+import { unwrapToolPayload } from "../mcp-client/render.js";
 
 export type CheckStatus = "PASS" | "WARN" | "FAIL";
 
@@ -109,6 +47,15 @@ export interface DoctorCheck {
 export interface DoctorReport {
   checks: DoctorCheck[];
   overall: CheckStatus;
+}
+
+/** Injectable collaborators (tests pass a client with a mocked fetch). */
+export interface DoctorDeps {
+  createClient?: () => McpClient;
+  credentialsExist?: () => boolean;
+  /** Used for the npm registry probe only. */
+  fetchImpl?: typeof fetch;
+  now?: () => number;
 }
 
 /**
@@ -131,204 +78,115 @@ export function rollUpStatus(checks: DoctorCheck[]): CheckStatus {
   return "PASS";
 }
 
-/**
- * Verify auth: credentials exist and a REAL authenticated query succeeds.
- *
- * VOY-1836: the probe must be `me { email name }` (DOCTOR_IDENTITY), never an
- * introspection query — production endpoints disable introspection (standard
- * Apollo hardening), which made the old `__schema` ping WARN on prod even
- * though the token was perfectly valid. One query now both verifies the token
- * and resolves the identity for the PASS message.
- */
-async function checkAuth(): Promise<DoctorCheck> {
-  if (!credentialsExist()) {
+function checkAuth(deps: DoctorDeps): DoctorCheck {
+  const exists = (deps.credentialsExist ?? credentialsExist)();
+  if (!exists) {
     return {
       name: "auth",
       status: "FAIL",
-      message: "No credentials. Run: voyagier auth login (or voyagier auth set-token <PAT>)",
+      message: "No credentials. Run: voyagier auth login (or: echo \"$VOYAGIER_PAT\" | voyagier auth set-token -)",
     };
   }
-  let me: { email?: string | null; name?: string | null } | null = null;
-  try {
-    ({ me } = await graphql<{ me: { email?: string | null; name?: string | null } | null }>(
-      DOCTOR_IDENTITY,
-    ));
-  } catch (err) {
-    if (err instanceof AuthError || (err instanceof CliError && err.code === "AUTH_FAILED")) {
-      return {
-        name: "auth",
-        status: "FAIL",
-        message: "Token rejected. Run: voyagier auth set-token <PAT>",
-      };
-    }
-    return {
-      name: "auth",
-      status: "WARN",
-      message: `Auth check could not complete: ${sanitizeExternalText(err instanceof Error ? err.message : String(err))}`,
-    };
-  }
-  // Identity fallback chain (VOY-1827): live API identity first, cached user
-  // context second — env-var auth has no cached context on disk.
-  const ctx = getUserContext();
-  const who = me?.email ?? me?.name ?? ctx?.email ?? ctx?.name ?? "unknown";
-  return {
-    name: "auth",
-    status: "PASS",
-    message: `Authenticated as ${sanitizeExternalText(who)}`,
-  };
+  return { name: "auth", status: "PASS", message: "Credentials present" };
+}
+
+function humanAge(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
 }
 
 /**
- * Verify backend reachability via a tiny introspection query.
- * Only runs if auth has already passed, since auth implicitly tests this.
- * Kept separate so its failure mode is distinct from "bad token".
+ * Initialize against the MCP server and list its tools. Refreshes the local
+ * tool cache on success so the command surface matches the server.
  */
-/** Hard ceiling on doctor probes; doctor is meant to be a quick self-check primitive. */
-const DOCTOR_PROBE_TIMEOUT_MS = 5000;
-
-async function checkReachability(): Promise<DoctorCheck> {
-  const url = getApiUrl();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), DOCTOR_PROBE_TIMEOUT_MS);
+async function checkMcp(deps: DoctorDeps, url: string): Promise<{ check: DoctorCheck; tools: McpToolDescriptor[]; client: McpClient | null }> {
+  const now = (deps.now ?? Date.now)();
+  const previous = readToolsCache();
+  const previousNote =
+    previous && previous.url === url
+      ? `cache was ${humanAge(toolsCacheAgeMs(previous, now))}${toolsCacheAgeMs(previous, now) >= TOOLS_CACHE_TTL_MS ? " (expired)" : ""}`
+      : "no cache before this run";
+  let client: McpClient;
   try {
-    const res = await fetch(`${url}/graphql`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: "{ __typename }" }),
-      signal: controller.signal,
-    });
-    if (!res.ok && res.status !== 401) {
-      return {
-        name: "reachability",
-        status: "FAIL",
-        message: `Backend ${url} responded ${res.status} ${sanitizeExternalText(res.statusText)}`,
-      };
-    }
-    return {
-      name: "reachability",
-      status: "PASS",
-      message: `${url} responding`,
-    };
+    client = (deps.createClient ?? (() => createDefaultClient("0.0.0")))();
   } catch (err) {
-    const aborted = err instanceof DOMException && err.name === "AbortError";
-    const detail = aborted
-      ? `timed out after ${DOCTOR_PROBE_TIMEOUT_MS}ms`
-      : err instanceof Error ? err.message : String(err);
     return {
-      name: "reachability",
-      status: "FAIL",
-      message: `Cannot reach ${url}: ${detail}`,
+      check: { name: "mcp", status: "FAIL", message: sanitizeExternalText(err instanceof Error ? err.message : String(err)) },
+      tools: [],
+      client: null,
     };
-  } finally {
-    clearTimeout(timer);
   }
-}
-
-/**
- * Verify schema compatibility across the ENTIRE CLI operation surface.
- *
- * Strategy (the VOY-1411 fix): fetch the live schema via a single
- * introspection query, build a client schema, then field-by-field validate
- * EVERY operation the CLI ships (collected from src/queries.ts) using
- * graphql's own `validate()`. This is the same technique as the workspace
- * audit script, brought into the runtime self-check.
- *
- * Why this replaced the old 2-probe version: the original checkSchema probed
- * exactly two always-valid queries and reported PASS while `goals`,
- * `plans get`, `selections`, `options` etc. were all broken (VOY-1407/1412/
- * 1413/1416). Validating the whole surface against the live schema would have
- * caught the entire drift chain in one run.
- *
- * Side-effect-free: introspection + local validation only. No CLI operation
- * (including mutations) is ever executed.
- */
-async function checkSchema(): Promise<DoctorCheck> {
-  // 1. Fetch the live schema. One introspection query covers the whole surface.
-  let schema: GraphQLSchema;
   try {
-    const introspection = await graphql<IntrospectionQuery>(getIntrospectionQuery());
-    schema = buildClientSchema(introspection);
-  } catch (err) {
-    if (err instanceof CliError && err.code === "AUTH_FAILED") {
-      return {
-        name: "schema",
-        status: "WARN",
-        message: "Schema check skipped (auth failed; fix auth first)",
-      };
-    }
-    // VOY-1836: production endpoints disable GraphQL introspection (standard
-    // Apollo hardening). That is expected server config, not a fault — auth
-    // already passed with a real query, so report the skip without degrading
-    // the overall verdict.
-    const msg = sanitizeExternalText(err instanceof Error ? err.message : String(err));
-    if (/introspection/i.test(msg)) {
-      return {
-        name: "schema",
+    const cache = await refreshToolsCache(client, url, now);
+    const server = cache.server?.name ? ` · server ${cache.server.name}${cache.server.version ? ` ${cache.server.version}` : ""}` : "";
+    return {
+      check: {
+        name: "mcp",
         status: "PASS",
-        message:
-          "Schema validation skipped — this API disables GraphQL introspection (standard production hardening). Not an error; operations are validated at release time.",
+        message: `${url} · ${cache.tools.length} tools${server} · tool cache refreshed (${previousNote})`,
+        details: { url, toolCount: cache.tools.length, tools: cache.tools.map((t) => t.name).sort() },
+      },
+      tools: cache.tools,
+      client,
+    };
+  } catch (err) {
+    const message = sanitizeExternalText(err instanceof Error ? err.message : String(err));
+    if (err instanceof CliError && err.code === CliErrorCode.AUTH_FAILED) {
+      return {
+        check: { name: "mcp", status: "FAIL", message: `Token rejected by ${url}. Run: voyagier auth login` },
+        tools: previous?.url === url ? previous.tools : [],
+        client: null,
       };
     }
-    // Couldn't introspect or build the schema (network blip, permissions, or an
-    // unexpected shape). Inconclusive — WARN, never a false FAIL.
+    if (err instanceof CliError && err.code === CliErrorCode.NETWORK) {
+      return { check: { name: "mcp", status: "FAIL", message }, tools: previous?.url === url ? previous.tools : [], client: null };
+    }
     return {
-      name: "schema",
-      status: "WARN",
-      message: `Schema check inconclusive — could not introspect live schema: ${msg}`,
+      check: { name: "mcp", status: "WARN", message: `MCP check could not complete: ${message}` },
+      tools: previous?.url === url ? previous.tools : [],
+      client: null,
     };
   }
-
-  // 2. Validate every shipped operation against it.
-  const ops = collectCliOperations();
-  const drifted = validateOperationsAgainstSchema(schema, ops);
-  return buildSchemaDriftCheck(ops.length, drifted);
 }
 
-/**
- * Turn drift diagnostics into the schema check verdict. Pure so the WARN/FAIL
- * classification is unit-testable without a live schema.
- *
- * Classification rationale (VOY-1714 #5): a cold agent seeing `overall: FAIL`
- * has no way to know whether it can proceed. Drift confined to peripheral
- * surfaces (places / comments / booking-record reads — the known VOY-1417/
- * 1418/1419 cluster) does NOT block the core compose/close loop (plan →
- * search → select → travellers → quote → book), so it downgrades to WARN with
- * an explicit go-ahead. Any core-surface drift stays FAIL.
- */
-export function buildSchemaDriftCheck(
-  opsCount: number,
-  drifted: Array<{ name: string; errors: string[] }>,
-): DoctorCheck {
-  if (drifted.length === 0) {
+/** Call `whoami` when the server has it; otherwise report the skip. */
+async function checkWhoami(client: McpClient | null, tools: McpToolDescriptor[]): Promise<DoctorCheck> {
+  if (!client) {
+    return { name: "whoami", status: "WARN", message: "Identity check skipped (MCP connection failed)" };
+  }
+  if (!tools.some((t) => t.name === "whoami")) {
     return {
-      name: "schema",
+      name: "whoami",
       status: "PASS",
-      message: `All ${opsCount} CLI operations valid against live schema`,
+      message: "Identity check skipped: this server does not publish a whoami tool yet (auth was verified by tools/list)",
     };
   }
-
-  const coreDrifted = drifted.filter((d) => !PERIPHERAL_OP_PATTERN.test(d.name));
-  if (coreDrifted.length === 0) {
+  try {
+    const result = await client.toolsCall("whoami", {});
+    const payload = unwrapToolPayload(parseToolContent(result));
+    const rec = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+    const who =
+      (typeof rec.email === "string" && rec.email) ||
+      (typeof rec.name === "string" && rec.name) ||
+      (typeof rec.username === "string" && rec.username) ||
+      "unknown";
+    const roles = ["isTravelAdvisor", "isTripPlanner", "isAdmin"].filter((k) => rec[k] === true).map((k) => k.replace(/^is/, "").toLowerCase());
     return {
-      name: "schema",
-      status: "WARN",
-      message:
-        `Schema drift on ${drifted.length}/${opsCount} operation(s), ALL on peripheral surfaces ` +
-        `(places/comments/booking-records) — the core compose/close loop is unaffected; safe to proceed`,
-      details: {
-        drifted: drifted.map((d) => `${d.name}: ${d.errors.join("; ")}`),
-      },
+      name: "whoami",
+      status: "PASS",
+      message: `Authenticated as ${sanitizeExternalText(String(who))}${roles.length ? ` (${roles.join(", ")})` : ""}`,
     };
+  } catch (err) {
+    const message = sanitizeExternalText(err instanceof Error ? err.message : String(err));
+    if (err instanceof CliError && err.code === CliErrorCode.AUTH_FAILED) {
+      return { name: "whoami", status: "FAIL", message: "Token rejected. Run: voyagier auth login" };
+    }
+    return { name: "whoami", status: "WARN", message: `whoami could not complete: ${message}` };
   }
-  return {
-    name: "schema",
-    status: "FAIL",
-    message: `Schema drift detected on ${drifted.length}/${opsCount} operation(s), ${coreDrifted.length} on CORE surfaces — core commands may fail`,
-    details: {
-      coreDrifted: coreDrifted.map((d) => d.name),
-      drifted: drifted.map((d) => `${d.name}: ${d.errors.join("; ")}`),
-    },
-  };
 }
 
 /**
@@ -360,8 +218,8 @@ function checkStateFiles(): DoctorCheck {
     try {
       const content = readFileSync(path, "utf-8");
       const parsed = JSON.parse(content) as { timestamp?: string | number };
-      // Prefer the embedded `timestamp` from src/state.ts (matches the rest of the state layer).
-      // state.ts stores ISO strings; older payloads may omit it. Fall back to mtime.
+      // Prefer the embedded `timestamp` written by the 3.x state layer (ISO
+      // strings; older payloads may omit it). Fall back to mtime.
       let baseMs: number | null = null;
       if (typeof parsed.timestamp === "string") {
         const ms = new Date(parsed.timestamp).getTime();
@@ -404,10 +262,9 @@ function checkStateFiles(): DoctorCheck {
  * Best-effort version check against npm registry.
  * WARN-only; never fails the report.
  */
-async function checkVersion(currentVersion: string): Promise<DoctorCheck> {
+async function checkVersion(currentVersion: string, fetchImpl: typeof fetch): Promise<DoctorCheck> {
   try {
-    const res = await fetch("https://registry.npmjs.org/@voyagier/cli/latest", {
-      // eslint-disable-next-line no-undef
+    const res = await fetchImpl("https://registry.npmjs.org/@voyagier/cli/latest", {
       signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) {
@@ -510,26 +367,49 @@ function statusIcon(s: CheckStatus): string {
   return chalk.red("✗");
 }
 
-export function registerDoctorCommand(program: Command, currentVersion: string): void {
+/** Run every check and roll them up. Exported for tests and for the MCP proxy. */
+export async function runDoctor(currentVersion: string, deps: DoctorDeps = {}): Promise<DoctorReport> {
+  const auth = checkAuth(deps);
+  let url: string | null = null;
+  let urlError: DoctorCheck | null = null;
+  try {
+    url = getMcpUrl();
+  } catch (err) {
+    urlError = { name: "mcp", status: "FAIL", message: sanitizeExternalText(err instanceof Error ? err.message : String(err)) };
+  }
+
+  let mcp: DoctorCheck;
+  let whoami: DoctorCheck;
+  if (urlError) {
+    mcp = urlError;
+    whoami = { name: "whoami", status: "WARN", message: "Identity check skipped (MCP URL invalid)" };
+  } else if (auth.status !== "PASS") {
+    mcp = { name: "mcp", status: "WARN", message: `MCP check skipped (no credentials; endpoint ${url})` };
+    whoami = { name: "whoami", status: "WARN", message: "Identity check skipped (no credentials)" };
+  } else {
+    const probe = await checkMcp(deps, url as string);
+    mcp = probe.check;
+    whoami = await checkWhoami(probe.client, probe.tools);
+  }
+  const stateFiles = checkStateFiles();
+  const version = await checkVersion(currentVersion, deps.fetchImpl ?? fetch);
+
+  const checks = [auth, mcp, whoami, stateFiles, version];
+  return { checks, overall: rollUpStatus(checks) };
+}
+
+export function registerDoctorCommand(program: Command, currentVersion: string, deps: DoctorDeps = {}): void {
   program
     .command("doctor")
-    .description("Self-check: auth, schema, reachability, state, version")
+    .description("Self-check: credentials, MCP server connection + tool list, identity, state, version")
     .option("--json", "Output raw JSON")
     .action(async (opts) => {
-      const auth = await checkAuth();
-      const reachability = await checkReachability();
-      // Only probe schema if auth passed; otherwise the schema check will spuriously fail.
-      const schema = auth.status === "PASS" ? await checkSchema() : {
-        name: "schema",
-        status: "WARN" as const,
-        message: "Schema check skipped (auth failed; fix auth first)",
+      const effectiveDeps: DoctorDeps = {
+        ...deps,
+        createClient: deps.createClient ?? (() => createDefaultClient(currentVersion)),
       };
-      const stateFiles = checkStateFiles();
-      const version = await checkVersion(currentVersion);
-
-      const checks = [auth, reachability, schema, stateFiles, version];
-      const overall = rollUpStatus(checks);
-      const report: DoctorReport = { checks, overall };
+      const report = await runDoctor(currentVersion, effectiveDeps);
+      const { checks, overall } = report;
 
       if (opts.json) {
         jsonOutput({ ok: overall !== "FAIL", data: report });
@@ -543,7 +423,6 @@ export function registerDoctorCommand(program: Command, currentVersion: string):
         if (c.details && (c.status === "FAIL" || c.status === "WARN")) {
           for (const [k, v] of Object.entries(c.details)) {
             if (Array.isArray(v)) {
-              // One entry per line — drift lists get long; comma-joining is unreadable.
               console.log(chalk.dim(`      ${k}:`));
               for (const entry of v) console.log(chalk.dim(`        - ${String(entry)}`));
             } else {

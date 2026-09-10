@@ -66,6 +66,12 @@ export enum CliErrorCode {
   // VOY-1872 — fork-template selections
   /** The target selection is a fork template; picks must land on its non-template sibling. */
   FORK_TEMPLATE = "FORK_TEMPLATE",
+
+  // 4.0.0 — the CLI is an MCP client (VOY-2193)
+  /** The MCP endpoint answered 429; `details.retryAfterSeconds` carries the server's Retry-After when it sent one. */
+  RATE_LIMITED = "RATE_LIMITED",
+  /** A 3.x command that no longer exists; `message` names the MCP tool that replaces it. */
+  COMMAND_REMOVED = "COMMAND_REMOVED",
 }
 
 export class CliError extends Error {
