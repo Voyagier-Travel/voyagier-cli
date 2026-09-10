@@ -3,8 +3,8 @@
   "name": "voyagier",
   "display_name": "Voyagier Travel",
   "version": "__VERSION__",
-  "description": "Book real travel from your agent — flights, hotels & activities behind a price-gated checkout.",
-  "long_description": "Voyagier lets AI agents plan and book real trips: search flights, hotels & activities, assemble trip plans, and check out through a price-gated booking flow that fails closed on price drift. Access is by invitation — request access and get your Personal Access Token at https://www.voyagier.com/agents.",
+  "description": "Book real travel from your agent: flights, hotels and activities behind a price-gated checkout, via the hosted Voyagier MCP server.",
+  "long_description": "Connects Claude Desktop to the hosted Voyagier MCP server (https://mcp.voyagier.com/api/mcp) with your Personal Access Token. The extension is a stdio proxy: every tool it lists and every call it makes is forwarded to the hosted server, so it always exposes the server's current tools. AI agents plan and book real trips with them: search flights, hotels and activities, assemble trip plans, and check out through a price-gated booking flow that fails closed on price drift. Access is by invitation. Request access and get your Personal Access Token at https://www.voyagier.com/agents.",
   "author": {
     "name": "Voyagier",
     "email": "apis@voyagier.com",
@@ -19,7 +19,7 @@
     "type": "git",
     "url": "https://github.com/Voyagier-Travel/voyagier-cli"
   },
-  "keywords": ["travel", "flights", "hotels", "booking", "trip-planning", "voyagier"],
+  "keywords": ["travel", "flights", "hotels", "booking", "trip-planning", "voyagier", "mcp"],
   "server": {
     "type": "node",
     "entry_point": "server/node_modules/@voyagier/cli/dist/index.js",
@@ -38,7 +38,7 @@
     "voyagier_token": {
       "type": "string",
       "title": "Voyagier Personal Access Token",
-      "description": "Create at travel.voyagier.com → Settings → Personal Access Tokens. Access is by invitation — request at https://www.voyagier.com/agents.",
+      "description": "Sent as the Bearer token to the hosted Voyagier MCP server. Create at travel.voyagier.com → Settings → Personal Access Tokens. Access is by invitation; request at https://www.voyagier.com/agents.",
       "sensitive": true,
       "required": true
     }

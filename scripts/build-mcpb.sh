@@ -3,7 +3,9 @@ set -euo pipefail
 
 # Builds the MCPB (Claude Desktop extension) bundle for the Voyagier CLI.
 # The bundle is a zip with manifest.json at the root and the published npm package
-# staged under server/node_modules/@voyagier/cli.
+# staged under server/node_modules/@voyagier/cli. The bundled server is the
+# stdio proxy (`voyagier mcp`): it forwards tools/list and tools/call to the
+# hosted Voyagier MCP server with the token from the extension's user_config.
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
@@ -48,11 +50,14 @@ rm -f "$out_file"
 )
 
 # Smoke test: initialize the MCP server from the staged copy and confirm it
-# reports serverInfo. EPIPE from `head` closing the pipe early is harmless.
+# reports serverInfo. The proxy's local handshake succeeds even when the remote
+# is unreachable (the failure is reported through `instructions` and per-request
+# errors), so point it at a closed loopback port: no network, no real token.
+# EPIPE from `head` closing the pipe early is harmless.
 echo "Running smoke test..."
 smoke_out="$(
   printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}\n' \
-    | VOYAGIER_TOKEN=dummy node "$stage/server/node_modules/@voyagier/cli/dist/index.js" mcp 2>"$stage/smoke.stderr" \
+    | VOYAGIER_TOKEN=placeholder VOYAGIER_MCP_URL=http://127.0.0.1:1/api/mcp node "$stage/server/node_modules/@voyagier/cli/dist/index.js" mcp 2>"$stage/smoke.stderr" \
     | head -1 || true
 )"
 

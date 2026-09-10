@@ -41,12 +41,12 @@ No install permissions? Zero-install works for every command: `npx @voyagier/cli
 **This skill is a quick orientation. The full, always-current integration contract ships with the CLI itself:**
 
 ```bash
-voyagier agent-docs    # prints AGENT.md: tool model, flag typing, JSON shapes, error codes, quirks
+voyagier agent-docs    # the MCP server's own guidance first, then AGENT.md: tool model, flag typing, JSON shapes, error codes
 ```
 
 Read it once per session before non-trivial work. Everything below is a summary of that document.
 
-**MCP-native host?** Connect to the hosted server directly (`voyagier mcp install <client>`, or `https://mcp.voyagier.com/api/mcp` with your PAT). It is the same tool surface the CLI wraps.
+**MCP-native host?** Connect to the hosted server directly (`voyagier mcp install <client>`, or `https://mcp.voyagier.com/api/mcp` with your PAT). It is the same tool surface the CLI wraps. Stdio-only hosts run `voyagier mcp`, a proxy that forwards to the same server.
 
 ## The model (30 seconds)
 

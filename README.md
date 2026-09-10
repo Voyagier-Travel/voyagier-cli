@@ -3,17 +3,18 @@
 [![CI](https://github.com/Voyagier-Travel/voyagier-cli/actions/workflows/tests-and-coverage.yaml/badge.svg?branch=main)](https://github.com/Voyagier-Travel/voyagier-cli/actions/workflows/tests-and-coverage.yaml)
 [![npm version](https://img.shields.io/npm/v/%40voyagier%2Fcli)](https://www.npmjs.com/package/@voyagier/cli)
 [![node](https://img.shields.io/node/v/%40voyagier%2Fcli)](https://www.npmjs.com/package/@voyagier/cli)
-[![MCP](https://img.shields.io/badge/MCP-client%20%2B%20stdio%20server-black)](https://github.com/Voyagier-Travel/voyagier-cli#connect-an-ai-agent)
+[![MCP](https://img.shields.io/badge/MCP-client%20%2B%20stdio%20proxy-black)](https://github.com/Voyagier-Travel/voyagier-cli#connect-an-ai-agent)
 [![license](https://img.shields.io/npm/l/%40voyagier%2Fcli)](https://github.com/Voyagier-Travel/voyagier-cli/blob/main/LICENSE)
 
 Plan, price and book real trips from your terminal. Everything syncs to [voyagier.com](https://voyagier.com).
 
-**The CLI is a shell for the Voyagier MCP server.** Every trip-planning command is one MCP tool — `voyagier <tool_name> --<param> <value>` — built at runtime from the server's tool list. The same tools power claude.ai, Claude Desktop and every other MCP client, so there is one implementation of every verb and a tool published on the server shows up in your terminal without an upgrade.
+**The CLI is a shell for the Voyagier MCP server: one command per tool.** Every trip-planning command is one MCP tool — `voyagier <tool_name> --<param> <value>` — built at runtime from the server's tool list at `https://mcp.voyagier.com/api/mcp`. The same tools power claude.ai, Claude Desktop and every other MCP client, so there is one implementation of every verb and a tool published on the server shows up in your terminal without an upgrade. For hosts that only speak stdio, `voyagier mcp` is a proxy for the same server.
 
 ```bash
-npm install -g voyagier        # or the canonical package: @voyagier/cli
-voyagier login                 # browser flow; keeps the token out of shell history
-voyagier doctor                # credentials, MCP connection, tool count, version
+npm install -g voyagier             # or the canonical package: @voyagier/cli
+voyagier auth login                 # browser flow; keeps the token out of shell history
+voyagier doctor                     # credentials, MCP connection, tool count, version
+voyagier mcp install claude-code    # point an MCP client at the hosted server (also: cursor, claude-desktop)
 ```
 
 `voyagier` is a convenience alias that tracks the latest compatible `@voyagier/cli` release. Pinning an exact version? Use the canonical package: `npm install -g @voyagier/cli@<version>`.
@@ -69,12 +70,12 @@ voyagier book --plan_id <PLAN_ID> --expect_total_cents <CENTS> --item_ids <ID> <
 
 | Command | Description |
 |---------|-------------|
-| `voyagier <tool_name>` | One command per MCP tool. Today: `clients_list`, `client_create`, `plans_list`, `search_destinations`, `plan_trip`, `set_date_range`, `set_destination`, `set_airport`, `goal_add`, `goal_delete`, `travellers_add`, `travellers_list`, `travellers_update`, `search_flights`, `search_hotels`, `search_activities`, `search_status`, `promote_search`, `get_selection_options`, `refresh_options`, `select_option`, `curate_options`, `choose_room_slot`, `choices_view`, `plan_status`, `itinerary`, `quote`, `book`, `bookings_list`, `share_plan` |
+| `voyagier <tool_name>` | One command per MCP tool, for example `plans_list`, `search_destinations`, `plan_trip`, `search_flights`, `promote_search`, `get_selection_options`, `select_option`, `plan_status`, `quote`, `book`. `voyagier --help` lists the server's current set |
 | `voyagier doctor` | Self-check: credentials, MCP server connection + tool list, identity, state, version |
 | `voyagier auth` | Manage the Personal Access Token (`login`, `set-token`, `status`, `logout`, `setup`) |
 | `voyagier mcp install <client>` | Point an MCP client (Claude Code, Cursor, Claude Desktop) at the Voyagier MCP server |
-| `voyagier mcp` | Run the stdio MCP server |
-| `voyagier agent-docs` | Print the full AI agent integration reference (AGENT.md) |
+| `voyagier mcp` | Run a stdio MCP server that proxies the hosted Voyagier MCP server |
+| `voyagier agent-docs` | Print the server's agent guidance, then the CLI usage notes (AGENT.md) |
 | `voyagier telemetry` | Anonymous usage telemetry (`status`, `on`, `off`) |
 
 Every 3.x trip-planning command (`plan-trip`, `search flights`, `select`, `plans …`, `clients …`, …) is replaced by a tool. Running one prints the replacement and exits 1; the full table is in the [CHANGELOG](./CHANGELOG.md).
@@ -82,11 +83,11 @@ Every 3.x trip-planning command (`plan-trip`, `search flights`, `select`, `plans
 ## For AI Agents
 
 ```bash
-voyagier agent-docs    # full reference (AGENT.md)
+voyagier agent-docs            # the MCP server's guidance, then the CLI usage notes (AGENT.md)
 npx @voyagier/cli agent-docs   # zero-install variant
 ```
 
-Or read [AGENT.md](./AGENT.md) directly. It covers the tool model, flag typing, JSON shapes, the error code table and the 3.x migration.
+The first part is the server's own `instructions` (the trip-planning guidance: tool order, how searches complete, how booking is gated), the same text every MCP client receives. The second part is [AGENT.md](./AGENT.md): the tool model, flag typing, JSON shapes, the error code table and the 3.x migration.
 
 ## Connect an AI agent
 
@@ -104,15 +105,15 @@ It uses your saved token (`voyagier login`), merges a `voyagier` entry into the 
 
 Claude Desktop's config format describes stdio servers only, so that client is pointed at the CLI's local server (`voyagier mcp`) instead. Voyagier can also be added through the remote connectors section of the app settings, which uses the hosted endpoint directly.
 
-## MCP server
+## Stdio MCP proxy
 
-The CLI ships an [MCP](https://modelcontextprotocol.io) stdio server for hosts that only speak stdio:
+For hosts that only speak stdio, the CLI ships an [MCP](https://modelcontextprotocol.io) stdio server that is a proxy for the hosted server:
 
 ```bash
-voyagier mcp          # run the stdio server (JSON-RPC on stdout)
+voyagier mcp          # stdio proxy (JSON-RPC on stdout)
 ```
 
-Authentication flows through the environment (`VOYAGIER_TOKEN`). The stdio server is being aligned with the hosted server's tool list so both expose the identical surface; until that lands, prefer the hosted endpoint wherever your client supports remote MCP servers.
+It has no tool table of its own. `tools/list` and `tools/call` are forwarded to `https://mcp.voyagier.com/api/mcp` (or `VOYAGIER_MCP_URL`) with the token from `VOYAGIER_TOKEN` or the saved credentials, and the results are returned exactly as the server sent them, so the proxy always exposes the server's current tools. The server's `instructions` are passed through on `initialize`. When the server cannot be reached, the proxy still completes the local handshake and explains the problem in `instructions`; each request then returns a JSON-RPC error that names the fix (set `VOYAGIER_TOKEN` on 401, wait `Retry-After` on 429) and retries the server, so fixing the environment needs no restart. Prefer the hosted endpoint directly wherever your client supports remote MCP servers.
 
 **Claude Desktop** (`claude_desktop_config.json`):
 
@@ -133,13 +134,15 @@ Authentication flows through the environment (`VOYAGIER_TOKEN`). The stdio serve
 | Variable | Description |
 |----------|-------------|
 | `VOYAGIER_TOKEN` | Personal access token (overrides the saved one) |
-| `VOYAGIER_MCP_URL` | MCP endpoint every tool command calls (default: `https://mcp.voyagier.com/api/mcp`). Must be `https://`; plain `http://` is accepted only for `localhost` / `127.0.0.1` / `::1` during local development |
+| `VOYAGIER_MCP_URL` | MCP endpoint every tool command, the stdio proxy and the extension call (default: `https://mcp.voyagier.com/api/mcp`). Must be `https://`; plain `http://` is accepted only for `localhost` / `127.0.0.1` / `::1` during local development |
 | `VOYAGIER_API_URL` | GraphQL base URL used by `voyagier auth setup` profile updates (default: `https://travel.voyagier.com/api`); honored together with `VOYAGIER_TOKEN` |
 | `VOYAGIER_CONFIG_DIR` | Directory for credentials and the tool cache (default: `~/.voyagier`) |
 
 ## How It Works
 
-The CLI is an MCP client. On startup it loads the server's `tools/list` (from the local cache when fresh) and registers one Commander command per tool, with flags generated from each tool's JSON input schema. Running a command sends `tools/call` over Streamable HTTP with your token as a Bearer header, honours the server's session and rate-limit headers, and prints the result. Trip-level state changes only through explicit tools (`set_date_range`, `set_destination`, `set_airport`, `plan_trip`); searches explore inventory and never write to a plan.
+The CLI is an MCP client. On startup it loads the server's `tools/list` (from the local cache when fresh) and registers one Commander command per tool, with flags generated from each tool's JSON input schema. Running a command sends `tools/call` over Streamable HTTP with your token as a Bearer header, honours the server's session and rate-limit headers, and prints the result. The order of operations, how searches complete and how booking is gated are the server's rules; read them with `voyagier agent-docs` and in each tool's `--help`.
+
+**Rate limit.** The hosted endpoint allows **180 requests per minute per token**, counted across the CLI, the stdio proxy and any other client using that token. Scripted loops should back off; the CLI reports `RATE_LIMITED` with `details.retryAfterSeconds` when the server sends `Retry-After`.
 
 ## Getting Access
 
@@ -156,7 +159,7 @@ Non-admin tokens expire (90 days max, 30 by default) — mint a fresh one when y
 
 ## Claude Desktop Extension (MCPB)
 
-The stdio server is also packaged as a Claude Desktop extension bundle (MCPB). Build it from the repo with `scripts/build-mcpb.sh`, which produces `dist-mcpb/voyagier-<version>.mcpb`. To install, drag the `.mcpb` file into Claude Desktop → Settings → Extensions, then enter your Personal Access Token when prompted.
+The stdio proxy is also packaged as a Claude Desktop extension bundle (MCPB): the extension connects Claude Desktop to the hosted Voyagier MCP server with the Personal Access Token you enter when installing it, and always exposes the server's current tools. Build it from the repo with `scripts/build-mcpb.sh`, which produces `dist-mcpb/voyagier-<version>.mcpb`. To install, drag the `.mcpb` file into Claude Desktop → Settings → Extensions, then enter your token when prompted.
 
 ## Privacy Policy
 

@@ -85,6 +85,7 @@ export async function refreshToolsCache(
     fetchedAt: new Date(now).toISOString(),
     server: init.serverInfo ? { name: init.serverInfo.name, version: init.serverInfo.version } : undefined,
     surfaceHash: toolsSurfaceHash(tools),
+    ...(typeof init.instructions === "string" && init.instructions.trim() ? { instructions: init.instructions } : {}),
     tools,
   };
   writeToolsCache(cache);

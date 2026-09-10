@@ -9,16 +9,16 @@ startCommand:
       voyagierToken:
         type: string
         description: Voyagier personal access token (request access at https://www.voyagier.com/agents)
-      apiUrl:
+      mcpUrl:
         type: string
-        description: "Optional API base URL override (defaults to production)"
+        description: "Optional hosted MCP endpoint override (defaults to https://mcp.voyagier.com/api/mcp)"
   commandFunction: |-
     (config) => ({
       command: 'npx',
       args: ['-y', '@voyagier/cli', 'mcp'],
       env: {
         VOYAGIER_TOKEN: config.voyagierToken,
-        ...(config.apiUrl ? { VOYAGIER_API_URL: config.apiUrl } : {})
+        ...(config.mcpUrl ? { VOYAGIER_MCP_URL: config.mcpUrl } : {})
       }
     })
   exampleConfig:

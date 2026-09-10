@@ -70,9 +70,16 @@ describe("removed-commands table", () => {
     expect(names).toEqual(expect.arrayContaining(["plans", "search", "travellers", "clients", "book", "quote", "whoami"]));
   });
 
-  it("the CHANGELOG carries the generated migration table verbatim", () => {
+  it("the CHANGELOG 4.0.0 section carries the generated migration table verbatim, once", () => {
     const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf-8");
-    expect(changelog).toContain(removedCommandsMarkdownTable());
+    const table = removedCommandsMarkdownTable();
+    const section = changelog.split(/^## \[4\.0\.0\]/m)[1]?.split(/^## \[/m)[0] ?? "";
+    expect(section).toContain("#### Migration table");
+    expect(section).toContain(table);
+    expect(changelog.split(table).length - 1).toBe(1);
+    // Every 3.x command is a row; no row exists that the table does not know.
+    const rows = section.split("\n").filter((l) => /^\| `voyagier /.test(l));
+    expect(rows.length).toBe(REMOVED_COMMANDS.length);
   });
 
   it("renders a markdown table with one row per command", () => {
