@@ -191,14 +191,39 @@ describe("plans share", () => {
     expect(mockGraphql).not.toHaveBeenCalled();
   });
 
-  it("prints a human confirmation on success", async () => {
+  it("prints a human confirmation on success, saying no email was sent", async () => {
     mockGraphql
       .mockResolvedValueOnce({ userPublicProfile: { id: "usr_1", name: "Bob Jones", username: "bob" } })
       .mockResolvedValueOnce(inviteFor("viewer"));
     await run(["share", "plan-1", "--user", "bob"]);
-    expect(logJoined()).toContain("Invited");
-    expect(logJoined()).toContain("Bob Jones");
-    expect(logJoined()).not.toContain("sign up");
+    const out = logJoined();
+    expect(out).toContain("Invited");
+    expect(out).toContain("Bob Jones");
+    expect(out).toContain("pending invite to accept");
+    expect(out).toContain("No email was sent");
+    expect(out).not.toContain("sign up");
+  });
+
+  it("human mode says no email was sent when --email resolves to an existing account", async () => {
+    mockGraphql.mockResolvedValueOnce(inviteFor("editor", { invitedUserId: "usr_9" }));
+    await run(["share", "plan-1", "--email", "amy@example.com", "--role", "editor"]);
+    const out = logJoined();
+    expect(out).toContain("amy@example.com");
+    expect(out).toContain("pending invite to accept");
+    expect(out).toContain("No email was sent");
+    expect(out).not.toContain("sign up");
+  });
+
+  it("--json shape is unchanged for an existing-account email invite (no pending, no notice field)", async () => {
+    mockGraphql.mockResolvedValueOnce(inviteFor("viewer", { invitedUserId: "usr_9" }));
+    await run(["share", "plan-1", "--email", "amy@example.com", "--json"]);
+    expect(mockJsonOutput).toHaveBeenCalledWith({
+      ok: true,
+      success: true,
+      planId: "plan-1",
+      invitedUser: "amy@example.com",
+      role: "Viewer",
+    });
   });
 
   it("falls back to the requested role name when the API returns no role", async () => {

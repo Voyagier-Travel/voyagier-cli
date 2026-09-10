@@ -104,13 +104,16 @@ export function registerSharingCommands(plans: Command): void {
           });
           return;
         }
+        // The API records the invite and sends nothing, on every path: say so
+        // every time so the caller knows the notification is theirs to make.
+        console.log(chalk.green(`\n  ✓ Invited ${chalk.bold(userDisplay)} as ${roleName}`));
         if (pending) {
-          console.log(chalk.green(`\n  ✓ Invited ${chalk.bold(userDisplay)} as ${roleName}`));
           console.log(chalk.dim("    No Voyagier account uses this address yet. The invite is held for it and"));
-          console.log(chalk.dim("    access is granted when they sign up with this email. No email was sent.\n"));
-          return;
+          console.log(chalk.dim("    access is granted when they sign up with this email."));
+        } else {
+          console.log(chalk.dim("    They have a pending invite to accept in Voyagier."));
         }
-        console.log(chalk.green(`\n  ✓ Invited ${chalk.bold(userDisplay)} as ${roleName}\n`));
+        console.log(chalk.dim("    No email was sent. Let them know yourself.\n"));
       } catch (err) {
         if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);
