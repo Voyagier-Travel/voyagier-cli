@@ -115,9 +115,14 @@ describe("parsing flags into tool arguments", () => {
     await expect(parseArgs("travellers_add", ["--plan_id", "p", "--travellers", "nope"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
   });
 
-  it("rejects a value outside an enum, a non-integer, and a missing required flag", async () => {
+  it("rejects a value outside an enum, a non-integer, non-finite numbers, and a missing required flag", async () => {
     await expect(parseArgs("plans_list", ["--relationship", "friend"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
     await expect(parseArgs("plans_list", ["--limit", "2.5"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    // Number("Infinity") / Number("1e309") are non-finite; JSON.stringify would send null.
+    for (const bad of ["Infinity", "-Infinity", "1e309", "NaN"]) {
+      await expect(parseArgs("plans_list", ["--limit", bad])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+      await expect(parseArgs("search_hotels", ["--location", "x", "--checkin", "d", "--checkout", "d", "--children_ages", bad])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    }
     await expect(parseArgs("plan_status", [])).rejects.toMatchObject({ code: "commander.missingMandatoryOptionValue" });
   });
 

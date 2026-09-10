@@ -119,6 +119,15 @@ Full reference: voyagier agent-docs`,
 
   // One command per MCP tool.
   registerGeneratedCommands(program, tools, { version, ...(opts.generated ?? {}) });
+  if (tools.length === 0) {
+    // Help never touches the network, so a first run has no tool list yet.
+    program.addHelpText(
+      "after",
+      `
+No tool commands are listed yet: the list comes from the Voyagier MCP server and is fetched on the first tool
+command you run, or now with: voyagier doctor`,
+    );
+  }
 
   // 3.x commands that no longer exist: hidden stubs with the replacement.
   registerRemovedCommandStubs(program, new Set(tools.map((t) => t.name)));

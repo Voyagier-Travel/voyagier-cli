@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from "@jest/globals";
 import { CliErrorCode } from "../errors.js";
 import { McpClient } from "./client.js";
-import { isHelpInvocation, isLocalInvocation, resolveStartupTools } from "./startup.js";
+import { isLocalInvocation, resolveStartupTools } from "./startup.js";
 import { clearToolsCache, readToolsCache, writeToolsCache } from "./tools-cache.js";
 import { getMcpUrl, DEFAULT_MCP_URL } from "./url.js";
 
@@ -88,17 +88,14 @@ describe("resolveStartupTools", () => {
     expect(calls).toEqual([]);
   });
 
-  it("makes one best-effort fetch for help when nothing is cached and credentials exist", async () => {
+  it("never touches the network for help or no-args, even with credentials and no cache", async () => {
     const { client, calls } = scriptedClient("ok");
-    const res = await resolveStartupTools([], { createClient: () => client });
-    expect(res.source).toBe("network");
-    expect(calls).toContain("tools/list");
-    // Help without credentials: no fetch.
-    delete process.env.VOYAGIER_TOKEN;
-    clearToolsCache();
-    const { client: c2, calls: calls2 } = scriptedClient("ok");
-    expect((await resolveStartupTools(["--help"], { createClient: () => c2 })).source).toBe("none");
-    expect(calls2).toEqual([]);
+    for (const argv of [[], ["--help"], ["-h"], ["help"]]) {
+      const res = await resolveStartupTools(argv, { createClient: () => client });
+      expect(res.source).toBe("none");
+      expect(res.tools).toEqual([]);
+    }
+    expect(calls).toEqual([]);
   });
 
   it("returns AUTH_FAILED as the error (not a throw) when there are no credentials", async () => {
@@ -139,12 +136,6 @@ describe("invocation classification", () => {
     expect(isLocalInvocation(["login"])).toBe(true);
     expect(isLocalInvocation(["plans_list"])).toBe(false);
     expect(isLocalInvocation(["plans", "list"])).toBe(false);
-  });
-  it("isHelpInvocation", () => {
-    expect(isHelpInvocation([])).toBe(true);
-    expect(isHelpInvocation(["-h"])).toBe(true);
-    expect(isHelpInvocation(["help"])).toBe(true);
-    expect(isHelpInvocation(["--version"])).toBe(false);
   });
 });
 

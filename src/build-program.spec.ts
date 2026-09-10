@@ -103,6 +103,21 @@ describe("command surface", () => {
     }
   });
 
+  it("tells a first run how to populate the tool list when none is loaded", () => {
+    // addHelpText("after") only renders through outputHelp, not helpInformation.
+    const fullHelp = (tools: McpToolDescriptor[]): string => {
+      let out = "";
+      const p = buildProgram("0.0.0-test", tools);
+      p.configureOutput({ writeOut: (str) => { out += str; } });
+      p.outputHelp();
+      return out;
+    };
+    const empty = fullHelp([]);
+    expect(empty).toContain("No tool commands are listed yet");
+    expect(empty).toContain("voyagier doctor");
+    expect(fullHelp(FIXTURE_TOOLS)).not.toContain("No tool commands are listed yet");
+  });
+
   it("uses the tool's title as the command summary and its description as the help body", () => {
     const program = buildProgram("0.0.0-test", FIXTURE_TOOLS);
     const cmd = program.commands.find((c) => c.name() === "plans_list")!;

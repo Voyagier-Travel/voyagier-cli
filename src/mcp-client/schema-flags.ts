@@ -120,7 +120,9 @@ function kindHint(spec: FlagSpec): string {
 
 function parseNumber(kind: "number" | "integer", value: string): number {
   const n = Number(value);
-  if (value.trim() === "" || Number.isNaN(n)) throw new InvalidArgumentError(`expected ${kind === "integer" ? "an" : "a"} ${kind}, got "${value}".`);
+  // Number.isFinite also rejects Infinity/1e309/NaN, which JSON.stringify
+  // would otherwise turn into null and send as a different request.
+  if (value.trim() === "" || !Number.isFinite(n)) throw new InvalidArgumentError(`expected ${kind === "integer" ? "an" : "a"} finite ${kind}, got "${value}".`);
   if (kind === "integer" && !Number.isInteger(n)) throw new InvalidArgumentError(`expected an integer, got "${value}".`);
   return n;
 }

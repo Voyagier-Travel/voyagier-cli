@@ -250,6 +250,10 @@ describe("voyagier doctor (command)", () => {
     registerDoctorCommand(p, "1.8.1", { createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch() });
     await p.parseAsync(["node", "test", "doctor", "--json"]);
     const payload = JSON.parse(out.join("")) as { ok: boolean; data: DoctorReport };
+    // The wrapped envelope every --json surface uses: { ok, data } — no
+    // top-level overall/checks.
+    expect(Object.keys(payload).sort()).toEqual(["data", "ok"]);
+    expect(Object.keys(payload.data).sort()).toEqual(["checks", "overall"]);
     expect(payload.ok).toBe(true);
     expect(payload.data.checks.map((c) => c.name)).toEqual(["auth", "mcp", "whoami", "state-files", "version"]);
     expect(exitSpy).not.toHaveBeenCalled();

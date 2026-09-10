@@ -142,7 +142,8 @@ export function removedCommandMessage(entry: RemovedCommand, available: Readonly
     );
   }
   if (entry.note) lines.push(entry.note);
-  lines.push(`Flags: voyagier ${entry.tools[0]} --help`);
+  // Only point at --help for a command that exists on this server today.
+  if (live.length) lines.push(`Flags: voyagier ${live[0]} --help`);
   return lines.join("\n  ");
 }
 

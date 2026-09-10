@@ -50,12 +50,16 @@ describe("removed-commands table", () => {
     const live = removedCommandMessage(findRemovedCommand(["select"])!, LIVE);
     expect(live).toContain("This command was removed in 4.0.");
     expect(live).toContain("Use: voyagier select_option [flags]");
+    expect(live).toContain("Flags: voyagier select_option --help");
     const planned = removedCommandMessage(findRemovedCommand(["travellers", "remove"])!, LIVE);
     expect(planned).toContain("Planned replacement: voyagier travellers_remove");
     expect(planned).toContain("not yet published");
+    // Never point at --help for a command this server does not have.
+    expect(planned).not.toContain("Flags:");
     const mixed = removedCommandMessage(findRemovedCommand(["plans", "share"])!, LIVE);
     expect(mixed).toContain("Use: voyagier share_plan [flags]");
     expect(mixed).toContain("Also planned: voyagier invite_collaborator");
+    expect(mixed).toContain("Flags: voyagier share_plan --help");
     const none = removedCommandMessage(findRemovedCommand(["places", "search"])!, LIVE);
     expect(none).toContain("There is no MCP tool for it.");
   });

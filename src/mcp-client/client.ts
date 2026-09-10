@@ -19,7 +19,7 @@
  *    tool's own error text, so callers only ever see successful results.
  */
 import { CliError, CliErrorCode, authFailedMessage } from "../errors.js";
-import { sanitizeExternalText } from "../utils.js";
+import { sanitizeExternalData, sanitizeExternalText } from "../utils.js";
 
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
 
@@ -156,7 +156,9 @@ export class McpClient {
       );
       const sid = headers.get("mcp-session-id");
       this.sessionId = sid && sid.trim() ? sid.trim() : null;
-      const result = (response.result ?? {}) as McpInitializeResult;
+      // Server metadata is untrusted display text (it reaches doctor output
+      // and --verbose lines): strip escapes at the boundary.
+      const result = sanitizeExternalData((response.result ?? {}) as McpInitializeResult);
       this.serverInfo = result;
       this.initialized = true;
       this.log(
@@ -193,7 +195,10 @@ export class McpClient {
       tools.push(...result.tools);
       cursor = typeof result.nextCursor === "string" && result.nextCursor ? result.nextCursor : undefined;
     } while (cursor);
-    return tools;
+    // Tool names, titles, descriptions, property descriptions and enum values
+    // become Commander help, spinner labels and error messages. They come from
+    // the network: sanitize once here so every consumer renders inert text.
+    return sanitizeExternalData(tools);
   }
 
   /**

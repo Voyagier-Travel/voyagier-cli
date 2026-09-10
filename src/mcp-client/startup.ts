@@ -4,7 +4,7 @@
  *  1. Fresh cache for the configured endpoint → use it, no network.
  *  2. Local command (auth, doctor, mcp, …), help/version, or no args → use a
  *     stale cache if one exists for the endpoint, else no tools; never hit the
- *     network just to print help.
+ *     network just to print help (help then says how to populate the list).
  *  3. Otherwise fetch `tools/list` (initialize + list), write the cache, use
  *     it. When the fetch fails, fall back to a stale cache and keep the error
  *     so the entrypoint can explain an unknown command.
@@ -54,15 +54,6 @@ export function isLocalInvocation(userArgs: readonly string[]): boolean {
   return LOCAL_COMMANDS.has(first);
 }
 
-/**
- * Help output lists the generated commands, so a help request is worth one
- * best-effort fetch when nothing is cached yet (failures are silent: help
- * still prints with the local commands).
- */
-export function isHelpInvocation(userArgs: readonly string[]): boolean {
-  const first = userArgs[0];
-  return !first || first === "--help" || first === "-h" || first === "help";
-}
 
 /** Fetch `tools/list` from the server and persist it. */
 export async function refreshToolsCache(
@@ -96,8 +87,7 @@ export async function resolveStartupTools(
     return { url, tools: cache.tools, source: "cache", cache };
   }
 
-  const helpWithoutCache = isHelpInvocation(userArgs) && !staleForUrl && credentialsExist();
-  if (!opts.force && isLocalInvocation(userArgs) && !helpWithoutCache) {
+  if (!opts.force && isLocalInvocation(userArgs)) {
     return staleForUrl
       ? { url, tools: staleForUrl.tools, source: "stale-cache", cache: staleForUrl }
       : { url, tools: [], source: "none", cache: null };

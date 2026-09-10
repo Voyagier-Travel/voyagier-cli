@@ -69,7 +69,11 @@ export function registerGeneratedCommands(
 ): string[] {
   const registered: string[] = [];
   const taken = new Set(program.commands.map((c) => c.name()));
-  for (const tool of tools) {
+  for (const raw of tools) {
+    // The client sanitizes tools/list at the boundary; the on-disk cache is
+    // re-read without it, so strip escapes again before anything reaches
+    // Commander help or the spinner.
+    const tool = sanitizeExternalData(raw);
     if (!tool.name || taken.has(tool.name)) continue;
     const specs = flagSpecsFromSchema(tool.inputSchema);
     const cmd = new Command(tool.name);
@@ -119,7 +123,10 @@ export async function runTool(
     return;
   }
   const planIdHint = typeof args.plan_id === "string" ? args.plan_id : undefined;
-  const rendered = renderToolPayload(tool.name, result.structuredContent ?? parsed, planIdHint);
+  // structuredContent arrives outside the text-block path parseToolContent
+  // sanitizes; render.ts assumes sanitized input, so strip escapes here too.
+  const forRender = result.structuredContent !== undefined ? sanitizeExternalData(result.structuredContent) : parsed;
+  const rendered = renderToolPayload(tool.name, forRender, planIdHint);
   if (rendered !== null && rendered.trim() !== "") {
     writeHuman(rendered);
     return;

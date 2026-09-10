@@ -106,6 +106,64 @@ describe("generated commands", () => {
     expect(JSON.parse(human[1])).toEqual({ tripPlanClients: [{ id: "c1", name: "Jane Doe" }] });
   });
 
+  it("strips terminal escapes from remote tool metadata before it reaches help or the spinner", async () => {
+    const hostile: McpToolDescriptor[] = [
+      {
+        name: "evil_tool",
+        title: "Nice \u001b[31mred\u001b[0m title",
+        description: "Desc \u001b]0;pwned\u0007 here",
+        inputSchema: {
+          type: "object",
+          properties: {
+            mode: { type: "string", description: "Mode \u001b[2Jcleared", enum: ["a\u001b[1mb", "c"] },
+          },
+          required: ["mode"],
+        },
+      },
+    ];
+    const program = new Command();
+    registerGeneratedCommands(program, hostile, { version: "0" });
+    const cmd = program.commands.find((c) => c.name() === "evil_tool")!;
+    const help = cmd.helpInformation() + cmd.summary();
+    expect(help).toContain("Nice red title");
+    // The OSC title-set sequence is removed whole, payload included.
+    expect(help).toContain("Desc  here");
+    expect(help).not.toContain("pwned");
+    expect(help).toContain("Mode cleared");
+    expect(help).toContain("ab");
+    // eslint-disable-next-line no-control-regex
+    expect(help).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
+  });
+
+  it("sanitizes tools/list at the client boundary", async () => {
+    const { McpClient: Client } = await import("./client.js");
+    const fetchImpl = (async (_i: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { method: string; id?: number };
+      const respond = (payload: unknown) => new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+      if (body.method === "initialize") return respond({ jsonrpc: "2.0", id: body.id, result: { serverInfo: { name: "voy\u001b[31magier" } } });
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      return respond({ jsonrpc: "2.0", id: body.id, result: { tools: [{ name: "x", title: "T\u001b[0m", inputSchema: { properties: { p: { description: "\u001b[2Jd" } } } }] } });
+    }) as unknown as typeof fetch;
+    const client = new Client({ url: "https://mcp.example.test/api/mcp", token: "***", fetchImpl });
+    const tools = await client.toolsList();
+    expect(tools[0].title).toBe("T");
+    expect(tools[0].inputSchema?.properties?.p.description).toBe("d");
+    expect(client.server?.serverInfo?.name).toBe("voyagier");
+  });
+
+  it("sanitizes structuredContent before rendering", async () => {
+    const { client } = clientReturning(() => ({
+      content: [{ type: "text", text: "unstructured" }],
+      structuredContent: { tripPlanStatus: { readiness: "Booked", title: "Plan \u001b[31mred\u001b[0m \u0007bell" } },
+    }));
+    const { run, human } = harness(client);
+    await run(["plan_status", "--plan_id", "p1"]);
+    expect(human[0]).toContain("Plan red bell");
+    // eslint-disable-next-line no-control-regex
+    expect(human[0].replace(/\u001b\[[0-9;]*m/g, "")).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
+    expect(human[0]).not.toContain("\u001b[31m");
+  });
+
   it("prefers structuredContent for rendering when the server sends it", async () => {
     const { client } = clientReturning(() => ({
       content: [{ type: "text", text: "unstructured" }],
