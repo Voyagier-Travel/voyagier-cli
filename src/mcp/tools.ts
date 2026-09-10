@@ -328,14 +328,21 @@ export function buildGetSelectionOptionsArgs(i: { selection_id: string; wait?: b
 }
 
 export function buildSelectOptionArgs(i: {
-  selection_id: string;
+  selection_id?: string;
   option_id: string;
   participant_choice_id?: string;
   traveller_ids?: string[];
   wait?: boolean;
 }): string[] {
   // Explicit-id mode ONLY — never index mode (avoids global-state collisions).
-  const args = ["select", "--selection-id", i.selection_id, "--option-id", i.option_id];
+  // One of selection_id / participant_choice_id is required — the CLI's direct
+  // mode fails closed without either, mirrored here so the tool call fails
+  // before spawning a child.
+  if (!i.selection_id && !i.participant_choice_id) {
+    throw new Error("select_option requires participant_choice_id (preferred) or selection_id.");
+  }
+  const args = ["select", "--option-id", i.option_id];
+  opt(args, "--selection-id", i.selection_id);
   opt(args, "--participant-choice-id", i.participant_choice_id);
   if (i.traveller_ids && i.traveller_ids.length > 0) args.push("--travellers", i.traveller_ids.join(","));
   if (i.wait !== false) args.push("--wait");
@@ -886,13 +893,18 @@ export const TOOLS: ToolDef[] = [
       "Decide a participant-choice row: choose an option by explicit selection + option id. A selection can hold SEVERAL choice rows at once (one per hotel room, one per traveller group), so prefer passing participant_choice_id (a row id from choices_view or plan_status) — it decides that exact row and keeps its travellers; without it, a multi-row selection is rejected with the row list (retry targeted). With wait=true (default), after the pick succeeds it polls until the pick is reflected server-side AND readiness settles, then returns a plan-status snapshot. A timed-out wait never means the pick failed. Round trip: call once per leg — the identical optionId on both legs is intended.",
     timeoutMs: T.search,
     inputSchema: {
-      selection_id: z.string().describe("Selection id the choice row lives on."),
-      option_id: optionId.describe("Option id to choose — the FULL 36-character uuid from search / get_selection_options. Ids are regenerated when a search is re-run, so re-fetch options rather than reusing a stale id."),
+      option_id: optionId.describe("Option id to choose — the FULL 36-character uuid from search / get_selection_options, read from the SAME selection/fork as the row. Ids are regenerated when a search is re-run, so re-fetch options rather than reusing a stale id."),
       participant_choice_id: z
         .string()
         .optional()
         .describe(
-          "The exact choice row to decide — PREFERRED (from choices_view rows with isActiveBranch true, or plan_status). Omit only when the selection holds a single live row.",
+          "The exact choice row to decide — PREFERRED (from choices_view rows with isActiveBranch true, or plan_status). The row knows its own selection, so selection_id is not needed with it.",
+        ),
+      selection_id: z
+        .string()
+        .optional()
+        .describe(
+          "Selection to decide on. Required only when no participant_choice_id is given; ignored in favour of the row's own selection when one is (a pre-fork id would be stale).",
         ),
       traveller_ids: z
         .array(z.string())

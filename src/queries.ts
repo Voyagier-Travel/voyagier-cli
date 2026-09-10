@@ -622,7 +622,7 @@ export const SET_DESTINATION_VALUE = `
 // live row and REJECTS ambiguous selections listing the rows
 // (AMBIGUOUS_CHOICE_TARGET / DIVERGENT_CHOICES) — retry targeted.
 export const DECIDE_PARTICIPANT_CHOICE = `
-  mutation Decide($selectionId: String!, $optionId: String!, $participantChoiceId: String, $travellerIds: [String!]) {
+  mutation Decide($selectionId: String, $optionId: String!, $participantChoiceId: String, $travellerIds: [String!]) {
     decideParticipantChoice(selectionId: $selectionId, optionId: $optionId, participantChoiceId: $participantChoiceId, travellerIds: $travellerIds) {
       id
       parentOptionId

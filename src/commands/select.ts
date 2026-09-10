@@ -155,7 +155,7 @@ function requirePickResult(
  * across both (the retry must honor the same --traveller/--travellers/--group).
  */
 async function performPick(
-  selectionId: string,
+  selectionId: string | null,
   optionId: string,
   scope: ChoiceScopeOpts,
 ): Promise<SelectionResponse> {
@@ -172,6 +172,13 @@ async function performPick(
       travellerIds,
     });
     return data.decideParticipantChoice;
+  }
+  // Every remaining mode is selection-keyed.
+  if (!selectionId) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      "--selection-id is required unless --participant-choice-id names the row to decide.",
+    );
   }
   if (scope.traveller) {
     const data = await graphql<{ setTripPlanSelectionTravellerChoice: SelectionResponse | null }>(
@@ -206,7 +213,7 @@ async function performPick(
 }
 
 async function setSelectedOption(
-  selectionId: string,
+  selectionId: string | null,
   optionId: string,
   rawScope: ChoiceScopeOpts = {},
 ): Promise<PickOutcome> {
@@ -218,10 +225,11 @@ async function setSelectedOption(
     // to auto-route it to the goal's single non-template sibling (VOY-1872);
     // that helper either returns the routed outcome or throws a FORK_TEMPLATE
     // CliError with recovery guidance. Other errors go through the plain mapper.
-    if (isForkTemplateRejection(err)) {
+    // Row-addressed picks (no selection id) have nothing to route from.
+    if (selectionId && isForkTemplateRejection(err)) {
       return handleForkTemplate(selectionId, optionId, scope);
     }
-    throw mapChoiceError(err, selectionId);
+    throw mapChoiceError(err, selectionId ?? scope.participantChoiceId ?? "(unknown)");
   }
 }
 
@@ -519,16 +527,16 @@ export function registerSelectCommands(program: Command): void {
         return;
       }
 
-      // ── Direct mode: --selection-id + --option-id ───────────────────────
+      // ── Direct mode: --selection-id/--participant-choice-id + --option-id ─
       // Entry is decided on "was the flag provided" (!== undefined), not
       // truthiness, so an empty --selection-id="" is caught here as a garbage
       // id below rather than silently falling through to indexed mode. Same
       // contract as normalizeChoiceScope.
-      if (opts.selectionId !== undefined || opts.optionId !== undefined) {
-        if (opts.selectionId === undefined || opts.optionId === undefined) {
+      if (opts.selectionId !== undefined || opts.optionId !== undefined || opts.participantChoiceId !== undefined) {
+        if (opts.optionId === undefined || (opts.selectionId === undefined && opts.participantChoiceId === undefined)) {
           throw new CliError(
             CliErrorCode.VALIDATION,
-            "Direct mode requires BOTH --selection-id and --option-id.",
+            "Direct mode requires --option-id plus --selection-id or --participant-choice-id (the row knows its own selection).",
           );
         }
         // Reject empty/"null"/"undefined" ids client-side (VOY-1828) — index
@@ -537,7 +545,7 @@ export function registerSelectCommands(program: Command): void {
         // --option-id additionally has to be a FULL uuid (VOY-2044): a truncated
         // id is a valid String to the API but matches no option, which the
         // server answers with an empty result rather than an error.
-        const selectionId = validateId(opts.selectionId, "--selection-id");
+        const selectionId = opts.selectionId !== undefined ? validateId(opts.selectionId, "--selection-id") : null;
         const optionId = validateOptionId(opts.optionId, "--option-id");
         try {
           if (!opts.json) progress("Selecting option...");

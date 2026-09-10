@@ -486,10 +486,16 @@ describe("argv builders", () => {
 
   it("select_option uses explicit-id mode ONLY (never index mode) and waits by default", () => {
     const args = buildSelectOptionArgs({ selection_id: "s1", option_id: "o1" });
-    expect(args).toEqual(["select", "--selection-id", "s1", "--option-id", "o1", "--wait", "--json"]);
+    expect(args).toEqual(["select", "--option-id", "o1", "--selection-id", "s1", "--wait", "--json"]);
     // No bare numeric positional that would trigger index mode / global-state reads.
     expect(args.some((a) => /^\d+$/.test(a))).toBe(false);
     expect(buildSelectOptionArgs({ selection_id: "s1", option_id: "o1", wait: false })).not.toContain("--wait");
+  });
+
+  it("select_option: a row id alone addresses the pick (the row knows its selection); no id at all fails closed", () => {
+    const args = buildSelectOptionArgs({ option_id: "o1", participant_choice_id: "pc1" });
+    expect(args).toEqual(["select", "--option-id", "o1", "--participant-choice-id", "pc1", "--wait", "--json"]);
+    expect(() => buildSelectOptionArgs({ option_id: "o1" })).toThrow(/participant_choice_id .* or selection_id/);
   });
 
   // VOY-2044: option ids are constrained to a FULL uuid at the schema boundary,
