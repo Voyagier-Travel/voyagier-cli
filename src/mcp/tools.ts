@@ -495,6 +495,10 @@ export function buildBookingsListArgs(i: { plan_id: string }): string[] {
   return ["bookings", "list", "--plan", i.plan_id, "--json"];
 }
 
+export function buildInviteCollaboratorArgs(i: { plan_id: string; email: string; role?: string }): string[] {
+  return ["plans", "share", "--plan", i.plan_id, "--email", i.email, "--role", i.role ?? "viewer", "--json"];
+}
+
 export function buildAgentDocsArgs(): string[] {
   // The ONE tool without --json: agent-docs prints the markdown reference.
   return ["agent-docs"];
@@ -1020,6 +1024,22 @@ export const TOOLS: ToolDef[] = [
     },
     annotations: { readOnlyHint: true },
     buildArgs: (i) => buildBookingsListArgs(i),
+  }),
+
+  defineTool({
+    name: "invite_collaborator",
+    title: "Invite collaborator by email",
+    description:
+      "Invite a person, by email address, to collaborate on a trip plan as viewer (default), editor or agent. The person does not need a Voyagier account: an existing account gets a pending invite to accept; an address with no account gets an invite held against the email and granted when they sign up with it. This tool DOES NOT EMAIL ANYONE — it records the invite and returns its status (pending: true means no account uses the address yet), so tell the person yourself. Errors when the address already has a pending invite for the plan or is already a collaborator." +
+      INJECTION_NOTE,
+    timeoutMs: T.short,
+    inputSchema: {
+      plan_id: z.string().describe("Trip plan id."),
+      email: z.string().email().describe("Email address of the person to invite."),
+      role: z.enum(["viewer", "editor", "agent"]).optional().describe('Role to grant: "viewer" (default, read-only), "editor" or "agent" (can change the plan).'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+    buildArgs: (i) => buildInviteCollaboratorArgs(i),
   }),
 
   defineTool({

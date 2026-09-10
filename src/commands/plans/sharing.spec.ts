@@ -67,11 +67,17 @@ async function run(args: string[]): Promise<void> {
   await program.parseAsync(["node", "voyagier", "plans", ...args]);
 }
 
-const roles = [
-  { id: "role-viewer", name: "Viewer" },
-  { id: "role-editor", name: "Editor" },
-  { id: "role-agent", name: "Agent" },
-];
+/** What the API returns for a successful invite, per role. */
+const inviteFor = (role: "viewer" | "editor" | "agent", extra: Record<string, unknown> = {}) => ({
+  inviteTripPlanCollaborator: {
+    id: "inv_1",
+    status: "PENDING",
+    email: null,
+    invitedUserId: "usr_1",
+    role: { id: `role-${role}`, name: role.charAt(0).toUpperCase() + role.slice(1), key: role },
+    ...extra,
+  },
+});
 
 // ── plans share ───────────────────────────────────────────────────────────
 
@@ -91,16 +97,16 @@ describe("plans share", () => {
   it("invites a user found by username with the default viewer role (--json)", async () => {
     mockGraphql
       .mockResolvedValueOnce({ userPublicProfile: { id: "usr_1", name: "Bob Jones", username: "bob" } })
-      .mockResolvedValueOnce({ tripPlanRoles: roles })
-      .mockResolvedValueOnce({ inviteTripPlanCollaborator: {} });
+      .mockResolvedValueOnce(inviteFor("viewer"));
 
     await run(["share", "plan-1", "--user", "bob", "--json"]);
 
-    expect(mockGraphql).toHaveBeenCalledTimes(3);
-    const [, inviteVars] = mockGraphql.mock.calls[2] as [string, any];
+    // Username lookup + invite: the role key goes straight to the API, no roles round-trip.
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    const [, inviteVars] = mockGraphql.mock.calls[1] as [string, any];
     expect(inviteVars).toEqual({
       tripPlanId: "plan-1",
-      input: { invitedUserId: "usr_1", roleId: "role-viewer" },
+      input: { invitedUserId: "usr_1", role: "viewer" },
     });
     expect(mockJsonOutput).toHaveBeenCalledWith({
       ok: true,
@@ -111,14 +117,14 @@ describe("plans share", () => {
     });
   });
 
-  it("resolves an explicit --role to its id (editor)", async () => {
+  it("sends an explicit --role as its key, case-insensitively (Editor)", async () => {
     mockGraphql
       .mockResolvedValueOnce({ userPublicProfile: { id: "usr_1", name: "Bob", username: "bob" } })
-      .mockResolvedValueOnce({ tripPlanRoles: roles })
-      .mockResolvedValueOnce({ inviteTripPlanCollaborator: {} });
-    await run(["share", "plan-1", "--user", "bob", "--role", "editor", "--json"]);
-    const [, inviteVars] = mockGraphql.mock.calls[2] as [string, any];
-    expect(inviteVars.input.roleId).toBe("role-editor");
+      .mockResolvedValueOnce(inviteFor("editor"));
+    await run(["share", "plan-1", "--user", "bob", "--role", "Editor", "--json"]);
+    const [, inviteVars] = mockGraphql.mock.calls[1] as [string, any];
+    expect(inviteVars.input).toEqual({ invitedUserId: "usr_1", role: "editor" });
+    expect(mockJsonOutput).toHaveBeenCalledWith(expect.objectContaining({ role: "Editor" }));
   });
 
   it("throws NOT_FOUND when the username does not exist", async () => {
@@ -126,48 +132,79 @@ describe("plans share", () => {
     await expect(run(["share", "plan-1", "--user", "ghost", "--json"])).rejects.toMatchObject({
       code: CliErrorCode.NOT_FOUND,
     });
+    expect(mockGraphql).toHaveBeenCalledTimes(1);
   });
 
-  it("invites a user found by email (case-insensitive match)", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ users: { items: [{ id: "usr_9", name: "Amy", email: "amy@example.com" }] } })
-      .mockResolvedValueOnce({ tripPlanRoles: roles })
-      .mockResolvedValueOnce({ inviteTripPlanCollaborator: {} });
-    await run(["share", "plan-1", "--email", "AMY@example.com", "--json"]);
-    const [, inviteVars] = mockGraphql.mock.calls[2] as [string, any];
-    expect(inviteVars.input.invitedUserId).toBe("usr_9");
+  it("invites by email in ONE call, letting the server resolve the address", async () => {
+    mockGraphql.mockResolvedValueOnce(inviteFor("viewer", { invitedUserId: "usr_9" }));
+
+    await run(["share", "plan-1", "--email", " AMY@example.com ", "--json"]);
+
+    expect(mockGraphql).toHaveBeenCalledTimes(1);
+    const [, inviteVars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(inviteVars).toEqual({
+      tripPlanId: "plan-1",
+      input: { invitedEmail: "AMY@example.com", role: "viewer" },
+    });
+    // An existing account behind the address: a normal invite, not pending signup.
+    expect(mockJsonOutput).toHaveBeenCalledWith({
+      ok: true,
+      success: true,
+      planId: "plan-1",
+      invitedUser: "AMY@example.com",
+      role: "Viewer",
+    });
   });
 
-  it("sends a platform invitation when no account matches the email", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ users: { items: [{ id: "usr_9", name: "Amy", email: "amy@example.com" }] } })
-      .mockResolvedValueOnce({ createUserInvitation: { __typename: "UserInvitation" } });
-    await run(["share", "plan-1", "--email", "new@example.com", "--json"]);
-    expect(mockGraphql).toHaveBeenCalledTimes(2);
-    const [, inviteVars] = mockGraphql.mock.calls[1] as [string, any];
-    expect(inviteVars).toEqual({ input: { email: "new@example.com" } });
-    expect(mockJsonOutput).toHaveBeenCalledWith(
-      expect.objectContaining({ ok: true, invited: true, email: "new@example.com" }),
-    );
+  it("reports pending: true when no account uses the email yet", async () => {
+    mockGraphql.mockResolvedValueOnce(inviteFor("editor", { invitedUserId: null, email: "new@example.com" }));
+
+    await run(["share", "plan-1", "--email", "new@example.com", "--role", "editor", "--json"]);
+
+    expect(mockGraphql).toHaveBeenCalledTimes(1);
+    const [, inviteVars] = mockGraphql.mock.calls[0] as [string, any];
+    expect(inviteVars.input).toEqual({ invitedEmail: "new@example.com", role: "editor" });
+    expect(mockJsonOutput).toHaveBeenCalledWith({
+      ok: true,
+      success: true,
+      planId: "plan-1",
+      invitedUser: "new@example.com",
+      role: "Editor",
+      pending: true,
+    });
   });
 
-  it("rejects an invalid --role with the list of valid roles", async () => {
-    mockGraphql
-      .mockResolvedValueOnce({ userPublicProfile: { id: "usr_1", name: "Bob", username: "bob" } })
-      .mockResolvedValueOnce({ tripPlanRoles: roles });
+  it("human mode explains a pending invite and that nothing was emailed", async () => {
+    mockGraphql.mockResolvedValueOnce(inviteFor("viewer", { invitedUserId: null, email: "new@example.com" }));
+    await run(["share", "plan-1", "--email", "new@example.com"]);
+    const out = logJoined();
+    expect(out).toContain("Invited");
+    expect(out).toContain("new@example.com");
+    expect(out).toContain("sign up");
+    expect(out).toContain("No email was sent");
+  });
+
+  it("rejects an invalid --role locally with the list of valid roles", async () => {
     await expect(
       run(["share", "plan-1", "--user", "bob", "--role", "boss", "--json"]),
-    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION, message: expect.stringContaining("viewer, editor, agent") });
+    expect(mockGraphql).not.toHaveBeenCalled();
   });
 
   it("prints a human confirmation on success", async () => {
     mockGraphql
       .mockResolvedValueOnce({ userPublicProfile: { id: "usr_1", name: "Bob Jones", username: "bob" } })
-      .mockResolvedValueOnce({ tripPlanRoles: roles })
-      .mockResolvedValueOnce({ inviteTripPlanCollaborator: {} });
+      .mockResolvedValueOnce(inviteFor("viewer"));
     await run(["share", "plan-1", "--user", "bob"]);
     expect(logJoined()).toContain("Invited");
     expect(logJoined()).toContain("Bob Jones");
+    expect(logJoined()).not.toContain("sign up");
+  });
+
+  it("falls back to the requested role name when the API returns no role", async () => {
+    mockGraphql.mockResolvedValueOnce({ inviteTripPlanCollaborator: { id: "inv_1", status: "PENDING", invitedUserId: "usr_9" } });
+    await run(["share", "plan-1", "--email", "amy@example.com", "--role", "agent", "--json"]);
+    expect(mockJsonOutput).toHaveBeenCalledWith(expect.objectContaining({ role: "Agent" }));
   });
 
   it("wraps a graphql failure as API_ERROR", async () => {

@@ -70,6 +70,8 @@ const CLI_ONLY_TOOLS: Record<string, string> = {
   book_dry_run: "Maps onto `book --dry-run`; the remote server folds the preview into quote.",
   booking_status: "Maps onto `book --status`; the remote server covers it with bookings_list.",
   agent_docs: "Ships the CLI's bundled AGENT.md reference — a local file, not a remote capability.",
+  invite_collaborator:
+    "Added to both surfaces together; the remote snapshot predates it. Remove this entry on the next `npm run refresh:mcp-fixture`, which should then list it as a shared tool.",
 };
 
 /** Tools only the remote server exposes. */

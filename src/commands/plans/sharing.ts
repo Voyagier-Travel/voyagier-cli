@@ -9,21 +9,30 @@ import { jsonOutput } from "../../output.js";
 import { CliError, CliErrorCode } from "../../errors.js";
 import {
   LOOKUP_USER,
-  GET_USERS,
-  CREATE_USER_INVITATION,
-  GET_TRIP_PLAN_ROLES,
   INVITE_COLLABORATOR,
   GET_COLLABORATORS,
   REMOVE_COLLABORATOR,
   GET_SHARED_TRIP_PLANS,
 } from "../../queries.js";
 
+/** Collaborator roles `plans share --role` accepts, as the API's role keys. */
+const SHARE_ROLES = ["viewer", "editor", "agent"] as const;
+
+/** What `inviteTripPlanCollaborator` returns; the fields `plans share` reports. */
+interface CollaboratorInvite {
+  id: string;
+  status: string;
+  email?: string | null;
+  invitedUserId?: string | null;
+  role?: { id: string; name: string; key?: string | null } | null;
+}
+
 export function registerSharingCommands(plans: Command): void {
   plans
     .command("share [planId]")
     .description("Invite a collaborator to a trip plan")
     .option("--user <username>", "Username of the person to invite")
-    .option("--email <email>", "Email address of the person to invite")
+    .option("--email <email>", "Email address of the person to invite (no account required)")
     .option("--role <role>", "Role: viewer, editor, agent", "viewer")
     .option("--json", "Output raw JSON")
     .option("--plan <id>", "Trip plan ID (alternative to the positional argument)")
@@ -37,7 +46,16 @@ export function registerSharingCommands(plans: Command): void {
           throw new CliError(CliErrorCode.VALIDATION, "Use either --user or --email, not both.");
         }
 
-        let userId: string;
+        // The API accepts the role KEY directly, so no roles round-trip is needed.
+        const roleKey = String(opts.role).trim().toLowerCase();
+        if (!(SHARE_ROLES as readonly string[]).includes(roleKey)) {
+          throw new CliError(
+            CliErrorCode.VALIDATION,
+            `Invalid role "${opts.role}". Valid: ${SHARE_ROLES.join(", ")}`
+          );
+        }
+
+        let input: { invitedUserId?: string; invitedEmail?: string; role: string };
         let userDisplay: string;
 
         if (opts.user) {
@@ -50,57 +68,44 @@ export function registerSharingCommands(plans: Command): void {
           if (!user) {
             throw new CliError(CliErrorCode.NOT_FOUND, `User "${opts.user}" not found.`);
           }
-          userId = user.id;
+          input = { invitedUserId: user.id, role: roleKey };
           userDisplay = user.name ?? user.username;
         } else {
-          // Look up user by email (search users, filter client-side)
-          // TODO: Replace with server-side email filter query when available (VOY-809)
-          const usersData = await graphql<{ users: { items: Array<{ id: string; name: string; email: string; username?: string }> } }>(
-            GET_USERS
-          );
-          const email = (opts.email as string).toLowerCase();
-          const match = usersData.users.items.find((u) => u.email?.toLowerCase() === email);
-
-          if (!match) {
-            // User not found — send platform invitation
-            await graphql<{ createUserInvitation: { __typename: string } }>(
-              CREATE_USER_INVITATION,
-              { input: { email: opts.email as string } }
-            );
-            if (opts.json) {
-              jsonOutput({ ok: true, invited: true, email: opts.email, message: "Platform invitation sent. Re-run after they sign up." });
-              return;
-            }
-            console.log(chalk.yellow(`\n  ✉ No Voyagier account found for ${opts.email}.`));
-            console.log(chalk.dim("    A platform invitation has been sent."));
-            console.log(chalk.dim("    Run this command again once they've signed up.\n"));
-            return;
-          }
-          userId = match.id;
-          userDisplay = match.name || match.email;
+          // The server resolves the address itself: an existing account is
+          // invited directly; an address with no account gets a pending invite
+          // that is claimed when they sign up with it.
+          const email = String(opts.email).trim();
+          input = { invitedEmail: email, role: roleKey };
+          userDisplay = email;
         }
 
-        // Resolve role name to ID
-        const rolesData = await graphql<{ tripPlanRoles: Array<{ id: string; name: string }> }>(
-          GET_TRIP_PLAN_ROLES
-        );
-        const roleName = opts.role.charAt(0).toUpperCase() + opts.role.slice(1).toLowerCase();
-        const role = rolesData.tripPlanRoles.find(r => r.name === roleName);
-        if (!role) {
-          const valid = rolesData.tripPlanRoles.map(r => r.name.toLowerCase()).join(", ");
-          throw new CliError(CliErrorCode.VALIDATION, `Invalid role "${opts.role}". Valid: ${valid}`);
-        }
-
-        await graphql<{ inviteTripPlanCollaborator: unknown }>(
+        const data = await graphql<{ inviteTripPlanCollaborator: CollaboratorInvite | null }>(
           INVITE_COLLABORATOR,
-          { tripPlanId: planId, input: { invitedUserId: userId, roleId: role.id } }
+          { tripPlanId: planId, input }
         );
+        const invite = data.inviteTripPlanCollaborator ?? ({} as CollaboratorInvite);
+        const roleName = invite.role?.name ?? roleKey.charAt(0).toUpperCase() + roleKey.slice(1);
+        // No account behind the address yet: the invite waits for their signup.
+        const pending = Boolean(opts.email) && !invite.invitedUserId;
 
         if (opts.json) {
-          jsonOutput({ ok: true, success: true, planId, invitedUser: userDisplay, role: role.name });
+          jsonOutput({
+            ok: true,
+            success: true,
+            planId,
+            invitedUser: userDisplay,
+            role: roleName,
+            ...(pending ? { pending: true } : {}),
+          });
           return;
         }
-        console.log(chalk.green(`\n  ✓ Invited ${chalk.bold(userDisplay)} as ${role.name}\n`));
+        if (pending) {
+          console.log(chalk.green(`\n  ✓ Invited ${chalk.bold(userDisplay)} as ${roleName}`));
+          console.log(chalk.dim("    No Voyagier account uses this address yet. The invite is held for it and"));
+          console.log(chalk.dim("    access is granted when they sign up with this email. No email was sent.\n"));
+          return;
+        }
+        console.log(chalk.green(`\n  ✓ Invited ${chalk.bold(userDisplay)} as ${roleName}\n`));
       } catch (err) {
         if (err instanceof CliError) throw err;
         const message = err instanceof Error ? err.message : String(err);

@@ -20,7 +20,7 @@ const EXPECTED_TOOL_NAMES = [
   "search_flights", "search_hotels", "listings_list", "listings_add_to_selection", "search_activities",
   "get_selection_options", "refresh_options", "select_option", "choices_view", "choose_room_slot",
   "itinerary", "plan_status",
-  "quote", "book_dry_run", "book", "booking_status", "bookings_list", "agent_docs",
+  "quote", "book_dry_run", "book", "booking_status", "bookings_list", "invite_collaborator", "agent_docs",
 ];
 
 const okRun: CliRunner = async () => ({ stdout: "{}", stderr: "", exitCode: 0 });

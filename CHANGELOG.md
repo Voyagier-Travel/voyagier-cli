@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- **`plans share --email` invites through the API directly.** The address is sent to `inviteTripPlanCollaborator` as `invitedEmail`, and the server resolves it: an existing account gets a pending invite, an address with no account gets an invite that is claimed when they sign up with it. The command no longer lists users to match the address client-side and no longer falls back to a platform invitation, so it works for every account that can invite on a plan. `--json` keeps `{ ok, success, planId, invitedUser, role }` (`invitedUser` is the address when inviting by email) and adds `pending: true` when no account uses the address yet.
+- **`plans share --role` sends the role key.** Both `--user` and `--email` pass `viewer`/`editor`/`agent` to the API as `role`, removing the roles lookup round-trip. Requires the matching API release.
+
+### Added
+- **`invite_collaborator` MCP tool:** wraps `plans share --email` (inputs `plan_id`, `email`, optional `role`, default `viewer`). Records the invite and returns its status; it sends no email.
+
 ## [3.0.0] — 2026-08-27
 
 ### Changed

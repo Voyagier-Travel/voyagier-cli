@@ -261,15 +261,12 @@ export const DELETE_TRIP_PLAN_ITEM = `mutation DeleteTripPlanItem($id: String!) 
 
 export const LOOKUP_USER = `query LookupUser($username: String!) { userPublicProfile(username: $username) { id name username } }`;
 
-export const GET_USERS = `query Users { users(limit: 100) { items { id name email username } } }`;
-
-export const CREATE_USER_INVITATION = `mutation InviteUser($input: CreateUserInvitationInput!) { createUserInvitation(createUserInvitationInput: $input) { __typename } }`;
-
-export const GET_TRIP_PLAN_ROLES = `{ tripPlanRoles { id name } }`;
-
 export const INVITE_COLLABORATOR = `
   mutation Invite($tripPlanId: String!, $input: InviteCollaboratorInput!) {
-    inviteTripPlanCollaborator(tripPlanId: $tripPlanId, input: $input) { id }
+    inviteTripPlanCollaborator(tripPlanId: $tripPlanId, input: $input) {
+      id status email invitedUserId
+      role { id name key }
+    }
   }
 `;
 
