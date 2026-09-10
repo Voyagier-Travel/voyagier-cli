@@ -147,9 +147,10 @@ export function normalizeApiUrl(url: string): string {
   } catch {
     return url;
   }
-  let path = parsed.pathname.replace(/\/+$/, "");
-  path = path.replace(/\/graphql$/, "");
-  path = path.replace(/\/mcp$/, "");
+  // Collapse duplicate slashes, then strip the endpoint suffixes and any
+  // trailing slash they leave behind ("/api//graphql" → "/api", not "/api/").
+  let path = parsed.pathname.replace(/\/{2,}/g, "/").replace(/\/+$/, "");
+  path = path.replace(/\/(graphql|mcp)$/, "").replace(/\/+$/, "");
   if (path === "") path = "/api";
   parsed.pathname = path;
   parsed.search = "";
@@ -173,14 +174,16 @@ function normalizeApiUrlWithWarning(url: string): string {
   const normalized = normalizeApiUrl(url);
   if (normalized !== url && !warnedNormalizedUrl) {
     warnedNormalizedUrl = true;
+    // JSON.stringify: the raw value may come from an env var or a hand-edited
+    // file and could carry quotes or control characters.
     process.stderr.write(
-      `Warning: API URL "${url}" normalized to "${normalized}" (the CLI needs the GraphQL API base, not the MCP endpoint).\n`,
+      `Warning: API URL ${JSON.stringify(url)} normalized to ${JSON.stringify(normalized)} (the CLI needs the GraphQL API base, not the MCP endpoint).\n`,
     );
   }
   return normalized;
 }
 
-export function saveCredentials(token: string, apiUrl: string = DEFAULT_API_URL): void {
+export function saveCredentials(token: string, apiUrl: string = DEFAULT_API_URL): string {
   // Reject cleartext endpoints before persisting (M2) — the token is sent to
   // this URL on every request.
   apiUrl = normalizeApiUrlWithWarning(apiUrl);
@@ -193,6 +196,9 @@ export function saveCredentials(token: string, apiUrl: string = DEFAULT_API_URL)
   writeFileSync(CREDENTIALS_FILE, JSON.stringify(creds, null, 2), { mode: 0o600 });
   // chmod after write so a pre-existing loose-perm file gets corrected (L2).
   chmodSync(CREDENTIALS_FILE, 0o600);
+  // Return what was actually persisted so callers display the effective URL,
+  // not the value they were handed.
+  return apiUrl;
 }
 
 export function saveUserContext(user: UserContext): void {

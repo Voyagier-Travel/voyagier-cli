@@ -190,6 +190,14 @@ describe("checkApiUrlConfig", () => {
     expect(check?.name).toBe("api-url");
     expect(check?.message).toContain("https://mcp.voyagier.com/api/mcp");
     expect(check?.message).toContain('normalized to "https://mcp.voyagier.com/api"');
+  });
+
+  it("sanitizes a configured URL carrying terminal escapes before printing it", () => {
+    mockGetConfiguredApiUrl.mockReturnValue("https://mcp.voyagier.com/api/mcp\u001b[31m");
+    mockGetApiUrl.mockReturnValue("https://mcp.voyagier.com/api");
+    const check = checkApiUrlConfig();
+    expect(check?.status).toBe("WARN");
+    expect(check?.message).not.toContain("\u001b");
     expect(String(check?.details?.fix)).toContain("remote connector");
   });
 

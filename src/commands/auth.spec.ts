@@ -158,6 +158,19 @@ describe("auth set-token", () => {
     expect(out()).toMatch(/Token saved/);
   });
 
+  it("prints the NORMALIZED URL after saving a URL that needed correcting", async () => {
+    const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await buildProgram().parseAsync(["node", "v", "auth", "set-token", TEST_TOKEN, "--url", "https://mcp.voyagier.com/api/mcp"]);
+    } finally {
+      stderrSpy.mockRestore();
+    }
+    expect(getApiUrl()).toBe("https://mcp.voyagier.com/api");
+    // The success line must not claim the un-normalized value was stored.
+    expect(out()).toMatch(/API URL: https:\/\/mcp\.voyagier\.com\/api\b/);
+    expect(out()).not.toMatch(/api\/mcp/);
+  });
+
   it("defaults the URL to the prod API when --url is omitted", async () => {
     await buildProgram().parseAsync(["node", "v", "auth", "set-token", TEST_TOKEN]);
     expect(getApiUrl()).toBe("https://travel.voyagier.com/api");

@@ -309,9 +309,9 @@ export function registerAuthCommands(program: Command): void {
           );
         }
       }
-      saveCredentials(tokenValue, opts.url);
+      const savedUrl = saveCredentials(tokenValue, opts.url);
       console.log(chalk.green("✓ Token saved."));
-      console.log(chalk.dim(`  API URL: ${opts.url}`));
+      console.log(chalk.dim(`  API URL: ${savedUrl}`));
       console.log(chalk.dim("  Next: voyagier auth setup"));
     });
 

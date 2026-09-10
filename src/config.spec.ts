@@ -198,6 +198,8 @@ describe("config", () => {
         expect(getConfiguredApiUrl()).toBe("https://mcp.voyagier.com/api/mcp");
         const warned = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
         expect(warned).toContain('normalized to "https://mcp.voyagier.com/api"');
+        // Raw value is JSON-quoted so control characters cannot mangle the line.
+        expect(warned).toContain('"https://mcp.voyagier.com/api/mcp"');
         stderrSpy.mockClear();
         getApiUrl();
         expect(stderrSpy).not.toHaveBeenCalled();
@@ -206,10 +208,10 @@ describe("config", () => {
       }
     });
 
-    it("normalizes a misconfigured URL on save so credentials.json holds the API base", () => {
+    it("normalizes a misconfigured URL on save so credentials.json holds the API base, and returns it", () => {
       const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
       try {
-        saveCredentials("tok", "https://travel.voyagier.com/api/graphql");
+        expect(saveCredentials("tok", "https://travel.voyagier.com/api/graphql")).toBe("https://travel.voyagier.com/api");
         expect(JSON.parse(readFileSync(credFile, "utf-8")).apiUrl).toBe("https://travel.voyagier.com/api");
         expect(getApiUrl()).toBe("https://travel.voyagier.com/api");
       } finally {
@@ -318,6 +320,9 @@ describe("config", () => {
       ["https://travel.voyagier.com/api/graphql", "https://travel.voyagier.com/api"],
       ["https://mcp.voyagier.com/api/mcp", "https://mcp.voyagier.com/api"],
       ["https://mcp.voyagier.com/api/mcp/", "https://mcp.voyagier.com/api"],
+      // Duplicate slashes never survive suffix stripping (review finding).
+      ["https://travel.voyagier.com/api//graphql", "https://travel.voyagier.com/api"],
+      ["https://travel.voyagier.com//api/mcp//", "https://travel.voyagier.com/api"],
       ["http://localhost:3001", "http://localhost:3001/api"],
       ["http://localhost:3001/api", "http://localhost:3001/api"],
       ["https://dev.voyagier.com/api", "https://dev.voyagier.com/api"],

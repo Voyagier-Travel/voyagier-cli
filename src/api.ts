@@ -86,7 +86,7 @@ export async function graphql<T = unknown>(
     const hint = detail !== ""
       ? ""
       : res.status === 404
-        ? `\nHint: No GraphQL endpoint at ${apiUrl}/graphql. Check the configured API URL (expected https://travel.voyagier.com/api): voyagier auth status`
+        ? `\nHint: No GraphQL endpoint at ${apiUrl}/graphql. Check the configured API URL (the API base, e.g. https://travel.voyagier.com/api): voyagier auth status`
         : "\nHint: The API returned no data. This may be a permissions issue.";
     throw new CliError(CliErrorCode.API_ERROR, `API error: ${res.status} ${sanitizeExternalText(res.statusText)}${detail}${hint}`);
   }

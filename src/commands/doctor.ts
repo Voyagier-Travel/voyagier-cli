@@ -207,7 +207,7 @@ export function checkApiUrlConfig(): DoctorCheck | null {
   return {
     name: "api-url",
     status: "WARN",
-    message: `Configured API URL "${configured}" was normalized to "${effective}"`,
+    message: `Configured API URL ${JSON.stringify(sanitizeExternalText(configured))} was normalized to ${JSON.stringify(effective)}`,
     details: {
       fix: "Set the GraphQL API base (e.g. https://travel.voyagier.com/api) via VOYAGIER_API_URL or: voyagier auth set-token - --url <url>. The .../api/mcp URL is for the claude.ai remote connector, not this CLI.",
     },
