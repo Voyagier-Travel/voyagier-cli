@@ -13,7 +13,7 @@ import { credentialsExist } from "../config.js";
 import { CliError, CliErrorCode, authFailedMessage } from "../errors.js";
 import { McpClient, type McpToolDescriptor } from "./client.js";
 import { createDefaultClient } from "./generated-commands.js";
-import { isToolsCacheFresh, readToolsCache, writeToolsCache, type ToolsCache } from "./tools-cache.js";
+import { isToolsCacheFresh, readToolsCache, toolsSurfaceHash, writeToolsCache, type ToolsCache } from "./tools-cache.js";
 import { getMcpUrl } from "./url.js";
 
 /** Commands that never need the remote tool list. */
@@ -76,6 +76,7 @@ export async function refreshToolsCache(
     url,
     fetchedAt: new Date(now).toISOString(),
     server: init.serverInfo ? { name: init.serverInfo.name, version: init.serverInfo.version } : undefined,
+    surfaceHash: toolsSurfaceHash(tools),
     tools,
   };
   writeToolsCache(cache);

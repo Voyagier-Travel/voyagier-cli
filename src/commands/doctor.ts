@@ -30,7 +30,7 @@ import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
 import type { McpClient, McpToolDescriptor } from "../mcp-client/client.js";
 import { createDefaultClient, parseToolContent } from "../mcp-client/generated-commands.js";
-import { readToolsCache, toolsCacheAgeMs, TOOLS_CACHE_TTL_MS } from "../mcp-client/tools-cache.js";
+import { readToolsCache, toolsCacheAgeMs, toolsSurfaceHash, TOOLS_CACHE_TTL_MS } from "../mcp-client/tools-cache.js";
 import { refreshToolsCache } from "../mcp-client/startup.js";
 import { getMcpUrl } from "../mcp-client/url.js";
 import { unwrapToolPayload } from "../mcp-client/render.js";
@@ -90,15 +90,6 @@ function checkAuth(deps: DoctorDeps): DoctorCheck {
   return { name: "auth", status: "PASS", message: "Credentials present" };
 }
 
-function humanAge(ms: number): string {
-  const minutes = Math.round(ms / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
-
 /**
  * Initialize against the MCP server and list its tools. Refreshes the local
  * tool cache on success so the command surface matches the server.
@@ -106,10 +97,11 @@ function humanAge(ms: number): string {
 async function checkMcp(deps: DoctorDeps, url: string): Promise<{ check: DoctorCheck; tools: McpToolDescriptor[]; client: McpClient | null }> {
   const now = (deps.now ?? Date.now)();
   const previous = readToolsCache();
+  // Absolute timestamps only (agents diff these across runs).
   const previousNote =
     previous && previous.url === url
-      ? `cache was ${humanAge(toolsCacheAgeMs(previous, now))}${toolsCacheAgeMs(previous, now) >= TOOLS_CACHE_TTL_MS ? " (expired)" : ""}`
-      : "no cache before this run";
+      ? `previous list ${previous.fetchedAt}${toolsCacheAgeMs(previous, now) >= TOOLS_CACHE_TTL_MS ? " (expired)" : ""}`
+      : "no previous list";
   let client: McpClient;
   try {
     client = (deps.createClient ?? (() => createDefaultClient("0.0.0")))();
@@ -123,12 +115,23 @@ async function checkMcp(deps: DoctorDeps, url: string): Promise<{ check: DoctorC
   try {
     const cache = await refreshToolsCache(client, url, now);
     const server = cache.server?.name ? ` · server ${cache.server.name}${cache.server.version ? ` ${cache.server.version}` : ""}` : "";
+    const surfaceHash = cache.surfaceHash ?? toolsSurfaceHash(cache.tools);
+    const surfaceChanged = previous?.url === url && previous.surfaceHash !== undefined && previous.surfaceHash !== surfaceHash;
     return {
       check: {
         name: "mcp",
         status: "PASS",
-        message: `${url} · ${cache.tools.length} tools${server} · tool cache refreshed (${previousNote})`,
-        details: { url, toolCount: cache.tools.length, tools: cache.tools.map((t) => t.name).sort() },
+        message:
+          `${url} · ${cache.tools.length} tools${server} · surface ${surfaceHash}${surfaceChanged ? ` (changed from ${previous!.surfaceHash})` : ""}` +
+          ` · tool list refreshed ${cache.fetchedAt} (${previousNote})`,
+        details: {
+          url,
+          toolCount: cache.tools.length,
+          surfaceHash,
+          previousSurfaceHash: previous?.url === url ? previous.surfaceHash ?? null : null,
+          listedAt: cache.fetchedAt,
+          tools: cache.tools.map((t) => t.name).sort(),
+        },
       },
       tools: cache.tools,
       client,

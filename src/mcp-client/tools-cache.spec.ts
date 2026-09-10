@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "@jest/globals";
 import { mkdtempSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { clearToolsCache, isToolsCacheFresh, readToolsCache, toolsCacheAgeMs, toolsCachePath, TOOLS_CACHE_TTL_MS, writeToolsCache } from "./tools-cache.js";
+import { clearToolsCache, isToolsCacheFresh, readToolsCache, toolsCacheAgeMs, toolsCachePath, toolsSurfaceHash, TOOLS_CACHE_TTL_MS, writeToolsCache } from "./tools-cache.js";
 
 const URL_A = "https://mcp.example.test/api/mcp";
 
@@ -45,5 +45,23 @@ describe("tools cache", () => {
     const nested = join(dir, "nested", "deeper");
     writeToolsCache({ url: URL_A, fetchedAt: new Date().toISOString(), tools: [] }, nested);
     expect(JSON.parse(readFileSync(toolsCachePath(nested), "utf-8")).url).toBe(URL_A);
+  });
+});
+
+describe("toolsSurfaceHash", () => {
+  const a = { name: "a", title: "A", description: "first", inputSchema: { type: "object", properties: { x: { type: "string" }, y: { type: "integer" } }, required: ["x"] } };
+  const b = { name: "b", inputSchema: { type: "object", properties: {} } };
+
+  it("is stable across list order and object key order", () => {
+    const reordered = { ...a, inputSchema: { required: ["x"], properties: { y: { type: "integer" }, x: { type: "string" } }, type: "object" } };
+    expect(toolsSurfaceHash([a, b])).toBe(toolsSurfaceHash([b, reordered]));
+    expect(toolsSurfaceHash([a, b])).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("ignores wording (title/description/annotations) but not names or input schemas", () => {
+    expect(toolsSurfaceHash([{ ...a, title: "Renamed", description: "other", annotations: { readOnlyHint: true } }, b])).toBe(toolsSurfaceHash([a, b]));
+    expect(toolsSurfaceHash([{ ...a, name: "a2" }, b])).not.toBe(toolsSurfaceHash([a, b]));
+    expect(toolsSurfaceHash([{ ...a, inputSchema: { ...a.inputSchema, required: [] } }, b])).not.toBe(toolsSurfaceHash([a, b]));
+    expect(toolsSurfaceHash([a])).not.toBe(toolsSurfaceHash([a, b]));
   });
 });

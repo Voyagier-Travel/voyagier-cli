@@ -93,6 +93,7 @@ export function buildProgram(version: string, tools: McpToolDescriptor[] = [], o
     .description("Voyagier CLI — a shell for the Voyagier MCP server: one command per tool")
     .version(version)
     .option("--stacktrace", "show full error stack traces")
+    .option("--verbose", "diagnostics on stderr: MCP endpoint, tool-surface hash, session handling")
     .addHelpText(
       "after",
       `

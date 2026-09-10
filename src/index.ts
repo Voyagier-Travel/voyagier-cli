@@ -8,6 +8,8 @@ import { credentialsExist } from "./config.js";
 import { CliError, CliErrorCode } from "./errors.js";
 import { resolveStartupTools, refreshToolsCache, type StartupTools } from "./mcp-client/startup.js";
 import { createDefaultClient } from "./mcp-client/generated-commands.js";
+import { toolsSurfaceHash } from "./mcp-client/tools-cache.js";
+import { verbose } from "./verbose.js";
 import chalk from "chalk";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")) as { version: string };
@@ -65,6 +67,12 @@ function knowsCommand(program: Command, name: string): boolean {
 function buildFromStartup(startup: StartupTools): Command {
   const program = buildProgram(pkg.version, startup.tools);
   instrumentCommands(program);
+  if (verbose) {
+    // Diagnostics only, stderr only: stdout stays the payload channel.
+    const hash = startup.tools.length ? toolsSurfaceHash(startup.tools) : "none";
+    const fetched = startup.cache?.fetchedAt ?? "n/a";
+    process.stderr.write(`mcp: ${startup.url} · ${startup.tools.length} tools · surface ${hash} · source ${startup.source} · listed ${fetched}\n`);
+  }
   return program;
 }
 

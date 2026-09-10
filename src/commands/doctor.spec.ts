@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { McpClient } from "../mcp-client/client.js";
-import { clearToolsCache, readToolsCache, writeToolsCache } from "../mcp-client/tools-cache.js";
+import { clearToolsCache, readToolsCache, toolsSurfaceHash, writeToolsCache } from "../mcp-client/tools-cache.js";
 import { compareSemver, registerDoctorCommand, rollUpStatus, runDoctor, type DoctorReport } from "./doctor.js";
 
 /**
@@ -89,15 +89,21 @@ describe("runDoctor", () => {
     stateDirsCreated.length = 0;
   });
 
-  it("PASSes auth + mcp (tool count, refreshed cache) and skips whoami when the server lacks the tool", async () => {
-    writeToolsCache({ url: URL, fetchedAt: new Date(Date.now() - 3 * 3600_000).toISOString(), tools: [{ name: "old" }] });
-    const report = await runDoctor("1.8.1", { createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch() });
+  it("PASSes auth + mcp (tool count, surface hash, refreshed cache) and skips whoami when the server lacks the tool", async () => {
+    const previousAt = new Date(Date.now() - 3 * 3600_000).toISOString();
+    const previousHash = toolsSurfaceHash([{ name: "old" }]);
+    writeToolsCache({ url: URL, fetchedAt: previousAt, surfaceHash: previousHash, tools: [{ name: "old" }] });
+    const report = await runDoctor("1.8.1", { createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch(), now: () => Date.parse("2026-09-10T22:00:00.000Z") });
     expect(check(report, "auth").status).toBe("PASS");
     const mcp = check(report, "mcp");
     expect(mcp.status).toBe("PASS");
-    expect(mcp.message).toContain(`${URL} · 2 tools · server voyagier 1.2.3`);
-    expect(mcp.message).toMatch(/cache was 3h ago/);
-    expect(mcp.details).toMatchObject({ toolCount: 2, tools: ["plan_status", "plans_list"] });
+    const hash = toolsSurfaceHash(TOOLS);
+    expect(mcp.message).toContain(`${URL} · 2 tools · server voyagier 1.2.3 · surface ${hash} (changed from ${previousHash})`);
+    // Absolute timestamps only — no relative "3h ago".
+    expect(mcp.message).toContain("tool list refreshed 2026-09-10T22:00:00.000Z");
+    expect(mcp.message).toContain(`previous list ${previousAt}`);
+    expect(mcp.message).not.toMatch(/ago\b/);
+    expect(mcp.details).toMatchObject({ toolCount: 2, surfaceHash: hash, previousSurfaceHash: previousHash, listedAt: "2026-09-10T22:00:00.000Z", tools: ["plan_status", "plans_list"] });
     expect(readToolsCache()?.tools).toEqual(TOOLS);
     const whoami = check(report, "whoami");
     expect(whoami.status).toBe("PASS");

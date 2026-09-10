@@ -60,6 +60,7 @@ describe("resolveStartupTools", () => {
     expect(res.tools).toEqual(TOOLS);
     expect(calls).toEqual(["initialize", "notifications/initialized", "tools/list"]);
     expect(readToolsCache()).toMatchObject({ url: URL, server: { name: "voyagier", version: "9" }, tools: TOOLS });
+    expect(readToolsCache()?.surfaceHash).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it("refetches when the cache is expired or for another endpoint", async () => {

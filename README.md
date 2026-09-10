@@ -62,7 +62,8 @@ voyagier book --plan_id <PLAN_ID> --expect_total_cents <CENTS> --item_ids <ID> <
 - **Flags mirror the tool's input schema.** `plan_id` is `--plan_id`; required inputs are required flags. Strings, integers, numbers, booleans (`--force` / `--force false`), enums (allowed values in `--help`), arrays (`--item_ids a b`, or repeat the flag) and JSON literals for objects (`--travellers '[…]'`).
 - **Output.** `--json` prints the tool's result as JSON: `{ "<operation>": <payload> }`. Without it, `plan_status`, the `search_*` tools, `get_selection_options`, `itinerary` and `quote` render a compact human view; other tools pretty-print the JSON.
 - **Errors** use one envelope everywhere: `{ "error": true, "code", "message", "details"? }`, exit 1. `AUTH_FAILED`, `PERMISSION_DENIED`, `RATE_LIMITED` (with `details.retryAfterSeconds`), `VALIDATION`, `API_ERROR` (the tool's own error text), `NETWORK`, `COMMAND_REMOVED`.
-- **Tool cache.** The server's tool list is cached in `~/.voyagier/tools-cache.json` for 24 hours. `voyagier doctor` refreshes it, and so does running a tool name the cache does not know yet.
+- **Tool cache.** The server's tool list is cached in `~/.voyagier/tools-cache.json` for 24 hours. `voyagier doctor` refreshes it, and so does running a tool name the cache does not know yet. `doctor` and `--verbose` report a stable hash of the tool surface (names + input schemas) so scripts can detect a contract change.
+- **Agent substrate.** Non-interactive; under `--json` stdout carries exactly one JSON document (diagnostics, spinners and warnings go to stderr); stable exit codes (0 / 1 handled / 2 unexpected); absolute timestamps in rendered output.
 
 ## Commands
 

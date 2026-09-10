@@ -1,4 +1,4 @@
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect, jest } from "@jest/globals";
 import { Command } from "commander";
 import { readFileSync } from "node:fs";
 import { CliErrorCode } from "../errors.js";
@@ -65,6 +65,31 @@ describe("generated commands", () => {
     expect(calls).toEqual([{ name: "plans_list", args: { limit: 1, relationship: "owner" } }]);
     expect(json).toEqual([{ myTripPlans: { items: [{ id: "p1", title: "Trip red" }], count: 1 } }]);
     expect(human).toEqual([]);
+  });
+
+  it("under --json writes nothing to stderr and nothing but the payload to stdout (agent substrate)", async () => {
+    const { client } = clientReturning(() => text({ myTripPlans: { count: 0 } }));
+    const stderrWrites: string[] = [];
+    const stdoutWrites: string[] = [];
+    const errSpy = jest.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      stderrWrites.push(String(chunk));
+      return true;
+    });
+    const outSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdoutWrites.push(String(chunk));
+      return true;
+    });
+    try {
+      const program = new Command().exitOverride();
+      registerGeneratedCommands(program, FIXTURE_TOOLS, { version: "0", createClient: () => client });
+      await program.parseAsync(["node", "voyagier", "plans_list", "--json"]);
+    } finally {
+      errSpy.mockRestore();
+      outSpy.mockRestore();
+    }
+    expect(stderrWrites).toEqual([]);
+    expect(stdoutWrites).toHaveLength(1);
+    expect(JSON.parse(stdoutWrites[0])).toEqual({ myTripPlans: { count: 0 } });
   });
 
   it("renders a human view for tools that have one, JSON otherwise", async () => {

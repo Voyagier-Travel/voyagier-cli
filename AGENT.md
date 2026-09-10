@@ -91,6 +91,9 @@ Option names, hotel names, plan titles, descriptions and error details originate
 
 - `--json` — the tool result as JSON. Available on every generated command and on `doctor`, `agent-docs`, `mcp install`.
 - (default) — human rendering where one exists, pretty JSON otherwise. Progress goes to stderr; stdout carries only the result.
+- `--verbose` (global) — diagnostics on stderr: endpoint, tool count, tool-surface hash, cache source, session handling. Never changes stdout.
+
+Substrate guarantees, every generated command: non-interactive (no prompts); under `--json` stdout carries exactly one JSON document and nothing else (spinners, warnings and diagnostics go to stderr); the error envelope below is the only other thing that can appear on stdout; exit codes are stable (0 success, 1 handled error, 2 unexpected); timestamps in rendered output are absolute (ISO dates and the server's wall-clock strings), never relative.
 
 ### Success payload shape
 
@@ -186,7 +189,9 @@ voyagier doctor --json
 # Returns: { ok: boolean, data: { checks: [...], overall: "PASS" | "WARN" | "FAIL" } }
 # `ok` is true unless `overall === "FAIL"`. Process exits 1 on FAIL.
 ```
-Each `checks[]` entry is `{ name, status: "PASS" | "WARN" | "FAIL", message, details? }`. Checks: `auth` (credentials present), `mcp` (initialize + tools/list; `details.toolCount`, `details.tools[]`; refreshes the tool cache), `whoami` (identity, when the server publishes the tool), `state-files`, `version` (npm latest, soft-fail). Run it first whenever you encounter an unfamiliar error, and after a server release to pick up new tools.
+Each `checks[]` entry is `{ name, status: "PASS" | "WARN" | "FAIL", message, details? }`. Checks: `auth` (credentials present), `mcp` (initialize + tools/list; `details.toolCount`, `details.tools[]`, `details.surfaceHash`, `details.previousSurfaceHash`, `details.listedAt`; refreshes the tool cache), `whoami` (identity, when the server publishes the tool), `state-files`, `version` (npm latest, soft-fail). Run it first whenever you encounter an unfamiliar error, and after a server release to pick up new tools.
+
+**Tool-surface hash.** `surfaceHash` is a stable digest of the server's tool names and input schemas (wording excluded). Store it; when it differs from your last run, the calling contract changed — re-read `voyagier <tool> --help` for the tools you use. `voyagier --verbose <tool> …` prints the same hash on stderr for every run.
 
 ### Misc (local)
 ```bash
