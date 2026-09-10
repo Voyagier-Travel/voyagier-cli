@@ -626,6 +626,22 @@ export const SET_TRIP_PLAN_SELECTED_OPTION = `
   }
 `;
 
+// Decide ONE participant-choice row. A selection can hold several rows at once
+// (room slots, per-group picks), so this is the row-addressed verb: with
+// participantChoiceId it targets that exact row (roster kept unless
+// travellerIds is passed); without it the server resolves the selection's only
+// live row and REJECTS ambiguous selections listing the rows
+// (AMBIGUOUS_CHOICE_TARGET / DIVERGENT_CHOICES) — retry targeted.
+export const DECIDE_PARTICIPANT_CHOICE = `
+  mutation Decide($selectionId: String!, $optionId: String!, $participantChoiceId: String, $travellerIds: [String!]) {
+    decideParticipantChoice(selectionId: $selectionId, optionId: $optionId, participantChoiceId: $participantChoiceId, travellerIds: $travellerIds) {
+      id
+      parentOptionId
+      parentOption { id name price }
+    }
+  }
+`;
+
 // --- Participant-choice scopes (VOY-1692) ---
 // The webapp's traveller-choice mutation family. Same 1-mirror-hop option
 // validation as setTripPlanSelectedOption. All return the updated selection.

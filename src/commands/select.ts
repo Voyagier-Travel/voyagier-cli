@@ -5,6 +5,7 @@ import { graphql } from "../api.js";
 import { getApiUrl } from "../config.js";
 import {
   SET_TRIP_PLAN_SELECTED_OPTION,
+  DECIDE_PARTICIPANT_CHOICE,
   SET_TRAVELLER_CHOICE_FOR_SUBSET,
   SET_TRAVELLER_CHOICE_FOR_GROUP,
   SET_SELECTION_TRAVELLER_CHOICE,
@@ -24,8 +25,14 @@ import { waitForPickSettle, type PickWaitOutcome, type PickScope } from "./selec
 /**
  * `select` — choose an option on a selection.
  *
- * ONE verb (VOY-1414), now scope-aware (VOY-1692). Since the participant-choice
- * migration the backend records picks as per-traveller choices:
+ * ONE verb (VOY-1414), now scope-aware (VOY-1692) and row-aware: the backend
+ * records picks as participant-choice ROWS, several of which can live on one
+ * selection (room slots, per-group picks), so the row-addressed mode is the
+ * safest:
+ *   - --participant-choice-id <id> -> decideParticipantChoice (THE row-addressed
+ *     decide; roster kept, or restated with --travellers). Row ids come from
+ *     choices-view. On multi-row selections the other modes are rejected
+ *     server-side with the row list — retry with this flag.
  *   - default            -> setTripPlanSelectedOption (alias for "for ALL travellers")
  *   - --travellers a,b   -> setTripPlanTravellerChoiceForSubset (replaceExisting)
  *   - --group <id>       -> setTripPlanTravellerChoiceForGroup
@@ -47,6 +54,10 @@ interface ChoiceScopeOpts {
   traveller?: string;
   travellers?: string;
   group?: string;
+  /** Target one participant-choice ROW (room slot / per-group pick) by id.
+   * Combinable with --travellers (re-roster the row); exclusive with
+   * --traveller/--group. */
+  participantChoiceId?: string;
 }
 
 /**
@@ -59,14 +70,16 @@ interface ChoiceScopeOpts {
  */
 function normalizeChoiceScope(scope: ChoiceScopeOpts): ChoiceScopeOpts {
   const out: ChoiceScopeOpts = {};
-  for (const key of ["traveller", "travellers", "group"] as const) {
+  for (const key of ["traveller", "travellers", "group", "participantChoiceId"] as const) {
     const raw = scope[key];
     if (raw === undefined) continue;
     const trimmed = raw.trim();
     if (trimmed === "") {
       throw new CliError(
         CliErrorCode.VALIDATION,
-        `--${key} was given an empty value. Pass a real ${key === "group" ? "group id" : "traveller id"}, or omit --${key} to select for all travellers.`,
+        `--${key === "participantChoiceId" ? "participant-choice-id" : key} was given an empty value. Pass a real ` +
+          `${key === "group" ? "group id" : key === "participantChoiceId" ? "participant choice id" : "traveller id"}, ` +
+          `or omit the flag.`,
       );
     }
     out[key] = trimmed;
@@ -78,11 +91,21 @@ function normalizeChoiceScope(scope: ChoiceScopeOpts): ChoiceScopeOpts {
       "Use at most ONE of --traveller, --travellers, --group (they are mutually exclusive scopes).",
     );
   }
+  // --participant-choice-id names the ROW; --travellers may re-roster it, but
+  // the single-traveller and group scopes are different addressing modes.
+  if (out.participantChoiceId && (out.traveller || out.group)) {
+    throw new CliError(
+      CliErrorCode.VALIDATION,
+      "--participant-choice-id targets one choice row; combine it with --travellers to change the row's " +
+        "travellers, not with --traveller/--group.",
+    );
+  }
   return out;
 }
 
 /** Human label for the scope a pick applies to (used in success output). */
 function scopeLabel(scope: ChoiceScopeOpts): string {
+  if (scope.participantChoiceId) return `for choice row ${scope.participantChoiceId}`;
   if (scope.traveller) return `for traveller ${scope.traveller}`;
   if (scope.travellers) return `for ${scope.travellers.split(",").filter((s) => s.trim()).length} traveller(s)`;
   if (scope.group) return `for group ${scope.group}`;
@@ -130,6 +153,20 @@ async function performPick(
   optionId: string,
   scope: ChoiceScopeOpts,
 ): Promise<SelectionResponse> {
+  if (scope.participantChoiceId) {
+    // Row-addressed decide: the roster stays as the row holds it unless
+    // --travellers restates it.
+    const travellerIds = scope.travellers
+      ? scope.travellers.split(",").map((s: string) => s.trim()).filter(Boolean)
+      : null;
+    const data = await graphql<{ decideParticipantChoice: SelectionResponse }>(DECIDE_PARTICIPANT_CHOICE, {
+      selectionId,
+      optionId,
+      participantChoiceId: scope.participantChoiceId,
+      travellerIds,
+    });
+    return data.decideParticipantChoice;
+  }
   if (scope.traveller) {
     const data = await graphql<{ setTripPlanSelectionTravellerChoice: SelectionResponse | null }>(
       SET_SELECTION_TRAVELLER_CHOICE,
@@ -459,6 +496,10 @@ export function registerSelectCommands(program: Command): void {
     .option("--traveller <id>", "Choose for ONE traveller only")
     .option("--travellers <ids>", "Choose for a subset of travellers (comma-separated IDs; replaces their existing choices)")
     .option("--group <groupId>", "Choose for a traveller group")
+    .option(
+      "--participant-choice-id <id>",
+      "Decide ONE choice row by id (from choices-view) — required on multi-row selections (room slots, per-group picks); roster kept unless --travellers restates it",
+    )
     .option("--plan <id>", "Assert that cached results belong to this trip plan (safety check for agent mode)")
     .option("--wait", "After the pick succeeds, wait until it is reflected server-side and plan readiness settles, then report a plan-status snapshot")
     .option("--timeout <seconds>", "Max seconds to wait when --wait is set (default 30)", "30")
