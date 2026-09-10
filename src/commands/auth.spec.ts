@@ -294,6 +294,16 @@ describe("auth login", () => {
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
+  it("non-interactive: an endpoint or MCP --url is normalized before the settings page is derived", async () => {
+    setInteractive(false);
+    for (const url of ["https://dev.voyagier.com/api/graphql", "https://dev.voyagier.com/api/mcp", "https://dev.voyagier.com"]) {
+      logs.length = 0;
+      await buildProgram().parseAsync(["node", "v", "auth", "login", "--url", url]);
+      expect(out()).toMatch(/https:\/\/dev\.voyagier\.com\/me\/settings\/tokens/);
+      expect(out()).not.toMatch(/graphql\/me|mcp\/me/);
+    }
+  });
+
   it("interactive: opens the browser, saves the pasted token, verifies + auto-sets profile", async () => {
     setInteractive(true);
     scriptedAnswers = [TEST_TOKEN];
