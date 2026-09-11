@@ -32,6 +32,8 @@ export interface PickScope {
   traveller?: string;
   travellers?: string;
   group?: string;
+  /** Row-addressed pick (select --participant-choice-id). */
+  participantChoiceId?: string;
 }
 
 interface WaitSelectionRead {
@@ -61,6 +63,8 @@ export interface PickWaitOutcome {
  * - --travellers A,B: every listed traveller's choice is this option
  * - --group: membership isn't in the selection read, so the honest weakest
  *   check is "at least one traveller chose this option"
+ * - --participant-choice-id: same weakest check — rows aren't in the read and
+ *   a multi-row selection never reaches consensus by design
  */
 export function pickReflected(
   raw: WaitSelectionRead,
@@ -76,7 +80,12 @@ export function pickReflected(
     const ids = scope.travellers.split(",").map((s) => s.trim()).filter(Boolean);
     return ids.length > 0 && ids.every(chose);
   }
-  if (scope.group) {
+  if (scope.group || scope.participantChoiceId) {
+    // Group membership and choice-row ids are not in the selection read, and a
+    // multi-row selection (one row per room / per group) legitimately holds
+    // DIFFERENT options at once — consensus would never arrive. The honest
+    // weakest check for both: at least one traveller on the selection now
+    // carries this option.
     return choices.some((c) => c.selectedOption?.id === optionId);
   }
   const { chosenOptionId, consensus } = deriveChosen(raw);

@@ -1134,3 +1134,89 @@ describe("select: one-way flight — chain guidance has no 'both legs' claim", (
     expect(output).not.toContain("RETURN leg");
   });
 });
+
+// ── Tests: row-addressed select (VOY-2173, review round) ──────────────────
+
+describe("select --participant-choice-id (VOY-2173)", () => {
+  let stdoutSpy: ReturnType<typeof jest.spyOn>;
+  let stderrSpy: ReturnType<typeof jest.spyOn>;
+  const ROW = "row-1";
+  const ROW_RESULT = { id: "sel-9", parentOptionId: OPT_UUID, parentOption: { id: OPT_UUID, name: "Room A", price: 200 } };
+
+  beforeEach(() => {
+    process.env.VOYAGIER_TOKEN = "test-token";
+    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation(() => true);
+    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+    delete process.env.VOYAGIER_TOKEN;
+  });
+
+  const captured = async (args: string[]): Promise<CliError> => {
+    try {
+      await runSelect(args);
+    } catch (e) {
+      return e as CliError;
+    }
+    throw new Error("expected a CliError");
+  };
+
+  it("omitting --travellers OMITS the travellerIds variable (keeps the row's roster), never sends null", async () => {
+    mockGraphql.mockResolvedValue({ decideParticipantChoice: ROW_RESULT });
+    await runSelect(["--participant-choice-id", ROW, "--option-id", OPT_UUID]);
+    const vars = mockGraphql.mock.calls[0][1] as Record<string, unknown>;
+    expect(vars).toEqual({ selectionId: null, optionId: OPT_UUID, participantChoiceId: ROW });
+    expect("travellerIds" in vars).toBe(false);
+  });
+
+  it("--travellers restates the roster on the row", async () => {
+    mockGraphql.mockResolvedValue({ decideParticipantChoice: ROW_RESULT });
+    await runSelect(["--participant-choice-id", ROW, "--option-id", OPT_UUID, "--travellers", "t1, t2"]);
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining("decideParticipantChoice"),
+      expect.objectContaining({ participantChoiceId: ROW, travellerIds: ["t1", "t2"] }),
+    );
+  });
+
+  it.each([", ,", " , ", ","])("rejects a separator-only --travellers (%j) before any mutation", async (value) => {
+    const err = await captured(["--participant-choice-id", ROW, "--option-id", OPT_UUID, "--travellers", value]);
+    expect(err).toBeInstanceOf(CliError);
+    expect(err.code).toBe(CliErrorCode.VALIDATION);
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it.each(["null", "undefined", ""])("rejects sentinel --participant-choice-id %j client-side", async (value) => {
+    const err = await captured(["--participant-choice-id", value, "--option-id", OPT_UUID]);
+    expect(err).toBeInstanceOf(CliError);
+    expect(err.code).toBe(CliErrorCode.VALIDATION);
+    expect(mockGraphql).not.toHaveBeenCalled();
+  });
+
+  it.each([null, {}, { id: undefined }])("a %j decideParticipantChoice payload is an API_ERROR naming the row, not a success", async (payload) => {
+    mockGraphql.mockResolvedValue({ decideParticipantChoice: payload });
+    const err = await captured(["--participant-choice-id", ROW, "--option-id", OPT_UUID, "--json"]);
+    expect(err.code).toBe(CliErrorCode.API_ERROR);
+    expect(err.message).toContain(`choice row ${ROW}`);
+    expect(err.message).toContain("choices-view");
+    expect(stdoutSpy).not.toHaveBeenCalled();
+  });
+
+  it("maps 'Option not found or does not belong' to row guidance — never 'selection-options <rowId>'", async () => {
+    mockGraphql.mockRejectedValue(new Error("Option not found or does not belong to this selection"));
+    const err = await captured(["--participant-choice-id", ROW, "--option-id", OPT_UUID]);
+    expect(err.code).toBe(CliErrorCode.API_ERROR);
+    expect(err.message).toContain(`choice row ${ROW}`);
+    expect(err.message).not.toContain(`selection-options ${ROW}`);
+    expect(err.message).not.toContain(`Selection ${ROW}`);
+  });
+
+  it("maps 'list-mode selection' to row guidance pointing at choices-view", async () => {
+    mockGraphql.mockRejectedValue(new Error("Cannot pick on a list-mode selection"));
+    const err = await captured(["--participant-choice-id", ROW, "--option-id", OPT_UUID]);
+    expect(err.message).toContain("choices-view");
+    expect(err.message).not.toContain(`Selection ${ROW}`);
+  });
+});

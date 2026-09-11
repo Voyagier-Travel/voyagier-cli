@@ -48,6 +48,21 @@ describe("pickReflected", () => {
     expect(pickReflected(mixed, "o1", { travellers: "" })).toBe(false);
   });
 
+  it("--participant-choice-id: a divergent multi-row selection counts as reflected once ANY traveller carries the option", () => {
+    // Two rooms, two different options: consensus never arrives by design.
+    const raw = { id: "sel", travellerOptionChoices: [choice("t1", "optA"), choice("t2", "optB")] };
+    expect(pickReflected(raw, "optA", { participantChoiceId: "row-1" })).toBe(true);
+    expect(pickReflected(raw, "optB", { participantChoiceId: "row-2" })).toBe(true);
+    // Default (selection-wide) scope still says NOT reflected for the same read.
+    expect(pickReflected(raw, "optA", {})).toBe(false);
+  });
+
+  it("--participant-choice-id with --travellers: the restated roster must all carry the option", () => {
+    const raw = { id: "sel", travellerOptionChoices: [choice("t1", "optA"), choice("t2", "optB")] };
+    expect(pickReflected(raw, "optA", { participantChoiceId: "row-1", travellers: "t1" })).toBe(true);
+    expect(pickReflected(raw, "optA", { participantChoiceId: "row-1", travellers: "t1,t2" })).toBe(false);
+  });
+
   it("--group: weakest honest check — at least one traveller chose the option", () => {
     const some = { id: "s1", travellerOptionChoices: [choice("t1", "o1"), choice("t2", null)] };
     expect(pickReflected(some, "o1", { group: "g1" })).toBe(true);

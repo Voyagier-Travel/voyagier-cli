@@ -149,6 +149,44 @@ function requirePickResult(
 }
 
 /**
+ * Row-addressed twin of requirePickResult: a null/empty decideParticipantChoice
+ * payload means the row (or the option, on the row's selection) matched
+ * nothing — the row id is stale (re-forked) or the option id is from a re-run
+ * search. There is no selection id to point at, so guidance goes through the
+ * choices view.
+ */
+function requireRowPickResult(
+  result: SelectionResponse | null | undefined,
+  participantChoiceId: string,
+  optionId: string,
+): SelectionResponse {
+  if (!result || !result.id) {
+    throw new CliError(
+      CliErrorCode.API_ERROR,
+      `The pick was not recorded: the server returned nothing for option ${optionId} on choice row ${participantChoiceId}.\n` +
+        `  The row id may be stale (rows are re-minted when a selection forks) or the option id may be from a re-run search.\n` +
+        `  Re-read the rows and the row's selection options, then pick current ids:\n` +
+        `    voyagier choices-view <planId> --json\n` +
+        `    voyagier selection-options <selectionId> --wait --json`,
+    );
+  }
+  return result;
+}
+
+/**
+ * Parse a --travellers list. Shared by every scope so "", " " and ", ," are
+ * rejected identically: a blank roster must never reach a mutation, where it
+ * would read as "clear the row" rather than "keep the row".
+ */
+function parseTravellerIds(travellers: string): string[] {
+  const ids = travellers.split(",").map((s: string) => s.trim()).filter(Boolean);
+  if (ids.length === 0) {
+    throw new CliError(CliErrorCode.VALIDATION, "--travellers requires a comma-separated list of traveller IDs.");
+  }
+  return ids;
+}
+
+/**
  * Send the pick to the backend for the resolved scope. No error mapping here —
  * the caller owns the catch so a single mapper/router covers both the initial
  * attempt and the fork-template retry (VOY-1872), keeping the scope identical
@@ -161,17 +199,22 @@ async function performPick(
 ): Promise<SelectionResponse> {
   if (scope.participantChoiceId) {
     // Row-addressed decide: the roster stays as the row holds it unless
-    // --travellers restates it.
-    const travellerIds = scope.travellers
-      ? scope.travellers.split(",").map((s: string) => s.trim()).filter(Boolean)
-      : null;
-    const data = await graphql<{ decideParticipantChoice: SelectionResponse }>(DECIDE_PARTICIPANT_CHOICE, {
+    // --travellers restates it. "Keep the roster" is expressed by OMITTING the
+    // variable — GraphQL distinguishes an absent argument from an explicit
+    // null, and only the former means "leave the row as it is".
+    const variables: Record<string, unknown> = {
       selectionId,
       optionId,
       participantChoiceId: scope.participantChoiceId,
-      travellerIds,
-    });
-    return data.decideParticipantChoice;
+    };
+    if (scope.travellers !== undefined) {
+      variables.travellerIds = parseTravellerIds(scope.travellers);
+    }
+    const data = await graphql<{ decideParticipantChoice: SelectionResponse | null }>(
+      DECIDE_PARTICIPANT_CHOICE,
+      variables,
+    );
+    return requireRowPickResult(data.decideParticipantChoice, scope.participantChoiceId, optionId);
   }
   // Every remaining mode is selection-keyed.
   if (!selectionId) {
@@ -188,10 +231,7 @@ async function performPick(
     return requirePickResult(data.setTripPlanSelectionTravellerChoice, selectionId, optionId);
   }
   if (scope.travellers) {
-    const travellerIds = scope.travellers.split(",").map((s: string) => s.trim()).filter(Boolean);
-    if (travellerIds.length === 0) {
-      throw new CliError(CliErrorCode.VALIDATION, "--travellers requires a comma-separated list of traveller IDs.");
-    }
+    const travellerIds = parseTravellerIds(scope.travellers);
     const data = await graphql<{ setTripPlanTravellerChoiceForSubset: SelectionResponse | null }>(
       SET_TRAVELLER_CHOICE_FOR_SUBSET,
       { selectionId, travellerIds, optionId, replaceExisting: true },
@@ -229,8 +269,41 @@ async function setSelectedOption(
     if (selectionId && isForkTemplateRejection(err)) {
       return handleForkTemplate(selectionId, optionId, scope);
     }
-    throw mapChoiceError(err, selectionId ?? scope.participantChoiceId ?? "(unknown)");
+    // mapChoiceError's guidance is written around a SELECTION id
+    // (selection-options <id>, select --selection-id <id>); a choice-row id
+    // must never be fed into it or the user is told to run those against a
+    // row. Row-addressed picks get their own mapper.
+    if (selectionId) throw mapChoiceError(err, selectionId);
+    throw mapRowChoiceError(err, scope.participantChoiceId ?? "(unknown)");
   }
+}
+
+/**
+ * Row-addressed counterpart of mapChoiceError: same two backend signatures,
+ * guidance phrased around the choice row and the choices view, never around a
+ * selection id we do not have.
+ */
+function mapRowChoiceError(err: unknown, participantChoiceId: string): unknown {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message.includes("list-mode selection")) {
+    return new CliError(
+      CliErrorCode.API_ERROR,
+      `Choice row ${participantChoiceId} sits on a LIST selection (inventory source) — picks are rejected there.\n` +
+        `  Pick a row on the goal's DECISION selection instead:\n` +
+        `    voyagier choices-view <planId> --json   # rows with isActiveBranch true on a Flight/Hotel/Activity selection\n` +
+        `    voyagier select --participant-choice-id <rowId> --option-id <id>`,
+    );
+  }
+  if (message.includes("Option not found or does not belong")) {
+    return new CliError(
+      CliErrorCode.API_ERROR,
+      `That option does not belong to the selection behind choice row ${participantChoiceId} (the backend only accepts options from the row's own selection or its direct mirrored list).\n` +
+        `  Find the row's selection in the choices view, list THAT selection's options and pick one of those ids:\n` +
+        `    voyagier choices-view <planId> --json\n` +
+        `    voyagier selection-options <selectionId> --wait --json`,
+    );
+  }
+  return err;
 }
 
 /**
@@ -392,11 +465,26 @@ async function handleForkTemplate(
 async function runPickWait(
   selectionId: string,
   optionId: string,
-  opts: { traveller?: string; travellers?: string; group?: string; timeout?: string; json?: boolean },
+  opts: {
+    traveller?: string;
+    travellers?: string;
+    group?: string;
+    participantChoiceId?: string;
+    timeout?: string;
+    json?: boolean;
+  },
 ): Promise<PickWaitOutcome | null> {
   const timeoutSec = parseInt(opts.timeout ?? "30", 10);
   const timeoutMs = (isNaN(timeoutSec) || timeoutSec <= 0 ? 30 : timeoutSec) * 1000;
-  const scope: PickScope = { traveller: opts.traveller, travellers: opts.travellers, group: opts.group };
+  // The row id travels with the scope: a row-addressed pick on a multi-row
+  // selection must not be verified by selection-wide consensus, or the wait
+  // runs to timeout after a pick that succeeded (VOY-2173 review).
+  const scope: PickScope = {
+    traveller: opts.traveller,
+    travellers: opts.travellers,
+    group: opts.group,
+    participantChoiceId: opts.participantChoiceId,
+  };
   try {
     if (!opts.json) progress("Waiting for readiness to settle...");
     return await waitForPickSettle(selectionId, optionId, scope, timeoutMs, deriveBaseUrl(getApiUrl()));
@@ -546,6 +634,11 @@ export function registerSelectCommands(program: Command): void {
         // id is a valid String to the API but matches no option, which the
         // server answers with an empty result rather than an error.
         const selectionId = opts.selectionId !== undefined ? validateId(opts.selectionId, "--selection-id") : null;
+        // The row id is user-supplied too: same sentinel rejection ("", "null",
+        // "undefined") as the selection id, before anything reaches the API.
+        if (opts.participantChoiceId !== undefined) {
+          opts.participantChoiceId = validateId(opts.participantChoiceId, "--participant-choice-id");
+        }
         const optionId = validateOptionId(opts.optionId, "--option-id");
         try {
           if (!opts.json) progress("Selecting option...");
