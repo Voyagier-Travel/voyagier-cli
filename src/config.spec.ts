@@ -1,7 +1,7 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync, chmodSync } from "fs";
 import { join } from "path";
-import { loadCredentials, saveCredentials, clearCredentials, credentialsExist, getToken, getApiUrl, CONFIG_DIR, saveUserContext, getUserContext, getHomeAirports, getPreferredCabin, assertSecureApiUrl, resetEnvUrlWarningForTests } from "./config.js";
+import { loadCredentials, saveCredentials, clearCredentials, credentialsExist, getToken, getApiUrl, CONFIG_DIR, saveUserContext, getUserContext, getHomeAirports, getPreferredCabin, assertSecureApiUrl, resetEnvUrlWarningForTests, normalizeApiUrl, resetNormalizedUrlWarningForTests, getConfiguredApiUrl } from "./config.js";
 import { CliError, CliErrorCode } from "./errors.js";
 
 const credFile = join(CONFIG_DIR, "credentials.json");
@@ -52,11 +52,11 @@ describe("config", () => {
 
   describe("saveCredentials / loadCredentials", () => {
     it("should save and load token + apiUrl", () => {
-      saveCredentials("my-token", "https://api.voyagier.com");
+      saveCredentials("my-token", "https://api.voyagier.com/api");
       const creds = loadCredentials();
       expect(creds).toEqual({
         token: "my-token",
-        apiUrl: "https://api.voyagier.com",
+        apiUrl: "https://api.voyagier.com/api",
       });
     });
 
@@ -112,14 +112,14 @@ describe("config", () => {
       // module registries, so the warn-once flag persists across tests in
       // this file — reset it instead of relying on test position.
       resetEnvUrlWarningForTests();
-      saveCredentials("file-token", "https://file.example.com");
+      saveCredentials("file-token", "https://file.example.com/api");
       process.env.VOYAGIER_API_URL = "https://env-api.com";
       const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
       try {
         const creds = loadCredentials();
         // File creds (and their saved URL) win — the env URL must not redirect them.
         expect(creds?.token).toBe("file-token");
-        expect(creds?.apiUrl).toBe("https://file.example.com");
+        expect(creds?.apiUrl).toBe("https://file.example.com/api");
         const warned = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
         expect(warned).toContain("VOYAGIER_API_URL is ignored unless VOYAGIER_TOKEN");
         // Warn-once: a second load stays quiet.
@@ -177,14 +177,46 @@ describe("config", () => {
 
   describe("getApiUrl", () => {
     it("should return saved apiUrl", () => {
-      saveCredentials("tok", "https://custom-api.voyagier.com");
-      expect(getApiUrl()).toBe("https://custom-api.voyagier.com");
+      saveCredentials("tok", "https://custom-api.voyagier.com/api");
+      expect(getApiUrl()).toBe("https://custom-api.voyagier.com/api");
     });
 
     it("should prefer env vars when VOYAGIER_TOKEN is set", () => {
       process.env.VOYAGIER_TOKEN = "env-tok";
-      process.env.VOYAGIER_API_URL = "https://env-override.com";
-      expect(getApiUrl()).toBe("https://env-override.com");
+      process.env.VOYAGIER_API_URL = "https://env-override.com/api";
+      expect(getApiUrl()).toBe("https://env-override.com/api");
+    });
+
+    it("normalizes a misconfigured env URL (MCP endpoint) to the API base and warns once", () => {
+      resetNormalizedUrlWarningForTests();
+      process.env.VOYAGIER_TOKEN = "env-tok";
+      process.env.VOYAGIER_API_URL = "https://mcp.voyagier.com/api/mcp";
+      const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        expect(getApiUrl()).toBe("https://mcp.voyagier.com/api");
+        // The raw configured value stays visible for doctor.
+        expect(getConfiguredApiUrl()).toBe("https://mcp.voyagier.com/api/mcp");
+        const warned = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+        expect(warned).toContain('normalized to "https://mcp.voyagier.com/api"');
+        // Raw value is JSON-quoted so control characters cannot mangle the line.
+        expect(warned).toContain('"https://mcp.voyagier.com/api/mcp"');
+        stderrSpy.mockClear();
+        getApiUrl();
+        expect(stderrSpy).not.toHaveBeenCalled();
+      } finally {
+        stderrSpy.mockRestore();
+      }
+    });
+
+    it("normalizes a misconfigured URL on save so credentials.json holds the API base, and returns it", () => {
+      const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        expect(saveCredentials("tok", "https://travel.voyagier.com/api/graphql")).toBe("https://travel.voyagier.com/api");
+        expect(JSON.parse(readFileSync(credFile, "utf-8")).apiUrl).toBe("https://travel.voyagier.com/api");
+        expect(getApiUrl()).toBe("https://travel.voyagier.com/api");
+      } finally {
+        stderrSpy.mockRestore();
+      }
     });
 
     it("should fall back to default when no credentials", () => {
@@ -276,6 +308,30 @@ describe("config", () => {
         preferredCabin: "first",
       });
       expect(getPreferredCabin()).toBe("first");
+    });
+  });
+
+  describe("normalizeApiUrl", () => {
+    it.each([
+      ["https://travel.voyagier.com/api", "https://travel.voyagier.com/api"],
+      ["https://travel.voyagier.com/api/", "https://travel.voyagier.com/api"],
+      ["https://travel.voyagier.com", "https://travel.voyagier.com/api"],
+      ["https://travel.voyagier.com/", "https://travel.voyagier.com/api"],
+      ["https://travel.voyagier.com/api/graphql", "https://travel.voyagier.com/api"],
+      ["https://mcp.voyagier.com/api/mcp", "https://mcp.voyagier.com/api"],
+      ["https://mcp.voyagier.com/api/mcp/", "https://mcp.voyagier.com/api"],
+      // Duplicate slashes never survive suffix stripping (review finding).
+      ["https://travel.voyagier.com/api//graphql", "https://travel.voyagier.com/api"],
+      ["https://travel.voyagier.com//api/mcp//", "https://travel.voyagier.com/api"],
+      ["http://localhost:3001", "http://localhost:3001/api"],
+      ["http://localhost:3001/api", "http://localhost:3001/api"],
+      ["https://dev.voyagier.com/api", "https://dev.voyagier.com/api"],
+      // Unrelated paths are left alone.
+      ["https://example.com/v2/other", "https://example.com/v2/other"],
+      // Unparseable input passes through for assertSecureApiUrl to reject.
+      ["not-a-url", "not-a-url"],
+    ])("%s → %s", (input, expected) => {
+      expect(normalizeApiUrl(input)).toBe(expected);
     });
   });
 

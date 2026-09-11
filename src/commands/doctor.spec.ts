@@ -12,6 +12,7 @@ const mockGraphql = jest.fn();
 const mockCredentialsExist = jest.fn();
 const mockGetUserContext = jest.fn();
 const mockGetApiUrl = jest.fn().mockReturnValue("https://dev.voyagier.com/api");
+const mockGetConfiguredApiUrl = jest.fn().mockReturnValue("https://dev.voyagier.com/api");
 const mockJsonOutput = jest.fn();
 const mockFetch = jest.fn();
 
@@ -28,6 +29,7 @@ jest.unstable_mockModule("../api.js", () => ({
 jest.unstable_mockModule("../config.js", () => ({
   credentialsExist: mockCredentialsExist,
   getApiUrl: mockGetApiUrl,
+  getConfiguredApiUrl: mockGetConfiguredApiUrl,
   getUserContext: mockGetUserContext,
   // doctor.ts falls back to CONFIG_DIR for its state-dir; specs set
   // VOYAGIER_STATE_DIR explicitly, so this value is never dereferenced.
@@ -41,6 +43,7 @@ jest.unstable_mockModule("../output.js", () => ({
 // ── Dynamic imports ────────────────────────────────────────────────────────
 
 let registerDoctorCommand: (program: Command, version: string) => void;
+let checkApiUrlConfig: () => { name: string; status: "PASS" | "WARN" | "FAIL"; message: string; details?: Record<string, unknown> } | null;
 let rollUpStatus: (checks: { status: "PASS" | "WARN" | "FAIL" }[]) => "PASS" | "WARN" | "FAIL";
 let collectCliOperations: () => Array<{ name: string; operation: string }>;
 let validateOperationsAgainstSchema: (
@@ -55,6 +58,7 @@ let buildSchemaDriftCheck: (
 beforeAll(async () => {
   const mod = await import("./doctor.js");
   registerDoctorCommand = mod.registerDoctorCommand;
+  checkApiUrlConfig = mod.checkApiUrlConfig;
   rollUpStatus = mod.rollUpStatus;
   collectCliOperations = mod.collectCliOperations;
   validateOperationsAgainstSchema = mod.validateOperationsAgainstSchema;
@@ -165,6 +169,43 @@ describe("rollUpStatus", () => {
   });
   it("returns FAIL when any check fails (overrides WARN)", () => {
     expect(rollUpStatus([{ status: "WARN" }, { status: "FAIL" }])).toBe("FAIL");
+  });
+});
+
+describe("checkApiUrlConfig", () => {
+  afterEach(() => {
+    mockGetApiUrl.mockReturnValue("https://dev.voyagier.com/api");
+    mockGetConfiguredApiUrl.mockReturnValue("https://dev.voyagier.com/api");
+  });
+
+  it("is silent when the configured URL is already the API base", () => {
+    expect(checkApiUrlConfig()).toBeNull();
+  });
+
+  it("WARNs with the configured and effective URLs when normalization changed the value", () => {
+    mockGetConfiguredApiUrl.mockReturnValue("https://mcp.voyagier.com/api/mcp");
+    mockGetApiUrl.mockReturnValue("https://mcp.voyagier.com/api");
+    const check = checkApiUrlConfig();
+    expect(check?.status).toBe("WARN");
+    expect(check?.name).toBe("api-url");
+    expect(check?.message).toContain("https://mcp.voyagier.com/api/mcp");
+    expect(check?.message).toContain('normalized to "https://mcp.voyagier.com/api"');
+  });
+
+  it("sanitizes a configured URL carrying terminal escapes before printing it", () => {
+    mockGetConfiguredApiUrl.mockReturnValue("https://mcp.voyagier.com/api/mcp\u001b[31m");
+    mockGetApiUrl.mockReturnValue("https://mcp.voyagier.com/api");
+    const check = checkApiUrlConfig();
+    expect(check?.status).toBe("WARN");
+    expect(check?.message).not.toContain("\u001b");
+    expect(String(check?.details?.fix)).toContain("remote connector");
+  });
+
+  it("stays out of the way when the URL itself is invalid (other checks report that)", () => {
+    mockGetApiUrl.mockImplementation(() => {
+      throw new CliError(CliErrorCode.VALIDATION, "Insecure API URL");
+    });
+    expect(checkApiUrlConfig()).toBeNull();
   });
 });
 

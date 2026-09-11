@@ -205,7 +205,7 @@ It's a thin adapter: each tool call self-spawns the CLI as a subprocess with `--
 | Variable | Description |
 |----------|-------------|
 | `VOYAGIER_TOKEN` | Personal access token (overrides config) |
-| `VOYAGIER_API_URL` | API base URL (default: `https://travel.voyagier.com/api`; the CLI appends `/graphql`) |
+| `VOYAGIER_API_URL` | API base URL (default: `https://travel.voyagier.com/api`; the CLI appends `/graphql`). A bare origin, a `/graphql` URL, or the hosted MCP URL (`.../api/mcp`) is normalized to the API base with a warning. `voyagier auth set-token --url` stores the normalized value; for a URL that still needs normalizing at read time (this variable, or a hand-edited credentials file) `voyagier doctor` reports the correction. |
 
 ## How It Works
 

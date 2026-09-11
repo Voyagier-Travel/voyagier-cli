@@ -48,6 +48,8 @@ jest.unstable_mockModule("../../api.js", () => ({
 
 jest.unstable_mockModule("../../config.js", () => ({
   getApiUrl: jest.fn().mockReturnValue("https://dev.voyagier.com/api"),
+  getConfiguredApiUrl: jest.fn().mockReturnValue("https://dev.voyagier.com/api"),
+  normalizeApiUrl: jest.fn((u: string) => u),
   CONFIG_DIR: "/tmp/test-config",
   // Rest of config.js's surface, stubbed so build-program.js and the real
   // state/selection-wait/clients modules it pulls in link cleanly. crud never

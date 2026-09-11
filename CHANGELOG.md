@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Fixed
+- **Any configured Voyagier URL now resolves to the GraphQL API base.** The CLI sends every request to `<API URL>/graphql`, so a `VOYAGIER_API_URL` or `auth set-token --url` value of the bare origin, the `/graphql` endpoint itself, or the hosted MCP URL (`.../api/mcp`) made every command fail with `404 Not Found` and a hint about permissions. The URL is now normalized (`https://mcp.voyagier.com/api/mcp` → `https://mcp.voyagier.com/api`, `https://travel.voyagier.com` → `https://travel.voyagier.com/api`) with a one-time stderr warning, `voyagier doctor` adds an `api-url` WARN naming the configured and effective values, and a 404 with no GraphQL error body now points at the URL configuration instead of permissions. (VOY-2181)
+
 ## [3.0.0] — 2026-08-27
 
 ### Changed
