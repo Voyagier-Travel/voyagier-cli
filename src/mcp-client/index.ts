@@ -1,0 +1,12 @@
+export { McpClient, MCP_PROTOCOL_VERSION } from "./client.js";
+export type { McpToolDescriptor, McpToolResult, McpJsonSchema, McpContentBlock, McpInitializeResult } from "./client.js";
+export { getMcpUrl, DEFAULT_MCP_URL } from "./url.js";
+export { readToolsCache, writeToolsCache, clearToolsCache, isToolsCacheFresh, toolsCacheAgeMs, toolsCachePath, toolsSurfaceHash, TOOLS_CACHE_TTL_MS } from "./tools-cache.js";
+export type { ToolsCache } from "./tools-cache.js";
+export { flagSpecsFromSchema, buildToolArguments, applyFlagsToCommand } from "./schema-flags.js";
+export type { FlagSpec } from "./schema-flags.js";
+export { registerGeneratedCommands, runTool, parseToolContent, createDefaultClient } from "./generated-commands.js";
+export type { GeneratedCommandContext } from "./generated-commands.js";
+export { renderToolPayload, unwrapToolPayload, TOOL_RENDERERS } from "./render.js";
+export { resolveStartupTools, refreshToolsCache, isLocalInvocation, commandToken, LOCAL_COMMANDS } from "./startup.js";
+export type { StartupTools } from "./startup.js";

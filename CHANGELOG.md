@@ -8,12 +8,119 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### ⚠️ BREAKING — the CLI is now a client of the Voyagier MCP server
+
+Every trip-planning command is one MCP tool: `voyagier <tool_name> --<param> <value> …`. The command list, flags and help text are generated at startup from the server's `tools/list` (`https://mcp.voyagier.com/api/mcp`, override with `VOYAGIER_MCP_URL`), so the CLI, the hosted MCP server and every MCP client share one implementation of every verb. The next release of this line is `4.0.0`.
+
+#### Added
+- **`src/mcp-client`:** a fetch-based MCP client over Streamable HTTP — `initialize`, `tools/list`, `tools/call`; Bearer PAT from the existing credential store; JSON and SSE responses; `Mcp-Session-Id` echoed when the server issues one, with one re-initialize on a stale-session 404; `429` surfaces as `RATE_LIMITED` with `details.retryAfterSeconds` from `Retry-After`; `401` → `AUTH_FAILED`, `403` → `PERMISSION_DENIED`, network failures → `NETWORK`, a tool's `isError` result → `API_ERROR` carrying the tool's own text.
+- **Generated command surface:** one Commander command per tool, flags typed from the tool's JSON input schema (string, integer/number, boolean, enum with choices, arrays as repeatable flags, objects and arrays of objects as JSON literals), required inputs enforced before any network call, the tool's description as `--help`. `--json` prints the result content as JSON; `plan_status`, `search_flights` / `search_hotels` / `search_activities` / `search_status` / `promote_search`, `get_selection_options` / `refresh_options`, `itinerary` and `quote` render a compact human view without it.
+- **Tool cache:** `~/.voyagier/tools-cache.json` (24h TTL, keyed by endpoint). Refreshed by `voyagier doctor`, on a cache miss, and when a command name is not in the cache (so a newly published server tool works on first use).
+- **Tool-surface hash:** a stable digest of the server's tool names + input schemas, reported by `doctor` (`details.surfaceHash`, with the previous run's hash and the absolute list timestamp) and by the new global `--verbose` flag on stderr, so scripts can detect when the calling contract changed.
+- **`VOYAGIER_MCP_URL`** environment variable. Same rule as `VOYAGIER_API_URL`: `https://` only, `http://` accepted for loopback hosts.
+- Error codes `RATE_LIMITED` and `COMMAND_REMOVED`.
+
+#### Changed
+- **`voyagier doctor`** checks the MCP connection instead of the GraphQL schema: credentials present → `initialize` + `tools/list` (tool count, server identity, cache refresh) → `whoami` when the server publishes that tool → state files → npm version. The `schema` and `reachability` checks are gone.
+- **AGENT.md and README** rewritten around the tool model.
+- Every tool result is passed through the same ANSI/control-character sanitizer the 3.x GraphQL boundary used before it is rendered.
+
+#### Removed
+- **Every 3.x trip-planning command.** Running one still parses, prints `This command was removed in 4.0. Use: voyagier <tool> [flags]` and exits 1 (`COMMAND_REMOVED`; JSON envelope under `--json`). Kept as local commands: `auth *`, `doctor`, `mcp install`, `mcp`, `agent-docs`, `telemetry`.
+- The hand-written GraphQL documents behind those commands (`src/queries.ts` keeps only the profile mutation `auth setup` uses), the local search/selection state files (`last-search.json`, `last-options.json`), and the `--agent` markdown output mode.
+- Flags are the tool's snake_case property names (`--plan_id`, `--selection_id`) rather than the 3.x kebab-case flags (`--plan`, `--selection-id`). JSON payloads are the server's `{ "<operation>": … }` shape.
+
+#### Migration table
+
+Replacements marked as planned are tools the server has not published yet; the removal message says so at runtime and points at `voyagier doctor` to refresh the tool list.
+
+| 3.x command | 4.0 replacement | Note |
+|---|---|---|
+| `voyagier destinations search` | `voyagier search_destinations` |  |
+| `voyagier plan-trip` | `voyagier plan_trip` | Pass travellers as a JSON array with --travellers. |
+| `voyagier plan-status` | `voyagier plan_status` |  |
+| `voyagier plans create` | `voyagier plan_trip` |  |
+| `voyagier plans list` | `voyagier plans_list` |  |
+| `voyagier plans get` | `voyagier plan_status`, `voyagier itinerary`, `voyagier choices_view` | There is no raw plan read; use the read view you need. |
+| `voyagier plans summary` | `voyagier itinerary` |  |
+| `voyagier plans update` | `voyagier plan_update` |  |
+| `voyagier plans delete` | `voyagier plan_delete` |  |
+| `voyagier plans items` | `voyagier plan_status`, `voyagier choices_view` |  |
+| `voyagier plans remove-item` | `voyagier goal_delete` |  |
+| `voyagier plans share` | `voyagier share_plan`, `voyagier invite_collaborator` | share_plan grants the plan's client access; invite_collaborator adds another user. |
+| `voyagier plans collaborators` | `voyagier collaborators_list` |  |
+| `voyagier plans unshare` | `voyagier collaborator_remove` |  |
+| `voyagier plans shared` | `voyagier plans_list` | Use --relationship shared. |
+| `voyagier plans comments` | — |  |
+| `voyagier plans vote` | — |  |
+| `voyagier plans bookable` | `voyagier quote` |  |
+| `voyagier plans goals` | `voyagier plan_status` |  |
+| `voyagier plans goal` | `voyagier plan_status` |  |
+| `voyagier plans goal-add` | `voyagier goal_add` |  |
+| `voyagier plans goal-add-with-selection` | `voyagier goal_add`, `voyagier promote_search` |  |
+| `voyagier plans goal-update` | `voyagier goal_update` |  |
+| `voyagier plans goal-remove` | `voyagier goal_delete` |  |
+| `voyagier plans goal-assign-travellers` | `voyagier goal_update` |  |
+| `voyagier plans goal-add-item` | `voyagier promote_search` |  |
+| `voyagier plans goal-add-item-with-selection` | `voyagier promote_search` |  |
+| `voyagier plans goal-reorder` | `voyagier goal_update` |  |
+| `voyagier travellers add` | `voyagier travellers_add` | Takes a JSON array of travellers. |
+| `voyagier travellers list` | `voyagier travellers_list` |  |
+| `voyagier travellers remove` | `voyagier travellers_remove` |  |
+| `voyagier travellers update` | `voyagier travellers_update` |  |
+| `voyagier search airports` | — | search_flights accepts IATA codes or city names in --from / --to. |
+| `voyagier search flights` | `voyagier search_flights`, `voyagier promote_search` | search_flights explores; promote_search puts a result on a plan goal. |
+| `voyagier search hotels` | `voyagier search_hotels`, `voyagier promote_search` | As above. |
+| `voyagier search activities` | `voyagier search_activities`, `voyagier promote_search` | As above. |
+| `voyagier select` | `voyagier select_option` | Row-addressed picks: --participant_choice_id (rows from choices_view). |
+| `voyagier selection-options` | `voyagier get_selection_options` |  |
+| `voyagier refresh-options` | `voyagier refresh_options` |  |
+| `voyagier choices-view` | `voyagier choices_view` |  |
+| `voyagier choose-room-slot` | `voyagier choose_room_slot` |  |
+| `voyagier traveller-choices list` | `voyagier choices_view` |  |
+| `voyagier cart` | `voyagier quote` |  |
+| `voyagier quote` | `voyagier quote` |  |
+| `voyagier send` | `voyagier share_plan` | share_plan returns the client link; you deliver it. |
+| `voyagier book` | `voyagier book` | The price gate is --expect_total_cents (integer cents) plus --item_ids from quote. |
+| `voyagier bookings list` | `voyagier bookings_list` |  |
+| `voyagier bookings get` | `voyagier booking_get` |  |
+| `voyagier whoami` | `voyagier whoami` |  |
+| `voyagier clients list` | `voyagier clients_list` |  |
+| `voyagier clients get` | `voyagier client_get` |  |
+| `voyagier clients create` | `voyagier client_create` |  |
+| `voyagier clients update` | `voyagier client_update` |  |
+| `voyagier clients archive` | — |  |
+| `voyagier clients upsert` | `voyagier clients_list`, `voyagier client_create` | Look up by name first, then create. |
+| `voyagier itinerary` | `voyagier itinerary` |  |
+| `voyagier listings list` | — |  |
+| `voyagier listings recent` | — |  |
+| `voyagier listings add-to-selection` | `voyagier promote_search` | Pass --listing_ids. |
+| `voyagier places search` | — |  |
+| `voyagier places get` | — |  |
+| `voyagier places attach` | — |  |
+| `voyagier places list` | — |  |
+| `voyagier places highlight` | — |  |
+| `voyagier places unhighlight` | — |  |
+| `voyagier places remove` | — |  |
+| `voyagier traveller-groups list` | — |  |
+| `voyagier traveller-groups get` | — |  |
+| `voyagier traveller-groups create` | — |  |
+| `voyagier traveller-groups update` | — |  |
+| `voyagier traveller-groups delete` | — |  |
+| `voyagier traveller-groups add-members` | — |  |
+| `voyagier traveller-groups remove-members` | — |  |
+| `voyagier traveller-groups upsert` | — |  |
+
+#### Not in this change
+- `voyagier mcp` (the stdio server) and the MCPB bundle still use their hand-maintained tool table; aligning them with the hosted server's tool list is a separate change in this release line.
+
+### Merged from the 3.x line before this cut
 ### Changed
-- **`plans share --email` invites through the API directly.** The address is sent to `inviteTripPlanCollaborator` as `invitedEmail`, and the server resolves it: an existing account gets a pending invite, an address with no account gets an invite that is claimed when they sign up with it. The command no longer lists users to match the address client-side and no longer falls back to a platform invitation, so it works for every account that can invite on a plan. `--json` keeps `{ ok, success, planId, invitedUser, role }` (`invitedUser` is the address when inviting by email) and adds `pending: true` when no account uses the address yet.
+- *(superseded in this release: `plans share` is removed; use `voyagier invite_collaborator`, which has the same API semantics)* **`plans share --email` invites through the API directly.** The address is sent to `inviteTripPlanCollaborator` as `invitedEmail`, and the server resolves it: an existing account gets a pending invite, an address with no account gets an invite that is claimed when they sign up with it. The command no longer lists users to match the address client-side and no longer falls back to a platform invitation, so it works for every account that can invite on a plan. `--json` keeps `{ ok, success, planId, invitedUser, role }` (`invitedUser` is the address when inviting by email) and adds `pending: true` when no account uses the address yet.
 - **`plans share --role` sends the role key.** Both `--user` and `--email` pass `viewer`/`editor`/`agent` to the API as `role`, removing the roles lookup round-trip. Requires the matching API release.
 
 ### Added
-- **`invite_collaborator` MCP tool:** wraps `plans share --email` (inputs `plan_id`, `email`, optional `role`, default `viewer`). Records the invite and returns its status; it sends no email.
+- *(superseded in this release: the stdio server's hand-maintained tool table is replaced by the hosted server's list)* **`invite_collaborator` MCP tool:** wraps `plans share --email` (inputs `plan_id`, `email`, optional `role`, default `viewer`). Records the invite and returns its status; it sends no email.
 
 ### Fixed
 - **Any configured Voyagier URL now resolves to the GraphQL API base.** The CLI sends every request to `<API URL>/graphql`, so a `VOYAGIER_API_URL` or `auth set-token --url` value of the bare origin, the `/graphql` endpoint itself, or the hosted MCP URL (`.../api/mcp`) made every command fail with `404 Not Found` and a hint about permissions. The URL is now normalized (`https://mcp.voyagier.com/api/mcp` → `https://mcp.voyagier.com/api`, `https://travel.voyagier.com` → `https://travel.voyagier.com/api`) with a one-time stderr warning, `voyagier doctor` adds an `api-url` WARN naming the configured and effective values, and a 404 with no GraphQL error body now points at the URL configuration instead of permissions. (VOY-2181)

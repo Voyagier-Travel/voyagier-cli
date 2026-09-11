@@ -2,31 +2,13 @@ import { Command } from "commander";
 
 import { CliErrorCode } from "./errors.js";
 import { registerAuthCommands } from "./commands/auth.js";
-import { registerPlanCommands } from "./commands/plans/index.js";
-import { registerSearchCommands } from "./commands/search.js";
-import { registerSelectCommands } from "./commands/select.js";
-import { registerTravellerCommands } from "./commands/travellers.js";
-import { registerCartCommands } from "./commands/cart.js";
-import { registerSelectionOptionsCommands } from "./commands/selection-options.js";
-import { registerBookCommands } from "./commands/book.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
-import { registerWhoamiCommand } from "./commands/whoami.js";
-import { registerBookingsCommands } from "./commands/bookings.js";
-import { registerPlanTripCommand } from "./commands/plan-trip.js";
-import { registerPlanStatusCommand } from "./commands/plan-status.js";
 import { registerAgentDocsCommand } from "./commands/agent-docs.js";
-import { registerClientsCommands } from "./commands/clients.js";
-import { registerDestinationsCommands } from "./commands/destinations.js";
 import { registerDoctorCommand } from "./commands/doctor.js";
-import { registerItineraryCommand } from "./commands/itinerary.js";
-import { registerListingsCommands } from "./commands/listings.js";
-import { registerPlacesCommands } from "./commands/places.js";
-import { registerTravellerGroupsCommands } from "./commands/traveller-groups.js";
-import { registerTravellerChoicesCommands } from "./commands/traveller-choices.js";
-import { registerParticipantChoicesCommands } from "./commands/participant-choices.js";
-import { registerQuoteCommand } from "./commands/quote.js";
-import { registerSendCommand } from "./commands/send.js";
 import { registerMcpCommand } from "./commands/mcp.js";
+import { registerGeneratedCommands, type GeneratedCommandContext } from "./mcp-client/generated-commands.js";
+import type { McpToolDescriptor } from "./mcp-client/client.js";
+import { registerRemovedCommandStubs } from "./removed-commands.js";
 
 /**
  * Route Commander's own argument-parse failures (unknown option, missing
@@ -53,9 +35,6 @@ import { registerMcpCommand } from "./commands/mcp.js";
  * Applied to the root AND every descendant command: Commander calls `error()`
  * on the command where the failure occurred (usually a subcommand), and each
  * command carries its own `_outputConfiguration` reference.
- *
- * Exported so command-level specs can wire the real hook onto their bare test
- * programs and exercise both branches (see search.spec / plans/crud.spec).
  */
 export function routeParseErrorsToJson(cmd: Command): void {
   cmd.configureOutput({
@@ -89,63 +68,69 @@ export function argvRequestsJson(argv: readonly string[]): boolean {
   return options.includes("--json");
 }
 
+export interface BuildProgramOptions {
+  /** Hooks for the generated tool commands (tests inject a mocked client). */
+  generated?: Omit<GeneratedCommandContext, "version">;
+}
+
 /**
  * Build the full Voyagier CLI command tree onto a fresh Command instance.
  *
+ * Local commands (auth, doctor, mcp, agent-docs, telemetry) are fixed. Every
+ * trip-planning command is generated from `tools`: the MCP server's
+ * `tools/list`, one command per tool. Commands the 3.x CLI shipped and 4.0
+ * removed are registered as hidden stubs that exit with the replacement.
+ *
  * Pure construction: NO argv parsing, NO side effects (welcome screen,
- * telemetry instrumentation, process.exit). The entrypoint (index.ts) wires
- * those around the returned program; tests use this to introspect the real
- * command/flag surface (see agent-docs doc-drift guard).
+ * telemetry instrumentation, process.exit). The entrypoint (index.ts) loads
+ * the tool list and wires those around the returned program; tests pass a
+ * fixture tool list to introspect the real command/flag surface.
  */
-export function buildProgram(version: string): Command {
+export function buildProgram(version: string, tools: McpToolDescriptor[] = [], opts: BuildProgramOptions = {}): Command {
   const program = new Command();
   program
     .name("voyagier")
-    .description("Voyagier CLI — search, plan, and book travel")
+    .description("Voyagier CLI — a shell for the Voyagier MCP server: one command per tool")
     .version(version)
     .option("--stacktrace", "show full error stack traces")
+    .option("--verbose", "diagnostics on stderr: MCP endpoint, tool-surface hash, session handling")
     .addHelpText(
       "after",
       `
-AI Agent Quick Start (scaffold, then compose — search is async):
-  voyagier plan-trip --client "Client Name" --title "Trip" --from DCA --to CDG --depart <DATE> --return <DATE> --hotel Paris --travellers "Name" --json
-  voyagier search flights --plan <ID> --from DCA --to CDG --date <DATE> --return <DATE> --json
-  voyagier selection-options <SELECTION_ID> --wait --json
-  voyagier select --selection-id <SELECTION_ID> --option-id <OPTION_ID> --json
-  voyagier book <PLAN_ID> --json
+Every trip-planning command is an MCP tool: voyagier <tool_name> --<param> <value> … [--json]
+Flags follow the tool's input schema; see: voyagier <tool_name> --help
+
+AI Agent Quick Start:
+  voyagier plans_list --json
+  voyagier search_destinations --query "Lisbon" --json
+  voyagier plan_trip --client_id <CLIENT_ID> --title "Trip" --travel_destination_id <DEST_ID> --json
+  voyagier plan_status --plan_id <PLAN_ID> --json
+  voyagier quote --plan_id <PLAN_ID> --json
 
 Full reference: voyagier agent-docs`,
     );
 
-  // Commands ordered by workflow: auth → plan → search → select → book
+  // Local commands first: they never need the remote tool list.
   registerAuthCommands(program);
-  // Destination resolution comes before plan creation: plan-trip takes the id
-  // this returns via --destination-id.
-  registerDestinationsCommands(program);
-  registerPlanTripCommand(program);
-  registerPlanStatusCommand(program);
-  registerPlanCommands(program);
-  registerTravellerCommands(program);
-  registerSearchCommands(program);
-  registerSelectCommands(program);
-  registerSelectionOptionsCommands(program);
-  registerCartCommands(program);
-  registerQuoteCommand(program);
-  registerSendCommand(program);
-  registerBookCommands(program);
-  registerBookingsCommands(program);
-  registerWhoamiCommand(program);
-  registerTelemetryCommands(program);
-  registerAgentDocsCommand(program);
-  registerClientsCommands(program);
   registerDoctorCommand(program, version);
-  registerItineraryCommand(program);
-  registerListingsCommands(program);
-  registerPlacesCommands(program);
-  registerTravellerGroupsCommands(program);
-  registerTravellerChoicesCommands(program);
-  registerParticipantChoicesCommands(program);
+  registerAgentDocsCommand(program);
+  registerTelemetryCommands(program);
   registerMcpCommand(program);
+
+  // One command per MCP tool.
+  registerGeneratedCommands(program, tools, { version, ...(opts.generated ?? {}) });
+  if (tools.length === 0) {
+    // Help never touches the network, so a first run has no tool list yet.
+    program.addHelpText(
+      "after",
+      `
+No tool commands are listed yet: the list comes from the Voyagier MCP server and is fetched on the first tool
+command you run, or now with: voyagier doctor`,
+    );
+  }
+
+  // 3.x commands that no longer exist: hidden stubs with the replacement.
+  registerRemovedCommandStubs(program, new Set(tools.map((t) => t.name)));
 
   // Applied after the whole tree is built so every subcommand is covered
   // (each command holds its own output configuration).

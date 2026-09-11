@@ -1,0 +1,247 @@
+import { describe, it, expect, jest } from "@jest/globals";
+import { Command } from "commander";
+import { readFileSync } from "node:fs";
+import { CliErrorCode } from "../errors.js";
+import { McpClient, type McpToolDescriptor, type McpToolResult } from "./client.js";
+import { parseToolContent, registerGeneratedCommands } from "./generated-commands.js";
+
+/**
+ * End-to-end on a bare Commander program: argv → tool arguments → tools/call →
+ * output, with a client whose fetch is scripted.
+ */
+
+const FIXTURE_TOOLS: McpToolDescriptor[] = JSON.parse(
+  readFileSync(new URL("../mcp/fixtures/remote-tools.json", import.meta.url), "utf-8"),
+) as McpToolDescriptor[];
+
+function clientReturning(resultFor: (name: string, args: Record<string, unknown>) => McpToolResult | { error: { code: number; message: string } }, headers: Record<string, string> = {}) {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as { method: string; id?: number; params?: { name: string; arguments: Record<string, unknown> } };
+    const respond = (payload: unknown) => new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json", ...headers } });
+    if (body.method === "initialize") return respond({ jsonrpc: "2.0", id: body.id, result: { serverInfo: { name: "voyagier" } } });
+    if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+    if (body.method === "tools/call") {
+      calls.push({ name: body.params!.name, args: body.params!.arguments });
+      const r = resultFor(body.params!.name, body.params!.arguments);
+      if ("error" in r) return respond({ jsonrpc: "2.0", id: body.id, error: r.error });
+      return respond({ jsonrpc: "2.0", id: body.id, result: r });
+    }
+    return respond({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "nope" } });
+  }) as unknown as typeof fetch;
+  return { client: new McpClient({ url: "https://mcp.example.test/api/mcp", token: "t", fetchImpl }), calls };
+}
+
+function harness(client: McpClient) {
+  const json: unknown[] = [];
+  const human: string[] = [];
+  const program = new Command().exitOverride().configureOutput({ writeErr: () => {}, writeOut: () => {} });
+  registerGeneratedCommands(program, FIXTURE_TOOLS, {
+    version: "0.0.0-test",
+    createClient: () => client,
+    writeJson: (d) => json.push(d),
+    writeHuman: (t) => human.push(t),
+  });
+  program.commands.forEach((c) => c.exitOverride().configureOutput({ writeErr: () => {}, writeOut: () => {} }));
+  return { program, json, human, run: (argv: string[]) => program.parseAsync(["node", "voyagier", ...argv]) };
+}
+
+const text = (obj: unknown): McpToolResult => ({ content: [{ type: "text", text: JSON.stringify(obj) }] });
+
+describe("generated commands", () => {
+  it("registers every fixture tool once and skips names already taken", () => {
+    const program = new Command();
+    program.command("quote").action(() => {});
+    const names = registerGeneratedCommands(program, FIXTURE_TOOLS, { version: "0" });
+    expect(names).not.toContain("quote");
+    expect(names).toContain("plans_list");
+    expect(names.length).toBe(FIXTURE_TOOLS.length - 1);
+  });
+
+  it("--json prints the parsed text block content, sanitized", async () => {
+    const { client, calls } = clientReturning(() => text({ myTripPlans: { items: [{ id: "p1", title: "Trip \u001b[31mred\u001b[0m" }], count: 1 } }));
+    const { run, json, human } = harness(client);
+    await run(["plans_list", "--limit", "1", "--relationship", "owner", "--json"]);
+    expect(calls).toEqual([{ name: "plans_list", args: { limit: 1, relationship: "owner" } }]);
+    expect(json).toEqual([{ myTripPlans: { items: [{ id: "p1", title: "Trip red" }], count: 1 } }]);
+    expect(human).toEqual([]);
+  });
+
+  it("under --json writes nothing to stderr and nothing but the payload to stdout (agent substrate)", async () => {
+    const { client } = clientReturning(() => text({ myTripPlans: { count: 0 } }));
+    const stderrWrites: string[] = [];
+    const stdoutWrites: string[] = [];
+    const errSpy = jest.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      stderrWrites.push(String(chunk));
+      return true;
+    });
+    const outSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdoutWrites.push(String(chunk));
+      return true;
+    });
+    try {
+      const program = new Command().exitOverride();
+      registerGeneratedCommands(program, FIXTURE_TOOLS, { version: "0", createClient: () => client });
+      await program.parseAsync(["node", "voyagier", "plans_list", "--json"]);
+    } finally {
+      errSpy.mockRestore();
+      outSpy.mockRestore();
+    }
+    expect(stderrWrites).toEqual([]);
+    expect(stdoutWrites).toHaveLength(1);
+    expect(JSON.parse(stdoutWrites[0])).toEqual({ myTripPlans: { count: 0 } });
+  });
+
+  it("renders a human view for tools that have one, JSON otherwise", async () => {
+    const { client } = clientReturning((name) =>
+      name === "plan_status"
+        ? text({ tripPlanStatus: { tripPlanId: "p1", title: "Doe", readiness: "ReadyToBook", goals: [] } })
+        : text({ tripPlanClients: [{ id: "c1", name: "Jane Doe" }] }),
+    );
+    const { run, human } = harness(client);
+    await run(["plan_status", "--plan_id", "p1"]);
+    expect(human[0]).toContain("Doe");
+    expect(human[0]).toContain("ReadyToBook");
+    await run(["clients_list"]);
+    expect(JSON.parse(human[1])).toEqual({ tripPlanClients: [{ id: "c1", name: "Jane Doe" }] });
+  });
+
+  it("strips terminal escapes from remote tool metadata before it reaches help or the spinner", async () => {
+    const hostile: McpToolDescriptor[] = [
+      {
+        name: "evil_tool",
+        title: "Nice \u001b[31mred\u001b[0m title",
+        description: "Desc \u001b]0;pwned\u0007 here",
+        inputSchema: {
+          type: "object",
+          properties: {
+            mode: { type: "string", description: "Mode \u001b[2Jcleared", enum: ["a\u001b[1mb", "c"] },
+          },
+          required: ["mode"],
+        },
+      },
+    ];
+    const program = new Command();
+    registerGeneratedCommands(program, hostile, { version: "0" });
+    const cmd = program.commands.find((c) => c.name() === "evil_tool")!;
+    const help = cmd.helpInformation() + cmd.summary();
+    expect(help).toContain("Nice red title");
+    // The OSC title-set sequence is removed whole, payload included.
+    expect(help).toContain("Desc  here");
+    expect(help).not.toContain("pwned");
+    expect(help).toContain("Mode cleared");
+    expect(help).toContain("ab");
+    // eslint-disable-next-line no-control-regex
+    expect(help).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
+  });
+
+  it("skips a tool whose property or tool name fails the allowlist, with one stderr warning each — names are never rewritten", () => {
+    const warnings: string[] = [];
+    const tools: McpToolDescriptor[] = [
+      { name: "ok_tool", inputSchema: { type: "object", properties: { plan_id: { type: "string" } } } },
+      { name: "bad_param", inputSchema: { type: "object", properties: { "plan\u001b[31m_id": { type: "string" } } } },
+      { name: "bad\u001bname", inputSchema: { type: "object", properties: {} } },
+      { name: "spaced name", inputSchema: { type: "object", properties: {} } },
+    ];
+    const program = new Command();
+    const registered = registerGeneratedCommands(program, tools, { version: "0", warn: (m) => warnings.push(m) });
+    // Identity is validated on the RAW name: an escape in a tool name is not
+    // "cleaned" into a different (valid) name, the descriptor is refused.
+    expect(registered).toEqual(["ok_tool"]);
+    expect(program.commands.map((c) => c.name())).toEqual(["ok_tool"]);
+    expect(warnings).toHaveLength(3);
+    expect(warnings[0]).toMatch(/Skipped server tool bad_param: Input property name .* is not a valid flag name/);
+    expect(warnings[1]).toMatch(/invalid name "badname"/); // shown sanitized, never registered
+    expect(warnings[2]).toMatch(/invalid name "spaced name"/);
+    // eslint-disable-next-line no-control-regex
+    expect(warnings.join("")).not.toMatch(/\u001b/);
+  });
+
+  it("a hostile descriptor cannot take a real tool's name: the real tool registers with ITS schema (review finding)", () => {
+    const warnings: string[] = [];
+    const tools: McpToolDescriptor[] = [
+      // Hostile first: after string sanitization this would read "badname".
+      { name: "bad\u001bname", description: "pwned", inputSchema: { type: "object", properties: { evil: { type: "string" } } } },
+      // The server's real tool of that name, listed second.
+      { name: "badname", description: "real", inputSchema: { type: "object", properties: { plan_id: { type: "string" } } } },
+    ];
+    const program = new Command();
+    const registered = registerGeneratedCommands(program, tools, { version: "0", warn: (m) => warnings.push(m) });
+    expect(registered).toEqual(["badname"]);
+    const cmd = program.commands.find((c) => c.name() === "badname")!;
+    const flags = cmd.options.map((o) => o.long);
+    expect(flags).toContain("--plan_id");
+    expect(flags).not.toContain("--evil");
+    expect(cmd.description()).toBe("real");
+    expect(warnings).toHaveLength(1);
+  });
+
+  it("serializes the sanitized structuredContent for tools without a renderer", async () => {
+    const { client } = clientReturning(() => ({
+      content: [{ type: "text", text: "summary text" }],
+      structuredContent: { tripPlanClients: [{ id: "c1", name: "Jane \u001b[31mDoe\u001b[0m" }] },
+    }));
+    const { run, human } = harness(client);
+    await run(["clients_list"]);
+    expect(JSON.parse(human[0])).toEqual({ tripPlanClients: [{ id: "c1", name: "Jane Doe" }] });
+  });
+
+  it("sanitizes tools/list at the client boundary", async () => {
+    const { McpClient: Client } = await import("./client.js");
+    const fetchImpl = (async (_i: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { method: string; id?: number };
+      const respond = (payload: unknown) => new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+      if (body.method === "initialize") return respond({ jsonrpc: "2.0", id: body.id, result: { serverInfo: { name: "voy\u001b[31magier" } } });
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      return respond({ jsonrpc: "2.0", id: body.id, result: { tools: [{ name: "x", title: "T\u001b[0m", inputSchema: { properties: { p: { description: "\u001b[2Jd" } } } }] } });
+    }) as unknown as typeof fetch;
+    const client = new Client({ url: "https://mcp.example.test/api/mcp", token: "***", fetchImpl });
+    const tools = await client.toolsList();
+    expect(tools[0].title).toBe("T");
+    expect(tools[0].inputSchema?.properties?.p.description).toBe("d");
+    expect(client.server?.serverInfo?.name).toBe("voyagier");
+  });
+
+  it("sanitizes structuredContent before rendering", async () => {
+    const { client } = clientReturning(() => ({
+      content: [{ type: "text", text: "unstructured" }],
+      structuredContent: { tripPlanStatus: { readiness: "Booked", title: "Plan \u001b[31mred\u001b[0m \u0007bell" } },
+    }));
+    const { run, human } = harness(client);
+    await run(["plan_status", "--plan_id", "p1"]);
+    expect(human[0]).toContain("Plan red bell");
+    // eslint-disable-next-line no-control-regex
+    expect(human[0].replace(/\u001b\[[0-9;]*m/g, "")).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
+    expect(human[0]).not.toContain("\u001b[31m");
+  });
+
+  it("prefers structuredContent for rendering when the server sends it", async () => {
+    const { client } = clientReturning(() => ({
+      content: [{ type: "text", text: "unstructured" }],
+      structuredContent: { tripPlanStatus: { readiness: "Booked", title: "Structured" } },
+    }));
+    const { run, human } = harness(client);
+    await run(["plan_status", "--plan_id", "p1"]);
+    expect(human[0]).toContain("Structured");
+  });
+
+  it("surfaces an isError result as API_ERROR with the tool's text", async () => {
+    const { client } = clientReturning(() => ({ isError: true, content: [{ type: "text", text: "Trip plan p1 not found" }] }));
+    const { run } = harness(client);
+    await expect(run(["plan_status", "--plan_id", "p1", "--json"])).rejects.toMatchObject({ code: CliErrorCode.API_ERROR, message: "Trip plan p1 not found" });
+  });
+
+  it("passes JSON and array flags through as structured arguments", async () => {
+    const travellers = [{ first_name: "Jane", last_name: "Doe", declared_type: "Adult" }];
+    const { client, calls } = clientReturning(() => text({ addTripPlanTravellers: { added: 1 } }));
+    const { run } = harness(client);
+    await run(["travellers_add", "--plan_id", "p1", "--travellers", JSON.stringify(travellers), "--json"]);
+    expect(calls[0].args).toEqual({ plan_id: "p1", travellers });
+  });
+
+  it("parseToolContent: one block → value, several → array, non-JSON text stays a string", () => {
+    expect(parseToolContent({ content: [{ type: "text", text: '{"a":1}' }] })).toEqual({ a: 1 });
+    expect(parseToolContent({ content: [{ type: "text", text: "plain" }, { type: "text", text: "[1]" }] })).toEqual(["plain", [1]]);
+    expect(parseToolContent({ content: [{ type: "image", data: "…", mimeType: "image/png" }] })).toEqual({ type: "image", data: "…", mimeType: "image/png" });
+  });
+});

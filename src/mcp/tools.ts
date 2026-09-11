@@ -24,7 +24,7 @@
  *    validation — the builders stay pure. See the `optionId` schema below.
  */
 import { z } from "zod";
-import { SELECTION_SCOPES, DEFAULT_SELECTION_SCOPE } from "../commands/plans/types.js";
+import { SELECTION_SCOPES, DEFAULT_SELECTION_SCOPE } from "./selection-scopes.js";
 import { OPTION_ID_PATTERN, OPTION_ID_ERROR } from "../utils.js";
 
 /**

@@ -1,147 +1,50 @@
-import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@jest/globals";
+import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { Command } from "commander";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { buildSchema, introspectionFromSchema, buildClientSchema, getIntrospectionQuery } from "graphql";
-import { CliError, CliErrorCode } from "../errors.js";
+import { McpClient } from "../mcp-client/client.js";
+import { clearToolsCache, readToolsCache, toolsSurfaceHash, writeToolsCache } from "../mcp-client/tools-cache.js";
+import { compareSemver, registerDoctorCommand, rollUpStatus, runDoctor, type DoctorReport } from "./doctor.js";
 
-// ── Mocks ──────────────────────────────────────────────────────────────────
+/**
+ * `voyagier doctor` against a scripted MCP server. Every collaborator is
+ * injected (client factory, credentials, registry fetch), so no module mocks.
+ */
 
-const mockGraphql = jest.fn();
-const mockCredentialsExist = jest.fn();
-const mockGetUserContext = jest.fn();
-const mockGetApiUrl = jest.fn().mockReturnValue("https://dev.voyagier.com/api");
-const mockGetConfiguredApiUrl = jest.fn().mockReturnValue("https://dev.voyagier.com/api");
-const mockJsonOutput = jest.fn();
-const mockFetch = jest.fn();
+const URL = "https://mcp.example.test/api/mcp";
+const TOOLS = [{ name: "plans_list" }, { name: "plan_status" }];
 
-jest.unstable_mockModule("../api.js", () => ({
-  graphql: mockGraphql,
-  AuthError: class AuthError extends Error {
-    constructor(m: string) {
-      super(m);
-      this.name = "AuthError";
+type Mode = "ok" | "ok-with-whoami" | "auth" | "network" | "server-error" | "whoami-fails";
+
+function scriptedClient(mode: Mode): McpClient {
+  const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as { method: string; id?: number; params?: { name?: string } };
+    const respond = (payload: unknown, status = 200) => new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json" } });
+    if (mode === "network") throw new TypeError("fetch failed");
+    if (mode === "auth") return new Response("", { status: 401 });
+    if (mode === "server-error") return new Response("oops", { status: 500, statusText: "Internal Server Error" });
+    if (body.method === "initialize") return respond({ jsonrpc: "2.0", id: body.id, result: { serverInfo: { name: "voyagier", version: "1.2.3" } } });
+    if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+    if (body.method === "tools/list") {
+      const tools = mode === "ok" ? TOOLS : [...TOOLS, { name: "whoami" }];
+      return respond({ jsonrpc: "2.0", id: body.id, result: { tools } });
     }
-  },
-}));
-
-jest.unstable_mockModule("../config.js", () => ({
-  credentialsExist: mockCredentialsExist,
-  getApiUrl: mockGetApiUrl,
-  getConfiguredApiUrl: mockGetConfiguredApiUrl,
-  getUserContext: mockGetUserContext,
-  // doctor.ts falls back to CONFIG_DIR for its state-dir; specs set
-  // VOYAGIER_STATE_DIR explicitly, so this value is never dereferenced.
-  CONFIG_DIR: "/tmp/voyagier-doctor-spec-config",
-}));
-
-jest.unstable_mockModule("../output.js", () => ({
-  jsonOutput: mockJsonOutput,
-}));
-
-// ── Dynamic imports ────────────────────────────────────────────────────────
-
-let registerDoctorCommand: (program: Command, version: string) => void;
-let checkApiUrlConfig: () => { name: string; status: "PASS" | "WARN" | "FAIL"; message: string; details?: Record<string, unknown> } | null;
-let rollUpStatus: (checks: { status: "PASS" | "WARN" | "FAIL" }[]) => "PASS" | "WARN" | "FAIL";
-let collectCliOperations: () => Array<{ name: string; operation: string }>;
-let validateOperationsAgainstSchema: (
-  schema: any,
-  ops: Array<{ name: string; operation: string }>,
-) => Array<{ name: string; errors: string[] }>;
-let buildSchemaDriftCheck: (
-  opsCount: number,
-  drifted: Array<{ name: string; errors: string[] }>,
-) => { name: string; status: "PASS" | "WARN" | "FAIL"; message: string; details?: Record<string, unknown> };
-
-beforeAll(async () => {
-  const mod = await import("./doctor.js");
-  registerDoctorCommand = mod.registerDoctorCommand;
-  checkApiUrlConfig = mod.checkApiUrlConfig;
-  rollUpStatus = mod.rollUpStatus;
-  collectCliOperations = mod.collectCliOperations;
-  validateOperationsAgainstSchema = mod.validateOperationsAgainstSchema;
-  buildSchemaDriftCheck = mod.buildSchemaDriftCheck;
-});
-
-// A small but real introspection result, used to drive the live-schema check
-// without a 900KB fixture. Build SDL -> introspection -> client schema.
-function fixtureIntrospection() {
-  const sdl = `
-    type Query {
-      tripPlans(page: Int, limit: Int): PlanPage
-      tripPlanClients: ClientPage
+    if (body.method === "tools/call" && body.params?.name === "whoami") {
+      if (mode === "whoami-fails") return respond({ jsonrpc: "2.0", id: body.id, result: { isError: true, content: [{ type: "text", text: "profile unavailable" }] } });
+      return respond({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: JSON.stringify({ me: { email: "jane@example.com", isTravelAdvisor: true } }) }] } });
     }
-    type PlanPage { count: Int }
-    type ClientPage { count: Int }
-  `;
-  return introspectionFromSchema(buildSchema(sdl));
+    return respond({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "nope" } });
+  }) as unknown as typeof fetch;
+  return new McpClient({ url: URL, token: "t", fetchImpl });
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+const registryFetch = (version = "1.8.1") =>
+  (async () => new Response(JSON.stringify({ version }), { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
 
-function buildProgram(): Command {
-  const p = new Command();
-  p.exitOverride();
-  registerDoctorCommand(p, "1.8.1");
-  return p;
+function check(report: DoctorReport, name: string) {
+  return report.checks.find((c) => c.name === name)!;
 }
-
-let stdoutSpy: jest.SpiedFunction<(buf: string | Uint8Array) => boolean>;
-let stderrSpy: jest.SpiedFunction<(buf: string | Uint8Array) => boolean>;
-let exitSpy: jest.SpiedFunction<typeof process.exit>;
-const originalFetch = globalThis.fetch;
-
-beforeEach(() => {
-  mockGraphql.mockReset();
-  mockCredentialsExist.mockReset();
-  mockGetUserContext.mockReset();
-  mockJsonOutput.mockReset();
-  mockFetch.mockReset();
-  stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation(() => true);
-  stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-  exitSpy = jest.spyOn(process, "exit").mockImplementation(((_code?: number) => {
-    return undefined as never;
-  }) as typeof process.exit);
-  // Stub the state dir to an empty temp dir so checkStateFiles() never reads the real ~/.voyagier/.
-  // Individual tests that exercise state-files behavior override this via `setStateDir(...)`.
-  setStateDir(mkdtempSync(join(tmpdir(), "vd-empty-")));
-  // Default: fetch returns a basic OK for reachability + a recent-version response.
-  // Each test that needs different fetch behavior calls mockFetch.mockImplementation directly.
-  globalThis.fetch = mockFetch as unknown as typeof fetch;
-  mockFetch.mockImplementation(async (input: unknown) => {
-    const url = String(input);
-    if (url.includes("registry.npmjs.org")) {
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ version: "1.8.1" }),
-      } as unknown as Response;
-    }
-    return {
-      ok: true,
-      status: 200,
-      statusText: "OK",
-      json: async () => ({ data: { __typename: "Query" } }),
-    } as unknown as Response;
-  });
-});
-
-afterEach(() => {
-  stdoutSpy.mockRestore();
-  stderrSpy.mockRestore();
-  exitSpy.mockRestore();
-  globalThis.fetch = originalFetch;
-  // Cleanup temp state dirs created during the test.
-  for (const dir of stateDirsCreated) {
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
-  }
-  stateDirsCreated.length = 0;
-  delete process.env.VOYAGIER_STATE_DIR;
-});
-
-// ── State-dir helpers ──────────────────────────────────────────────────────
 
 const stateDirsCreated: string[] = [];
 function setStateDir(dir: string): string {
@@ -158,583 +61,265 @@ function makeStateDir(payloads: Record<string, unknown>): string {
   return setStateDir(dir);
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────
-
 describe("rollUpStatus", () => {
   it("returns PASS when all checks pass", () => {
-    expect(rollUpStatus([{ status: "PASS" }, { status: "PASS" }])).toBe("PASS");
+    expect(rollUpStatus([{ name: "a", status: "PASS", message: "" }])).toBe("PASS");
   });
   it("returns WARN when any check warns and none fail", () => {
-    expect(rollUpStatus([{ status: "PASS" }, { status: "WARN" }])).toBe("WARN");
+    expect(rollUpStatus([{ name: "a", status: "PASS", message: "" }, { name: "b", status: "WARN", message: "" }])).toBe("WARN");
   });
   it("returns FAIL when any check fails (overrides WARN)", () => {
-    expect(rollUpStatus([{ status: "WARN" }, { status: "FAIL" }])).toBe("FAIL");
+    expect(rollUpStatus([{ name: "a", status: "WARN", message: "" }, { name: "b", status: "FAIL", message: "" }])).toBe("FAIL");
   });
 });
 
-describe("checkApiUrlConfig", () => {
+describe("runDoctor", () => {
+  const savedEnv = { ...process.env };
+  beforeEach(() => {
+    process.env.VOYAGIER_MCP_URL = URL;
+    clearToolsCache();
+    setStateDir(mkdtempSync(join(tmpdir(), "vd-empty-")));
+  });
   afterEach(() => {
-    mockGetApiUrl.mockReturnValue("https://dev.voyagier.com/api");
-    mockGetConfiguredApiUrl.mockReturnValue("https://dev.voyagier.com/api");
+    process.env = { ...savedEnv };
+    clearToolsCache();
+    for (const dir of stateDirsCreated) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+    stateDirsCreated.length = 0;
   });
 
-  it("is silent when the configured URL is already the API base", () => {
-    expect(checkApiUrlConfig()).toBeNull();
+  it("PASSes auth + mcp (tool count, surface hash, refreshed cache) and skips whoami when the server lacks the tool", async () => {
+    const previousAt = new Date(Date.now() - 3 * 3600_000).toISOString();
+    const previousHash = toolsSurfaceHash([{ name: "old" }]);
+    writeToolsCache({ url: URL, fetchedAt: previousAt, surfaceHash: previousHash, tools: [{ name: "old" }] });
+    const report = await runDoctor("1.8.1", { createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch(), now: () => Date.parse("2026-09-10T22:00:00.000Z") });
+    expect(check(report, "auth").status).toBe("PASS");
+    const mcp = check(report, "mcp");
+    expect(mcp.status).toBe("PASS");
+    const hash = toolsSurfaceHash(TOOLS);
+    expect(mcp.message).toContain(`${URL} · 2 tools · server voyagier 1.2.3 · surface ${hash} (changed from ${previousHash})`);
+    // Absolute timestamps only — no relative "3h ago".
+    expect(mcp.message).toContain("tool list refreshed 2026-09-10T22:00:00.000Z");
+    expect(mcp.message).toContain(`previous list ${previousAt}`);
+    expect(mcp.message).not.toMatch(/ago\b/);
+    expect(mcp.details).toMatchObject({ toolCount: 2, surfaceHash: hash, previousSurfaceHash: previousHash, listedAt: "2026-09-10T22:00:00.000Z", tools: ["plan_status", "plans_list"] });
+    expect(readToolsCache()?.tools).toEqual(TOOLS);
+    const whoami = check(report, "whoami");
+    expect(whoami.status).toBe("PASS");
+    expect(whoami.message).toMatch(/does not publish a whoami tool yet/);
+    expect(check(report, "version")).toMatchObject({ status: "PASS", message: "Running latest (v1.8.1)" });
+    expect(report.overall).toBe("PASS");
   });
 
-  it("WARNs with the configured and effective URLs when normalization changed the value", () => {
-    mockGetConfiguredApiUrl.mockReturnValue("https://mcp.voyagier.com/api/mcp");
-    mockGetApiUrl.mockReturnValue("https://mcp.voyagier.com/api");
-    const check = checkApiUrlConfig();
-    expect(check?.status).toBe("WARN");
-    expect(check?.name).toBe("api-url");
-    expect(check?.message).toContain("https://mcp.voyagier.com/api/mcp");
-    expect(check?.message).toContain('normalized to "https://mcp.voyagier.com/api"');
+  it("calls whoami when the server publishes it and reports the identity", async () => {
+    const report = await runDoctor("1.8.1", { createClient: () => scriptedClient("ok-with-whoami"), credentialsExist: () => true, fetchImpl: registryFetch() });
+    expect(check(report, "whoami")).toMatchObject({ status: "PASS", message: "Authenticated as jane@example.com (traveladvisor)" });
   });
 
-  it("sanitizes a configured URL carrying terminal escapes before printing it", () => {
-    mockGetConfiguredApiUrl.mockReturnValue("https://mcp.voyagier.com/api/mcp\u001b[31m");
-    mockGetApiUrl.mockReturnValue("https://mcp.voyagier.com/api");
-    const check = checkApiUrlConfig();
-    expect(check?.status).toBe("WARN");
-    expect(check?.message).not.toContain("\u001b");
-    expect(String(check?.details?.fix)).toContain("remote connector");
+  it("WARNs (not FAILs) when whoami itself errors", async () => {
+    const report = await runDoctor("1.8.1", { createClient: () => scriptedClient("whoami-fails"), credentialsExist: () => true, fetchImpl: registryFetch() });
+    expect(check(report, "whoami")).toMatchObject({ status: "WARN", message: expect.stringContaining("profile unavailable") });
+    expect(report.overall).toBe("WARN");
   });
 
-  it("stays out of the way when the URL itself is invalid (other checks report that)", () => {
-    mockGetApiUrl.mockImplementation(() => {
-      throw new CliError(CliErrorCode.VALIDATION, "Insecure API URL");
+  it("FAILs auth when no credentials exist and skips the network checks", async () => {
+    let touched = false;
+    const report = await runDoctor("1.8.1", {
+      createClient: () => {
+        touched = true;
+        return scriptedClient("ok");
+      },
+      credentialsExist: () => false,
+      fetchImpl: registryFetch(),
     });
-    expect(checkApiUrlConfig()).toBeNull();
+    expect(check(report, "auth").status).toBe("FAIL");
+    expect(check(report, "auth").message).toMatch(/voyagier auth login/);
+    expect(check(report, "mcp").status).toBe("WARN");
+    expect(check(report, "whoami").status).toBe("WARN");
+    expect(touched).toBe(false);
+    expect(report.overall).toBe("FAIL");
+  });
+
+  it("FAILs mcp when the token is rejected", async () => {
+    const report = await runDoctor("1.8.1", { createClient: () => scriptedClient("auth"), credentialsExist: () => true, fetchImpl: registryFetch() });
+    expect(check(report, "mcp")).toMatchObject({ status: "FAIL", message: expect.stringContaining("Token rejected") });
+    expect(check(report, "whoami").status).toBe("WARN");
+    expect(report.overall).toBe("FAIL");
+  });
+
+  it("FAILs mcp on a network error and WARNs on other server errors", async () => {
+    const net = await runDoctor("1.8.1", { createClient: () => scriptedClient("network"), credentialsExist: () => true, fetchImpl: registryFetch() });
+    expect(check(net, "mcp")).toMatchObject({ status: "FAIL", message: expect.stringContaining("could not reach") });
+    const srv = await runDoctor("1.8.1", { createClient: () => scriptedClient("server-error"), credentialsExist: () => true, fetchImpl: registryFetch() });
+    expect(check(srv, "mcp")).toMatchObject({ status: "WARN", message: expect.stringContaining("500") });
+  });
+
+  it("FAILs mcp when VOYAGIER_MCP_URL is insecure", async () => {
+    process.env.VOYAGIER_MCP_URL = "http://mcp.example.test/api/mcp";
+    const report = await runDoctor("1.8.1", { createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch() });
+    expect(check(report, "mcp")).toMatchObject({ status: "FAIL", message: expect.stringContaining("Insecure") });
+  });
+
+  it("WARNs when a newer version is on npm, and when the registry is unreachable", async () => {
+    const outdated = await runDoctor("1.8.1", { createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch("1.9.0") });
+    expect(check(outdated, "version")).toMatchObject({ status: "WARN", details: { current: "1.8.1", latest: "1.9.0" } });
+    const offline = await runDoctor("1.8.1", {
+      createClient: () => scriptedClient("ok"),
+      credentialsExist: () => true,
+      fetchImpl: (async () => {
+        throw new TypeError("offline");
+      }) as unknown as typeof fetch,
+    });
+    expect(check(offline, "version")).toMatchObject({ status: "WARN", message: expect.stringContaining("offline") });
+    expect(offline.overall).toBe("WARN");
+  });
+
+  describe("api-url (GraphQL API base still used by auth)", () => {
+    it("adds a WARN when the configured API URL had to be normalized (env var pointing at the MCP endpoint)", async () => {
+      process.env.VOYAGIER_TOKEN = "***";
+      process.env.VOYAGIER_API_URL = "https://mcp.voyagier.com/api/mcp";
+      const report = await runDoctor("1.8.1", { createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch() });
+      const apiUrl = check(report, "api-url");
+      expect(apiUrl.status).toBe("WARN");
+      // Both values JSON-quoted (raw configured value cannot mangle the line).
+      expect(apiUrl.message).toContain('"https://mcp.voyagier.com/api/mcp" was normalized to "https://mcp.voyagier.com/api"');
+      expect(String(apiUrl.details?.fix)).toContain("VOYAGIER_MCP_URL");
+    });
+
+    it("stays silent when the configured URL is already the API base", async () => {
+      process.env.VOYAGIER_TOKEN = "***";
+      process.env.VOYAGIER_API_URL = "https://travel.voyagier.com/api";
+      const report = await runDoctor("1.8.1", { createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch() });
+      expect(report.checks.find((c) => c.name === "api-url")).toBeUndefined();
+    });
+  });
+
+  describe("state-files", () => {
+    const deps = () => ({ createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch() });
+
+    it("reports PASS when no state dir exists (clean install)", async () => {
+      process.env.VOYAGIER_STATE_DIR = join(tmpdir(), "vd-nonexistent-" + Date.now());
+      const r = await runDoctor("1.8.1", deps());
+      expect(check(r, "state-files")).toMatchObject({ status: "PASS", message: expect.stringContaining("clean install") });
+    });
+
+    it("reports PASS when state dir is empty", async () => {
+      makeStateDir({});
+      expect(check(await runDoctor("1.8.1", deps()), "state-files").status).toBe("PASS");
+    });
+
+    it("reports PASS for fresh JSON with embedded ISO timestamp", async () => {
+      makeStateDir({ "last-search.json": { timestamp: new Date().toISOString(), data: {} } });
+      expect(check(await runDoctor("1.8.1", deps()), "state-files").status).toBe("PASS");
+    });
+
+    it("reports WARN when embedded timestamp is older than 24h (even if file mtime is fresh)", async () => {
+      makeStateDir({ "last-search.json": { timestamp: new Date(Date.now() - 48 * 3600_000).toISOString(), data: {} } });
+      const r = await runDoctor("1.8.1", deps());
+      expect(check(r, "state-files")).toMatchObject({ status: "WARN", message: expect.stringMatching(/older than 24h/) });
+      expect(r.overall).toBe("WARN");
+    });
+
+    it("reports WARN when a state file is corrupt JSON", async () => {
+      makeStateDir({ "last-search.json": "{ this is not json" });
+      expect(check(await runDoctor("1.8.1", deps()), "state-files")).toMatchObject({ status: "WARN", details: { corrupt: ["last-search.json"] } });
+    });
+
+    it("falls back to mtime when payload omits timestamp (legacy file)", async () => {
+      makeStateDir({ "last-search.json": { data: { foo: "bar" } } });
+      expect(check(await runDoctor("1.8.1", deps()), "state-files").status).toBe("PASS");
+    });
   });
 });
 
-describe("voyagier doctor", () => {
-  // Note: the command-level schema check validates the REAL CLI surface
-  // (collectCliOperations) against whatever schema introspection returns.
-  // Driving all ~88 ops to PASS would require serving the full live schema as
-  // a fixture, so the end-to-end command tests assert the auth/version/state
-  // wiring and the schema-check's resilience branches; the field-by-field
-  // validation correctness is unit-tested directly against a fixture schema
-  // below (validateOperationsAgainstSchema / collectCliOperations).
-  it("reports PASS for non-schema checks; schema WARNs inconclusive when introspection can't build", async () => {
-    mockCredentialsExist.mockReturnValue(true);
-    mockGetUserContext.mockReturnValue({ email: "daniel@voyagier.com" });
-    // Auth ping ok; introspection returns an unbuildable shape => schema WARN (not FAIL).
-    mockGraphql.mockResolvedValue({ __schema: { queryType: { name: "Query" } } });
+describe("voyagier doctor (command)", () => {
+  const savedEnv = { ...process.env };
+  let stdoutSpy: jest.SpiedFunction<typeof process.stdout.write>;
+  let logSpy: jest.SpiedFunction<typeof console.log>;
+  let exitSpy: jest.SpiedFunction<typeof process.exit>;
+  let out: string[];
+  beforeEach(() => {
+    process.env.VOYAGIER_MCP_URL = URL;
+    clearToolsCache();
+    setStateDir(mkdtempSync(join(tmpdir(), "vd-empty-")));
+    out = [];
+    stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      out.push(String(chunk));
+      return true;
+    });
+    logSpy = jest.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      out.push(args.join(" "));
+    });
+    exitSpy = jest.spyOn(process, "exit").mockImplementation((() => undefined as never) as typeof process.exit);
+  });
+  afterEach(() => {
+    process.env = { ...savedEnv };
+    clearToolsCache();
+    stdoutSpy.mockRestore();
+    logSpy.mockRestore();
+    exitSpy.mockRestore();
+    for (const dir of stateDirsCreated) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+    stateDirsCreated.length = 0;
+  });
 
-    const p = buildProgram();
+  it("--json emits { ok, data } and exits 0 on PASS/WARN", async () => {
+    const p = new Command().exitOverride();
+    registerDoctorCommand(p, "1.8.1", { createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch() });
     await p.parseAsync(["node", "test", "doctor", "--json"]);
-
-    expect(mockJsonOutput).toHaveBeenCalledTimes(1);
-    const reported = mockJsonOutput.mock.calls[0][0] as {
-      ok: boolean;
-      data: { overall: string; checks: Array<{ name: string; status: string }> };
-    };
-    // WARN rolls up to overall WARN, ok=true (not a hard fail).
-    expect(reported.ok).toBe(true);
-    expect(reported.data.checks.find((c) => c.name === "auth")?.status).toBe("PASS");
-    expect(reported.data.checks.find((c) => c.name === "version")?.status).toBe("PASS");
-    const schema = reported.data.checks.find((c) => c.name === "schema");
-    expect(schema?.status).toBe("WARN");
-    expect(schema?.message).toMatch(/inconclusive/i);
+    const payload = JSON.parse(out.join("")) as { ok: boolean; data: DoctorReport };
+    // The wrapped envelope every --json surface uses: { ok, data } — no
+    // top-level overall/checks.
+    expect(Object.keys(payload).sort()).toEqual(["data", "ok"]);
+    expect(Object.keys(payload.data).sort()).toEqual(["checks", "overall"]);
+    expect(payload.ok).toBe(true);
+    expect(payload.data.checks.map((c) => c.name)).toEqual(["auth", "mcp", "whoami", "state-files", "version"]);
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("schema check reports a non-degrading skip when the server disables introspection (VOY-1836)", async () => {
-    mockCredentialsExist.mockReturnValue(true);
-    mockGetUserContext.mockReturnValue({ email: "daniel@voyagier.com" });
-    mockGraphql.mockImplementation(async (query: string) => {
-      if (query.includes("DoctorIdentity")) return { me: { email: "daniel@voyagier.com" } };
-      // Production hardening: Apollo refuses introspection.
-      throw new Error("GraphQL introspection is not allowed by Apollo Server");
-    });
-
-    const p = buildProgram();
+  it("--json reports ok:false and exits 1 on FAIL", async () => {
+    const p = new Command().exitOverride();
+    registerDoctorCommand(p, "1.8.1", { createClient: () => scriptedClient("auth"), credentialsExist: () => true, fetchImpl: registryFetch() });
     await p.parseAsync(["node", "test", "doctor", "--json"]);
-
-    const reported = mockJsonOutput.mock.calls[0][0] as {
-      ok: boolean;
-      data: { overall: string; checks: Array<{ name: string; status: string; message: string }> };
-    };
-    const schema = reported.data.checks.find((c) => c.name === "schema");
-    expect(schema?.status).toBe("PASS");
-    expect(schema?.message).toMatch(/introspection/i);
-    expect(schema?.message).toMatch(/not an error/i);
-    // Auth passed via the real authenticated query, so the overall verdict
-    // must not be degraded by the deliberate prod introspection block.
-    expect(reported.data.checks.find((c) => c.name === "auth")?.status).toBe("PASS");
-    expect(reported.data.overall).not.toBe("FAIL");
-  });
-
-  it("reports FAIL when no credentials exist", async () => {
-    mockCredentialsExist.mockReturnValue(false);
-
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-
-    const reported = mockJsonOutput.mock.calls[0][0] as {
-      ok: boolean;
-      data: { overall: string; checks: Array<{ name: string; status: string; message: string }> };
-    };
-    expect(reported.ok).toBe(false);
-    expect(reported.data.overall).toBe("FAIL");
-    const auth = reported.data.checks.find((c) => c.name === "auth");
-    expect(auth?.status).toBe("FAIL");
-    expect(auth?.message).toMatch(/auth login|set-token/);
+    const payload = JSON.parse(out.join("")) as { ok: boolean; data: DoctorReport };
+    expect(payload.ok).toBe(false);
+    expect(payload.data.overall).toBe("FAIL");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("reports FAIL when token is rejected", async () => {
-    mockCredentialsExist.mockReturnValue(true);
-    mockGraphql.mockRejectedValue(new CliError(CliErrorCode.AUTH_FAILED, "401 Unauthorized"));
-
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-
-    const reported = mockJsonOutput.mock.calls[0][0] as {
-      data: { overall: string; checks: Array<{ name: string; status: string }> };
-    };
-    expect(reported.data.overall).toBe("FAIL");
-    expect(reported.data.checks.find((c) => c.name === "auth")?.status).toBe("FAIL");
-  });
-
-  it("resolves the authenticated identity from the API (env-var auth, no cached context)", async () => {
-    mockCredentialsExist.mockReturnValue(true);
-    // Env-var (VOYAGIER_TOKEN) auth has no cached user context on disk.
-    mockGetUserContext.mockReturnValue(null);
-    mockGraphql.mockImplementation(async (query: string) => {
-      if (query.includes("DoctorIdentity")) return { me: { email: "api-user@voyagier.com", name: "API User" } };
-      if (query.includes("IntrospectionQuery")) return { __schema: { queryType: { name: "Query" } } };
-      return { __schema: { queryType: { name: "Query" } } };
-    });
-
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-
-    const reported = mockJsonOutput.mock.calls[0][0] as {
-      data: { checks: Array<{ name: string; status: string; message: string }> };
-    };
-    const auth = reported.data.checks.find((c) => c.name === "auth");
-    expect(auth?.status).toBe("PASS");
-    // Email preferred over name, and over the (absent) cached context.
-    expect(auth?.message).toBe("Authenticated as api-user@voyagier.com");
-  });
-
-  it("falls back to the API name when the identity has no email", async () => {
-    mockCredentialsExist.mockReturnValue(true);
-    mockGetUserContext.mockReturnValue(null);
-    mockGraphql.mockImplementation(async (query: string) => {
-      if (query.includes("DoctorIdentity")) return { me: { name: "Nameless User" } };
-      return { __schema: { queryType: { name: "Query" } } };
-    });
-
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-
-    const reported = mockJsonOutput.mock.calls[0][0] as {
-      data: { checks: Array<{ name: string; status: string; message: string }> };
-    };
-    const auth = reported.data.checks.find((c) => c.name === "auth");
-    expect(auth?.status).toBe("PASS");
-    expect(auth?.message).toBe("Authenticated as Nameless User");
-  });
-
-  it("reports WARN when the identity probe fails with a non-auth error (VOY-1836: the me query IS the auth check)", async () => {
-    mockCredentialsExist.mockReturnValue(true);
-    mockGetUserContext.mockReturnValue({ email: "cached@voyagier.com" });
-    mockGraphql.mockImplementation(async (query: string) => {
-      if (query.includes("DoctorIdentity")) throw new Error("identity read blip");
-      return { __schema: { queryType: { name: "Query" } } };
-    });
-
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-
-    const reported = mockJsonOutput.mock.calls[0][0] as {
-      data: { checks: Array<{ name: string; status: string; message: string }> };
-    };
-    const auth = reported.data.checks.find((c) => c.name === "auth");
-    // The authenticated identity query is now the auth probe itself — a
-    // non-auth failure means the check could not complete (inconclusive).
-    expect(auth?.status).toBe("WARN");
-    expect(auth?.message).toContain("could not complete");
-  });
-
-  it("falls back to cached context when the identity returns no usable fields (still PASS)", async () => {
-    mockCredentialsExist.mockReturnValue(true);
-    mockGetUserContext.mockReturnValue({ email: "cached@voyagier.com" });
-    mockGraphql.mockImplementation(async (query: string) => {
-      if (query.includes("DoctorIdentity")) return { me: {} };
-      return { __schema: { queryType: { name: "Query" } } };
-    });
-
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-
-    const reported = mockJsonOutput.mock.calls[0][0] as {
-      data: { checks: Array<{ name: string; status: string; message: string }> };
-    };
-    const auth = reported.data.checks.find((c) => c.name === "auth");
-    expect(auth?.status).toBe("PASS");
-    expect(auth?.message).toBe("Authenticated as cached@voyagier.com");
-  });
-
-  it("never sends an introspection query as the auth probe (VOY-1836: prod disables introspection)", async () => {
-    mockCredentialsExist.mockReturnValue(true);
-    mockGetUserContext.mockReturnValue(null);
-    mockGraphql.mockImplementation(async (query: string) => {
-      if (query.includes("DoctorIdentity")) return { me: { email: "a@b.c" } };
-      return { __schema: { queryType: { name: "Query" } } };
-    });
-
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-
-    // checkAuth runs before any other GraphQL traffic, so the FIRST query the
-    // doctor sends must be the authenticated identity probe — never any form
-    // of introspection (robust to getIntrospectionQuery() formatting).
-    const firstQuery = mockGraphql.mock.calls[0]?.[0] as string;
-    expect(firstQuery).toContain("DoctorIdentity");
-    expect(firstQuery).not.toMatch(/__schema/);
-  });
-
-  it("reports 'unknown' only when neither API nor cached identity is available", async () => {
-    mockCredentialsExist.mockReturnValue(true);
-    mockGetUserContext.mockReturnValue(null);
-    mockGraphql.mockImplementation(async (query: string) => {
-      if (query.includes("DoctorIdentity")) return { me: null };
-      return { __schema: { queryType: { name: "Query" } } };
-    });
-
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-
-    const reported = mockJsonOutput.mock.calls[0][0] as {
-      data: { checks: Array<{ name: string; status: string; message: string }> };
-    };
-    const auth = reported.data.checks.find((c) => c.name === "auth");
-    expect(auth?.status).toBe("PASS");
-    expect(auth?.message).toBe("Authenticated as unknown");
-  });
-
-  it("reports WARN when version is outdated", async () => {
-    mockCredentialsExist.mockReturnValue(true);
-    mockGetUserContext.mockReturnValue({ email: "daniel@voyagier.com" });
-    mockGraphql.mockResolvedValue({ __schema: { queryType: { name: "Query" } } });
-    mockFetch.mockImplementation(async (input: unknown) => {
-      const url = String(input);
-      if (url.includes("registry.npmjs.org")) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ version: "2.0.0" }),
-        } as unknown as Response;
-      }
-      return {
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        json: async () => ({ data: {} }),
-      } as unknown as Response;
-    });
-
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-
-    const reported = mockJsonOutput.mock.calls[0][0] as {
-      data: { overall: string; checks: Array<{ name: string; status: string; message: string }> };
-    };
-    expect(reported.data.overall).toBe("WARN");
-    const version = reported.data.checks.find((c) => c.name === "version");
-    expect(version?.status).toBe("WARN");
-    expect(version?.message).toMatch(/2\.0\.0/);
-  });
-
-  it("flags schema drift when a real shipped operation has an unknown field", async () => {
-    mockCredentialsExist.mockReturnValue(true);
-    mockGetUserContext.mockReturnValue({ email: "daniel@voyagier.com" });
-    // Auth ping ok; introspection returns the tiny fixture schema. The real CLI
-    // ops (goals, plans get, etc.) reference types the fixture doesn't define =>
-    // genuine drift => schema FAIL. This proves the live-validation path catches
-    // exactly the class of break VOY-1411 was about (the old 2-probe check missed).
-    mockGraphql.mockImplementation(async (query: string) => {
-      if (query.includes("IntrospectionQuery")) return fixtureIntrospection();
-      return { __schema: { queryType: { name: "Query" } } };
-    });
-
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-
-    const reported = mockJsonOutput.mock.calls[0][0] as {
-      data: { overall: string; checks: Array<{ name: string; status: string; details?: { drifted?: string[] } }> };
-    };
-    const schema = reported.data.checks.find((c) => c.name === "schema");
-    expect(schema?.status).toBe("FAIL");
-    expect(schema?.message).toMatch(/drift detected on \d+\/\d+ operation/);
-    expect(Array.isArray(schema?.details?.drifted)).toBe(true);
-    expect(reported.data.overall).toBe("FAIL");
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  it("warns but doesn't fail when version registry is unreachable", async () => {
-    mockCredentialsExist.mockReturnValue(true);
-    mockGetUserContext.mockReturnValue({ email: "daniel@voyagier.com" });
-    mockGraphql.mockResolvedValue({ __schema: { queryType: { name: "Query" } } });
-    mockFetch.mockImplementation(async (input: unknown) => {
-      const url = String(input);
-      if (url.includes("registry.npmjs.org")) {
-        throw new Error("network timeout");
-      }
-      return {
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        json: async () => ({ data: {} }),
-      } as unknown as Response;
-    });
-
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-
-    const reported = mockJsonOutput.mock.calls[0][0] as {
-      ok: boolean;
-      data: { overall: string };
-    };
-    // Version warn shouldn't fail the report
-    expect(reported.ok).toBe(true);
-    expect(reported.data.overall).toBe("WARN");
+  it("human output lists every check with its message", async () => {
+    const p = new Command().exitOverride();
+    registerDoctorCommand(p, "1.8.1", { createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch() });
+    await p.parseAsync(["node", "test", "doctor"]);
+    const text = out.join("\n");
+    expect(text).toContain("Voyagier CLI Doctor");
+    expect(text).toContain("2 tools");
+    expect(text).toContain("All checks passed.");
   });
 });
-
-// ── live-schema validation (the VOY-1411 fix) ───────────────────────────────
-//
-// The end-to-end command tests above exercise the wiring + resilience. These
-// unit tests pin the field-by-field validation correctness against a fixture
-// schema, and — critically — guard against the original bug ever returning:
-// doctor must validate the WHOLE queries.ts surface, not a hardcoded subset.
-
-describe("collectCliOperations", () => {
-  it("collects every GraphQL operation exported from queries.ts", () => {
-    const ops = collectCliOperations();
-    // The surface is large; the exact count drifts as queries are added. The
-    // invariant that matters: it's the WHOLE surface, not a tiny hardcoded set.
-    expect(ops.length).toBeGreaterThan(50);
-    // Known ops that were part of the historical drift chain must be present.
-    const names = ops.map((o) => o.name);
-    expect(names).toContain("LIST_TRIP_PLAN_GOALS");
-    expect(names).toContain("GET_PLAN_DEEP");
-    // Every collected entry is a non-empty operation document.
-    for (const o of ops) {
-      expect(typeof o.operation).toBe("string");
-      expect(o.operation.length).toBeGreaterThan(0);
-      expect(o.operation).toMatch(/^(query|mutation|subscription|fragment|\{)/);
-    }
-  });
-});
-
-describe("buildSchemaDriftCheck — core vs peripheral classification (VOY-1714)", () => {
-  const err = (name: string) => ({ name, errors: ["Cannot query field x"] });
-
-  it("PASS when nothing drifted", () => {
-    expect(buildSchemaDriftCheck(100, [])).toMatchObject({ status: "PASS" });
-  });
-
-  it("WARN with explicit go-ahead when drift is confined to peripheral surfaces", () => {
-    const check = buildSchemaDriftCheck(100, [
-      err("GET_PLACE_BY_ID"),
-      err("SEARCH_PLACES"),
-      err("GET_COMMENTS"),
-      err("GET_BOOKING_RECORDS_BY_USER"),
-    ]);
-    expect(check.status).toBe("WARN");
-    expect(check.message).toMatch(/core compose\/close loop is unaffected; safe to proceed/);
-  });
-
-  it("FAIL naming the core ops when any core-surface op drifted", () => {
-    const check = buildSchemaDriftCheck(100, [err("GET_PLACE_BY_ID"), err("GET_QUOTE_DATA")]);
-    expect(check.status).toBe("FAIL");
-    expect(check.message).toMatch(/1 on CORE surfaces/);
-    expect((check.details as { coreDrifted: string[] }).coreDrifted).toEqual(["GET_QUOTE_DATA"]);
-  });
-
-  it("unknown op names classify as CORE (fail-closed)", () => {
-    expect(buildSchemaDriftCheck(10, [err("SOME_FUTURE_OP")]).status).toBe("FAIL");
-  });
-
-  it("peripheral pattern is token-anchored — REPLACE_* does not match PLACE (fail-closed)", () => {
-    // "REPLACE" contains "PLACE" as a substring; an unanchored pattern would
-    // misclassify a future core op as peripheral and wave the agent through.
-    expect(buildSchemaDriftCheck(10, [err("REPLACE_HOTEL_SELECTION")]).status).toBe("FAIL");
-    // While genuinely peripheral shapes still match at token boundaries:
-    expect(buildSchemaDriftCheck(10, [err("UPSERT_TRIP_PLAN_PLACE")]).status).toBe("WARN");
-  });
-
-  it("peripheral pattern is bounded on BOTH sides — PLACEMENT does not match PLACE (fail-closed)", () => {
-    // Trailing boundary: "PLACEMENT" starts with "PLACE" at a token start; a
-    // pattern without a trailing bound would misclassify it as peripheral.
-    expect(buildSchemaDriftCheck(10, [err("GET_PLACEMENT_FEE")]).status).toBe("FAIL");
-    expect(buildSchemaDriftCheck(10, [err("COMMENTARY_FEED")]).status).toBe("FAIL");
-    // While plural peripheral ops (real names in queries.ts) still match:
-    expect(buildSchemaDriftCheck(10, [err("GET_COMMENTS")]).status).toBe("WARN");
-    expect(buildSchemaDriftCheck(10, [err("SEARCH_PLACES")]).status).toBe("WARN");
-    expect(buildSchemaDriftCheck(10, [err("GET_BOOKING_RECORDS_BY_USER")]).status).toBe("WARN");
-  });
-});
-
-describe("validateOperationsAgainstSchema", () => {
-  const schema = buildClientSchema(
-    introspectionFromSchema(
-      buildSchema(`
-        type Query { tripPlans(page: Int, limit: Int): PlanPage }
-        type PlanPage { count: Int name: String }
-      `),
-    ),
-  );
-
-  it("returns [] when all operations are valid", () => {
-    const drift = validateOperationsAgainstSchema(schema as any, [
-      { name: "GOOD", operation: "{ tripPlans(page:1, limit:1){ count name } }" },
-    ]);
-    expect(drift).toEqual([]);
-  });
-
-  it("reports the field-level error for a drifted operation", () => {
-    const drift = validateOperationsAgainstSchema(schema as any, [
-      { name: "GOOD", operation: "{ tripPlans { count } }" },
-      { name: "DRIFTED", operation: "{ tripPlans { isFulfilled } }" },
-    ]);
-    expect(drift).toHaveLength(1);
-    expect(drift[0].name).toBe("DRIFTED");
-    expect(drift[0].errors.join(" ")).toMatch(/Cannot query field "isFulfilled"/);
-  });
-
-  it("treats a malformed operation as drift (parse error), not a crash", () => {
-    const drift = validateOperationsAgainstSchema(schema as any, [
-      { name: "BROKEN", operation: "{ tripPlans { " },
-    ]);
-    expect(drift).toHaveLength(1);
-    expect(drift[0].errors[0]).toMatch(/parse error/i);
-  });
-
-  it("validates introspection query helper is the canonical graphql one", () => {
-    // Guard: checkSchema fetches via getIntrospectionQuery(); ensure it's the real thing.
-    expect(getIntrospectionQuery()).toMatch(/IntrospectionQuery/);
-  });
-});
-
-// ── state-files branch coverage (Copilot review on PR #44) ──────────────────────────────
-//
-// All tests in this block run against an isolated tmp dir via VOYAGIER_STATE_DIR —
-// no test should ever read the real ~/.voyagier/ directory.
-
-describe("voyagier doctor — state-files", () => {
-  beforeEach(() => {
-    mockCredentialsExist.mockReturnValue(true);
-    mockGetUserContext.mockReturnValue({ email: "daniel@voyagier.com" });
-    mockGraphql.mockResolvedValue({ __schema: { queryType: { name: "Query" } } });
-  });
-
-  it("reports PASS when no state dir exists (clean install)", async () => {
-    // Use a path that doesn't exist
-    process.env.VOYAGIER_STATE_DIR = join(tmpdir(), "vd-nonexistent-" + Date.now());
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-    const reported = mockJsonOutput.mock.calls[0][0] as { data: { checks: Array<{ name: string; status: string; message: string }> } };
-    const stateCheck = reported.data.checks.find((c) => c.name === "state-files");
-    expect(stateCheck?.status).toBe("PASS");
-    expect(stateCheck?.message).toContain("clean install");
-  });
-
-  it("reports PASS when state dir is empty", async () => {
-    makeStateDir({});
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-    const reported = mockJsonOutput.mock.calls[0][0] as { data: { checks: Array<{ name: string; status: string; message: string }> } };
-    const stateCheck = reported.data.checks.find((c) => c.name === "state-files");
-    expect(stateCheck?.status).toBe("PASS");
-  });
-
-  it("reports PASS for fresh JSON with embedded ISO timestamp (just now)", async () => {
-    makeStateDir({
-      "last-search.json": { timestamp: new Date().toISOString(), data: {} },
-    });
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-    const reported = mockJsonOutput.mock.calls[0][0] as { data: { checks: Array<{ name: string; status: string; message: string }> } };
-    const stateCheck = reported.data.checks.find((c) => c.name === "state-files");
-    expect(stateCheck?.status).toBe("PASS");
-  });
-
-  it("reports WARN when embedded timestamp is older than 24h (even if file mtime is fresh)", async () => {
-    const ancient = new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(); // 48h ago
-    makeStateDir({
-      "last-search.json": { timestamp: ancient, data: {} },
-    });
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-    const reported = mockJsonOutput.mock.calls[0][0] as { data: { overall: string; checks: Array<{ name: string; status: string; message: string }> } };
-    const stateCheck = reported.data.checks.find((c) => c.name === "state-files");
-    expect(stateCheck?.status).toBe("WARN");
-    expect(stateCheck?.message).toMatch(/older than 24h|stale/i);
-    expect(reported.data.overall).toBe("WARN");
-  });
-
-  it("reports WARN when a state file is corrupt JSON (recoverable; user can clear state)", async () => {
-    makeStateDir({
-      "last-search.json": "{ this is not json",
-    });
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-    const reported = mockJsonOutput.mock.calls[0][0] as { data: { overall: string; checks: Array<{ name: string; status: string; message: string; details?: { corrupt?: string[] } }> } };
-    const stateCheck = reported.data.checks.find((c) => c.name === "state-files");
-    expect(stateCheck?.status).toBe("WARN");
-    expect(stateCheck?.details?.corrupt).toEqual(["last-search.json"]);
-  });
-
-  it("falls back to mtime when payload omits timestamp (legacy file)", async () => {
-    makeStateDir({
-      "last-search.json": { data: { foo: "bar" } }, // no timestamp
-    });
-    const p = buildProgram();
-    await p.parseAsync(["node", "test", "doctor", "--json"]);
-    const reported = mockJsonOutput.mock.calls[0][0] as { data: { checks: Array<{ name: string; status: string; message: string }> } };
-    const stateCheck = reported.data.checks.find((c) => c.name === "state-files");
-    // File was just written, mtime is fresh → PASS
-    expect(stateCheck?.status).toBe("PASS");
-  });
-});
-
-// ── compareSemver ───────────────────────────────────────────────────────────────────
 
 describe("compareSemver", () => {
-  let compareSemver: (a: string, b: string) => number;
-  beforeAll(async () => {
-    const mod = await import("./doctor.js");
-    compareSemver = (mod as unknown as { compareSemver: typeof compareSemver }).compareSemver;
-  });
-
   it("returns 0 for equal versions", () => {
-    expect(compareSemver("1.8.1", "1.8.1")).toBe(0);
+    expect(compareSemver("2.0.0", "2.0.0")).toBe(0);
   });
   it("returns -1 when current < latest", () => {
-    expect(compareSemver("1.8.0", "1.8.1")).toBe(-1);
     expect(compareSemver("1.8.1", "1.9.0")).toBe(-1);
     expect(compareSemver("1.8.1", "2.0.0")).toBe(-1);
   });
   it("returns 1 when current > latest (dev/prerelease ahead of npm)", () => {
-    expect(compareSemver("2.0.1", "2.0.0")).toBe(1);
-    expect(compareSemver("2.1.0", "2.0.5")).toBe(1);
+    expect(compareSemver("2.1.0", "2.0.0")).toBe(1);
   });
   it("treats prerelease versions as < their release counterpart per semver spec", () => {
     expect(compareSemver("2.0.0-next.0", "2.0.0")).toBe(-1);
     expect(compareSemver("2.0.0", "2.0.0-next.0")).toBe(1);
   });
-  it("is the key fix from Copilot #3178799142: 2.0.1-next.0 is ahead of 2.0.0", () => {
+  it("2.0.1-next.0 is ahead of 2.0.0", () => {
     expect(compareSemver("2.0.1-next.0", "2.0.0")).toBe(1);
   });
   it("returns 0 (no false positive) when either input is unparseable", () => {
-    expect(compareSemver("not-a-version", "1.0.0")).toBe(0);
-    expect(compareSemver("1.0.0", "")).toBe(0);
+    expect(compareSemver("garbage", "2.0.0")).toBe(0);
+    expect(compareSemver("2.0.0", "")).toBe(0);
   });
 });
