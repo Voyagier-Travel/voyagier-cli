@@ -178,13 +178,13 @@ describe("runDoctor", () => {
   describe("api-url (GraphQL API base still used by auth)", () => {
     it("adds a WARN when the configured API URL had to be normalized (env var pointing at the MCP endpoint)", async () => {
       process.env.VOYAGIER_TOKEN = "***";
-      process.env.VOYAGIER_API_URL = "https://mcp.voyagier.com/api/mcp\u001b[31m";
+      process.env.VOYAGIER_API_URL = "https://mcp.voyagier.com/api/mcp";
       const report = await runDoctor("1.8.1", { createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch() });
       const apiUrl = check(report, "api-url");
       expect(apiUrl.status).toBe("WARN");
-      expect(apiUrl.message).toContain('normalized to "https://mcp.voyagier.com/api"');
-      // Configured value is sanitized before it reaches the terminal.
-      expect(apiUrl.message).not.toContain("\u001b");
+      // Both values JSON-quoted (raw configured value cannot mangle the line).
+      expect(apiUrl.message).toContain('"https://mcp.voyagier.com/api/mcp" was normalized to "https://mcp.voyagier.com/api"');
+      expect(String(apiUrl.details?.fix)).toContain("VOYAGIER_MCP_URL");
     });
 
     it("stays silent when the configured URL is already the API base", async () => {

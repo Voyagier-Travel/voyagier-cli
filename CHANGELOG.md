@@ -72,7 +72,7 @@ Replacements marked as planned are tools the server has not published yet; the r
 | `voyagier search flights` | `voyagier search_flights`, `voyagier promote_search` | search_flights explores; promote_search puts a result on a plan goal. |
 | `voyagier search hotels` | `voyagier search_hotels`, `voyagier promote_search` | As above. |
 | `voyagier search activities` | `voyagier search_activities`, `voyagier promote_search` | As above. |
-| `voyagier select` | `voyagier select_option` |  |
+| `voyagier select` | `voyagier select_option` | Row-addressed picks: --participant_choice_id (rows from choices_view). |
 | `voyagier selection-options` | `voyagier get_selection_options` |  |
 | `voyagier refresh-options` | `voyagier refresh_options` |  |
 | `voyagier choices-view` | `voyagier choices_view` |  |
