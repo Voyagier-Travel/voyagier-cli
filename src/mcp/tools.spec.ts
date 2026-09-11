@@ -41,6 +41,7 @@ import {
   buildBookArgs,
   buildBookingStatusArgs,
   buildBookingsListArgs,
+  buildInviteCollaboratorArgs,
   buildAgentDocsArgs,
 } from "./tools.js";
 
@@ -74,6 +75,7 @@ const EXPECTED_TOOL_NAMES = [
   "book",
   "booking_status",
   "bookings_list",
+  "invite_collaborator",
   "agent_docs",
 ];
 
@@ -526,6 +528,26 @@ describe("argv builders", () => {
     expect(buildBookingsListArgs({ plan_id: "p" })).toEqual(["bookings", "list", "--plan", "p", "--json"]);
   });
 
+  it("invite_collaborator: maps onto plans share --email, defaulting the role to viewer", () => {
+    expect(buildInviteCollaboratorArgs({ plan_id: "p", email: "jane@example.com" })).toEqual([
+      "plans", "share", "--plan", "p", "--email", "jane@example.com", "--role", "viewer", "--json",
+    ]);
+    expect(buildInviteCollaboratorArgs({ plan_id: "p", email: "jane@example.com", role: "editor" })).toEqual([
+      "plans", "share", "--plan", "p", "--email", "jane@example.com", "--role", "editor", "--json",
+    ]);
+  });
+
+  it("invite_collaborator: rejects a malformed email and a role outside viewer/editor/agent at the schema boundary", () => {
+    const tool = TOOLS.find((t) => t.name === "invite_collaborator")!;
+    const schema = z.object(tool.inputSchema as z.ZodRawShape);
+    expect(schema.safeParse({ plan_id: "p", email: "not-an-email" }).success).toBe(false);
+    expect(schema.safeParse({ plan_id: "p", email: "jane@example.com", role: "owner" }).success).toBe(false);
+    expect(schema.safeParse({ plan_id: "p", email: "jane@example.com", role: "agent" }).success).toBe(true);
+    // Non-destructive write that never notifies anyone — the description says so.
+    expect(tool.annotations).toEqual({ readOnlyHint: false, destructiveHint: false });
+    expect(tool.description).toContain("DOES NOT EMAIL ANYONE");
+  });
+
   it("book_dry_run: --expect-total only when provided, rendered via moneyArg", () => {
     expect(buildBookDryRunArgs({ plan_id: "p" })).toEqual(["book", "p", "--dry-run", "--json"]);
     const gated = buildBookDryRunArgs({ plan_id: "p", expect_total: 339.1 });
@@ -668,6 +690,7 @@ describe("--json discipline via the table (buildArgs on representative input)", 
     book: { plan_id: "p", expect_total: 10 },
     booking_status: { plan_id: "p" },
     bookings_list: { plan_id: "p" },
+    invite_collaborator: { plan_id: "p", email: "jane@example.com" },
     agent_docs: {},
   };
 

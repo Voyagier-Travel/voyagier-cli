@@ -192,6 +192,7 @@ It's a thin adapter: each tool call self-spawns the CLI as a subprocess with `--
 | `book_dry_run` | `book --dry-run` | Chargeable subtotal + blockers; no gate needed. |
 | `book` | `book` | **Requires a price gate** — `expect_total_cents` (integer cents, preferred) or `expect_total` (dollars), or `max_total` alone as a cap; fails closed with `PRICE_CHANGED`. |
 | `booking_status` | `book --status` | Post-payment confirmation lookup. |
+| `invite_collaborator` | `plans share --email` | Invite a collaborator by email as `viewer`/`editor`/`agent`; no account needed. Sends no email; `pending: true` means the address has no account yet. |
 | `agent_docs` | `agent-docs` | The full agent reference as markdown. |
 
 > **Deprecated aliases.** `create_client` and `add_traveller` remain registered as deprecated aliases of `client_create` and `travellers_add` (same behaviour) for one release. Prefer the canonical names, which align with the Voyagier platform's first-party MCP tool registry.

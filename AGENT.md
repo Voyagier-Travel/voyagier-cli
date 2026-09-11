@@ -445,10 +445,18 @@ voyagier plans list --relationship owner --json       # only plans you own
 voyagier plans shared [--page <n>] [--limit <n>] --json
 
 # Manage collaborators on a plan you own:
-voyagier plans share <planId> --user <username> --role editor --json   # or --email <addr>
+voyagier plans share <planId> --email <addr> --role editor --json      # by email (no account needed)
+voyagier plans share <planId> --user <username> --role editor --json   # by username
 voyagier plans collaborators <planId> --json                            # who's on the plan
 voyagier plans unshare <planId> --collaborator-id <id> --json           # id from `plans collaborators`
 ```
+
+`plans share --email` sends the address to the API, which resolves it: an
+existing account gets a pending invite to accept; an address with no account
+gets an invite held against the email and granted when they sign up with it.
+Nothing is emailed — tell the person yourself. `--json` returns
+`{ ok, success, planId, invitedUser, role }` and adds `pending: true` when no
+account uses the address yet. The MCP tool `invite_collaborator` wraps this path.
 
 Roles for `plans share --role`: `viewer` (default), `editor`, `agent`. Plan-level
 reads work on shared plans too — `voyagier plans get <id>` and
