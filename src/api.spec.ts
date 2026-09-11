@@ -22,7 +22,7 @@ describe("graphql", () => {
     } else {
       originalCreds = null;
     }
-    saveCredentials("test-token-abc", "https://api.test.voyagier.com");
+    saveCredentials("test-token-abc", "https://api.test.voyagier.com/api");
   });
 
   afterEach(() => {
@@ -48,7 +48,7 @@ describe("graphql", () => {
     );
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "https://api.test.voyagier.com/graphql",
+      "https://api.test.voyagier.com/api/graphql",
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
@@ -137,6 +137,26 @@ describe("graphql", () => {
 
     await expect(graphql("query { anything }"))
       .rejects.toThrow("API error: 500 Internal Server Error");
+  });
+
+  it("404 with no GraphQL body points at the API URL config, not permissions", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: async () => ({ message: "Cannot POST /api/mcp/graphql", statusCode: 404 }),
+    } as any);
+
+    try {
+      await graphql("query { me { id } }");
+      fail("Expected CliError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe(CliErrorCode.API_ERROR);
+      expect((err as CliError).message).toContain("No GraphQL endpoint at");
+      expect((err as CliError).message).toContain("Check the configured API URL");
+      expect((err as CliError).message).not.toContain("permissions issue");
+    }
   });
 
   it("should throw AuthError on 401 unauthorized", async () => {
