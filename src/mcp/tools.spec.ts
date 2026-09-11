@@ -492,6 +492,15 @@ describe("argv builders", () => {
     expect(buildSelectOptionArgs({ selection_id: "s1", option_id: "o1", wait: false })).not.toContain("--wait");
   });
 
+  it("select_option description is truthful about which paths fail closed (review finding)", () => {
+    const tool = TOOLS.find((t) => t.name === "select_option")!;
+    // The bare decide fails closed on multi-row; traveller_ids is a scoped upsert and must not be sold as fail-closed.
+    expect(tool.description).toMatch(/only path that fails closed/i);
+    expect(tool.description).toMatch(/traveller_ids is NOT fail-closed/i);
+    expect(tool.description).toMatch(/replaces coverage/i);
+    expect(tool.description).not.toMatch(/every untargeted .* rejected/i);
+  });
+
   it("select_option: a row id alone addresses the pick (the row knows its selection); no id at all fails closed", () => {
     const args = buildSelectOptionArgs({ option_id: "o1", participant_choice_id: "pc1" });
     expect(args).toEqual(["select", "--option-id", "o1", "--participant-choice-id", "pc1", "--wait", "--json"]);

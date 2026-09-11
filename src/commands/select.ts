@@ -31,14 +31,18 @@ import { waitForPickSettle, type PickWaitOutcome, type PickScope } from "./selec
  * safest:
  *   - --participant-choice-id <id> -> decideParticipantChoice (THE row-addressed
  *     decide; roster kept, or restated with --travellers). Row ids come from
- *     choices-view. On multi-row selections the other modes are rejected
- *     server-side with the row list — retry with this flag.
+ *     choices-view. The ONLY row-precise write.
  *   - default            -> decideParticipantChoice with no row id: the server
  *     resolves the selection's only live row (zero rows seed a whole-selection
- *     choice; several rows are rejected with the row list)
+ *     choice; several rows are REJECTED with the row list — this is the one
+ *     mode that fails closed on a multi-row selection)
  *   - --travellers a,b   -> upsertParticipantChoice(travellerIds, replaceExisting)
  *   - --group <id>       -> upsertParticipantChoice(groupId)
  *   - --traveller <id>   -> upsertParticipantChoice(travellerIds: [id]) (one traveller)
+ *     These three are SCOPED UPSERTS, not decides: on a multi-row selection
+ *     they are NOT rejected — they replace coverage for the named travellers /
+ *     group, which can overlap or re-roster existing rows. Use them to change
+ *     who a choice covers; use the row id to decide a specific row.
  *
  * The removed selectionId-keyed mutations' response keys survive as field
  * aliases in queries.ts (VOY-2173), so the routing below and the --json
@@ -261,20 +265,23 @@ async function setSelectedOption(
   try {
     return { result: await performPick(selectionId, optionId, scope) };
   } catch (err) {
+    // Row-addressed mode is decided by the ROW id, not by the absence of a
+    // selection id: callers may pass both, and then the row is authoritative
+    // (the server ignores a stale pre-fork selection id in its favour). A
+    // fork-template retry would carry the same row and only repeat the
+    // failure, and selection-phrased guidance would point at the wrong thing —
+    // so with a row id, neither routing nor the selection mapper applies.
+    if (scope.participantChoiceId) {
+      throw mapRowChoiceError(err, scope.participantChoiceId);
+    }
     // Fork-template rejection: the pick can never land on this selection. Try
     // to auto-route it to the goal's single non-template sibling (VOY-1872);
     // that helper either returns the routed outcome or throws a FORK_TEMPLATE
     // CliError with recovery guidance. Other errors go through the plain mapper.
-    // Row-addressed picks (no selection id) have nothing to route from.
     if (selectionId && isForkTemplateRejection(err)) {
       return handleForkTemplate(selectionId, optionId, scope);
     }
-    // mapChoiceError's guidance is written around a SELECTION id
-    // (selection-options <id>, select --selection-id <id>); a choice-row id
-    // must never be fed into it or the user is told to run those against a
-    // row. Row-addressed picks get their own mapper.
-    if (selectionId) throw mapChoiceError(err, selectionId);
-    throw mapRowChoiceError(err, scope.participantChoiceId ?? "(unknown)");
+    throw mapChoiceError(err, selectionId ?? "(unknown)");
   }
 }
 
@@ -285,6 +292,18 @@ async function setSelectedOption(
  */
 function mapRowChoiceError(err: unknown, participantChoiceId: string): unknown {
   const message = err instanceof Error ? err.message : String(err);
+  if (isForkTemplateRejection(err)) {
+    // No auto-routing for rows (VOY-1872 routes by SELECTION; a row carries
+    // its own selection, so a retry could only repeat the rejection). Point at
+    // the live rows instead.
+    return new CliError(
+      CliErrorCode.FORK_TEMPLATE,
+      `Choice row ${participantChoiceId} sits on a fork TEMPLATE selection, which never takes picks.\n` +
+        `  Decide a row on the live sibling fork instead (rows with isActiveBranch true):\n` +
+        `    voyagier choices-view <planId> --json\n` +
+        `    voyagier select --participant-choice-id <rowId> --option-id <id>`,
+    );
+  }
   if (message.includes("list-mode selection")) {
     return new CliError(
       CliErrorCode.API_ERROR,
@@ -503,6 +522,7 @@ function waitJsonFragment(outcome: PickWaitOutcome | null): Record<string, unkno
       pickVisible: outcome.pickVisible,
       settled: outcome.settled,
       ...(outcome.timedOut ? { timedOut: true } : {}),
+      ...(outcome.rowMissing ? { rowMissing: true } : {}),
       elapsedSeconds: Math.round(outcome.elapsedMs / 1000),
       ...(outcome.planStatus
         ? {
@@ -525,6 +545,13 @@ function renderWaitOutcome(outcome: PickWaitOutcome | null, agent: boolean): voi
     return;
   }
   const s = outcome.planStatus;
+  if (outcome.rowMissing) {
+    out(
+      agent
+        ? "\n⚠️ **Wait stopped** — the targeted choice row is no longer in the plan's choices view (re-forked or removed). The pick itself was accepted; re-read `voyagier choices-view <planId> --json` before acting on this row again."
+        : chalk.yellow("  ⚠ Wait stopped — the targeted choice row is no longer in the choices view (re-forked or removed). The pick was accepted; re-read choices-view before acting on this row again."),
+    );
+  }
   if (outcome.timedOut) {
     const what = outcome.pickVisible ? "readiness is still settling" : "the pick is not yet visible server-side";
     const check = outcome.tripPlanId ? `voyagier plan-status ${shellArg(outcome.tripPlanId)}` : "voyagier plan-status <planId>";

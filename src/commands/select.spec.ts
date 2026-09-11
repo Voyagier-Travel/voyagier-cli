@@ -1213,6 +1213,25 @@ describe("select --participant-choice-id (VOY-2173)", () => {
     expect(err.message).not.toContain(`Selection ${ROW}`);
   });
 
+  it("with BOTH ids, a fork-template rejection is mapped by the row — no routing query, no retry", async () => {
+    mockGraphql.mockRejectedValue(new Error("Selection sel-1 is a fork template and cannot take choices directly."));
+    const err = await captured(["--selection-id", "sel-1", "--participant-choice-id", ROW, "--option-id", OPT_UUID]);
+    expect(err).toBeInstanceOf(CliError);
+    // Exactly one call: the pick. Routing would have issued a goal-tree read and a retry.
+    expect(mockGraphql).toHaveBeenCalledTimes(1);
+    expect(err.code).toBe(CliErrorCode.FORK_TEMPLATE);
+    expect(err.message).toContain(`Choice row ${ROW}`);
+    expect(err.message).toContain("choices-view");
+    expect(err.message).not.toContain("--selection-id sel-1");
+  });
+
+  it("with BOTH ids, option-not-found guidance is phrased around the row, not the selection", async () => {
+    mockGraphql.mockRejectedValue(new Error("Option not found or does not belong to this selection"));
+    const err = await captured(["--selection-id", "sel-1", "--participant-choice-id", ROW, "--option-id", OPT_UUID]);
+    expect(err.message).toContain(`choice row ${ROW}`);
+    expect(err.message).not.toContain("selection-options sel-1");
+  });
+
   it("maps 'list-mode selection' to row guidance pointing at choices-view", async () => {
     mockGraphql.mockRejectedValue(new Error("Cannot pick on a list-mode selection"));
     const err = await captured(["--participant-choice-id", ROW, "--option-id", OPT_UUID]);
