@@ -102,6 +102,8 @@ describe("agent-docs", () => {
     it("documents the JSON result shape, the rate-limit ceiling and the stdio proxy", () => {
       if (!live) return;
       expect(content).toContain('{ "<operation>": <payload> }');
+      // One placeholder vocabulary: the GraphQL-era name must not linger anywhere.
+      expect(content).not.toMatch(/graphqlOperation/);
       expect(content).toContain("180 requests per minute");
       expect(content).toContain("voyagier mcp");
       expect(content).toMatch(/proxy/);

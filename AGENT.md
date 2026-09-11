@@ -59,7 +59,7 @@ Substrate guarantees, every generated command: non-interactive (no prompts); und
 
 ### Success payload shape
 
-A tool result is `{ "<graphqlOperation>": <payload> }`, one key. For example `plans_list --json` prints `{ "myTripPlans": { "items": [...], "count", "page", "limit" } }` and `plan_status --json` prints `{ "tripPlanStatus": { ... } }`. The server omits empty and null fields, so test for presence (`.tripPlanQuote.items // []`) rather than assuming a key exists. When in doubt, pipe `--json` through `jq keys`.
+A tool result is `{ "<operation>": <payload> }`, one key (the operation name is the server’s, e.g. `myTripPlans`). For example `plans_list --json` prints `{ "myTripPlans": { "items": [...], "count", "page", "limit" } }` and `plan_status --json` prints `{ "tripPlanStatus": { ... } }`. The server omits empty and null fields, so test for presence (`.tripPlanQuote.items // []`) rather than assuming a key exists. When in doubt, pipe `--json` through `jq keys`.
 
 ### Error envelope (uniform across commands)
 

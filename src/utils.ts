@@ -15,18 +15,6 @@ export function maskLoyaltyValue(value: string): string {
 }
 
 /**
- * A full 36-character option id: a UUID in 8-4-4-4-12 hex groups. Single source
- * of truth — the MCP `option_id` schemas (formerly src/mcp/tools.ts; the hosted server owns them now) reuse this rather
- * than restating the pattern.
- */
-export const OPTION_ID_PATTERN =
-  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-
-/** The message every option-id rejection carries, CLI and MCP alike. */
-export const OPTION_ID_ERROR =
-  "Option id must be the full id shown in search results (a 36-character UUID).";
-
-/**
  * Open a URL in the user's default browser. Throws CliError(VALIDATION) for
  * malformed or non-http(s) URLs; launch/spawn failures are still silent.
  *

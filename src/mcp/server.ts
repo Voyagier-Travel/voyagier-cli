@@ -8,16 +8,21 @@
  * or the stored credentials, and the remote result is returned to the local
  * client exactly as the remote sent it: the same tool descriptors, the same
  * content blocks, `structuredContent` and `isError` untouched. The remote's
- * `instructions` and `tools` capability from `initialize` are passed through
- * as this server's own.
+ * `instructions` from `initialize` are passed through as this server's own.
+ * Capabilities are NOT passed through: this proxy advertises plain
+ * `tools: {}` and deliberately omits `listChanged`, because the stateless HTTP
+ * upstream sends no server notifications for it to relay; hosts re-list on
+ * their own cadence (or after `voyagier doctor` refreshes the cache).
  *
  * Failure policy: the local handshake always succeeds, so an MCP host can
  * connect and show the user what is wrong. When the remote cannot be reached
  * (no token, 401, network), `instructions` carries the explanation and every
  * `tools/list` / `tools/call` answers with a JSON-RPC error whose message says
  * how to fix it (set `VOYAGIER_TOKEN`, wait `Retry-After`, …). Each request
- * re-attempts the remote handshake, so fixing the environment and retrying
- * needs no restart of the host.
+ * re-attempts the remote handshake, and a client whose credentials were
+ * rejected (startup failure or a 401 on any forwarded call) is dropped, so
+ * the next request rebuilds one from the CURRENT credentials — fixing the
+ * environment and retrying needs no restart of the host.
  */
 import { readFileSync } from "fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -146,8 +151,8 @@ export function unavailableInstructions(url: string, err: CliError): string {
 
 /**
  * Build the proxy. Performs the remote `initialize` first so the local
- * handshake can carry the remote's instructions and tools capability; connects
- * no transport.
+ * handshake can carry the remote's instructions (capabilities are downgraded
+ * to plain `tools: {}`, see below); connects no transport.
  */
 export async function createProxyServer(deps: CreateProxyServerDeps = {}): Promise<ProxyServer> {
   const version = deps.version ?? readVersion();
@@ -167,6 +172,10 @@ export async function createProxyServer(deps: CreateProxyServerDeps = {}): Promi
   } catch (err) {
     startupError = toCliError(err);
     log(`mcp proxy: remote initialize failed (${startupError.code}): ${startupError.message}`);
+    // The client captured its token at construction. Keeping it would retry
+    // the rejected credentials forever; drop it so the first request rebuilds
+    // from whatever `VOYAGIER_TOKEN` / stored credentials say by then.
+    client = null;
   }
 
   // The remote advertises `tools.listChanged`, but this proxy speaks to a
@@ -184,11 +193,12 @@ export async function createProxyServer(deps: CreateProxyServerDeps = {}): Promi
 
   const forward = async (method: string, params: Record<string, unknown>): Promise<unknown> => {
     if (!client) {
-      // Startup had no client (typically: no token yet). Re-read credentials
-      // now, so a login performed while the host stays open is picked up.
+      // No usable client (no token at startup, or the last one was rejected).
+      // Re-read credentials now, so a login performed while the host stays
+      // open is picked up.
       try {
         client = createClient();
-        log("mcp proxy: client created on first request");
+        log("mcp proxy: client (re)created from current credentials");
       } catch (err) {
         throw cliErrorToMcpError(toCliError(err));
       }
@@ -196,7 +206,14 @@ export async function createProxyServer(deps: CreateProxyServerDeps = {}): Promi
     try {
       return await client.request(method, params);
     } catch (err) {
-      throw cliErrorToMcpError(err);
+      const cliErr = toCliError(err);
+      if (cliErr.code === CliErrorCode.AUTH_FAILED) {
+        // Rejected token: never reuse this client. The next request re-reads
+        // credentials instead of retrying the same dead token.
+        client = null;
+        log("mcp proxy: credentials rejected; client dropped until the next request");
+      }
+      throw cliErrorToMcpError(cliErr);
     }
   };
 
