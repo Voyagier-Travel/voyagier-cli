@@ -221,7 +221,7 @@ Every 3.x trip-planning command is replaced by a tool. Running an old command pr
 | `clients list` / `create` | `clients_list` / `client_create` |
 | `cart`, `plans bookable` | `quote` |
 | `book` | `book` (gate is `--expect_total_cents` + `--item_ids` from `quote`) |
-| `send`, `plans share` | `share_plan` |
+| `send`, `plans share` | `share_plan` (client access) / `invite_collaborator` (another user) |
 | `destinations search` | `search_destinations` |
 | `itinerary`, `quote`, `choices-view`, `choose-room-slot`, `refresh-options` | same name, now a tool with `--plan_id` / `--selection_id` flags |
 

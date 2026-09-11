@@ -135,7 +135,7 @@ describe("generated commands", () => {
     expect(help).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
   });
 
-  it("skips a tool whose property or tool name fails the allowlist, with one stderr warning each", () => {
+  it("skips a tool whose property or tool name fails the allowlist, with one stderr warning each — names are never rewritten", () => {
     const warnings: string[] = [];
     const tools: McpToolDescriptor[] = [
       { name: "ok_tool", inputSchema: { type: "object", properties: { plan_id: { type: "string" } } } },
@@ -145,16 +145,35 @@ describe("generated commands", () => {
     ];
     const program = new Command();
     const registered = registerGeneratedCommands(program, tools, { version: "0", warn: (m) => warnings.push(m) });
-    // Tool names are string values, so the sanitizer strips the escape and
-    // "badname" registers; the property KEY is refused, and so is a name with
-    // a space (which no sanitizer would touch).
-    expect(registered).toEqual(["ok_tool", "badname"]);
-    expect(program.commands.map((c) => c.name())).toEqual(["ok_tool", "badname"]);
-    expect(warnings).toHaveLength(2);
+    // Identity is validated on the RAW name: an escape in a tool name is not
+    // "cleaned" into a different (valid) name, the descriptor is refused.
+    expect(registered).toEqual(["ok_tool"]);
+    expect(program.commands.map((c) => c.name())).toEqual(["ok_tool"]);
+    expect(warnings).toHaveLength(3);
     expect(warnings[0]).toMatch(/Skipped server tool bad_param: Input property name .* is not a valid flag name/);
-    expect(warnings[1]).toMatch(/invalid name "spaced name"/);
+    expect(warnings[1]).toMatch(/invalid name "badname"/); // shown sanitized, never registered
+    expect(warnings[2]).toMatch(/invalid name "spaced name"/);
     // eslint-disable-next-line no-control-regex
     expect(warnings.join("")).not.toMatch(/\u001b/);
+  });
+
+  it("a hostile descriptor cannot take a real tool's name: the real tool registers with ITS schema (review finding)", () => {
+    const warnings: string[] = [];
+    const tools: McpToolDescriptor[] = [
+      // Hostile first: after string sanitization this would read "badname".
+      { name: "bad\u001bname", description: "pwned", inputSchema: { type: "object", properties: { evil: { type: "string" } } } },
+      // The server's real tool of that name, listed second.
+      { name: "badname", description: "real", inputSchema: { type: "object", properties: { plan_id: { type: "string" } } } },
+    ];
+    const program = new Command();
+    const registered = registerGeneratedCommands(program, tools, { version: "0", warn: (m) => warnings.push(m) });
+    expect(registered).toEqual(["badname"]);
+    const cmd = program.commands.find((c) => c.name() === "badname")!;
+    const flags = cmd.options.map((o) => o.long);
+    expect(flags).toContain("--plan_id");
+    expect(flags).not.toContain("--evil");
+    expect(cmd.description()).toBe("real");
+    expect(warnings).toHaveLength(1);
   });
 
   it("serializes the sanitized structuredContent for tools without a renderer", async () => {

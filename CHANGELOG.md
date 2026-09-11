@@ -114,6 +114,17 @@ Replacements marked as planned are tools the server has not published yet; the r
 #### Not in this change
 - `voyagier mcp` (the stdio server) and the MCPB bundle still use their hand-maintained tool table; aligning them with the hosted server's tool list is a separate change in this release line.
 
+### Merged from the 3.x line before this cut
+### Changed
+- *(superseded in this release: `plans share` is removed; use `voyagier invite_collaborator`, which has the same API semantics)* **`plans share --email` invites through the API directly.** The address is sent to `inviteTripPlanCollaborator` as `invitedEmail`, and the server resolves it: an existing account gets a pending invite, an address with no account gets an invite that is claimed when they sign up with it. The command no longer lists users to match the address client-side and no longer falls back to a platform invitation, so it works for every account that can invite on a plan. `--json` keeps `{ ok, success, planId, invitedUser, role }` (`invitedUser` is the address when inviting by email) and adds `pending: true` when no account uses the address yet.
+- **`plans share --role` sends the role key.** Both `--user` and `--email` pass `viewer`/`editor`/`agent` to the API as `role`, removing the roles lookup round-trip. Requires the matching API release.
+
+### Added
+- *(superseded in this release: the stdio server's hand-maintained tool table is replaced by the hosted server's list)* **`invite_collaborator` MCP tool:** wraps `plans share --email` (inputs `plan_id`, `email`, optional `role`, default `viewer`). Records the invite and returns its status; it sends no email.
+
+### Fixed
+- **Any configured Voyagier URL now resolves to the GraphQL API base.** The CLI sends every request to `<API URL>/graphql`, so a `VOYAGIER_API_URL` or `auth set-token --url` value of the bare origin, the `/graphql` endpoint itself, or the hosted MCP URL (`.../api/mcp`) made every command fail with `404 Not Found` and a hint about permissions. The URL is now normalized (`https://mcp.voyagier.com/api/mcp` → `https://mcp.voyagier.com/api`, `https://travel.voyagier.com` → `https://travel.voyagier.com/api`) with a one-time stderr warning, `voyagier doctor` adds an `api-url` WARN naming the configured and effective values, and a 404 with no GraphQL error body now points at the URL configuration instead of permissions. (VOY-2181)
+
 ## [3.0.0] — 2026-08-27
 
 ### Changed

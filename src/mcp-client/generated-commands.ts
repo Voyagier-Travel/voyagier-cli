@@ -14,7 +14,7 @@ import { startSpinner } from "../spinner.js";
 import { getTraceId } from "../telemetry.js";
 import { sanitizeExternalData, sanitizeExternalText } from "../utils.js";
 import { verbose } from "../verbose.js";
-import { McpClient, type McpToolDescriptor, type McpToolResult } from "./client.js";
+import { McpClient, sanitizeToolDescriptor, type McpToolDescriptor, type McpToolResult } from "./client.js";
 import { renderToolPayload } from "./render.js";
 import { applyFlagsToCommand, buildToolArguments, flagSpecsFromSchema, TOOL_NAME_PATTERN, type FlagSpec } from "./schema-flags.js";
 import { CliError } from "../errors.js";
@@ -82,15 +82,20 @@ export function registerGeneratedCommands(
   const taken = new Set(program.commands.map((c) => c.name()));
   const warnSink = ctx.warn ?? warn;
   for (const raw of tools) {
-    // The client sanitizes tools/list at the boundary; the on-disk cache is
-    // re-read without it, so strip escapes again before anything reaches
-    // Commander help or the spinner.
-    const tool = sanitizeExternalData(raw);
-    if (!tool.name || taken.has(tool.name)) continue;
-    if (!TOOL_NAME_PATTERN.test(tool.name)) {
-      warnSink(`Skipped a server tool with an invalid name ${JSON.stringify(tool.name.slice(0, 40))} (allowed: letters, digits, underscore, dash).`);
+    // Identity first, on the RAW name: a name that fails the allowlist skips
+    // the descriptor. It is never sanitized into a different string, or a
+    // hostile descriptor could take a real tool's name (and its dedupe slot)
+    // and the real RPC method would later be called with the hostile schema.
+    if (typeof raw?.name !== "string" || !TOOL_NAME_PATTERN.test(raw.name)) {
+      const shown = typeof raw?.name === "string" ? sanitizeExternalText(raw.name).slice(0, 40) : "";
+      warnSink(`Skipped a server tool with an invalid name ${JSON.stringify(shown)} (allowed: letters, digits, underscore, dash).`);
       continue;
     }
+    if (taken.has(raw.name)) continue;
+    // The client sanitizes display metadata at the boundary; the on-disk cache
+    // is re-read without it, so do it again here (name untouched).
+    const tool = sanitizeToolDescriptor(raw);
+    if (!tool) continue;
     let specs: FlagSpec[];
     try {
       specs = flagSpecsFromSchema(tool.inputSchema);

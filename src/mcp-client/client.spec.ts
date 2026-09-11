@@ -96,6 +96,23 @@ describe("McpClient handshake", () => {
     expect(client.server?.serverInfo?.name).toBe("voyagier");
   });
 
+  it("toolsList drops a descriptor whose name fails the allowlist instead of rewriting it, and sanitizes only display metadata", async () => {
+    const { client } = makeClient(
+      happyServer({
+        "tools/list": () => ({
+          tools: [
+            { name: "bad\u001bname", description: "pwned" },
+            { name: "badname", title: "Real\u001b[31m", description: "real", inputSchema: { type: "object", properties: { plan_id: { type: "string", description: "x\u001by" } } } },
+          ],
+        }),
+      }),
+    );
+    const tools = await client.toolsList();
+    expect(tools.map((t) => t.name)).toEqual(["badname"]);
+    expect(tools[0].title).not.toMatch(/\u001b/);
+    expect((tools[0].inputSchema as { properties: Record<string, { description?: string }> }).properties.plan_id.description).not.toMatch(/\u001b/);
+  });
+
   it("does not re-initialize on subsequent calls", async () => {
     const { client, sent } = makeClient(happyServer({ "tools/list": () => ({ tools: TOOLS }), "tools/call": () => ({ content: [{ type: "text", text: "{}" }] }) }));
     await client.toolsList();

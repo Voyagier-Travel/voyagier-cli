@@ -63,7 +63,7 @@ export const REMOVED_COMMANDS: readonly RemovedCommand[] = [
   { command: "search flights", tools: ["search_flights", "promote_search"], note: "search_flights explores; promote_search puts a result on a plan goal." },
   { command: "search hotels", tools: ["search_hotels", "promote_search"], note: "As above." },
   { command: "search activities", tools: ["search_activities", "promote_search"], note: "As above." },
-  { command: "select", tools: ["select_option"] },
+  { command: "select", tools: ["select_option"], note: "Row-addressed picks: --participant_choice_id (rows from choices_view)." },
   { command: "selection-options", tools: ["get_selection_options"] },
   { command: "refresh-options", tools: ["refresh_options"] },
   { command: "choices-view", tools: ["choices_view"] },

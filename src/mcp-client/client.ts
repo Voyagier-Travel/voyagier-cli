@@ -20,6 +20,7 @@
  */
 import { CliError, CliErrorCode, authFailedMessage } from "../errors.js";
 import { sanitizeExternalData, sanitizeExternalText } from "../utils.js";
+import { TOOL_NAME_PATTERN } from "./schema-flags.js";
 
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
 
@@ -38,6 +39,18 @@ export interface McpJsonSchema {
 }
 
 /** One entry of a `tools/list` result. */
+/**
+ * Identity-preserving sanitizer for a remote tool descriptor. Returns null when
+ * the name fails TOOL_NAME_PATTERN (the descriptor must be skipped, never
+ * renamed); otherwise sanitizes only display metadata and schema VALUES —
+ * property names are allowlisted separately by schema-flags.ts.
+ */
+export function sanitizeToolDescriptor(raw: McpToolDescriptor): McpToolDescriptor | null {
+  if (typeof raw?.name !== "string" || !TOOL_NAME_PATTERN.test(raw.name)) return null;
+  const { name, ...display } = raw;
+  return { ...sanitizeExternalData(display), name };
+}
+
 export interface McpToolDescriptor {
   name: string;
   title?: string;
@@ -195,10 +208,17 @@ export class McpClient {
       tools.push(...result.tools);
       cursor = typeof result.nextCursor === "string" && result.nextCursor ? result.nextCursor : undefined;
     } while (cursor);
-    // Tool names, titles, descriptions, property descriptions and enum values
-    // become Commander help, spinner labels and error messages. They come from
-    // the network: sanitize once here so every consumer renders inert text.
-    return sanitizeExternalData(tools);
+    // Titles, descriptions, property descriptions and enum values become
+    // Commander help, spinner labels and error messages, so they are
+    // sanitized here. The NAME is identity: it is the RPC method that will be
+    // called, so it is never rewritten — a name that fails the allowlist is
+    // dropped as a whole descriptor instead. Rewriting it could turn a hostile
+    // descriptor into a valid tool's name and then call the real tool with the
+    // hostile schema.
+    return tools.flatMap((raw) => {
+      const clean = sanitizeToolDescriptor(raw);
+      return clean ? [clean] : [];
+    });
   }
 
   /**

@@ -158,6 +158,19 @@ describe("auth set-token", () => {
     expect(out()).toMatch(/Token saved/);
   });
 
+  it("prints the NORMALIZED URL after saving a URL that needed correcting", async () => {
+    const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await buildProgram().parseAsync(["node", "v", "auth", "set-token", TEST_TOKEN, "--url", "https://mcp.voyagier.com/api/mcp"]);
+    } finally {
+      stderrSpy.mockRestore();
+    }
+    expect(getApiUrl()).toBe("https://mcp.voyagier.com/api");
+    // The success line must not claim the un-normalized value was stored.
+    expect(out()).toMatch(/API URL: https:\/\/mcp\.voyagier\.com\/api\b/);
+    expect(out()).not.toMatch(/api\/mcp/);
+  });
+
   it("defaults the URL to the prod API when --url is omitted", async () => {
     await buildProgram().parseAsync(["node", "v", "auth", "set-token", TEST_TOKEN]);
     expect(getApiUrl()).toBe("https://travel.voyagier.com/api");
@@ -279,6 +292,16 @@ describe("auth login", () => {
     expect(out()).toMatch(/dev\.voyagier\.com\/me\/settings\/tokens/);
     expect(credentialsExist()).toBe(false);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
+  });
+
+  it("non-interactive: an endpoint or MCP --url is normalized before the settings page is derived", async () => {
+    setInteractive(false);
+    for (const url of ["https://dev.voyagier.com/api/graphql", "https://dev.voyagier.com/api/mcp", "https://dev.voyagier.com"]) {
+      logs.length = 0;
+      await buildProgram().parseAsync(["node", "v", "auth", "login", "--url", url]);
+      expect(out()).toMatch(/https:\/\/dev\.voyagier\.com\/me\/settings\/tokens/);
+      expect(out()).not.toMatch(/graphql\/me|mcp\/me/);
+    }
   });
 
   it("interactive: opens the browser, saves the pasted token, verifies + auto-sets profile", async () => {

@@ -4,7 +4,7 @@ import { createInterface } from "readline/promises";
 import { stdin, stdout } from "process";
 import { openBrowser, maskLoyaltyValue } from "../utils.js";
 
-import { saveCredentials, getToken, getApiUrl, clearCredentials, credentialsExist, saveUserContext, getUserContext } from "../config.js";
+import { saveCredentials, getToken, getApiUrl, clearCredentials, credentialsExist, saveUserContext, getUserContext, normalizeApiUrl } from "../config.js";
 import type { UserContext } from "../config.js";
 import { graphql } from "../api.js";
 import { UPDATE_MY_USER } from "../queries.js";
@@ -309,9 +309,9 @@ export function registerAuthCommands(program: Command): void {
           );
         }
       }
-      saveCredentials(tokenValue, opts.url);
+      const savedUrl = saveCredentials(tokenValue, opts.url);
       console.log(chalk.green("✓ Token saved."));
-      console.log(chalk.dim(`  API URL: ${opts.url}`));
+      console.log(chalk.dim(`  API URL: ${savedUrl}`));
       console.log(chalk.dim("  Next: voyagier auth setup"));
     });
 
@@ -381,7 +381,10 @@ export function registerAuthCommands(program: Command): void {
     .description("Log in to Voyagier")
     .option("--url <apiUrl>", "API base URL", "https://travel.voyagier.com/api")
     .action(async (opts) => {
-      const apiUrl = opts.url as string;
+      // Normalize first: a bare origin, an endpoint URL (.../api/graphql) or
+      // the hosted MCP URL (.../api/mcp) must resolve to the API base before
+      // the settings page is derived from it, and before it is persisted.
+      const apiUrl = normalizeApiUrl(opts.url as string);
       const isInteractive = process.stdin.isTTY === true && !process.env.CI;
 
       console.log(chalk.bold("\nVoyagier CLI Login\n"));

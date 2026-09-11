@@ -41,6 +41,7 @@ import {
   buildBookArgs,
   buildBookingStatusArgs,
   buildBookingsListArgs,
+  buildInviteCollaboratorArgs,
   buildAgentDocsArgs,
 } from "./tools.js";
 
@@ -74,6 +75,7 @@ const EXPECTED_TOOL_NAMES = [
   "book",
   "booking_status",
   "bookings_list",
+  "invite_collaborator",
   "agent_docs",
 ];
 
@@ -486,10 +488,25 @@ describe("argv builders", () => {
 
   it("select_option uses explicit-id mode ONLY (never index mode) and waits by default", () => {
     const args = buildSelectOptionArgs({ selection_id: "s1", option_id: "o1" });
-    expect(args).toEqual(["select", "--selection-id", "s1", "--option-id", "o1", "--wait", "--json"]);
+    expect(args).toEqual(["select", "--option-id", "o1", "--selection-id", "s1", "--wait", "--json"]);
     // No bare numeric positional that would trigger index mode / global-state reads.
     expect(args.some((a) => /^\d+$/.test(a))).toBe(false);
     expect(buildSelectOptionArgs({ selection_id: "s1", option_id: "o1", wait: false })).not.toContain("--wait");
+  });
+
+  it("select_option description is truthful about which paths fail closed (review finding)", () => {
+    const tool = TOOLS.find((t) => t.name === "select_option")!;
+    // The bare decide fails closed on multi-row; traveller_ids is a scoped upsert and must not be sold as fail-closed.
+    expect(tool.description).toMatch(/only path that fails closed/i);
+    expect(tool.description).toMatch(/traveller_ids is NOT fail-closed/i);
+    expect(tool.description).toMatch(/replaces coverage/i);
+    expect(tool.description).not.toMatch(/every untargeted .* rejected/i);
+  });
+
+  it("select_option: a row id alone addresses the pick (the row knows its selection); no id at all fails closed", () => {
+    const args = buildSelectOptionArgs({ option_id: "o1", participant_choice_id: "pc1" });
+    expect(args).toEqual(["select", "--option-id", "o1", "--participant-choice-id", "pc1", "--wait", "--json"]);
+    expect(() => buildSelectOptionArgs({ option_id: "o1" })).toThrow(/participant_choice_id .* or selection_id/);
   });
 
   // VOY-2044: option ids are constrained to a FULL uuid at the schema boundary,
@@ -524,6 +541,26 @@ describe("argv builders", () => {
 
   it("bookings_list: plan filter flag + --json", () => {
     expect(buildBookingsListArgs({ plan_id: "p" })).toEqual(["bookings", "list", "--plan", "p", "--json"]);
+  });
+
+  it("invite_collaborator: maps onto plans share --email, defaulting the role to viewer", () => {
+    expect(buildInviteCollaboratorArgs({ plan_id: "p", email: "jane@example.com" })).toEqual([
+      "plans", "share", "--plan", "p", "--email", "jane@example.com", "--role", "viewer", "--json",
+    ]);
+    expect(buildInviteCollaboratorArgs({ plan_id: "p", email: "jane@example.com", role: "editor" })).toEqual([
+      "plans", "share", "--plan", "p", "--email", "jane@example.com", "--role", "editor", "--json",
+    ]);
+  });
+
+  it("invite_collaborator: rejects a malformed email and a role outside viewer/editor/agent at the schema boundary", () => {
+    const tool = TOOLS.find((t) => t.name === "invite_collaborator")!;
+    const schema = z.object(tool.inputSchema as z.ZodRawShape);
+    expect(schema.safeParse({ plan_id: "p", email: "not-an-email" }).success).toBe(false);
+    expect(schema.safeParse({ plan_id: "p", email: "jane@example.com", role: "owner" }).success).toBe(false);
+    expect(schema.safeParse({ plan_id: "p", email: "jane@example.com", role: "agent" }).success).toBe(true);
+    // Non-destructive write that never notifies anyone — the description says so.
+    expect(tool.annotations).toEqual({ readOnlyHint: false, destructiveHint: false });
+    expect(tool.description).toContain("DOES NOT EMAIL ANYONE");
   });
 
   it("book_dry_run: --expect-total only when provided, rendered via moneyArg", () => {
@@ -668,6 +705,7 @@ describe("--json discipline via the table (buildArgs on representative input)", 
     book: { plan_id: "p", expect_total: 10 },
     booking_status: { plan_id: "p" },
     bookings_list: { plan_id: "p" },
+    invite_collaborator: { plan_id: "p", email: "jane@example.com" },
     agent_docs: {},
   };
 
