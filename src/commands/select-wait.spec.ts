@@ -6,7 +6,7 @@
  * timeout honesty, and backoff behavior are all asserted without real timers.
  */
 import { describe, it, expect, jest } from "@jest/globals";
-import { pickReflected, isSettled, waitForPickSettle } from "./select-wait.js";
+import { pickReflected, rowReflected, isSettled, waitForPickSettle } from "./select-wait.js";
 import type { PlanStatusData } from "./plan-status.js";
 
 const choice = (travellerId: string, optionId: string | null) => ({
@@ -46,6 +46,11 @@ describe("pickReflected", () => {
     expect(pickReflected(mixed, "o1", { travellers: "t1, t2" })).toBe(true);
     expect(pickReflected(mixed, "o1", { travellers: "t1,t3" })).toBe(false);
     expect(pickReflected(mixed, "o1", { travellers: "" })).toBe(false);
+  });
+
+  it("--participant-choice-id is never judged from the selection read (conservative false)", () => {
+    const raw = { id: "sel", travellerOptionChoices: [choice("t1", "optA"), choice("t2", "optB")] };
+    expect(pickReflected(raw, "optA", { participantChoiceId: "row-1" })).toBe(false);
   });
 
   it("--group: weakest honest check — at least one traveller chose the option", () => {
@@ -170,6 +175,88 @@ const deps = () => {
     },
   };
 };
+
+describe("rowReflected (row-addressed --wait)", () => {
+  const rows = [
+    { id: "row-1", optionId: "optA" },
+    { id: "row-2", optionId: null },
+    { id: "row-3", optionId: "optA" },
+  ];
+  it("true only when the TARGETED row carries the option", () => {
+    expect(rowReflected(rows, "row-1", "optA")).toBe(true);
+    expect(rowReflected(rows, "row-2", "optA")).toBe(false);
+  });
+  it("a sibling row already on the same option does not count for the target", () => {
+    // row-3 has optA; row-2 (the target) does not yet.
+    expect(rowReflected(rows, "row-2", "optA")).toBe(false);
+  });
+  it("an empty-roster row still reflects once ITS optionId flips (no traveller needed)", () => {
+    expect(rowReflected([{ id: "row-9", optionId: "optZ" }], "row-9", "optZ")).toBe(true);
+  });
+  it("returns null when the row is gone from the view", () => {
+    expect(rowReflected(rows, "row-404", "optA")).toBeNull();
+    expect(rowReflected(null, "row-1", "optA")).toBeNull();
+  });
+});
+
+/** Scripted gql for row-addressed waits: selection read → choices view(s) → plan read(s). */
+function scriptedRowGql(selectionRead: unknown, viewReads: unknown[], planReads: unknown[]) {
+  const calls: GqlCall[] = [];
+  const gql = (async (query: string, vars: Record<string, unknown>) => {
+    calls.push({ query, vars });
+    if (query.includes("TripPlanSelectionWithMonitor")) return selectionRead;
+    if (query.includes("TripPlanChoicesView")) return viewReads.length > 1 ? viewReads.shift() : viewReads[0];
+    return planReads.length > 1 ? planReads.shift() : planReads[0];
+  }) as never;
+  return { gql, calls };
+}
+
+describe("waitForPickSettle — row-addressed scope polls the row, not the selection", () => {
+  const selRead = { getTripPlanSelection: { id: "s1", tripPlanId: "p1", travellerOptionChoices: [] } };
+  const view = (targetOption: string | null, siblingOption: string | null = null) => ({
+    tripPlanChoicesView: [
+      { id: "row-target", optionId: targetOption },
+      { id: "row-sibling", optionId: siblingOption },
+    ],
+  });
+
+  it("a sibling row already on the option is NOT the pick; waits until the target row flips", async () => {
+    const d = deps();
+    const { gql, calls } = scriptedRowGql(selRead, [view(null, "o1"), view(null, "o1"), view("o1", "o1")], [settledPlan()]);
+    const out = await waitForPickSettle("s1", "o1", { participantChoiceId: "row-target" }, 30000, "https://x", { gql, ...d });
+    expect(out.pickVisible).toBe(true);
+    expect(out.settled).toBe(true);
+    expect(calls.filter((c) => c.query.includes("TripPlanChoicesView"))).toHaveLength(3);
+    // The selection is read exactly once, for the plan id — never to judge the pick.
+    expect(calls.filter((c) => c.query.includes("TripPlanSelectionWithMonitor"))).toHaveLength(1);
+    expect(calls.find((c) => c.query.includes("TripPlanChoicesView"))?.vars).toEqual({ tripPlanId: "p1" });
+  });
+
+  it("an empty-roster row reflects as soon as its optionId matches", async () => {
+    const { gql } = scriptedRowGql(selRead, [view("o1")], [settledPlan()]);
+    const out = await waitForPickSettle("s1", "o1", { participantChoiceId: "row-target" }, 30000, "https://x", { gql, ...deps() });
+    expect(out.pickVisible).toBe(true);
+    expect(out.timedOut).toBe(false);
+  });
+
+  it("a vanished row stops the wait with rowMissing instead of running to the deadline", async () => {
+    const d = deps();
+    const { gql } = scriptedRowGql(selRead, [{ tripPlanChoicesView: [{ id: "other", optionId: null }] }], [settledPlan()]);
+    const out = await waitForPickSettle("s1", "o1", { participantChoiceId: "row-target" }, 30000, "https://x", { gql, ...d });
+    expect(out.rowMissing).toBe(true);
+    expect(out.pickVisible).toBe(false);
+    expect(out.timedOut).toBe(false);
+    expect(out.elapsedMs).toBeLessThan(30000);
+  });
+
+  it("times out honestly when the target row never flips", async () => {
+    const { gql } = scriptedRowGql(selRead, [view(null)], [settledPlan()]);
+    const out = await waitForPickSettle("s1", "o1", { participantChoiceId: "row-target" }, 5000, "https://x", { gql, ...deps() });
+    expect(out.pickVisible).toBe(false);
+    expect(out.timedOut).toBe(true);
+    expect(out.tripPlanId).toBe("p1");
+  });
+});
 
 describe("waitForPickSettle", () => {
   const selRead = (reflected: boolean) => ({

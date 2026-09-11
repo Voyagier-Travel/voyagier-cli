@@ -21,7 +21,7 @@
 import { graphql } from "../api.js";
 import { deriveChosen, type RawTravellerChoice } from "../choices.js";
 import { startSpinner, type SpinnerHandle } from "../spinner.js";
-import { GET_SELECTION_WITH_MONITOR, GET_PLAN_STATUS } from "../queries.js";
+import { GET_SELECTION_WITH_MONITOR, GET_PLAN_STATUS, TRIP_PLAN_CHOICES_VIEW } from "../queries.js";
 import {
   buildPlanStatus,
   type PlanStatusData,
@@ -32,6 +32,8 @@ export interface PickScope {
   traveller?: string;
   travellers?: string;
   group?: string;
+  /** Row-addressed pick (select --participant-choice-id). */
+  participantChoiceId?: string;
 }
 
 interface WaitSelectionRead {
@@ -48,6 +50,8 @@ export interface PickWaitOutcome {
   settled: boolean;
   /** The wait deadline elapsed before both conditions held. */
   timedOut: boolean;
+  /** Row-addressed wait only: the targeted row vanished from the choices view. */
+  rowMissing?: boolean;
   elapsedMs: number;
   tripPlanId: string | null;
   /** Final plan-status snapshot; null only if the plan read never succeeded. */
@@ -61,6 +65,8 @@ export interface PickWaitOutcome {
  * - --travellers A,B: every listed traveller's choice is this option
  * - --group: membership isn't in the selection read, so the honest weakest
  *   check is "at least one traveller chose this option"
+ * - --participant-choice-id: NOT decided here — see rowReflected, which reads
+ *   the targeted row from the choices view
  */
 export function pickReflected(
   raw: WaitSelectionRead,
@@ -79,8 +85,38 @@ export function pickReflected(
   if (scope.group) {
     return choices.some((c) => c.selectedOption?.id === optionId);
   }
+  // Row-addressed picks are never judged from the selection read: rows are
+  // not in it, a sibling row may already hold the same option, and an
+  // empty-roster row has no traveller to show it. waitForPickSettle polls the
+  // row itself (rowReflected) for that scope; reaching here means a caller
+  // used the selection-wide check by mistake, so answer conservatively.
+  if (scope.participantChoiceId) return false;
   const { chosenOptionId, consensus } = deriveChosen(raw);
   return consensus && chosenOptionId === optionId;
+}
+
+/** The slice of a tripPlanChoicesView row the wait phase needs. */
+export interface ChoicesViewRowRead {
+  id: string;
+  optionId?: string | null;
+}
+
+/**
+ * Is a ROW-ADDRESSED pick reflected? True only when the targeted row exists
+ * and now carries exactly this option. A sibling row on the same option does
+ * not count, and a row whose roster is empty still counts once ITS optionId
+ * flips — neither of which the selection-wide read can express.
+ * Returns null when the row is no longer in the view (re-forked / removed):
+ * the caller stops waiting and says so instead of running to the deadline.
+ */
+export function rowReflected(
+  rows: ChoicesViewRowRead[] | null | undefined,
+  participantChoiceId: string,
+  optionId: string,
+): boolean | null {
+  const row = (rows ?? []).find((r) => r.id === participantChoiceId);
+  if (!row) return null;
+  return row.optionId === optionId;
 }
 
 /**
@@ -140,23 +176,45 @@ export async function waitForPickSettle(
   let delay = INITIAL_DELAY_MS;
 
   let pickVisible = false;
+  let rowMissing = false;
   let tripPlanId: string | null = null;
   let planStatus: PlanStatusData | null = null;
   let settled = false;
 
   try {
   // Phase A: pick visibility (also resolves tripPlanId for phase B).
+  // Row-addressed picks read the ROW from the choices view once the plan id
+  // is known; every other scope is judged from the selection read.
   for (;;) {
-    const data = await gql<{ getTripPlanSelection: WaitSelectionRead | null }>(
-      GET_SELECTION_WITH_MONITOR,
-      { tripPlanSelectionId: selectionId },
-    );
-    const raw = data.getTripPlanSelection;
-    if (raw) {
-      tripPlanId = raw.tripPlanId ?? tripPlanId;
-      if (pickReflected(raw, optionId, scope)) {
+    if (scope.participantChoiceId && tripPlanId) {
+      const view = await gql<{ tripPlanChoicesView: ChoicesViewRowRead[] | null }>(TRIP_PLAN_CHOICES_VIEW, {
+        tripPlanId,
+      });
+      const reflected = rowReflected(view.tripPlanChoicesView, scope.participantChoiceId, optionId);
+      if (reflected === null) {
+        rowMissing = true;
+        break;
+      }
+      if (reflected) {
         pickVisible = true;
         break;
+      }
+    } else {
+      const data = await gql<{ getTripPlanSelection: WaitSelectionRead | null }>(
+        GET_SELECTION_WITH_MONITOR,
+        { tripPlanSelectionId: selectionId },
+      );
+      const raw = data.getTripPlanSelection;
+      if (raw) {
+        tripPlanId = raw.tripPlanId ?? tripPlanId;
+        if (scope.participantChoiceId) {
+          // Plan id resolved — the next iteration reads the row. No sleep:
+          // this was a lookup, not a poll.
+          if (tripPlanId) continue;
+        } else if (pickReflected(raw, optionId, scope)) {
+          pickVisible = true;
+          break;
+        }
       }
     }
     if (now() >= deadline) break;
@@ -198,7 +256,8 @@ export async function waitForPickSettle(
   return {
     pickVisible,
     settled: pickVisible && settled,
-    timedOut: !(pickVisible && settled),
+    timedOut: !rowMissing && !(pickVisible && settled),
+    ...(rowMissing ? { rowMissing: true } : {}),
     elapsedMs: now() - started,
     tripPlanId,
     planStatus,

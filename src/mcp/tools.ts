@@ -327,9 +327,24 @@ export function buildGetSelectionOptionsArgs(i: { selection_id: string; wait?: b
   return args;
 }
 
-export function buildSelectOptionArgs(i: { selection_id: string; option_id: string; wait?: boolean }): string[] {
+export function buildSelectOptionArgs(i: {
+  selection_id?: string;
+  option_id: string;
+  participant_choice_id?: string;
+  traveller_ids?: string[];
+  wait?: boolean;
+}): string[] {
   // Explicit-id mode ONLY — never index mode (avoids global-state collisions).
-  const args = ["select", "--selection-id", i.selection_id, "--option-id", i.option_id];
+  // One of selection_id / participant_choice_id is required — the CLI's direct
+  // mode fails closed without either, mirrored here so the tool call fails
+  // before spawning a child.
+  if (!i.selection_id && !i.participant_choice_id) {
+    throw new Error("select_option requires participant_choice_id (preferred) or selection_id.");
+  }
+  const args = ["select", "--option-id", i.option_id];
+  opt(args, "--selection-id", i.selection_id);
+  opt(args, "--participant-choice-id", i.participant_choice_id);
+  if (i.traveller_ids && i.traveller_ids.length > 0) args.push("--travellers", i.traveller_ids.join(","));
   if (i.wait !== false) args.push("--wait");
   args.push("--json");
   return args;
@@ -879,11 +894,26 @@ export const TOOLS: ToolDef[] = [
     name: "select_option",
     title: "Select option",
     description:
-      "Choose an option on a selection by explicit selection + option id (defaults to choosing for all travellers). With wait=true (default), after the pick succeeds it polls until the pick is reflected server-side AND readiness settles, then returns a plan-status snapshot. A timed-out wait never means the pick failed. Round trip: call once per leg — the identical optionId on both legs is intended.",
+      "Decide a participant-choice row: choose an option by explicit selection + option id. A selection can hold SEVERAL choice rows at once (one per hotel room, one per traveller group), so prefer passing participant_choice_id (a row id from choices_view or plan_status) — it decides that exact row and keeps its travellers; it is the only row-precise write. Without it: a bare call (no traveller_ids) on a multi-row selection is REJECTED with the row list (retry targeted) — that is the only path that fails closed. traveller_ids is NOT fail-closed: it is a scoped upsert that replaces coverage for exactly those travellers and can overlap or re-roster existing rows; use it only when you mean to change who a choice covers. With wait=true (default), after the pick succeeds it polls until the pick is reflected server-side (row-addressed picks: the targeted row itself shows the option) AND readiness settles, then returns a plan-status snapshot. A timed-out wait never means the pick failed. Round trip: call once per leg — the identical optionId on both legs is intended.",
     timeoutMs: T.search,
     inputSchema: {
-      selection_id: z.string().describe("Selection id to pick on."),
-      option_id: optionId.describe("Option id to choose — the FULL 36-character uuid from search / get_selection_options. Ids are regenerated when a search is re-run, so re-fetch options rather than reusing a stale id."),
+      option_id: optionId.describe("Option id to choose — the FULL 36-character uuid from search / get_selection_options, read from the SAME selection/fork as the row. Ids are regenerated when a search is re-run, so re-fetch options rather than reusing a stale id."),
+      participant_choice_id: z
+        .string()
+        .optional()
+        .describe(
+          "The exact choice row to decide — PREFERRED (from choices_view rows with isActiveBranch true, or plan_status). The row knows its own selection, so selection_id is not needed with it.",
+        ),
+      selection_id: z
+        .string()
+        .optional()
+        .describe(
+          "Selection to decide on. Required only when no participant_choice_id is given; ignored in favour of the row's own selection when one is (a pre-fork id would be stale).",
+        ),
+      traveller_ids: z
+        .array(z.string())
+        .optional()
+        .describe("Omit to keep the row's traveller coverage (the safe default). Pass only to change who it covers."),
       wait: z.boolean().optional().describe("Wait for the pick to reflect + readiness to settle. Default true."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
@@ -894,7 +924,7 @@ export const TOOLS: ToolDef[] = [
     name: "choices_view",
     title: "View all choices",
     description:
-      "Flat view of every participant choice on a plan (decided AND open slots) — the source of the participant_choice_id that choose_room_slot needs. Rows with selectionType HotelRoom/HotelRoomRate are room/rate slots: optionId null = an open slot to fill; optionId set = already decided; locked true = booked, do not touch. Rows from dormant sibling forks are listed too — filter on isActiveBranch true (only those are counted by the cart) before picking a slot to write to." +
+      "Flat view of every participant choice on a plan (decided AND open slots) — the source of the participant_choice_id that select_option and choose_room_slot target. Every row is one decision: optionId null = an open row to fill; optionId set = already decided; locked true = booked, do not touch. Rows with selectionType HotelRoom/HotelRoomRate are room/rate slots (one row per room). Rows from dormant sibling forks are listed too — filter on isActiveBranch true (only those are counted by the cart) before picking a row to write to." +
       INJECTION_NOTE,
     timeoutMs: T.short,
     inputSchema: {
@@ -906,9 +936,9 @@ export const TOOLS: ToolDef[] = [
 
   defineTool({
     name: "choose_room_slot",
-    title: "Choose room slot",
+    title: "Manage choice slot",
     description:
-      "Create or update a participant choice (room slot) on a selection: pick an option for a subset of travellers, a group, or everyone. Rooms/rates are decided on PRE-CREATED slot rows — get the slot's participant_choice_id and selection_id from choices_view first (rows with selectionType HotelRoom/HotelRoomRate AND isActiveBranch true), then update that exact slot in place. Use create_new_choice only to open a fresh slot (e.g. a second hotel room).",
+      "Manage a participant-choice row (room slot): open a fresh slot with create_new_choice (e.g. a second hotel room), re-roster an existing row via participant_choice_id + traveller_ids, or carve an undecided traveller subset into its own row (traveller_ids with no option_id). To DECIDE a row's option, prefer select_option with participant_choice_id. Get the row's participant_choice_id and selection_id from choices_view first (rows with isActiveBranch true), then update that exact row in place.",
     timeoutMs: T.medium,
     inputSchema: {
       selection_id: z.string().describe("Selection id to choose on."),
