@@ -16,7 +16,7 @@ export function maskLoyaltyValue(value: string): string {
 
 /**
  * A full 36-character option id: a UUID in 8-4-4-4-12 hex groups. Single source
- * of truth — the MCP `option_id` schemas (src/mcp/tools.ts) reuse this rather
+ * of truth — the MCP `option_id` schemas (formerly src/mcp/tools.ts; the hosted server owns them now) reuse this rather
  * than restating the pattern.
  */
 export const OPTION_ID_PATTERN =
