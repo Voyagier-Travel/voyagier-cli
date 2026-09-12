@@ -1,6 +1,6 @@
 {
   "name": "@voyagier/cli",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "mcpName": "com.voyagier/cli",
   "description": "Command-line shell for the Voyagier MCP server: one command per tool to search, plan, quote and book real trips (flights, hotels, activities). Built for AI agents: --json everywhere, uniform error codes, price-gated checkout, a stdio MCP proxy (voyagier mcp) and a printable agent reference (voyagier agent-docs).",
   "type": "module",
