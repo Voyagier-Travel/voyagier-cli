@@ -26,6 +26,8 @@ export interface ToolsCache {
   server?: { name?: string; version?: string };
   /** `toolsSurfaceHash(tools)` at fetch time — scripts compare it across runs. */
   surfaceHash?: string;
+  /** The server's `instructions` from initialize (agent guidance); `agent-docs` prints it. */
+  instructions?: string;
   tools: McpToolDescriptor[];
 }
 

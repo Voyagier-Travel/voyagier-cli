@@ -1,311 +1,305 @@
 /**
- * server.ts — in-memory integration tests.
+ * server.ts — the stdio proxy, tested end-to-end in memory.
  *
- * Uses the SDK's InMemoryTransport.createLinkedPair() + a real SDK Client so
- * the initialize handshake, tools/list, tools/call, isError propagation, and
- * schema validation all run end-to-end — with the exec seam mocked, so NO real
- * network and NO real child spawns.
+ * A real SDK Client talks to the proxy over InMemoryTransport; the proxy talks
+ * to a scripted "hosted server" (test/mock-remote.ts) through the real
+ * McpClient with a mocked fetch. No network, no token, no child processes.
  */
-import { describe, it, expect, jest } from "@jest/globals";
+import { describe, it, expect } from "@jest/globals";
+import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createServer, type CliRunner, INSTRUCTIONS } from "./server.js";
-import type { CliResult } from "./exec.js";
+import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import { CliError, CliErrorCode } from "../errors.js";
+import type { McpToolDescriptor } from "../mcp-client/client.js";
+import { makeMockRemote, jsonResponse, MOCK_REMOTE_URL, type MockRemoteOptions } from "../../test/mock-remote.js";
+import { McpClient } from "../mcp-client/client.js";
+import { cliErrorToMcpError, createProxyServer, PROXY_ERROR_CODES, SET_TOKEN_HINT, startupFixHint, unavailableInstructions } from "./server.js";
 
-const EXPECTED_TOOL_NAMES = [
-  "doctor", "clients_list", "client_create", "create_client",
-  "plans_list", "search_destinations", "plan_trip", "travellers_add", "add_traveller",
-  "travellers_update", "travellers_list", "goal_add",
-  "search_flights", "search_hotels", "listings_list", "listings_add_to_selection", "search_activities",
-  "get_selection_options", "refresh_options", "select_option", "choices_view", "choose_room_slot",
-  "itinerary", "plan_status",
-  "quote", "book_dry_run", "book", "booking_status", "bookings_list", "invite_collaborator", "agent_docs",
-];
+const FIXTURE_TOOLS: McpToolDescriptor[] = JSON.parse(
+  readFileSync(new URL("./fixtures/remote-tools.json", import.meta.url), "utf-8"),
+) as McpToolDescriptor[];
 
-const okRun: CliRunner = async () => ({ stdout: "{}", stderr: "", exitCode: 0 });
+const INSTRUCTIONS = "Voyagier trip-planning MCP. Routing rules:\n1. Search never touches a plan.";
 
-async function connect(run: CliRunner = okRun): Promise<{ client: Client }> {
-  const server = createServer({ version: "9.9.9", run });
+async function connect(remoteOpts: MockRemoteOptions = {}, extra: { instructions?: boolean } = {}) {
+  const { client: upstream, sent } = makeMockRemote({
+    tools: FIXTURE_TOOLS,
+    instructions: extra.instructions === false ? undefined : INSTRUCTIONS,
+    ...remoteOpts,
+  });
+  const logs: string[] = [];
+  const proxy = await createProxyServer({ client: upstream, version: "9.9.9", log: (l) => logs.push(l) });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: "test-client", version: "0" });
-  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-  return { client };
+  const client = new Client({ name: "test-host", version: "0" });
+  await Promise.all([proxy.server.connect(serverTransport), client.connect(clientTransport)]);
+  return { client, proxy, sent, logs };
 }
 
-interface TextResult {
-  content: Array<{ type: string; text?: string }>;
-  isError?: boolean;
-}
-
-describe("MCP server integration", () => {
-  it("completes the initialize handshake advertising name 'voyagier' + instructions", async () => {
-    const { client } = await connect();
-    expect(client.getServerVersion()?.name).toBe("voyagier");
-    expect(client.getServerVersion()?.version).toBe("9.9.9");
+describe("voyagier mcp — stdio proxy", () => {
+  it("initialize: local serverInfo and the remote's instructions passed through; tools advertised WITHOUT listChanged", async () => {
+    const { client, proxy, sent } = await connect();
+    expect(client.getServerVersion()).toEqual({ name: "voyagier", version: "9.9.9" });
     expect(client.getInstructions()).toBe(INSTRUCTIONS);
+    // The remote says listChanged: true, but a stateless HTTP upstream never
+    // delivers notifications to this proxy, so it must not promise to relay them.
+    expect(client.getServerCapabilities()).toEqual({ tools: {} });
+    expect(proxy.remote?.serverInfo).toEqual({ name: "voyagier", version: "1.0.0" });
+    expect(proxy.startupError).toBeNull();
+    // Exactly one remote handshake happened at startup: initialize + initialized.
+    expect(sent.map((s) => s.body.method)).toEqual(["initialize", "notifications/initialized"]);
   });
 
-  it("tools/list returns exactly the expected tools", async () => {
-    const { client } = await connect();
+  it("initialize: no instructions locally when the remote sends none", async () => {
+    const { client } = await connect({}, { instructions: false });
+    expect(client.getInstructions()).toBeUndefined();
+  });
+
+  it("tools/list is the remote's list, byte for byte — no local tools added or removed", async () => {
+    const { client, sent } = await connect();
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(EXPECTED_TOOL_NAMES.length);
-    expect(tools.map((t) => t.name).sort()).toEqual([...EXPECTED_TOOL_NAMES].sort());
+    expect(JSON.stringify(tools)).toBe(JSON.stringify(FIXTURE_TOOLS));
+    expect(tools.map((t) => t.name)).not.toContain("doctor");
+    expect(tools.map((t) => t.name)).not.toContain("agent_docs");
+    const listCalls = sent.filter((s) => s.body.method === "tools/list");
+    expect(listCalls).toHaveLength(1);
+    expect(listCalls[0].headers.authorization).toBe("Bearer pat_placeholder");
+    expect(listCalls[0].url).toBe(MOCK_REMOTE_URL);
   });
 
-  it("tools/list never exposes `send` (emails a real client — CLI-only)", async () => {
-    const { client } = await connect();
+  it("tools/list forwards the cursor and returns the remote page with its nextCursor", async () => {
+    const { client, sent } = await connect({ pageSize: 4 });
+    const first = await client.listTools();
+    expect(first.tools).toEqual(FIXTURE_TOOLS.slice(0, 4));
+    expect(first.nextCursor).toBe("4");
+    const second = await client.listTools({ cursor: first.nextCursor });
+    expect(second.tools).toEqual(FIXTURE_TOOLS.slice(4, 8));
+    const cursors = sent.filter((s) => s.body.method === "tools/list").map((s) => (s.body.params as { cursor?: string }).cursor);
+    expect(cursors).toEqual([undefined, "4"]);
+  });
+
+  it("tools/call forwards name + arguments and returns content, structuredContent and _meta untouched", async () => {
+    const remoteResult = {
+      content: [{ type: "text", text: JSON.stringify({ myTripPlans: { items: [], count: 0 } }) }],
+      structuredContent: { myTripPlans: { items: [], count: 0 } },
+      _meta: { requestId: "r-1" },
+    };
+    const { client, sent } = await connect({ onCall: () => remoteResult });
+    const result = await client.callTool({ name: "plans_list", arguments: { limit: 1 } });
+    expect(result).toEqual(remoteResult);
+    const call = sent.find((s) => s.body.method === "tools/call");
+    expect(call?.body.params).toEqual({ name: "plans_list", arguments: { limit: 1 } });
+  });
+
+  it("tools/call passes an isError result through as a result, not as a protocol error", async () => {
+    const remoteResult = { content: [{ type: "text", text: '{"code":"PRICE_CHANGED","message":"total moved"}' }], isError: true };
+    const { client } = await connect({ onCall: () => remoteResult });
+    const result = await client.callTool({ name: "book", arguments: { plan_id: "p" } });
+    expect(result).toEqual(remoteResult);
+  });
+
+  it("remote 401 on a request → JSON-RPC error 401 telling the user to set the token", async () => {
+    const { client } = await connect({
+      intercept: (sent) => (sent.body.method === "tools/list" ? jsonResponse({ message: "Unauthorized" }, { status: 401 }) : undefined),
+    });
+    const err = await client.listTools().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(McpError);
+    expect((err as McpError).code).toBe(PROXY_ERROR_CODES.AUTH_FAILED);
+    expect((err as McpError).message).toContain("VOYAGIER_TOKEN");
+    expect((err as McpError).data).toMatchObject({ code: "AUTH_FAILED" });
+  });
+
+  it("remote 429 → JSON-RPC error 429 carrying Retry-After", async () => {
+    const { client } = await connect({
+      intercept: (sent) =>
+        sent.body.method === "tools/call" ? jsonResponse({ message: "slow down" }, { status: 429, headers: { "retry-after": "7" } }) : undefined,
+    });
+    const err = await client.callTool({ name: "plans_list", arguments: {} }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(McpError);
+    expect((err as McpError).code).toBe(PROXY_ERROR_CODES.RATE_LIMITED);
+    expect((err as McpError).message).toContain("Retry after 7s");
+    expect((err as McpError).data).toMatchObject({ code: "RATE_LIMITED", retryAfterSeconds: 7 });
+  });
+
+  it("remote JSON-RPC error (unknown tool) → JSON-RPC method-not-found locally", async () => {
+    const { client } = await connect({
+      intercept: (sent) =>
+        sent.body.method === "tools/call"
+          ? jsonResponse({ jsonrpc: "2.0", id: sent.body.id, error: { code: -32601, message: "Unknown tool: frobnicate" } })
+          : undefined,
+    });
+    const err = await client.callTool({ name: "frobnicate", arguments: {} }).catch((e: unknown) => e);
+    expect((err as McpError).code).toBe(PROXY_ERROR_CODES.METHOD_NOT_FOUND);
+    expect((err as McpError).message).toContain("Unknown tool: frobnicate");
+  });
+
+  it("startup 401: the local handshake still succeeds, instructions explain, requests fail with the fix and retry the remote", async () => {
+    let unauthorized = true;
+    const { client, proxy, sent, logs } = await connect({
+      intercept: (sent) => (unauthorized && sent.body.method === "initialize" ? jsonResponse({ message: "Unauthorized" }, { status: 401 }) : undefined),
+    });
+    expect(proxy.startupError?.code).toBe(CliErrorCode.AUTH_FAILED);
+    expect(client.getInstructions()).toContain("could not complete the handshake");
+    expect(client.getInstructions()).toContain("VOYAGIER_TOKEN");
+    expect(client.getServerCapabilities()).toEqual({ tools: {} });
+    expect(logs.some((l) => l.includes("AUTH_FAILED"))).toBe(true);
+
+    const err = await client.listTools().catch((e: unknown) => e);
+    expect((err as McpError).code).toBe(PROXY_ERROR_CODES.AUTH_FAILED);
+
+    // The environment is fixed (token now valid): the next request succeeds without a restart.
+    unauthorized = false;
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).not.toContain("send");
+    expect(tools).toEqual(FIXTURE_TOOLS);
+    expect(sent.filter((s) => s.body.method === "initialize").length).toBeGreaterThanOrEqual(2);
   });
 
-  it("tools/call doctor: builds ['doctor','--json'] and returns the child JSON as text", async () => {
-    const run = jest.fn<CliRunner>(async () => ({
-      stdout: JSON.stringify({ ok: true, data: { overall: "PASS" } }),
-      stderr: "",
-      exitCode: 0,
-    }));
-    const { client } = await connect(run);
-    const res = (await client.callTool({ name: "doctor", arguments: {} })) as TextResult;
-
-    expect(run).toHaveBeenCalledWith(["doctor", "--json"], 60_000);
-    expect(res.isError).toBeFalsy();
-    expect(res.content[0]?.type).toBe("text");
-    expect(res.content[0]?.text).toContain("PASS");
-  });
-
-  it("a failing child (non-zero exit) sets isError:true and passes the envelope through", async () => {
-    const run: CliRunner = async () => ({
-      stdout: JSON.stringify({ error: true, code: "AUTH_FAILED", message: "Token rejected." }),
-      stderr: "",
-      exitCode: 1,
+  it("startup network failure: instructions explain and tools/list is a connection error", async () => {
+    const { client, proxy } = await connect({
+      intercept: () => {
+        throw new TypeError("fetch failed");
+      },
     });
-    const { client } = await connect(run);
-    const res = (await client.callTool({ name: "doctor", arguments: {} })) as TextResult;
-    expect(res.isError).toBe(true);
-    expect(res.content[0]?.text).toContain("AUTH_FAILED");
+    expect(proxy.startupError?.code).toBe(CliErrorCode.NETWORK);
+    expect(client.getInstructions()).toContain("could not complete the handshake");
+    const err = await client.listTools().catch((e: unknown) => e);
+    expect((err as McpError).code).toBe(PROXY_ERROR_CODES.NETWORK);
   });
 
-  it("forwards typed inputs to the correct argv (book price gate)", async () => {
-    const run = jest.fn<CliRunner>(async () => ({ stdout: "{}", stderr: "", exitCode: 0 }));
-    const { client } = await connect(run);
-    await client.callTool({ name: "book", arguments: { plan_id: "P1", expect_total: 339.1, types: ["Activity", "Hotel"] } });
-    expect(run).toHaveBeenCalledWith(
-      ["book", "P1", "--expect-total", "339.10", "--types", "Activity,Hotel", "--json"],
-      120_000,
-    );
+  it("no client at all (token resolution failed) → every request is the auth error", async () => {
+    const proxy = await createProxyServer({
+      version: "9.9.9",
+      client: undefined,
+    }).catch((e: unknown) => e);
+    // createDefaultClient needs a token; the sandbox has none, so startup records AUTH_FAILED.
+    expect(proxy).not.toBeInstanceOf(Error);
+    const built = proxy as Awaited<ReturnType<typeof createProxyServer>>;
+    expect(built.startupError?.code).toBe(CliErrorCode.AUTH_FAILED);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-host", version: "0" });
+    await Promise.all([built.server.connect(serverTransport), client.connect(clientTransport)]);
+    expect(client.getInstructions()).toContain(SET_TOKEN_HINT);
+    const err = await client.listTools().catch((e: unknown) => e);
+    expect((err as McpError).code).toBe(PROXY_ERROR_CODES.AUTH_FAILED);
   });
 
-  it("rejects schema-invalid args (book missing required expect_total) before reaching the CLI", async () => {
-    const run = jest.fn<CliRunner>(okRun);
-    const { client } = await connect(run);
-    const res = (await client.callTool({ name: "book", arguments: { plan_id: "P1" } })) as TextResult;
-    // The SDK validates inputSchema and returns a tool error rather than running the handler.
-    expect(res.isError).toBe(true);
-    expect(run).not.toHaveBeenCalled();
-  });
-
-  it("rejects schema-invalid args (create_client missing required email) before reaching the CLI", async () => {
-    const run = jest.fn<CliRunner>(okRun);
-    const { client } = await connect(run);
-    const res = (await client.callTool({ name: "create_client", arguments: { name: "Al" } })) as TextResult;
-    expect(res.isError).toBe(true);
-    expect(run).not.toHaveBeenCalled();
-  });
-
-  it("travellers_update: forwards typed inputs to the `travellers update` argv (happy path)", async () => {
-    const run = jest.fn<CliRunner>(async () => ({
-      stdout: JSON.stringify({ id: "t1", firstName: "Jane", lastName: "Doe" }),
-      stderr: "",
-      exitCode: 0,
-    }));
-    const { client } = await connect(run);
-    const res = (await client.callTool({
-      name: "travellers_update",
-      arguments: { traveller_id: "t1", gender: "F", dob: "1990-01-02" },
-    })) as TextResult;
-    expect(run).toHaveBeenCalledWith(
-      ["travellers", "update", "t1", "--gender", "F", "--dob", "1990-01-02", "--json"],
-      60_000,
-    );
-    expect(res.isError).toBeFalsy();
-    expect(res.content[0]?.text).toContain("t1");
-  });
-
-  it("travellers_update: a CLI error envelope maps to isError:true", async () => {
-    const run: CliRunner = async () => ({
-      stdout: JSON.stringify({ error: true, code: "VALIDATION", message: "Nothing to update." }),
-      stderr: "",
-      exitCode: 1,
+  it("a rejected token is never retried: after a 401 the next request rebuilds the client from CURRENT credentials (review finding)", async () => {
+    // Remote accepts only token B. The factory reads the "current" token each
+    // time it is called, exactly like createDefaultClient reads credentials.
+    let currentToken = "pat_old";
+    const { fetchImpl, sent } = makeMockRemote({
+      tools: FIXTURE_TOOLS,
+      intercept: (rec) =>
+        rec.headers.authorization === "Bearer pat_new" ? undefined : jsonResponse({ message: "Unauthorized" }, { status: 401 }),
     });
-    const { client } = await connect(run);
-    const res = (await client.callTool({ name: "travellers_update", arguments: { traveller_id: "t1" } })) as TextResult;
-    expect(res.isError).toBe(true);
-    expect(res.content[0]?.text).toContain("VALIDATION");
-  });
-
-  it("travellers_update: rejects schema-invalid args (missing traveller_id) before reaching the CLI", async () => {
-    const run = jest.fn<CliRunner>(okRun);
-    const { client } = await connect(run);
-    const res = (await client.callTool({ name: "travellers_update", arguments: { first: "Jane" } })) as TextResult;
-    expect(res.isError).toBe(true);
-    expect(run).not.toHaveBeenCalled();
-  });
-
-  it("travellers_list: forwards to the `travellers list --plan` argv (happy path)", async () => {
-    const run = jest.fn<CliRunner>(async () => ({
-      stdout: JSON.stringify({ travellers: [{ id: "t1", firstName: "Jane", lastName: "Doe" }] }),
-      stderr: "",
-      exitCode: 0,
-    }));
-    const { client } = await connect(run);
-    const res = (await client.callTool({ name: "travellers_list", arguments: { plan_id: "P1" } })) as TextResult;
-    expect(run).toHaveBeenCalledWith(["travellers", "list", "--plan", "P1", "--json"], 60_000);
-    expect(res.isError).toBeFalsy();
-    expect(res.content[0]?.text).toContain("t1");
-  });
-
-  it("itinerary: forwards to the `itinerary <planId>` argv (happy path)", async () => {
-    const run = jest.fn<CliRunner>(async () => ({
-      stdout: JSON.stringify({ ok: true, data: { events: [], total: 0 }, planContext: { planId: "P1" } }),
-      stderr: "",
-      exitCode: 0,
-    }));
-    const { client } = await connect(run);
-    const res = (await client.callTool({ name: "itinerary", arguments: { plan_id: "P1" } })) as TextResult;
-    expect(run).toHaveBeenCalledWith(["itinerary", "P1", "--json"], 60_000);
-    expect(res.isError).toBeFalsy();
-    expect(res.content[0]?.text).toContain("planContext");
-  });
-
-  it("bookings_list: forwards to the `bookings list --plan` argv (happy path)", async () => {
-    const run = jest.fn<CliRunner>(async () => ({
-      stdout: JSON.stringify({ bookings: [{ id: "b1", status: "Confirmed" }] }),
-      stderr: "",
-      exitCode: 0,
-    }));
-    const { client } = await connect(run);
-    const res = (await client.callTool({ name: "bookings_list", arguments: { plan_id: "P1" } })) as TextResult;
-    expect(run).toHaveBeenCalledWith(["bookings", "list", "--plan", "P1", "--json"], 60_000);
-    expect(res.isError).toBeFalsy();
-    expect(res.content[0]?.text).toContain("Confirmed");
-  });
-
-  it("goal_add: forwards typed inputs to the `plans goal-add` argv (happy path)", async () => {
-    const run = jest.fn<CliRunner>(async () => ({
-      stdout: JSON.stringify({ ok: true, data: { goal: { id: "g1", type: "Activity" } } }),
-      stderr: "",
-      exitCode: 0,
-    }));
-    const { client } = await connect(run);
-    const res = (await client.callTool({
-      name: "goal_add",
-      arguments: { plan_id: "pl1", type: "Activity", name: "Sushi tour" },
-    })) as TextResult;
-    expect(run).toHaveBeenCalledWith(
-      ["plans", "goal-add", "pl1", "--type", "Activity", "--name", "Sushi tour", "--json"],
-      60_000,
-    );
-    expect(res.isError).toBeFalsy();
-    expect(res.content[0]?.text).toContain("g1");
-  });
-
-  it("goal_add: a CLI error envelope (bad type) maps to isError:true", async () => {
-    const run: CliRunner = async () => ({
-      stdout: JSON.stringify({ error: true, code: "VALIDATION", message: 'Invalid --type "Widget".' }),
-      stderr: "",
-      exitCode: 1,
+    const factoryCalls: string[] = [];
+    const proxy = await createProxyServer({
+      version: "9.9.9",
+      createClient: () => {
+        factoryCalls.push(currentToken);
+        return new McpClient({ url: MOCK_REMOTE_URL, token: currentToken, fetchImpl, clientInfo: { name: "spec", version: "0" }, timeoutMs: 5000 });
+      },
     });
-    const { client } = await connect(run);
-    const res = (await client.callTool({ name: "goal_add", arguments: { plan_id: "pl1", type: "Widget" } })) as TextResult;
-    expect(res.isError).toBe(true);
-    expect(res.content[0]?.text).toContain("VALIDATION");
+    // Startup handshake was rejected with the old token; the client is not kept.
+    expect(proxy.startupError?.code).toBe(CliErrorCode.AUTH_FAILED);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const host = new Client({ name: "test-host", version: "0" });
+    await Promise.all([proxy.server.connect(serverTransport), host.connect(clientTransport)]);
+
+    // Still the old token: 401 again, and again the client must be dropped.
+    const first = await host.listTools().catch((e: unknown) => e);
+    expect((first as McpError).code).toBe(PROXY_ERROR_CODES.AUTH_FAILED);
+
+    // `voyagier auth login` stored a new token while the host stayed open.
+    currentToken = "pat_new";
+    const { tools } = await host.listTools();
+    expect(tools).toEqual(FIXTURE_TOOLS);
+    // startup (old) → first request (old, rejected) → second request (new): three constructions, no reuse of a rejected client.
+    expect(factoryCalls).toEqual(["pat_old", "pat_old", "pat_new"]);
+    const authHeaders = sent.map((r) => r.headers.authorization);
+    expect(authHeaders.slice(-2).every((h) => h === "Bearer pat_new")).toBe(true);
+    // The working client is reused from here on.
+    await host.listTools();
+    expect(factoryCalls).toHaveLength(3);
   });
 
-  it("goal_add: rejects schema-invalid args (missing type) before reaching the CLI", async () => {
-    const run = jest.fn<CliRunner>(okRun);
-    const { client } = await connect(run);
-    const res = (await client.callTool({ name: "goal_add", arguments: { plan_id: "pl1" } })) as TextResult;
-    expect(res.isError).toBe(true);
-    expect(run).not.toHaveBeenCalled();
+  it("no client at startup, then credentials appear: the first request builds the client and succeeds", async () => {
+    const { client: upstream } = makeMockRemote({ tools: FIXTURE_TOOLS, instructions: INSTRUCTIONS });
+    let hasToken = false;
+    const logs: string[] = [];
+    const proxy = await createProxyServer({
+      version: "9.9.9",
+      log: (l) => logs.push(l),
+      createClient: () => {
+        if (!hasToken) throw new CliError(CliErrorCode.AUTH_FAILED, "Not authenticated.");
+        return upstream;
+      },
+    });
+    expect(proxy.startupError?.code).toBe(CliErrorCode.AUTH_FAILED);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const host = new Client({ name: "test-host", version: "0" });
+    await Promise.all([proxy.server.connect(serverTransport), host.connect(clientTransport)]);
+
+    // Still no token: the request fails with the auth error (not a stale cached one).
+    const first = await host.listTools().catch((e: unknown) => e);
+    expect((first as McpError).code).toBe(PROXY_ERROR_CODES.AUTH_FAILED);
+
+    // `voyagier auth login` happened meanwhile: the next request constructs the client and works.
+    hasToken = true;
+    const { tools } = await host.listTools();
+    expect(tools).toEqual(FIXTURE_TOOLS);
+    expect(logs.some((l) => l.includes("client (re)created from current credentials"))).toBe(true);
+    // And it is reused afterwards.
+    await host.listTools();
+    expect(logs.filter((l) => l.includes("client (re)created from current credentials"))).toHaveLength(1);
   });
 
-  it("search_flights: sort input maps to --sort; omitting it preserves server order", async () => {
-    const run = jest.fn<CliRunner>(okRun);
-    const { client } = await connect(run);
-    await client.callTool({ name: "search_flights", arguments: { plan_id: "p", from: "JFK", to: "NRT", date: "2026-09-15", sort: "duration" } });
-    expect(run).toHaveBeenCalledWith(
-      ["search", "flights", "--plan", "p", "--from", "JFK", "--to", "NRT", "--date", "2026-09-15", "--sort", "duration", "--json"],
-      300_000,
-    );
-    run.mockClear();
-    await client.callTool({ name: "search_flights", arguments: { plan_id: "p", from: "JFK", to: "NRT", date: "2026-09-15" } });
-    expect(run.mock.calls[0][0]).not.toContain("--sort");
+  it("tools/list with a malformed remote result is an internal error, not a crash", async () => {
+    const { client } = await connect({
+      intercept: (sent) => (sent.body.method === "tools/list" ? jsonResponse({ jsonrpc: "2.0", id: sent.body.id, result: { nope: true } }) : undefined),
+    });
+    const err = await client.listTools().catch((e: unknown) => e);
+    expect((err as McpError).code).toBe(PROXY_ERROR_CODES.INTERNAL);
+    expect((err as McpError).message).toContain("no tool list");
+  });
+});
+
+describe("cliErrorToMcpError", () => {
+  it("maps every CLI code the client can raise", () => {
+    expect(cliErrorToMcpError(new CliError(CliErrorCode.AUTH_FAILED, "x")).code).toBe(401);
+    expect(cliErrorToMcpError(new CliError(CliErrorCode.PERMISSION_DENIED, "x")).code).toBe(403);
+    expect(cliErrorToMcpError(new CliError(CliErrorCode.RATE_LIMITED, "x")).code).toBe(429);
+    expect(cliErrorToMcpError(new CliError(CliErrorCode.RATE_LIMITED, "x")).message).not.toContain("Retry after");
+    expect(cliErrorToMcpError(new CliError(CliErrorCode.NETWORK, "x")).code).toBe(-32000);
+    expect(cliErrorToMcpError(new CliError(CliErrorCode.VALIDATION, "x")).code).toBe(-32602);
+    expect(cliErrorToMcpError(new CliError(CliErrorCode.NOT_FOUND, "x")).code).toBe(-32601);
+    expect(cliErrorToMcpError(new CliError(CliErrorCode.API_ERROR, "x")).code).toBe(-32603);
   });
 
-  it("search_flights: rejects an out-of-enum sort value before reaching the CLI", async () => {
-    const run = jest.fn<CliRunner>(okRun);
-    const { client } = await connect(run);
-    const res = (await client.callTool({
-      name: "search_flights",
-      arguments: { plan_id: "p", from: "JFK", to: "NRT", date: "2026-09-15", sort: "best" },
-    })) as TextResult;
-    expect(res.isError).toBe(true);
-    expect(run).not.toHaveBeenCalled();
+  it("passes McpError through and wraps plain errors", () => {
+    const original = new McpError(-32099, "keep me");
+    expect(cliErrorToMcpError(original)).toBe(original);
+    expect(cliErrorToMcpError(new Error("boom")).message).toContain("boom");
+    expect(cliErrorToMcpError("string").message).toContain("string");
   });
 
-  it("registerTool receives each tool's title + annotations config", () => {
-    // Capture the config object every registerTool call gets, then assert the
-    // title/annotations plumbed through from the TOOLS table survive the wiring.
-    type RegisterToolCfg = { title?: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } };
-    const configs = new Map<string, RegisterToolCfg>();
-    const spy = jest
-      .spyOn(McpServer.prototype, "registerTool")
-      .mockImplementation(function (this: McpServer, name: string, config: RegisterToolCfg) {
-        configs.set(name, config);
-        return {} as ReturnType<McpServer["registerTool"]>;
-      });
-    try {
-      createServer({ version: "9.9.9", run: okRun });
-    } finally {
-      spy.mockRestore();
-    }
-
-    // Every tool got a non-empty title and annotations with readOnlyHint defined.
-    expect(configs.size).toBe(EXPECTED_TOOL_NAMES.length);
-    for (const name of EXPECTED_TOOL_NAMES) {
-      const cfg = configs.get(name);
-      expect(cfg).toBeDefined();
-      expect(typeof cfg!.title).toBe("string");
-      expect(cfg!.title!.length).toBeGreaterThan(0);
-      expect(typeof cfg!.annotations?.readOnlyHint).toBe("boolean");
-    }
-    // book is the destructive one; read-only tools are not destructive.
-    expect(configs.get("book")!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
-    expect(configs.get("doctor")!.annotations).toMatchObject({ readOnlyHint: true });
-    expect(configs.get("doctor")!.annotations!.destructiveHint).not.toBe(true);
+  it("unavailableInstructions names the endpoint and the fix", () => {
+    const text = unavailableInstructions("https://mcp.example.test/api/mcp", new CliError(CliErrorCode.NETWORK, "timed out"));
+    expect(text).toContain("https://mcp.example.test/api/mcp");
+    expect(text).toContain("timed out");
+    expect(text).toContain("retry");
   });
 
-  it("tools/list surfaces titles + annotations to the client", async () => {
-    const { client } = await connect();
-    const { tools } = await client.listTools();
-    const book = tools.find((t) => t.name === "book")!;
-    expect(book.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
-    const doctor = tools.find((t) => t.name === "doctor")!;
-    expect(doctor.annotations).toMatchObject({ readOnlyHint: true });
-    for (const t of tools) {
-      expect(typeof t.title).toBe("string");
-      expect((t.title ?? "").length).toBeGreaterThan(0);
-    }
-  });
-
-  it("search_hotels: sort=price maps to --sort price", async () => {
-    const run = jest.fn<CliRunner>(okRun);
-    const { client } = await connect(run);
-    await client.callTool({ name: "search_hotels", arguments: { plan_id: "p", location: "Paris", checkin: "2026-09-01", checkout: "2026-09-05", sort: "price" } });
-    expect(run).toHaveBeenCalledWith(
-      ["search", "hotels", "--plan", "p", "--location", "Paris", "--checkin", "2026-09-01", "--checkout", "2026-09-05", "--sort", "price", "--json"],
-      300_000,
-    );
+  it("startupFixHint gives guidance specific to the failure", () => {
+    expect(startupFixHint(new CliError(CliErrorCode.AUTH_FAILED, "x"))).toBe(SET_TOKEN_HINT);
+    expect(startupFixHint(new CliError(CliErrorCode.PERMISSION_DENIED, "x"))).toMatch(/not allowed|workspace admin/);
+    expect(startupFixHint(new CliError(CliErrorCode.PERMISSION_DENIED, "x"))).not.toMatch(/connection/);
+    const limited = startupFixHint(new CliError(CliErrorCode.RATE_LIMITED, "x", { retryAfterSeconds: 12 }));
+    expect(limited).toContain("rate limiting");
+    expect(limited).toContain("Wait 12s");
+    expect(limited).not.toMatch(/connection/);
+    expect(startupFixHint(new CliError(CliErrorCode.RATE_LIMITED, "x"))).toContain("Wait, then retry");
+    expect(startupFixHint(new CliError(CliErrorCode.NETWORK, "x"))).toMatch(/network connection.*VOYAGIER_MCP_URL/);
+    expect(startupFixHint(new CliError(CliErrorCode.API_ERROR, "x"))).toContain("voyagier doctor");
   });
 });

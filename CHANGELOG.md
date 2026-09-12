@@ -6,33 +6,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ---
 
-## [Unreleased]
+## [4.0.0] — Unreleased
 
-### ⚠️ BREAKING — the CLI is now a client of the Voyagier MCP server
+### ⚠️ BREAKING — the CLI is a client of the Voyagier MCP server
 
-Every trip-planning command is one MCP tool: `voyagier <tool_name> --<param> <value> …`. The command list, flags and help text are generated at startup from the server's `tools/list` (`https://mcp.voyagier.com/api/mcp`, override with `VOYAGIER_MCP_URL`), so the CLI, the hosted MCP server and every MCP client share one implementation of every verb. The next release of this line is `4.0.0`.
+**Why.** Two implementations of one verb drift. The 3.x CLI carried its own GraphQL for every trip-planning command and the stdio server carried a second, hand-maintained tool table; each surface aged on its own schedule and agents that learned one found the other missing a tool or an input. In 4.0 there is one implementation of every verb, on the hosted Voyagier MCP server (`https://mcp.voyagier.com/api/mcp`), and every surface is a client of it: `voyagier <tool_name> --<param> <value> …` calls `tools/call`, the stdio server and the Claude Desktop extension forward `tools/list` and `tools/call` to it unchanged, and MCP-native hosts connect to it directly. A tool published on the server reaches every surface on deploy, with no CLI release.
 
 #### Added
 - **`src/mcp-client`:** a fetch-based MCP client over Streamable HTTP — `initialize`, `tools/list`, `tools/call`; Bearer PAT from the existing credential store; JSON and SSE responses; `Mcp-Session-Id` echoed when the server issues one, with one re-initialize on a stale-session 404; `429` surfaces as `RATE_LIMITED` with `details.retryAfterSeconds` from `Retry-After`; `401` → `AUTH_FAILED`, `403` → `PERMISSION_DENIED`, network failures → `NETWORK`, a tool's `isError` result → `API_ERROR` carrying the tool's own text.
-- **Generated command surface:** one Commander command per tool, flags typed from the tool's JSON input schema (string, integer/number, boolean, enum with choices, arrays as repeatable flags, objects and arrays of objects as JSON literals), required inputs enforced before any network call, the tool's description as `--help`. `--json` prints the result content as JSON; `plan_status`, `search_flights` / `search_hotels` / `search_activities` / `search_status` / `promote_search`, `get_selection_options` / `refresh_options`, `itinerary` and `quote` render a compact human view without it.
-- **Tool cache:** `~/.voyagier/tools-cache.json` (24h TTL, keyed by endpoint). Refreshed by `voyagier doctor`, on a cache miss, and when a command name is not in the cache (so a newly published server tool works on first use).
+- **Generated command surface:** one command per tool, flags typed from the tool's JSON input schema (string, integer/number, boolean, enum with choices, arrays as repeatable flags, objects and arrays of objects as JSON literals), required inputs enforced before any network call, the tool's description as `--help`. `--json` prints the result content as JSON; `plan_status`, `search_flights` / `search_hotels` / `search_activities` / `search_status` / `promote_search`, `get_selection_options` / `refresh_options`, `itinerary` and `quote` render a compact human view without it.
+- **Tool cache:** `~/.voyagier/tools-cache.json` (24h TTL, keyed by endpoint) holds the server's `tools/list` and its `instructions`. Refreshed by `voyagier doctor`, on a cache miss, and when a command name is not in the cache (so a newly published server tool works on first use).
 - **Tool-surface hash:** a stable digest of the server's tool names + input schemas, reported by `doctor` (`details.surfaceHash`, with the previous run's hash and the absolute list timestamp) and by the new global `--verbose` flag on stderr, so scripts can detect when the calling contract changed.
-- **`VOYAGIER_MCP_URL`** environment variable. Same rule as `VOYAGIER_API_URL`: `https://` only, `http://` accepted for loopback hosts.
+- **`VOYAGIER_MCP_URL`** environment variable: the MCP endpoint every command, the stdio proxy and the extension talk to (default `https://mcp.voyagier.com/api/mcp`). Same rule as `VOYAGIER_API_URL`: `https://` only, `http://` accepted for loopback hosts.
 - Error codes `RATE_LIMITED` and `COMMAND_REMOVED`.
 
 #### Changed
+- **`voyagier mcp` is a proxy for the hosted server.** The stdio server holds no tool table: `tools/list` and `tools/call` are forwarded to the hosted MCP server with the token from `VOYAGIER_TOKEN` (or the stored credentials) and the results are returned exactly as the server sent them — the same descriptors, content blocks, `structuredContent` and `isError`. The server's `instructions` from `initialize` are passed through as the proxy's own. Capabilities are not: the proxy advertises plain `tools` and does not expose `listChanged`, because the hosted server sends no notifications for it to relay; hosts re-list tools on their own cadence (or after `voyagier doctor` refreshes the cache), and a token fixed while the host stays open is picked up on the next request. `doctor` and `agent_docs` are no longer tools; `voyagier doctor` and `voyagier agent-docs` are CLI commands. When the hosted server cannot be reached, the local handshake still succeeds so the host can show the problem: `instructions` explain it and each request answers with a JSON-RPC error that names the fix — `401` → set `VOYAGIER_TOKEN`; `429` → the server's `Retry-After`; unreachable → check the connection. Requests re-attempt the remote handshake, so fixing the environment needs no restart.
+- **Claude Desktop extension (MCPB)** is the same proxy: same entry point (`voyagier mcp`), same `VOYAGIER_TOKEN` user setting, now described as connecting to the hosted Voyagier MCP server.
+- **`voyagier agent-docs`** prints the server's `instructions` (the trip-planning guidance: tool order, search completion, booking gates) first, then the CLI's own usage notes (auth, flags-from-schema, `--json`, exit codes). The instructions are read from the tool cache when fresh and fetched otherwise; `--json` returns `{ instructions, instructionsSource, content, format }`. AGENT.md no longer carries trip-planning guidance of its own.
 - **`voyagier doctor`** checks the MCP connection instead of the GraphQL schema: credentials present → `initialize` + `tools/list` (tool count, server identity, cache refresh) → `whoami` when the server publishes that tool → state files → npm version. The `schema` and `reachability` checks are gone.
-- **AGENT.md and README** rewritten around the tool model.
+- **README and AGENT.md** rewritten around the tool model.
 - Every tool result is passed through the same ANSI/control-character sanitizer the 3.x GraphQL boundary used before it is rendered.
+- The `graphql` package is no longer a dependency (nothing at runtime imported it; the one profile mutation behind `auth setup` is sent with `fetch`).
 
 #### Removed
 - **Every 3.x trip-planning command.** Running one still parses, prints `This command was removed in 4.0. Use: voyagier <tool> [flags]` and exits 1 (`COMMAND_REMOVED`; JSON envelope under `--json`). Kept as local commands: `auth *`, `doctor`, `mcp install`, `mcp`, `agent-docs`, `telemetry`.
 - The hand-written GraphQL documents behind those commands (`src/queries.ts` keeps only the profile mutation `auth setup` uses), the local search/selection state files (`last-search.json`, `last-options.json`), and the `--agent` markdown output mode.
+- The stdio server's own tool table (`src/mcp/tools.ts`), its CLI-spawning execution path, and the `doctor`, `agent_docs`, `create_client`, `add_traveller`, `listings_list`, `listings_add_to_selection`, `book_dry_run` and `booking_status` tools it alone exposed. The hosted server's `quote` is the booking preview; `bookings_list` covers booking status.
 - Flags are the tool's snake_case property names (`--plan_id`, `--selection_id`) rather than the 3.x kebab-case flags (`--plan`, `--selection-id`). JSON payloads are the server's `{ "<operation>": … }` shape.
+- The `refresh:plan-schema` script and the plan-schema snapshot it maintained (no GraphQL documents remain to check).
+
+#### Rate limit
+The hosted MCP endpoint is limited per token to **180 requests per minute**, across every client of that token (the CLI, the stdio proxy, MCP-native hosts). Scripted loops should back off; the CLI reports `RATE_LIMITED` with `details.retryAfterSeconds`, and the stdio proxy returns a JSON-RPC error carrying the same `Retry-After`.
 
 #### Migration table
 
-Replacements marked as planned are tools the server has not published yet; the removal message says so at runtime and points at `voyagier doctor` to refresh the tool list.
+Generated from `src/removed-commands.ts` — the same table drives the runtime removal messages, and a spec fails when this section drifts from it. Replacements marked as planned are tools the server has not published yet; the removal message says so at runtime and points at `voyagier doctor` to refresh the tool list.
 
 | 3.x command | 4.0 replacement | Note |
 |---|---|---|
@@ -111,8 +120,11 @@ Replacements marked as planned are tools the server has not published yet; the r
 | `voyagier traveller-groups remove-members` | — |  |
 | `voyagier traveller-groups upsert` | — |  |
 
-#### Not in this change
-- `voyagier mcp` (the stdio server) and the MCPB bundle still use their hand-maintained tool table; aligning them with the hosted server's tool list is a separate change in this release line.
+#### Upgrading
+1. `npm install -g @voyagier/cli@4` (or `voyagier@3`, the alias that tracks it). 3.x stays installable: `npm install -g @voyagier/cli@3`.
+2. `voyagier doctor --json` — verifies the token, connects to the MCP server and fills the tool cache.
+3. Replace each 3.x command with its tool from the table above; `voyagier <tool_name> --help` lists the flags.
+4. Stdio MCP hosts and the Claude Desktop extension need no configuration change; they now see the hosted server's tools.
 
 ### Merged from the 3.x line before this cut
 ### Changed

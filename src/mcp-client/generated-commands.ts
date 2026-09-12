@@ -34,10 +34,11 @@ export interface GeneratedCommandContext {
 }
 
 /** Default client: hosted URL (or VOYAGIER_MCP_URL), stored PAT, trace header. */
-export function createDefaultClient(version: string): McpClient {
+export function createDefaultClient(version: string, opts: { fetchImpl?: typeof fetch } = {}): McpClient {
   return new McpClient({
     url: getMcpUrl(),
     token: getToken(),
+    fetchImpl: opts.fetchImpl,
     clientInfo: { name: "voyagier-cli", version },
     requestId: getTraceId,
     log: verbose ? (line) => process.stderr.write(`${line}\n`) : undefined,

@@ -2,7 +2,7 @@
   "name": "@voyagier/cli",
   "version": "3.0.0",
   "mcpName": "com.voyagier/cli",
-  "description": "Agent-ready travel CLI — search, plan, quote, and book real trips (flights, hotels, activities) against the Voyagier platform. Built for AI agents: --json everywhere, uniform error codes, price-gated checkout, printable agent reference (voyagier agent-docs).",
+  "description": "Command-line shell for the Voyagier MCP server: one command per tool to search, plan, quote and book real trips (flights, hotels, activities). Built for AI agents: --json everywhere, uniform error codes, price-gated checkout, a stdio MCP proxy (voyagier mcp) and a printable agent reference (voyagier agent-docs).",
   "type": "module",
   "bin": {
     "voyagier": "dist/index.js"
@@ -15,8 +15,7 @@
     "test": "NODE_OPTIONS=\"--experimental-vm-modules\" jest",
     "test:watch": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --watch",
     "test:cov": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --coverage",
-    "refresh:mcp-fixture": "node scripts/refresh-mcp-fixture.mjs",
-    "refresh:plan-schema": "tsx scripts/refresh-plan-schema.mts"
+    "refresh:mcp-fixture": "node scripts/refresh-mcp-fixture.mjs"
   },
   "keywords": [
     "voyagier",
@@ -47,7 +46,6 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "chalk": "^6.0.0",
     "commander": "^15.0.0",
-    "graphql": "^17.0.2",
     "zod": "^4.5.4"
   },
   "devDependencies": {

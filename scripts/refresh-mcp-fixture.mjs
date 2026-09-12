@@ -2,17 +2,23 @@
 /**
  * Refresh the remote MCP tool-registry fixture.
  *
- * Calls `tools/list` on the remote Voyagier MCP server and writes the
- * `result.tools` array to src/mcp/fixtures/remote-tools.json, which
- * src/mcp/registry-contract.spec.ts compares the CLI's own tool table against.
- * Run it when the remote server's tools change, then read the diff: a new
- * difference makes the contract spec fail until it is either resolved in
- * src/mcp/tools.ts or recorded as a deliberate exception in that spec.
+ * Calls `tools/list` on the hosted Voyagier MCP server and writes the
+ * `result.tools` array to src/mcp/fixtures/remote-tools.json.
+ *
+ * The fixture is a documentation aid, not a contract: the CLI builds its
+ * command surface from the live `tools/list` at runtime and the stdio proxy
+ * forwards the remote list untouched, so nothing in the shipped code reads
+ * this file. The specs that exercise the generated command surface offline
+ * (build-program, schema-flags, doc-drift, removed-commands, the proxy's
+ * byte-for-byte contract) use it as a realistic snapshot. Refresh it when the
+ * server publishes new tools so those specs and the docs see them.
  *
  * Usage:  VOYAGIER_TOKEN=<token> npm run refresh:mcp-fixture
  *
- * The token is read from the environment only. It is never written to the
- * fixture, echoed, or included in any error message.
+ * Run locally only. The token is read from the environment, never written to
+ * the fixture, echoed, or included in any error message; it must not be added
+ * to CI. A token-free registry artifact published by the server's own CI is
+ * the intended future source for this snapshot.
  */
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -99,4 +105,4 @@ if (!Array.isArray(tools) || tools.length === 0) {
 
 writeFileSync(FIXTURE, `${JSON.stringify(tools, null, 2)}\n`, "utf-8");
 console.log(`Wrote ${tools.length} tools to ${path.relative(process.cwd(), FIXTURE)}`);
-console.log("Next: review the diff, then run `npm test` — src/mcp/registry-contract.spec.ts checks it against the CLI tool table.");
+console.log("Next: review the diff, then run `npm test` — the docs and generated-surface specs read this snapshot.");

@@ -240,6 +240,19 @@ export class McpClient {
     return result;
   }
 
+  /**
+   * Raw pass-through: send `method` with `params` and return the remote's
+   * `result` untouched — no unwrapping, no isError mapping, pagination left to
+   * the caller. This is what the stdio proxy (`voyagier mcp`) forwards on, so a
+   * `tools/list` page or a `tools/call` result (including `structuredContent`
+   * and `isError`) reaches the local client exactly as the remote sent it.
+   * Transport-level failures (401/403/429/network/RPC errors) still throw the
+   * mapped CliError.
+   */
+  async request(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    return this.rpc(method, params);
+  }
+
   // ── transport ─────────────────────────────────────────────────────────────
 
   /** Send one JSON-RPC request after ensuring the session is initialized. */
