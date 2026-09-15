@@ -12,6 +12,7 @@ import { registerBookCommands } from "./commands/book.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerWhoamiCommand } from "./commands/whoami.js";
 import { registerBookingsCommands } from "./commands/bookings.js";
+import { registerAdminBookingIntentsCommands } from "./commands/admin-booking-intents.js";
 import { registerPlanTripCommand } from "./commands/plan-trip.js";
 import { registerPlanStatusCommand } from "./commands/plan-status.js";
 import { registerAgentDocsCommand } from "./commands/agent-docs.js";
@@ -130,6 +131,7 @@ Full reference: voyagier agent-docs`,
   registerSendCommand(program);
   registerBookCommands(program);
   registerBookingsCommands(program);
+  registerAdminBookingIntentsCommands(program);
   registerWhoamiCommand(program);
   registerTelemetryCommands(program);
   registerAgentDocsCommand(program);

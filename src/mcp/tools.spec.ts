@@ -38,6 +38,7 @@ import {
   buildBookArgs,
   buildBookingStatusArgs,
   buildBookingsListArgs,
+  buildAdminBookingIntentsArgs,
   buildAgentDocsArgs,
 } from "./tools.js";
 
@@ -69,6 +70,7 @@ const EXPECTED_TOOL_NAMES = [
   "book",
   "booking_status",
   "bookings_list",
+  "admin_booking_intents",
   "agent_docs",
 ];
 
@@ -426,6 +428,33 @@ describe("argv builders", () => {
     expect(buildBookingsListArgs({ plan_id: "p" })).toEqual(["bookings", "list", "--plan", "p", "--json"]);
   });
 
+  it("admin_booking_intents: no filters is just list + --json; every filter forwarded when given", () => {
+    expect(buildAdminBookingIntentsArgs({})).toEqual(["admin", "booking-intents", "list", "--json"]);
+    expect(
+      buildAdminBookingIntentsArgs({
+        page: 2,
+        limit: 50,
+        query: "paris",
+        status: "PAID",
+        start_date: "2026-01-01",
+        end_date: "2026-02-01",
+        user_id: "u1",
+        trip_id: "t1",
+      }),
+    ).toEqual([
+      "admin", "booking-intents", "list",
+      "--page", "2",
+      "--limit", "50",
+      "--query", "paris",
+      "--status", "PAID",
+      "--start-date", "2026-01-01",
+      "--end-date", "2026-02-01",
+      "--user-id", "u1",
+      "--trip-id", "t1",
+      "--json",
+    ]);
+  });
+
   it("book_dry_run: --expect-total only when provided, rendered via moneyArg", () => {
     expect(buildBookDryRunArgs({ plan_id: "p" })).toEqual(["book", "p", "--dry-run", "--json"]);
     const gated = buildBookDryRunArgs({ plan_id: "p", expect_total: 339.1 });
@@ -519,6 +548,7 @@ describe("--json discipline via the table (buildArgs on representative input)", 
     book: { plan_id: "p", expect_total: 10 },
     booking_status: { plan_id: "p" },
     bookings_list: { plan_id: "p" },
+    admin_booking_intents: {},
     agent_docs: {},
   };
 

@@ -411,6 +411,36 @@ export function buildBookingsListArgs(i: { plan_id: string }): string[] {
   return ["bookings", "list", "--plan", i.plan_id, "--json"];
 }
 
+// Mirrors `admin booking-intents list` (src/commands/admin-booking-intents.ts),
+// which calls the AdminAuthGuard-gated `adminBookingIntents` GraphQL query
+// (VOY-2210) — requires an admin PAT. Every filter is optional; omitting all
+// of them returns every row across every user, unfiltered by userId linkage
+// or paid status (the gap in Navigator CRM's link-only sync).
+export interface AdminBookingIntentsInput {
+  page?: number;
+  limit?: number;
+  query?: string;
+  status?: string;
+  start_date?: string;
+  end_date?: string;
+  user_id?: string;
+  trip_id?: string;
+}
+
+export function buildAdminBookingIntentsArgs(i: AdminBookingIntentsInput): string[] {
+  const args = ["admin", "booking-intents", "list"];
+  opt(args, "--page", i.page);
+  opt(args, "--limit", i.limit);
+  opt(args, "--query", i.query);
+  opt(args, "--status", i.status);
+  opt(args, "--start-date", i.start_date);
+  opt(args, "--end-date", i.end_date);
+  opt(args, "--user-id", i.user_id);
+  opt(args, "--trip-id", i.trip_id);
+  args.push("--json");
+  return args;
+}
+
 export function buildAgentDocsArgs(): string[] {
   // The ONE tool without --json: agent-docs prints the markdown reference.
   return ["agent-docs"];
@@ -892,6 +922,30 @@ export const TOOLS: ToolDef[] = [
     },
     annotations: { readOnlyHint: true },
     buildArgs: (i) => buildBookingsListArgs(i),
+  }),
+
+  defineTool({
+    name: "admin_booking_intents",
+    title: "Admin: list booking intents",
+    description:
+      "ADMIN-ONLY (requires an admin PAT, else FORBIDDEN): read the booking_intents table directly (VOY-2210). Returns EVERY row across every user regardless of userId linkage or paid status — including unpaid/abandoned/pre-auth wizard drafts — unlike Navigator CRM's link-only sync. Filter with query (free text across message/tripName/destinationLabel), status (DRAFT/SAVED/PAID/PLAN_CREATED/BOOKED/ABANDONED), start_date/end_date (createdAt range), user_id, or trip_id; omit all filters to page through everything." +
+      INJECTION_NOTE,
+    timeoutMs: T.short,
+    inputSchema: {
+      page: z.number().int().optional().describe("Page number, 1-based (default 1)."),
+      limit: z.number().int().optional().describe("Page size (default 20, max 100)."),
+      query: z.string().optional().describe("Free-text search across message, tripName, destinationLabel."),
+      status: z
+        .enum(["DRAFT", "SAVED", "PAID", "PLAN_CREATED", "BOOKED", "ABANDONED"])
+        .optional()
+        .describe("Filter by funnel status."),
+      start_date: z.string().optional().describe("Only intents created on/after this date (ISO 8601)."),
+      end_date: z.string().optional().describe("Only intents created before this date (ISO 8601)."),
+      user_id: z.string().optional().describe("Filter by the user who expressed the intent."),
+      trip_id: z.string().optional().describe("Filter by the trip the intent fired from."),
+    },
+    annotations: { readOnlyHint: true },
+    buildArgs: (i) => buildAdminBookingIntentsArgs(i),
   }),
 
   defineTool({

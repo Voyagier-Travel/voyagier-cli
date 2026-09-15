@@ -1817,3 +1817,68 @@ export const GET_PLAN_CLIENT = `
     }
   }
 `;
+
+// Admin-gated, unfiltered read of the booking_intents table (VOY-2210) — every
+// row regardless of userId linkage or paid status, unlike Navigator CRM's
+// link-only sync. Requires an admin PAT; the server rejects non-admins with
+// FORBIDDEN. Omits `updatedAt` (not a GraphQL field on BookingIntent).
+export const ADMIN_BOOKING_INTENTS = `
+  query AdminBookingIntents(
+    $page: Int
+    $limit: Int
+    $query: String
+    $status: BookingIntentStatus
+    $startDate: DateTime
+    $endDate: DateTime
+    $userId: String
+    $tripId: String
+  ) {
+    adminBookingIntents(
+      page: $page
+      limit: $limit
+      query: $query
+      status: $status
+      startDate: $startDate
+      endDate: $endDate
+      userId: $userId
+      tripId: $tripId
+    ) {
+      items {
+        id
+        userId
+        tripId
+        tripName
+        message
+        status
+        destinationLabel
+        adultCount
+        youthCount
+        childCount
+        infantCount
+        petCount
+        heartedPlaces
+        startDate
+        endDate
+        minNights
+        maxNights
+        flexibleMonths
+        dateNotes
+        flightPreferences
+        hotelPreferences
+        roomCount
+        travellerDetails
+        depositAmountCents
+        paidAt
+        stripeCheckoutSessionId
+        emailSentAt
+        slackThreadTs
+        aiDerivedSignals
+        aiSignalsGeneratedAt
+        createdAt
+      }
+      count
+      page
+      limit
+    }
+  }
+`;
