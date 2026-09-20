@@ -163,7 +163,7 @@ Every 3.x trip-planning command is replaced by a tool. Running an old command pr
 | `selection-options` | `get_options` |
 | `choices-view`, `traveller-choices list` | `get_plan_choices` |
 | `select` | `select_option` |
-| `choose-room-slot` | `set_room_count` (rooms per hotel selection) / `set_room_rates` (rate per room) |
+| `choose-room-slot` | `set_room_count` sets how many rooms the hotel selection needs; each room slot row is then decided with `select_option --participant_choice_id` (rows from `get_plan_choices`). `set_room_rates` only edits the rate list of an imported or hand-added room. |
 | `travellers add` / `list` / `update` / `remove` | `add_travellers` / `list_travellers` / `update_traveller` / `delete_traveller` |
 | `clients list` / `get` / `create` / `update` | `list_clients` / `get_client` / `create_client` / `update_client` |
 | `plans goal-add` / `goal-update` / `goal-remove` | `add_goal` / `update_goal` / `delete_goal` |

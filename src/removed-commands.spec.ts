@@ -52,7 +52,10 @@ describe("removed-commands table", () => {
     expect(retired.filter((t) => used.has(t))).toEqual([]);
     expect(findRemovedCommand(["plan-trip"])?.tools).toEqual(["create_plan"]);
     expect(findRemovedCommand(["travellers", "remove"])?.tools).toEqual(["delete_traveller"]);
-    expect(findRemovedCommand(["choose-room-slot"])?.tools).toEqual(["set_room_count", "set_room_rates"]);
+    expect(findRemovedCommand(["choose-room-slot"])?.tools).toEqual(["set_room_count", "select_option"]);
+    expect(findRemovedCommand(["plans", "goal-assign-travellers"])?.tools).toEqual(["move_travellers"]);
+    // set_room_rates edits a manual room's rate list; it never decides a room slot.
+    expect(findRemovedCommand(["choose-room-slot"])?.tools).not.toContain("set_room_rates");
   });
 
   it("finds the longest matching path and ignores flags", () => {

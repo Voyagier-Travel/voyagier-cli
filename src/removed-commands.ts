@@ -71,7 +71,11 @@ export const REMOVED_COMMANDS: readonly RemovedCommand[] = [
   { command: "selection-options", tools: ["get_options"] },
   { command: "refresh-options", tools: ["refresh_options"] },
   { command: "choices-view", tools: ["get_plan_choices"] },
-  { command: "choose-room-slot", tools: ["set_room_count", "set_room_rates"], note: "No direct replacement: set_room_count sets how many rooms a hotel selection needs; set_room_rates picks the rate per room on a hotel option." },
+  {
+    command: "choose-room-slot",
+    tools: ["set_room_count", "select_option"],
+    note: "set_room_count sets how many rooms the hotel selection needs; each room slot row is then decided with select_option --participant_choice_id (rows from get_plan_choices). set_room_rates only edits the rate list of an imported or hand-added room.",
+  },
   { command: "traveller-choices list", tools: ["get_plan_choices"] },
   // Close
   { command: "cart", tools: ["get_plan_quote"] },
