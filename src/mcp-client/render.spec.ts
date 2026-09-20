@@ -1,10 +1,20 @@
 import { describe, it, expect } from "@jest/globals";
 import { readFileSync } from "node:fs";
-import { TOOL_RENDERERS, renderItinerary, renderPlanStatus, renderQuote, renderSearchResult, renderSelectionOptions, renderToolPayload, shellQuote, unwrapToolPayload } from "./render.js";
+import {
+  TOOL_RENDERERS,
+  renderItinerary,
+  renderPlanStatus,
+  renderQuote,
+  renderSearchResult,
+  renderSelectionOptions,
+  renderToolPayload,
+  shellQuote,
+  unwrapToolPayload,
+} from "./render.js";
 import type { McpToolDescriptor } from "./client.js";
 
 const FIXTURE_TOOLS: McpToolDescriptor[] = JSON.parse(
-  readFileSync(new URL("../mcp/fixtures/remote-tools.json", import.meta.url), "utf-8"),
+  readFileSync(new URL("../mcp/fixtures/remote-tools.json", import.meta.url), "utf-8")
 ) as McpToolDescriptor[];
 
 /**
@@ -25,7 +35,12 @@ const PLAN_STATUS = {
   summary: { goalsTotal: 4, goalsDecided: 2, goalsBooked: 0, blockerCount: 2, bookableNow: false },
   blockers: [
     { kind: "TravellerData", message: "Jane Doe is missing dateOfBirth", refs: { travellerId: "trv-1" } },
-    { kind: "RequirementUnmet", message: "Flights: Cabin class", unverified: true, refs: { goalId: "g-1", selectionId: "s-1" } },
+    {
+      kind: "RequirementUnmet",
+      message: "Flights: Cabin class",
+      unverified: true,
+      refs: { goalId: "g-1", selectionId: "s-1" },
+    },
   ],
   nextActions: [{ action: "SelectOption", detail: "Pick a fare", selectionId: "s-1" }],
   waiting: [{ kind: "OptionsPending", message: "Hotel inventory is loading", refs: { selectionId: "s-2" } }],
@@ -56,11 +71,33 @@ const SEARCH = {
           isBookable: true,
           airlines: ["TP"],
           segments: [
-            { origin: "BWI", destination: "LIS", departureTime: "2026-11-20T17:40:00", arrivalTime: "2026-11-21T06:55:00", durationLabel: "8h 15m", stops: 0 },
-            { origin: "LIS", destination: "BWI", departureTime: "2026-11-27T11:10:00", arrivalTime: "2026-11-27T15:05:00", durationLabel: "8h 55m", stops: 1 },
+            {
+              origin: "BWI",
+              destination: "LIS",
+              departureTime: "2026-11-20T17:40:00",
+              arrivalTime: "2026-11-21T06:55:00",
+              durationLabel: "8h 15m",
+              stops: 0,
+            },
+            {
+              origin: "LIS",
+              destination: "BWI",
+              departureTime: "2026-11-27T11:10:00",
+              arrivalTime: "2026-11-27T15:05:00",
+              durationLabel: "8h 55m",
+              stops: 1,
+            },
           ],
         },
-        { index: 1, optionId: "opt-2", name: "Grand Hotel", price: 1290, currency: "USD", rating: 4.5, amenities: ["Pool", "Spa", "Gym", "Bar", "Wifi"] },
+        {
+          index: 1,
+          optionId: "opt-2",
+          name: "Grand Hotel",
+          price: 1290,
+          currency: "USD",
+          rating: 4.5,
+          amenities: ["Pool", "Spa", "Gym", "Bar", "Wifi"],
+        },
       ],
       callouts: { cheapestIndex: 0, fastestIndex: 0, highestRatedIndex: 1 },
     },
@@ -121,7 +158,9 @@ describe("renderSearchResult", () => {
     const out = strip(renderToolPayload("search_flights", SEARCH));
     expect(out).toContain("status Ready");
     expect(out).toContain("id srch-1");
-    expect(out).toContain("[0]  TP  ·  BWI→LIS 17:40–06:55 8h 15m nonstop  ·  LIS→BWI 11:10–15:05 8h 55m 1 stop  ·  $812.40  ·  [cheapest, fastest]");
+    expect(out).toContain(
+      "[0]  TP  ·  BWI→LIS 17:40–06:55 8h 15m nonstop  ·  LIS→BWI 11:10–15:05 8h 55m 1 stop  ·  $812.40  ·  [cheapest, fastest]"
+    );
     expect(out).toContain("option_id opt-1");
     expect(out).toContain("[1]  Grand Hotel  ·  ⭐4.5  ·  Pool, Spa, Gym, Bar  ·  $1,290.00  ·  [top rated]");
     expect(out).toContain("… 40 more (showing top 2)");
@@ -130,12 +169,26 @@ describe("renderSearchResult", () => {
   });
 
   it("points a still-fetching search at the verb-first polling tools", () => {
-    const out = strip(renderToolPayload("get_search_status", { id: "s", type: "Hotel", status: "Fetching", optionsSummary: { optionCount: 0, topOptions: [] } }));
+    const out = strip(
+      renderToolPayload("get_search_status", {
+        id: "s",
+        type: "Hotel",
+        status: "Fetching",
+        optionsSummary: { optionCount: 0, topOptions: [] },
+      })
+    );
     expect(out).toContain("poll get_search_status / get_options");
   });
 
   it("says when a search is still fetching and surfaces fetchError", () => {
-    const out = strip(renderSearchResult({ id: "s", type: "Hotel", status: "Fetching", optionsSummary: { optionCount: 0, topOptions: [] } }));
+    const out = strip(
+      renderSearchResult({
+        id: "s",
+        type: "Hotel",
+        status: "Fetching",
+        optionsSummary: { optionCount: 0, topOptions: [] },
+      })
+    );
     expect(out).toContain("status Fetching");
     expect(out).toContain("0 options yet");
     const err = strip(renderSearchResult({ id: "s", status: "FetchError", fetchError: "Supplier timeout" }));
@@ -154,9 +207,12 @@ describe("renderSelectionOptions", () => {
       renderSelectionOptions({
         __typename: "TripPlanFlightSelection",
         id: "sel-1",
-        fetchStatus: { status: "NoResults", searchedQuery: { summary: "BWI→LIS 2026-11-20, return same day", degenerateHint: "same-day return" } },
+        fetchStatus: {
+          status: "NoResults",
+          searchedQuery: { summary: "BWI→LIS 2026-11-20, return same day", degenerateHint: "same-day return" },
+        },
         optionsSummary: { optionCount: 0, topOptions: [] },
-      }),
+      })
     );
     expect(out).toContain("FlightSelection  ·  status NoResults  ·  selection_id sel-1");
     expect(out).toContain("searched: BWI→LIS 2026-11-20, return same day");
@@ -184,8 +240,21 @@ describe("renderSelectionOptions", () => {
       callouts: { cheapestIndex: 1 },
     },
     participantChoices: [
-      { id: "pc-decided", decided: true, travellerIds: ["t1"], travellerNames: ["Ana Example"], locked: false, selectedOption: { id: "opt-a", name: "Hotel A" } },
-      { id: "pc-open", decided: false, travellerIds: ["t2", "t3"], travellerNames: ["Bo Example", "Cy Example"], locked: false },
+      {
+        id: "pc-decided",
+        decided: true,
+        travellerIds: ["t1"],
+        travellerNames: ["Ana Example"],
+        locked: false,
+        selectedOption: { id: "opt-a", name: "Hotel A" },
+      },
+      {
+        id: "pc-open",
+        decided: false,
+        travellerIds: ["t2", "t3"],
+        travellerNames: ["Bo Example", "Cy Example"],
+        locked: false,
+      },
     ],
   };
 
@@ -193,16 +262,20 @@ describe("renderSelectionOptions", () => {
     const out = strip(renderSelectionOptions(HOTEL_PAGE));
     const lines = out.split("\n");
     const rowsAt = lines.indexOf("  rows:");
-    expect(rowsAt).toBeGreaterThan(lines.findIndex((l) => l.includes("option_id opt-b")));
+    expect(rowsAt).toBeGreaterThan(lines.findIndex(l => l.includes("option_id opt-b")));
     expect(lines[rowsAt + 1]).toBe("    participant_choice_id pc-decided  ·  Ana Example  ·  decided  ·  → Hotel A");
     expect(lines[rowsAt + 2]).toBe("    participant_choice_id pc-open  ·  Bo Example, Cy Example  ·  undecided");
-    expect(lines[rowsAt + 3]).toBe("  decide a row: voyagier select_option --participant_choice_id pc-open --option_id <option_id>");
+    expect(lines[rowsAt + 3]).toBe(
+      "  decide a row: voyagier select_option --participant_choice_id pc-open --option_id <option_id>"
+    );
   });
 
   it("points at the next page with the server's cursor and the same selection id", () => {
     const out = strip(renderSelectionOptions(HOTEL_PAGE));
     expect(out).toContain("… 3 more (showing top 2)");
-    expect(out.split("\n").at(-1)).toBe("  more options: voyagier get_options --selection_id sel-h1 --cursor eyJvIjoyfQ");
+    expect(out.split("\n").at(-1)).toBe(
+      "  more options: voyagier get_options --selection_id sel-h1 --cursor eyJvIjoyfQ"
+    );
     expect(out).not.toContain("--query");
     expect(out).not.toContain("--limit");
     // Same through the tool entry point with no hints (the get_options command without --query/--limit).
@@ -211,19 +284,54 @@ describe("renderSelectionOptions", () => {
 
   it("repeats the query and page size the page was read with, shell-quoted, in the next-page line", () => {
     // The get_options contract: pass nextCursor back as cursor, with the same query.
-    const filtered = { ...HOTEL_PAGE, optionsSummary: { ...HOTEL_PAGE.optionsSummary, optionCount: 12, matchedCount: 5 } };
+    const filtered = {
+      ...HOTEL_PAGE,
+      optionsSummary: { ...HOTEL_PAGE.optionsSummary, optionCount: 12, matchedCount: 5 },
+    };
     const out = strip(renderToolPayload("get_options", filtered, { query: "Grand O'Hara hotel", limit: 2 }));
-    expect(out.split("\n").at(-1)).toBe("  more options: voyagier get_options --selection_id sel-h1 --cursor eyJvIjoyfQ --query 'Grand O'\\''Hara hotel' --limit 2");
+    expect(out.split("\n").at(-1)).toBe(
+      "  more options: voyagier get_options --selection_id sel-h1 --cursor eyJvIjoyfQ --query 'Grand O'\\''Hara hotel' --limit 2"
+    );
     // A plain word needs no quotes; limit alone threads too.
-    expect(strip(renderToolPayload("get_options", filtered, { query: "grand" }))).toMatch(/--cursor eyJvIjoyfQ --query grand$/);
+    expect(strip(renderToolPayload("get_options", filtered, { query: "grand" }))).toMatch(
+      /--cursor eyJvIjoyfQ --query grand$/
+    );
     expect(strip(renderToolPayload("get_options", filtered, { limit: 2 }))).toMatch(/--cursor eyJvIjoyfQ --limit 2$/);
+  });
+
+  it("shell-quotes server-provided ids and cursors in the copy-pasteable lines", () => {
+    // The sanitizer strips control characters, not shell metacharacters: a
+    // non-UUID id from a custom server must not alter the pasted command.
+    const hostile = {
+      ...HOTEL_PAGE,
+      id: "sel;rm -rf x",
+      optionsSummary: { ...HOTEL_PAGE.optionsSummary, nextCursor: "cur$(id)" },
+      participantChoices: [
+        { id: "pc open`x`", decided: false, travellerIds: ["t2"], travellerNames: ["Bo Example"], locked: false },
+      ],
+    };
+    const out = strip(renderSelectionOptions(hostile));
+    expect(out).toContain(
+      "decide a row: voyagier select_option --participant_choice_id 'pc open`x`' --option_id <option_id>"
+    );
+    expect(out.split("\n").at(-1)).toBe(
+      "  more options: voyagier get_options --selection_id 'sel;rm -rf x' --cursor 'cur$(id)'"
+    );
+    // Plain-word ids stay bare (the common case is unchanged).
+    expect(strip(renderSelectionOptions(HOTEL_PAGE))).toContain("--participant_choice_id pc-open --option_id");
   });
 
   it("words a queried digest as matching even when every option matched", () => {
     // matchedCount 5 of optionCount 5 with a --query: filtered, not "3 more (showing top 2)".
     const out = strip(renderToolPayload("get_options", HOTEL_PAGE, { query: "hotel" }));
     expect(out).toContain("… 3 more (showing top 2 of 5 matching, 5 total)");
-    const all = strip(renderToolPayload("get_options", { ...HOTEL_PAGE, optionsSummary: { ...HOTEL_PAGE.optionsSummary, optionCount: 2, matchedCount: 2 } }, { query: "hotel" }));
+    const all = strip(
+      renderToolPayload(
+        "get_options",
+        { ...HOTEL_PAGE, optionsSummary: { ...HOTEL_PAGE.optionsSummary, optionCount: 2, matchedCount: 2 } },
+        { query: "hotel" }
+      )
+    );
     expect(all).toContain("  (2 matching of 2 total)");
     expect(all).not.toContain("more (");
   });
@@ -232,7 +340,16 @@ describe("renderSelectionOptions", () => {
     const allDecided = {
       ...HOTEL_PAGE,
       optionsSummary: { ...HOTEL_PAGE.optionsSummary, nextCursor: undefined, truncated: false },
-      participantChoices: [HOTEL_PAGE.participantChoices[0], { id: "pc-2", decided: true, travellerNames: ["Bo Example"], locked: true, selectedOption: { id: "opt-b", name: "Hotel B" } }],
+      participantChoices: [
+        HOTEL_PAGE.participantChoices[0],
+        {
+          id: "pc-2",
+          decided: true,
+          travellerNames: ["Bo Example"],
+          locked: true,
+          selectedOption: { id: "opt-b", name: "Hotel B" },
+        },
+      ],
     };
     const out = strip(renderSelectionOptions(allDecided));
     expect(out).toContain("    participant_choice_id pc-2  ·  Bo Example  ·  decided  ·  locked  ·  → Hotel B");
@@ -241,20 +358,26 @@ describe("renderSelectionOptions", () => {
   });
 
   it("says how many options matched a query filter when the server narrows the digest", () => {
-    const filtered = { ...HOTEL_PAGE, optionsSummary: { ...HOTEL_PAGE.optionsSummary, optionCount: 12, matchedCount: 5 } };
+    const filtered = {
+      ...HOTEL_PAGE,
+      optionsSummary: { ...HOTEL_PAGE.optionsSummary, optionCount: 12, matchedCount: 5 },
+    };
     expect(strip(renderSelectionOptions(filtered))).toContain("… 3 more (showing top 2 of 5 matching, 12 total)");
   });
 
-  it("never counts non-matching options as \"more\" when the page already shows every match", () => {
+  it('never counts non-matching options as "more" when the page already shows every match', () => {
     // matchedCount 2, optionCount 12, two topOptions: the other ten do not match the query.
-    const allMatchesShown = { ...HOTEL_PAGE, optionsSummary: { ...HOTEL_PAGE.optionsSummary, optionCount: 12, matchedCount: 2 } };
+    const allMatchesShown = {
+      ...HOTEL_PAGE,
+      optionsSummary: { ...HOTEL_PAGE.optionsSummary, optionCount: 12, matchedCount: 2 },
+    };
     const out = strip(renderSelectionOptions(allMatchesShown));
     expect(out).not.toContain("more (");
     expect(out).toContain("  (2 matching of 12 total)");
     expect(out).not.toContain("10 more");
   });
 
-  it("keeps the count-based \"more\" line when the server reports no matchedCount", () => {
+  it('keeps the count-based "more" line when the server reports no matchedCount', () => {
     const { matchedCount: _m, ...noMatched } = HOTEL_PAGE.optionsSummary;
     const out = strip(renderSelectionOptions({ ...HOTEL_PAGE, optionsSummary: { ...noMatched, optionCount: 12 } }));
     expect(out).toContain("… 10 more (showing top 2)");
@@ -273,12 +396,20 @@ describe("renderSelectionOptions", () => {
         "  [2]  Hotel B  ·  $2,045.73  ·  not bookable",
         "       option_id opt-b",
         "  … 3 more (showing top 2)",
-      ].join("\n"),
+      ].join("\n")
     );
     // Unknown shapes skip the section rather than failing the render.
-    const odd = strip(renderSelectionOptions({ ...noRows, optionsSummary: { ...summaryNoCursor, nextCursor: 7 }, participantChoices: ["x", { decided: false }, null] }));
+    const odd = strip(
+      renderSelectionOptions({
+        ...noRows,
+        optionsSummary: { ...summaryNoCursor, nextCursor: 7 },
+        participantChoices: ["x", { decided: false }, null],
+      })
+    );
     expect(odd).toBe(out);
-    expect(strip(renderSelectionOptions({ ...noRows, participantChoices: "not-an-array" }))).toContain("option_id opt-a");
+    expect(strip(renderSelectionOptions({ ...noRows, participantChoices: "not-an-array" }))).toContain(
+      "option_id opt-a"
+    );
   });
 });
 
@@ -290,10 +421,18 @@ describe("renderItinerary", () => {
         startDate: "2026-11-20",
         endDate: "2026-11-27",
         tripPlanEvents: [
-          { name: "Flight BWI → LIS", datetime: "2026-11-20T17:40:00", localTime: "5:40pm", duration: "PT8H15M", location: { name: "BWI" }, travellers: [{ id: "t", name: "Jane Doe" }], bookingRecordId: "b1" },
+          {
+            name: "Flight BWI → LIS",
+            datetime: "2026-11-20T17:40:00",
+            localTime: "5:40pm",
+            duration: "PT8H15M",
+            location: { name: "BWI" },
+            travellers: [{ id: "t", name: "Jane Doe" }],
+            bookingRecordId: "b1",
+          },
           { name: "Check-in Grand Hotel", datetime: "2026-11-21T15:00:00", location: { name: "Grand Hotel" } },
         ],
-      }),
+      })
     );
     expect(out).toContain("Lisbon  2026-11-20 → 2026-11-27");
     expect(out).toContain("  2026-11-20\n    5:40pm  Flight BWI → LIS  @ BWI  PT8H15M  [Jane Doe]  booked");
@@ -313,16 +452,30 @@ describe("renderQuote", () => {
         "get_plan_quote",
         {
           items: [
-            { selectionId: "s-1", optionId: "o-1", name: "TP 203 BWI→LIS", priceCents: 81240, currency: "USD", bookable: true },
-            { selectionId: "s-2", name: "Grand Hotel", priceCents: 129000, currency: "USD", bookable: false, bookableReason: "room not picked" },
+            {
+              selectionId: "s-1",
+              optionId: "o-1",
+              name: "TP 203 BWI→LIS",
+              priceCents: 81240,
+              currency: "USD",
+              bookable: true,
+            },
+            {
+              selectionId: "s-2",
+              name: "Grand Hotel",
+              priceCents: 129000,
+              currency: "USD",
+              bookable: false,
+              bookableReason: "room not picked",
+            },
           ],
           chargeableTotalCents: 81240,
           currency: "USD",
           acceptance: { expectTotalCents: 81240, itemIds: ["i-1"] },
           checkoutBlockers: [{ kind: "TRAVELLER_DATA", label: "Date of birth" }],
         },
-        { planId: "plan-9" },
-      ),
+        { planId: "plan-9" }
+      )
     );
     expect(out).toContain("• TP 203 BWI→LIS  $812.40  bookable");
     expect(out).toContain("• Grand Hotel  $1,290.00  not bookable: room not picked");
@@ -332,7 +485,13 @@ describe("renderQuote", () => {
   });
 
   it("handles a pruned payload with nothing carted", () => {
-    const out = strip(renderQuote({ chargeableTotalCents: 0, currency: "USD", acceptanceUnavailableReason: "no bookable items in the cart" }));
+    const out = strip(
+      renderQuote({
+        chargeableTotalCents: 0,
+        currency: "USD",
+        acceptanceUnavailableReason: "no bookable items in the cart",
+      })
+    );
     expect(out).toContain("No items in the cart yet.");
     expect(out).toContain("No gated booking possible: no bookable items in the cart");
     expect(renderQuote({ something: "else" })).toBeNull();
@@ -345,7 +504,7 @@ describe("shellQuote", () => {
     expect(shellQuote("eyJvIjoyfQ==")).toBe("eyJvIjoyfQ==");
     expect(shellQuote("two words")).toBe("'two words'");
     expect(shellQuote("O'Hara")).toBe("'O'\\''Hara'");
-    expect(shellQuote("$(rm -rf) `x` ; & | > \"q\"")).toBe("'$(rm -rf) `x` ; & | > \"q\"'");
+    expect(shellQuote('$(rm -rf) `x` ; & | > "q"')).toBe("'$(rm -rf) `x` ; & | > \"q\"'");
     expect(shellQuote("")).toBe("''");
   });
 });
@@ -359,8 +518,8 @@ describe("renderToolPayload", () => {
   });
 
   it("keys every renderer by a tool name the server publishes", () => {
-    const live = new Set(FIXTURE_TOOLS.map((t) => t.name));
-    expect(Object.keys(TOOL_RENDERERS).filter((name) => !live.has(name))).toEqual([]);
+    const live = new Set(FIXTURE_TOOLS.map(t => t.name));
+    expect(Object.keys(TOOL_RENDERERS).filter(name => !live.has(name))).toEqual([]);
     for (const old of ["plan_status", "search_status", "get_selection_options", "itinerary", "quote"]) {
       expect(renderToolPayload(old, PLAN_STATUS)).toBeNull();
     }

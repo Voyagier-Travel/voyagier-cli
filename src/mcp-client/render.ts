@@ -63,7 +63,9 @@ function price(p: unknown, currency?: unknown): string {
   const n = num(p);
   if (n === null) return "";
   const c = str(currency);
-  return c && c !== "USD" ? `${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${c}` : formatPrice(n);
+  return c && c !== "USD"
+    ? `${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${c}`
+    : formatPrice(n);
 }
 
 function priceCents(p: unknown, currency?: unknown): string {
@@ -165,7 +167,9 @@ function renderTopOptions(summary: Rec, queried = false): string[] {
     // A query filter narrowed the digest: the page is a slice of the matches,
     // not of all options, so the options beyond the matches are never "more".
     if (matched > shown) {
-      lines.push(chalk.dim(`  … ${matched - shown} more (showing top ${shown} of ${matched} matching, ${count} total)`));
+      lines.push(
+        chalk.dim(`  … ${matched - shown} more (showing top ${shown} of ${matched} matching, ${count} total)`)
+      );
     } else {
       lines.push(chalk.dim(`  (${matched} matching of ${count} total)`));
     }
@@ -205,7 +209,13 @@ function renderParticipantChoices(payload: Rec): string[] {
   }
   if (lines.length === 1) return [];
   if (firstUndecided) {
-    lines.push(chalk.dim(`  decide a row: voyagier select_option --participant_choice_id ${firstUndecided} --option_id <option_id>`));
+    // A server-provided id on a copy-pasteable line: the sanitizer strips
+    // control characters, not shell metacharacters, so quote it too.
+    lines.push(
+      chalk.dim(
+        `  decide a row: voyagier select_option --participant_choice_id ${shellQuote(firstUndecided)} --option_id <option_id>`
+      )
+    );
   }
   return lines;
 }
@@ -220,12 +230,16 @@ function renderParticipantChoices(payload: Rec): string[] {
 function renderOptionsCursor(payload: Rec, summary: Rec, hints: RenderHints = {}): string[] {
   const cursor = str(summary.nextCursor);
   if (!cursor) return [];
-  const selectionId = str(payload.id) ?? "<selection_id>";
+  const selectionId = str(payload.id);
   const repeat = [
     typeof hints.query === "string" ? ` --query ${shellQuote(hints.query)}` : "",
     typeof hints.limit === "number" && Number.isFinite(hints.limit) ? ` --limit ${hints.limit}` : "",
   ].join("");
-  return [chalk.dim(`  more options: voyagier get_options --selection_id ${selectionId} --cursor ${cursor}${repeat}`)];
+  return [
+    chalk.dim(
+      `  more options: voyagier get_options --selection_id ${selectionId ? shellQuote(selectionId) : "<selection_id>"} --cursor ${shellQuote(cursor)}${repeat}`
+    ),
+  ];
 }
 
 /** search_flights / search_hotels / search_activities / get_search_status / promote_search */
@@ -244,10 +258,12 @@ export function renderSearchResult(payload: unknown): string | null {
   if (fetchError) lines.push(chalk.red(`  ${fetchError}`));
   const count = summary ? num(summary.optionCount) : null;
   if (summary && count != null) {
-    lines.push(count === 0 ? chalk.dim("  0 options yet — if status is Fetching, poll get_search_status / get_options") : "");
+    lines.push(
+      count === 0 ? chalk.dim("  0 options yet — if status is Fetching, poll get_search_status / get_options") : ""
+    );
     lines.push(...renderTopOptions(summary));
   }
-  return lines.filter((l) => l !== "").join("\n");
+  return lines.filter(l => l !== "").join("\n");
 }
 
 /** get_options / refresh_options. `hints` carries the invoking command's `query` and `limit`. */
@@ -312,7 +328,7 @@ export function renderPlanStatus(payload: unknown): string | null {
   if (cart) {
     const total = price(cart.total, cart.currency);
     lines.push(
-      `  cart: ${num(cart.itemCount) ?? 0} item(s), ${num(cart.bookableCount) ?? 0} bookable${total ? `, total ${chalk.green(total)}` : ""}`,
+      `  cart: ${num(cart.itemCount) ?? 0} item(s), ${num(cart.bookableCount) ?? 0} bookable${total ? `, total ${chalk.green(total)}` : ""}`
     );
   }
 
@@ -320,8 +336,16 @@ export function renderPlanStatus(payload: unknown): string | null {
   if (goals.length) {
     lines.push("", chalk.bold("  Goals"));
     for (const g of goals) {
-      const state = g.isBooked ? chalk.green("booked") : g.isDecided ? chalk.green("decided") : g.isReady ? chalk.cyan("ready") : chalk.yellow("open");
-      lines.push(`    ${state.padEnd(18)} ${str(g.name) ?? str(g.type) ?? ""} ${chalk.dim(str(g.type) ? `(${g.type})` : "")} ${chalk.dim(str(g.goalId) ? `goal_id ${g.goalId}` : "")}`.trimEnd());
+      const state = g.isBooked
+        ? chalk.green("booked")
+        : g.isDecided
+          ? chalk.green("decided")
+          : g.isReady
+            ? chalk.cyan("ready")
+            : chalk.yellow("open");
+      lines.push(
+        `    ${state.padEnd(18)} ${str(g.name) ?? str(g.type) ?? ""} ${chalk.dim(str(g.type) ? `(${g.type})` : "")} ${chalk.dim(str(g.goalId) ? `goal_id ${g.goalId}` : "")}`.trimEnd()
+      );
     }
   }
 
@@ -346,11 +370,13 @@ export function renderPlanStatus(payload: unknown): string | null {
   }
 
   const travellers = arr(payload.travellers).filter(isRec);
-  const missing = travellers.filter((t) => arr(t.missing).length > 0);
+  const missing = travellers.filter(t => arr(t.missing).length > 0);
   if (missing.length) {
     lines.push("", chalk.bold("  Traveller data missing"));
     for (const t of missing) {
-      lines.push(`    ${str(t.name) ?? str(t.travellerId) ?? "?"}: ${arr(t.missing).map(String).join(", ")} ${chalk.dim(str(t.travellerId) ? `traveller_id ${t.travellerId}` : "")}`.trimEnd());
+      lines.push(
+        `    ${str(t.name) ?? str(t.travellerId) ?? "?"}: ${arr(t.missing).map(String).join(", ")} ${chalk.dim(str(t.travellerId) ? `traveller_id ${t.travellerId}` : "")}`.trimEnd()
+      );
     }
   }
 
@@ -359,10 +385,12 @@ export function renderPlanStatus(payload: unknown): string | null {
     lines.push("", chalk.bold("  Next actions"));
     for (const a of next) {
       const refs = ["goalId", "selectionId", "inputName"]
-        .filter((k) => str(a[k]))
-        .map((k) => `${k} ${a[k]}`)
+        .filter(k => str(a[k]))
+        .map(k => `${k} ${a[k]}`)
         .join("  ");
-      lines.push(`    ${chalk.cyan("→")} ${str(a.action) ?? ""}${str(a.detail) ? `: ${a.detail}` : ""}${refs ? chalk.dim(`  (${refs})`) : ""}`);
+      lines.push(
+        `    ${chalk.cyan("→")} ${str(a.action) ?? ""}${str(a.detail) ? `: ${a.detail}` : ""}${refs ? chalk.dim(`  (${refs})`) : ""}`
+      );
     }
   }
   return lines.join("\n");
@@ -393,9 +421,12 @@ export function renderItinerary(payload: unknown): string | null {
     }
     const time = str(ev.localTime) ?? hhmm(iso);
     const loc = isRec(ev.location) ? str(ev.location.name) : null;
-    const who = arr(ev.travellers).filter(isRec).map((t) => str(t.name)).filter(Boolean);
+    const who = arr(ev.travellers)
+      .filter(isRec)
+      .map(t => str(t.name))
+      .filter(Boolean);
     lines.push(
-      `    ${chalk.cyan(time.padEnd(7))} ${str(ev.name) ?? ""}${loc ? chalk.dim(`  @ ${loc}`) : ""}${str(ev.duration) ? chalk.dim(`  ${ev.duration}`) : ""}${who.length ? chalk.dim(`  [${who.join(", ")}]`) : ""}${str(ev.bookingRecordId) ? chalk.green("  booked") : ""}`,
+      `    ${chalk.cyan(time.padEnd(7))} ${str(ev.name) ?? ""}${loc ? chalk.dim(`  @ ${loc}`) : ""}${str(ev.duration) ? chalk.dim(`  ${ev.duration}`) : ""}${who.length ? chalk.dim(`  [${who.join(", ")}]`) : ""}${str(ev.bookingRecordId) ? chalk.green("  booked") : ""}`
     );
   }
   return lines.join("\n");
@@ -405,31 +436,43 @@ export function renderItinerary(payload: unknown): string | null {
 
 export function renderQuote(payload: unknown): string | null {
   // The server prunes empty fields, so `items` is absent when nothing is carted.
-  if (!isRec(payload) || !("chargeableTotalCents" in payload || "items" in payload || "checkoutBlockers" in payload)) return null;
+  if (!isRec(payload) || !("chargeableTotalCents" in payload || "items" in payload || "checkoutBlockers" in payload))
+    return null;
   const lines: string[] = [chalk.bold("Quote")];
   const items = arr(payload.items).filter(isRec);
   if (!items.length) lines.push(chalk.dim("  No items in the cart yet."));
   for (const it of items) {
-    const bookable = it.bookable === true ? chalk.green("bookable") : chalk.yellow(`not bookable${str(it.bookableReason) ? `: ${it.bookableReason}` : ""}`);
+    const bookable =
+      it.bookable === true
+        ? chalk.green("bookable")
+        : chalk.yellow(`not bookable${str(it.bookableReason) ? `: ${it.bookableReason}` : ""}`);
     const p = num(it.priceCents) != null ? priceCents(it.priceCents, it.currency) : price(it.price, it.currency);
     lines.push(`  • ${str(it.name) ?? "item"}  ${chalk.green(p)}  ${bookable}`);
-    if (str(it.selectionId)) lines.push(chalk.dim(`      selection_id ${it.selectionId}${str(it.optionId) ? `  option_id ${it.optionId}` : ""}`));
+    if (str(it.selectionId))
+      lines.push(
+        chalk.dim(`      selection_id ${it.selectionId}${str(it.optionId) ? `  option_id ${it.optionId}` : ""}`)
+      );
   }
   const total = priceCents(payload.chargeableTotalCents, payload.currency);
-  if (total) lines.push("", `  chargeable total ${chalk.bold.green(total)}${num(payload.chargeableTotalCents) != null ? chalk.dim(`  (${payload.chargeableTotalCents} cents)`) : ""}`);
+  if (total)
+    lines.push(
+      "",
+      `  chargeable total ${chalk.bold.green(total)}${num(payload.chargeableTotalCents) != null ? chalk.dim(`  (${payload.chargeableTotalCents} cents)`) : ""}`
+    );
   const blockers = arr(payload.checkoutBlockers).filter(isRec);
   if (blockers.length) {
     lines.push("", chalk.bold("  Checkout blockers"));
-    for (const b of blockers) lines.push(`    ${chalk.red("•")} ${str(b.kind) ?? ""}${str(b.label) ? `: ${b.label}` : ""}`);
+    for (const b of blockers)
+      lines.push(`    ${chalk.red("•")} ${str(b.kind) ?? ""}${str(b.label) ? `: ${b.label}` : ""}`);
   }
   const acceptance = isRec(payload.acceptance) ? payload.acceptance : null;
   if (acceptance && num(acceptance.expectTotalCents) != null) {
-    const ids = arr(acceptance.itemIds).map(String);
+    const ids = arr(acceptance.itemIds).map(id => shellQuote(String(id)));
     const planId = str(payload.tripPlanId) ?? str(payload.planId);
     lines.push(
       "",
       chalk.bold("  To book at exactly this price:"),
-      `    voyagier book_plan --plan_id ${planId ?? "<plan_id>"} --expect_total_cents ${acceptance.expectTotalCents}${ids.length ? ` --item_ids ${ids.join(" ")}` : ""}`,
+      `    voyagier book_plan --plan_id ${planId ? shellQuote(planId) : "<plan_id>"} --expect_total_cents ${acceptance.expectTotalCents}${ids.length ? ` --item_ids ${ids.join(" ")}` : ""}`
     );
   } else if (str(payload.acceptanceUnavailableReason)) {
     lines.push("", chalk.yellow(`  No gated booking possible: ${payload.acceptanceUnavailableReason}`));
@@ -448,11 +491,31 @@ export type ToolRenderer = (payload: unknown, hints?: RenderHints) => string | n
  * envelope.
  */
 const RENDERER_FIELDS = {
-  planStatus: ["readiness", "title", "tripPlanId", "summary", "cart", "goals", "blockers", "waiting", "travellers", "nextActions"],
+  planStatus: [
+    "readiness",
+    "title",
+    "tripPlanId",
+    "summary",
+    "cart",
+    "goals",
+    "blockers",
+    "waiting",
+    "travellers",
+    "nextActions",
+  ],
   searchResult: ["optionsSummary", "status", "fetchStatus", "type", "id", "fetchError"],
   selectionOptions: ["fetchStatus", "optionsSummary", "id"],
   itinerary: ["tripPlanEvents", "events", "startDate", "endDate", "title"],
-  quote: ["chargeableTotalCents", "items", "checkoutBlockers", "currency", "acceptance", "tripPlanId", "planId", "acceptanceUnavailableReason"],
+  quote: [
+    "chargeableTotalCents",
+    "items",
+    "checkoutBlockers",
+    "currency",
+    "acceptance",
+    "tripPlanId",
+    "planId",
+    "acceptanceUnavailableReason",
+  ],
 } as const;
 
 const TOOL_FIELDS: Record<string, readonly string[]> = {
