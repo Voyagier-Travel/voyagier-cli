@@ -35,25 +35,29 @@ describe("flagSpecsFromSchema", () => {
     expect(byParam.checkin).toMatchObject({ kind: "string", required: true });
     expect(byParam.adults).toMatchObject({ kind: "integer", required: false });
     expect(byParam.children_ages).toMatchObject({ kind: "array", itemKind: "integer" });
-    expect(byParam.hotel_name.description).toMatch(/SPECIFIC property/);
+    // Descriptions flow from the schema into the flag help. The check uses a
+    // required property: the server currently publishes optional properties
+    // without their descriptions.
+    expect(byParam.location.description).toMatch(/Stay location/);
+    expect(byParam.checkin.description).toMatch(/Check-in date/);
   });
 
   it("maps enums, booleans, arrays of strings and object/array-of-object to the right kinds", () => {
-    const plansList = Object.fromEntries(flagSpecsFromSchema(tool("plans_list").inputSchema).map((s) => [s.param, s]));
+    const plansList = Object.fromEntries(flagSpecsFromSchema(tool("list_plans").inputSchema).map((s) => [s.param, s]));
     expect(plansList.relationship).toMatchObject({ kind: "enum", enumValues: ["owner", "shared"] });
     expect(plansList.limit).toMatchObject({ kind: "integer" });
 
     const refresh = Object.fromEntries(flagSpecsFromSchema(tool("refresh_options").inputSchema).map((s) => [s.param, s]));
     expect(refresh.force).toMatchObject({ kind: "boolean" });
 
-    const book = Object.fromEntries(flagSpecsFromSchema(tool("book").inputSchema).map((s) => [s.param, s]));
+    const book = Object.fromEntries(flagSpecsFromSchema(tool("book_plan").inputSchema).map((s) => [s.param, s]));
     expect(book.item_ids).toMatchObject({ kind: "array", itemKind: "string", required: true });
     expect(book.expect_total_cents).toMatchObject({ kind: "integer", required: true });
 
-    const travellersAdd = Object.fromEntries(flagSpecsFromSchema(tool("travellers_add").inputSchema).map((s) => [s.param, s]));
+    const travellersAdd = Object.fromEntries(flagSpecsFromSchema(tool("add_travellers").inputSchema).map((s) => [s.param, s]));
     expect(travellersAdd.travellers).toMatchObject({ kind: "json", jsonShape: "array", required: true });
 
-    const update = Object.fromEntries(flagSpecsFromSchema(tool("travellers_update").inputSchema).map((s) => [s.param, s]));
+    const update = Object.fromEntries(flagSpecsFromSchema(tool("update_traveller").inputSchema).map((s) => [s.param, s]));
     expect(update.passport).toMatchObject({ kind: "json", jsonShape: "object" });
   });
 
@@ -91,7 +95,7 @@ describe("flagSpecsFromSchema", () => {
 
 describe("parsing flags into tool arguments", () => {
   it("sends only the flags that were passed, typed", async () => {
-    const args = await parseArgs("plans_list", ["--limit", "2", "--relationship", "owner"]);
+    const args = await parseArgs("list_plans", ["--limit", "2", "--relationship", "owner"]);
     expect(args).toEqual({ limit: 2, relationship: "owner" });
   });
 
@@ -102,7 +106,7 @@ describe("parsing flags into tool arguments", () => {
       checkout: "2026-10-04",
       children_ages: [4, 9],
     });
-    expect(await parseArgs("book", ["--plan_id", "p", "--expect_total_cents", "1000", "--item_ids", "a", "--item_ids", "b"])).toEqual({
+    expect(await parseArgs("book_plan", ["--plan_id", "p", "--expect_total_cents", "1000", "--item_ids", "a", "--item_ids", "b"])).toEqual({
       plan_id: "p",
       expect_total_cents: 1000,
       item_ids: ["a", "b"],
@@ -119,20 +123,20 @@ describe("parsing flags into tool arguments", () => {
 
   it("parses JSON flags and validates their shape", async () => {
     const travellers = [{ first_name: "Jane", last_name: "Doe" }];
-    expect(await parseArgs("travellers_add", ["--plan_id", "p", "--travellers", JSON.stringify(travellers)])).toEqual({ plan_id: "p", travellers });
-    await expect(parseArgs("travellers_add", ["--plan_id", "p", "--travellers", '{"not":"an array"}'])).rejects.toMatchObject({ code: "commander.invalidArgument" });
-    await expect(parseArgs("travellers_add", ["--plan_id", "p", "--travellers", "nope"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    expect(await parseArgs("add_travellers", ["--plan_id", "p", "--travellers", JSON.stringify(travellers)])).toEqual({ plan_id: "p", travellers });
+    await expect(parseArgs("add_travellers", ["--plan_id", "p", "--travellers", '{"not":"an array"}'])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    await expect(parseArgs("add_travellers", ["--plan_id", "p", "--travellers", "nope"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
   });
 
   it("rejects a value outside an enum, a non-integer, non-finite numbers, and a missing required flag", async () => {
-    await expect(parseArgs("plans_list", ["--relationship", "friend"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
-    await expect(parseArgs("plans_list", ["--limit", "2.5"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    await expect(parseArgs("list_plans", ["--relationship", "friend"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    await expect(parseArgs("list_plans", ["--limit", "2.5"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
     // Number("Infinity") / Number("1e309") are non-finite; JSON.stringify would send null.
     for (const bad of ["Infinity", "-Infinity", "1e309", "NaN"]) {
-      await expect(parseArgs("plans_list", ["--limit", bad])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+      await expect(parseArgs("list_plans", ["--limit", bad])).rejects.toMatchObject({ code: "commander.invalidArgument" });
       await expect(parseArgs("search_hotels", ["--location", "x", "--checkin", "d", "--checkout", "d", "--children_ages", bad])).rejects.toMatchObject({ code: "commander.invalidArgument" });
     }
-    await expect(parseArgs("plan_status", [])).rejects.toMatchObject({ code: "commander.missingMandatoryOptionValue" });
+    await expect(parseArgs("get_plan_status", [])).rejects.toMatchObject({ code: "commander.missingMandatoryOptionValue" });
   });
 
   it("every fixture tool registers without option-name conflicts", () => {

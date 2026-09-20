@@ -51,18 +51,18 @@ const text = (obj: unknown): McpToolResult => ({ content: [{ type: "text", text:
 describe("generated commands", () => {
   it("registers every fixture tool once and skips names already taken", () => {
     const program = new Command();
-    program.command("quote").action(() => {});
+    program.command("whoami").action(() => {});
     const names = registerGeneratedCommands(program, FIXTURE_TOOLS, { version: "0" });
-    expect(names).not.toContain("quote");
-    expect(names).toContain("plans_list");
+    expect(names).not.toContain("whoami");
+    expect(names).toContain("list_plans");
     expect(names.length).toBe(FIXTURE_TOOLS.length - 1);
   });
 
   it("--json prints the parsed text block content, sanitized", async () => {
     const { client, calls } = clientReturning(() => text({ myTripPlans: { items: [{ id: "p1", title: "Trip \u001b[31mred\u001b[0m" }], count: 1 } }));
     const { run, json, human } = harness(client);
-    await run(["plans_list", "--limit", "1", "--relationship", "owner", "--json"]);
-    expect(calls).toEqual([{ name: "plans_list", args: { limit: 1, relationship: "owner" } }]);
+    await run(["list_plans", "--limit", "1", "--relationship", "owner", "--json"]);
+    expect(calls).toEqual([{ name: "list_plans", args: { limit: 1, relationship: "owner" } }]);
     expect(json).toEqual([{ myTripPlans: { items: [{ id: "p1", title: "Trip red" }], count: 1 } }]);
     expect(human).toEqual([]);
   });
@@ -82,7 +82,7 @@ describe("generated commands", () => {
     try {
       const program = new Command().exitOverride();
       registerGeneratedCommands(program, FIXTURE_TOOLS, { version: "0", createClient: () => client });
-      await program.parseAsync(["node", "voyagier", "plans_list", "--json"]);
+      await program.parseAsync(["node", "voyagier", "list_plans", "--json"]);
     } finally {
       errSpy.mockRestore();
       outSpy.mockRestore();
@@ -94,15 +94,15 @@ describe("generated commands", () => {
 
   it("renders a human view for tools that have one, JSON otherwise", async () => {
     const { client } = clientReturning((name) =>
-      name === "plan_status"
+      name === "get_plan_status"
         ? text({ tripPlanStatus: { tripPlanId: "p1", title: "Doe", readiness: "ReadyToBook", goals: [] } })
         : text({ tripPlanClients: [{ id: "c1", name: "Jane Doe" }] }),
     );
     const { run, human } = harness(client);
-    await run(["plan_status", "--plan_id", "p1"]);
+    await run(["get_plan_status", "--plan_id", "p1"]);
     expect(human[0]).toContain("Doe");
     expect(human[0]).toContain("ReadyToBook");
-    await run(["clients_list"]);
+    await run(["list_clients"]);
     expect(JSON.parse(human[1])).toEqual({ tripPlanClients: [{ id: "c1", name: "Jane Doe" }] });
   });
 
@@ -182,7 +182,7 @@ describe("generated commands", () => {
       structuredContent: { tripPlanClients: [{ id: "c1", name: "Jane \u001b[31mDoe\u001b[0m" }] },
     }));
     const { run, human } = harness(client);
-    await run(["clients_list"]);
+    await run(["list_clients"]);
     expect(JSON.parse(human[0])).toEqual({ tripPlanClients: [{ id: "c1", name: "Jane Doe" }] });
   });
 
@@ -208,7 +208,7 @@ describe("generated commands", () => {
       structuredContent: { tripPlanStatus: { readiness: "Booked", title: "Plan \u001b[31mred\u001b[0m \u0007bell" } },
     }));
     const { run, human } = harness(client);
-    await run(["plan_status", "--plan_id", "p1"]);
+    await run(["get_plan_status", "--plan_id", "p1"]);
     expect(human[0]).toContain("Plan red bell");
     // eslint-disable-next-line no-control-regex
     expect(human[0].replace(/\u001b\[[0-9;]*m/g, "")).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
@@ -221,21 +221,21 @@ describe("generated commands", () => {
       structuredContent: { tripPlanStatus: { readiness: "Booked", title: "Structured" } },
     }));
     const { run, human } = harness(client);
-    await run(["plan_status", "--plan_id", "p1"]);
+    await run(["get_plan_status", "--plan_id", "p1"]);
     expect(human[0]).toContain("Structured");
   });
 
   it("surfaces an isError result as API_ERROR with the tool's text", async () => {
     const { client } = clientReturning(() => ({ isError: true, content: [{ type: "text", text: "Trip plan p1 not found" }] }));
     const { run } = harness(client);
-    await expect(run(["plan_status", "--plan_id", "p1", "--json"])).rejects.toMatchObject({ code: CliErrorCode.API_ERROR, message: "Trip plan p1 not found" });
+    await expect(run(["get_plan_status", "--plan_id", "p1", "--json"])).rejects.toMatchObject({ code: CliErrorCode.API_ERROR, message: "Trip plan p1 not found" });
   });
 
   it("passes JSON and array flags through as structured arguments", async () => {
     const travellers = [{ first_name: "Jane", last_name: "Doe", declared_type: "Adult" }];
     const { client, calls } = clientReturning(() => text({ addTripPlanTravellers: { added: 1 } }));
     const { run } = harness(client);
-    await run(["travellers_add", "--plan_id", "p1", "--travellers", JSON.stringify(travellers), "--json"]);
+    await run(["add_travellers", "--plan_id", "p1", "--travellers", JSON.stringify(travellers), "--json"]);
     expect(calls[0].args).toEqual({ plan_id: "p1", travellers });
   });
 

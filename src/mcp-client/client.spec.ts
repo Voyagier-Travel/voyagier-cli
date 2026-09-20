@@ -74,13 +74,13 @@ function happyServer(handlers: Record<string, (body: Record<string, unknown>) =>
   };
 }
 
-const TOOLS = [{ name: "plans_list", title: "List trip plans", inputSchema: { type: "object", properties: {} } }];
+const TOOLS = [{ name: "list_plans", title: "List trip plans", inputSchema: { type: "object", properties: {} } }];
 
 describe("McpClient handshake", () => {
   it("initializes once, sends notifications/initialized, then lists tools with the protocol-version header", async () => {
     const { client, sent } = makeClient(happyServer({ "tools/list": () => ({ tools: TOOLS }) }));
     const tools = await client.toolsList();
-    expect(tools.map((t) => t.name)).toEqual(["plans_list"]);
+    expect(tools.map((t) => t.name)).toEqual(["list_plans"]);
     expect(sent.map((s) => s.body.method)).toEqual(["initialize", "notifications/initialized", "tools/list"]);
     // Bearer + accept both content types on every request.
     for (const s of sent) {
@@ -116,7 +116,7 @@ describe("McpClient handshake", () => {
   it("does not re-initialize on subsequent calls", async () => {
     const { client, sent } = makeClient(happyServer({ "tools/list": () => ({ tools: TOOLS }), "tools/call": () => ({ content: [{ type: "text", text: "{}" }] }) }));
     await client.toolsList();
-    await client.toolsCall("plans_list", {});
+    await client.toolsCall("list_plans", {});
     expect(sent.filter((s) => s.body.method === "initialize")).toHaveLength(1);
   });
 
@@ -178,10 +178,10 @@ describe("McpClient response parsing", () => {
 
   it("throws API_ERROR carrying the tool's text when the result isError", async () => {
     const { client } = makeClient(happyServer({ "tools/call": () => ({ isError: true, content: [{ type: "text", text: "Plan not found: p1" }] }) }));
-    await expect(client.toolsCall("plan_status", { plan_id: "p1" })).rejects.toMatchObject({
+    await expect(client.toolsCall("get_plan_status", { plan_id: "p1" })).rejects.toMatchObject({
       code: CliErrorCode.API_ERROR,
       message: "Plan not found: p1",
-      details: { tool: "plan_status" },
+      details: { tool: "get_plan_status" },
     });
   });
 
@@ -189,11 +189,11 @@ describe("McpClient response parsing", () => {
     const { client, sent } = makeClient(
       happyServer({ "tools/call": () => ({ content: [{ type: "text", text: '{"ok":true}' }], structuredContent: { ok: true } }) }),
     );
-    const result = await client.toolsCall("plans_list", { limit: 2 });
+    const result = await client.toolsCall("list_plans", { limit: 2 });
     expect(result.content[0].text).toBe('{"ok":true}');
     expect(result.structuredContent).toEqual({ ok: true });
     const call = sent.find((s) => s.body.method === "tools/call")!;
-    expect(call.body.params).toEqual({ name: "plans_list", arguments: { limit: 2 } });
+    expect(call.body.params).toEqual({ name: "list_plans", arguments: { limit: 2 } });
   });
 });
 
@@ -294,10 +294,10 @@ describe("error mapping helpers", () => {
   });
 
   it("toolErrorToCliError keeps a JSON envelope's code when it is a known CliErrorCode", () => {
-    const err = toolErrorToCliError("book", JSON.stringify({ code: "PRICE_CHANGED", message: "Total moved", details: { actual: 1 } }));
+    const err = toolErrorToCliError("book_plan", JSON.stringify({ code: "PRICE_CHANGED", message: "Total moved", details: { actual: 1 } }));
     expect(err.code).toBe(CliErrorCode.PRICE_CHANGED);
     expect(err.message).toBe("Total moved");
-    expect(err.details).toMatchObject({ tool: "book", serverDetails: { actual: 1 } });
+    expect(err.details).toMatchObject({ tool: "book_plan", serverDetails: { actual: 1 } });
   });
 
   it("toolErrorToCliError strips terminal escapes from plain text", () => {

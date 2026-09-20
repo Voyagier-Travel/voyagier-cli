@@ -15,27 +15,44 @@ const FIXTURE_TOOLS: McpToolDescriptor[] = JSON.parse(
 const LIVE = new Set(FIXTURE_TOOLS.map((t) => t.name));
 
 describe("removed-commands table", () => {
-  it("has unique command paths and no replacement tool that is a typo of a live one", () => {
+  it("has unique command paths and every replacement tool is live in the registry snapshot", () => {
     const paths = REMOVED_COMMANDS.map((r) => r.command);
     expect(new Set(paths).size).toBe(paths.length);
-    // Every replacement is either live on the server today or one of the
-    // planned tools named in the migration plan.
-    const planned = new Set([
-      "whoami",
-      "plan_update",
-      "plan_delete",
-      "goal_update",
+    // Every replacement the table names must exist in the fixture. A tool the
+    // server has not published yet is not a migration target; add it to the
+    // table when it appears in a refreshed snapshot, not before.
+    const missing = REMOVED_COMMANDS.flatMap((r) => r.tools.filter((t) => !LIVE.has(t)).map((t) => `${r.command} → ${t}`));
+    expect(missing).toEqual([]);
+  });
+
+  it("uses the verb-first tool names, never the pre-rename ones", () => {
+    const retired = [
+      "plan_trip",
+      "book",
+      "quote",
+      "itinerary",
+      "plan_status",
+      "search_status",
+      "get_selection_options",
+      "choices_view",
+      "choose_room_slot",
+      "goal_add",
+      "goal_delete",
+      "plans_list",
+      "clients_list",
+      "client_create",
+      "bookings_list",
+      "travellers_add",
+      "travellers_list",
+      "travellers_update",
       "travellers_remove",
-      "client_get",
-      "client_update",
-      "collaborators_list",
-      "collaborator_remove",
-      "booking_get",
-      "invite_collaborator",
-    ]);
-    for (const r of REMOVED_COMMANDS) {
-      for (const t of r.tools) expect(LIVE.has(t) || planned.has(t)).toBe(true);
-    }
+      "set_date_range",
+    ];
+    const used = new Set(REMOVED_COMMANDS.flatMap((r) => r.tools));
+    expect(retired.filter((t) => used.has(t))).toEqual([]);
+    expect(findRemovedCommand(["plan-trip"])?.tools).toEqual(["create_plan"]);
+    expect(findRemovedCommand(["travellers", "remove"])?.tools).toEqual(["delete_traveller"]);
+    expect(findRemovedCommand(["choose-room-slot"])?.tools).toEqual(["set_room_count", "set_room_rates"]);
   });
 
   it("finds the longest matching path and ignores flags", () => {
@@ -51,15 +68,23 @@ describe("removed-commands table", () => {
     expect(live).toContain("This command was removed in 4.0.");
     expect(live).toContain("Use: voyagier select_option [flags]");
     expect(live).toContain("Flags: voyagier select_option --help");
-    const planned = removedCommandMessage(findRemovedCommand(["travellers", "remove"])!, LIVE);
-    expect(planned).toContain("Planned replacement: voyagier travellers_remove");
+    // Every mapped tool is live in the snapshot, so simulate a server that has
+    // not published some of them yet: the message must not send the user to a
+    // command that does not exist there.
+    const withoutTraveller = new Set([...LIVE].filter((t) => t !== "delete_traveller"));
+    const planned = removedCommandMessage(findRemovedCommand(["travellers", "remove"])!, withoutTraveller);
+    expect(planned).toContain("Planned replacement: voyagier delete_traveller");
     expect(planned).toContain("not yet published");
     // Never point at --help for a command this server does not have.
     expect(planned).not.toContain("Flags:");
-    const mixed = removedCommandMessage(findRemovedCommand(["plans", "share"])!, LIVE);
+    const withoutInvite = new Set([...LIVE].filter((t) => t !== "invite_collaborator"));
+    const mixed = removedCommandMessage(findRemovedCommand(["plans", "share"])!, withoutInvite);
     expect(mixed).toContain("Use: voyagier share_plan [flags]");
     expect(mixed).toContain("Also planned: voyagier invite_collaborator");
     expect(mixed).toContain("Flags: voyagier share_plan --help");
+    const bothLive = removedCommandMessage(findRemovedCommand(["plans", "share"])!, LIVE);
+    expect(bothLive).toContain("Use: voyagier share_plan [flags]  or  voyagier invite_collaborator [flags]");
+    expect(bothLive).not.toContain("planned");
     const none = removedCommandMessage(findRemovedCommand(["places", "search"])!, LIVE);
     expect(none).toContain("There is no MCP tool for it.");
   });
@@ -87,6 +112,6 @@ describe("removed-commands table", () => {
     const rows = table.split("\n");
     expect(rows[0]).toBe("| 3.x command | 4.0 replacement | Note |");
     expect(rows.length).toBe(REMOVED_COMMANDS.length + 2);
-    expect(table).toContain("| `voyagier plans list` | `voyagier plans_list` |");
+    expect(table).toContain("| `voyagier plans list` | `voyagier list_plans` |");
   });
 });

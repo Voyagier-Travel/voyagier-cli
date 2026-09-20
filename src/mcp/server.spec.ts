@@ -85,16 +85,16 @@ describe("voyagier mcp — stdio proxy", () => {
       _meta: { requestId: "r-1" },
     };
     const { client, sent } = await connect({ onCall: () => remoteResult });
-    const result = await client.callTool({ name: "plans_list", arguments: { limit: 1 } });
+    const result = await client.callTool({ name: "list_plans", arguments: { limit: 1 } });
     expect(result).toEqual(remoteResult);
     const call = sent.find((s) => s.body.method === "tools/call");
-    expect(call?.body.params).toEqual({ name: "plans_list", arguments: { limit: 1 } });
+    expect(call?.body.params).toEqual({ name: "list_plans", arguments: { limit: 1 } });
   });
 
   it("tools/call passes an isError result through as a result, not as a protocol error", async () => {
     const remoteResult = { content: [{ type: "text", text: '{"code":"PRICE_CHANGED","message":"total moved"}' }], isError: true };
     const { client } = await connect({ onCall: () => remoteResult });
-    const result = await client.callTool({ name: "book", arguments: { plan_id: "p" } });
+    const result = await client.callTool({ name: "book_plan", arguments: { plan_id: "p" } });
     expect(result).toEqual(remoteResult);
   });
 
@@ -114,7 +114,7 @@ describe("voyagier mcp — stdio proxy", () => {
       intercept: (sent) =>
         sent.body.method === "tools/call" ? jsonResponse({ message: "slow down" }, { status: 429, headers: { "retry-after": "7" } }) : undefined,
     });
-    const err = await client.callTool({ name: "plans_list", arguments: {} }).catch((e: unknown) => e);
+    const err = await client.callTool({ name: "list_plans", arguments: {} }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(McpError);
     expect((err as McpError).code).toBe(PROXY_ERROR_CODES.RATE_LIMITED);
     expect((err as McpError).message).toContain("Retry after 7s");

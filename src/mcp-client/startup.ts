@@ -51,7 +51,7 @@ const HELP_OR_VERSION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
 
 /**
  * The command word in argv, skipping leading global flags
- * (`voyagier --verbose plans_list` → `plans_list`). Null when there is no
+ * (`voyagier --verbose list_plans` → `list_plans`). Null when there is no
  * command word, or when a help/version flag comes first (Commander answers
  * those without running a command).
  */

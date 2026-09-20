@@ -163,8 +163,8 @@ describe("doc-drift guard", () => {
   it("builds a non-trivial command surface (sanity)", () => {
     // If this ever collapses, the extraction below would vacuously pass.
     expect(knownPaths.size).toBeGreaterThan(20);
-    expect(knownPaths.has("plan_trip")).toBe(true);
-    expect(knownPaths.has("get_selection_options")).toBe(true);
+    expect(knownPaths.has("create_plan")).toBe(true);
+    expect(knownPaths.has("get_options")).toBe(true);
     expect(knownPaths.has("doctor")).toBe(true);
     // Removed-command stubs are not part of the documented surface.
     expect(knownPaths.has("plans")).toBe(false);

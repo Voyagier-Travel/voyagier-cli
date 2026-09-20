@@ -13,7 +13,7 @@ import { compareSemver, registerDoctorCommand, rollUpStatus, runDoctor, type Doc
  */
 
 const URL = "https://mcp.example.test/api/mcp";
-const TOOLS = [{ name: "plans_list" }, { name: "plan_status" }];
+const TOOLS = [{ name: "list_plans" }, { name: "get_plan_status" }];
 
 type Mode = "ok" | "ok-with-whoami" | "auth" | "network" | "server-error" | "whoami-fails";
 
@@ -103,7 +103,7 @@ describe("runDoctor", () => {
     expect(mcp.message).toContain("tool list refreshed 2026-09-10T22:00:00.000Z");
     expect(mcp.message).toContain(`previous list ${previousAt}`);
     expect(mcp.message).not.toMatch(/ago\b/);
-    expect(mcp.details).toMatchObject({ toolCount: 2, surfaceHash: hash, previousSurfaceHash: previousHash, listedAt: "2026-09-10T22:00:00.000Z", tools: ["plan_status", "plans_list"] });
+    expect(mcp.details).toMatchObject({ toolCount: 2, surfaceHash: hash, previousSurfaceHash: previousHash, listedAt: "2026-09-10T22:00:00.000Z", tools: ["get_plan_status", "list_plans"] });
     expect(readToolsCache()?.tools).toEqual(TOOLS);
     const whoami = check(report, "whoami");
     expect(whoami.status).toBe("PASS");

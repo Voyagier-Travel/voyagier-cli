@@ -13,7 +13,7 @@ import { getMcpUrl, DEFAULT_MCP_URL } from "./url.js";
  */
 
 const URL = "https://mcp.example.test/api/mcp";
-const TOOLS = [{ name: "plans_list", inputSchema: { type: "object", properties: {} } }];
+const TOOLS = [{ name: "list_plans", inputSchema: { type: "object", properties: {} } }];
 
 function scriptedClient(behaviour: "ok" | "auth" | "network"): { client: McpClient; calls: string[] } {
   const calls: string[] = [];
@@ -47,7 +47,7 @@ describe("resolveStartupTools", () => {
   it("uses a fresh cache without touching the network", async () => {
     writeToolsCache({ url: URL, fetchedAt: new Date().toISOString(), tools: TOOLS });
     const { client, calls } = scriptedClient("ok");
-    const res = await resolveStartupTools(["plans_list"], { createClient: () => client });
+    const res = await resolveStartupTools(["list_plans"], { createClient: () => client });
     expect(res.source).toBe("cache");
     expect(res.tools).toEqual(TOOLS);
     expect(calls).toEqual([]);
@@ -55,7 +55,7 @@ describe("resolveStartupTools", () => {
 
   it("fetches, caches and reports network when the cache is missing", async () => {
     const { client, calls } = scriptedClient("ok");
-    const res = await resolveStartupTools(["plans_list", "--json"], { createClient: () => client });
+    const res = await resolveStartupTools(["list_plans", "--json"], { createClient: () => client });
     expect(res.source).toBe("network");
     expect(res.tools).toEqual(TOOLS);
     expect(calls).toEqual(["initialize", "notifications/initialized", "tools/list"]);
@@ -64,7 +64,7 @@ describe("resolveStartupTools", () => {
   });
 
   it("treats a tool command preceded by global flags as a tool invocation (fetches with an empty cache)", async () => {
-    for (const argv of [["--verbose", "plans_list"], ["--json", "plans_list"], ["--stacktrace", "--verbose", "plans_list", "--limit", "1"]]) {
+    for (const argv of [["--verbose", "list_plans"], ["--json", "list_plans"], ["--stacktrace", "--verbose", "list_plans", "--limit", "1"]]) {
       clearToolsCache();
       const { client, calls } = scriptedClient("ok");
       const res = await resolveStartupTools(argv, { createClient: () => client });
@@ -77,9 +77,9 @@ describe("resolveStartupTools", () => {
   it("refetches when the cache is expired or for another endpoint", async () => {
     writeToolsCache({ url: URL, fetchedAt: new Date(Date.now() - 48 * 3600_000).toISOString(), tools: [{ name: "old" }] });
     const { client } = scriptedClient("ok");
-    expect((await resolveStartupTools(["plans_list"], { createClient: () => client })).source).toBe("network");
+    expect((await resolveStartupTools(["list_plans"], { createClient: () => client })).source).toBe("network");
     writeToolsCache({ url: "https://elsewhere.example.test/mcp", fetchedAt: new Date().toISOString(), tools: [{ name: "other" }] });
-    const again = await resolveStartupTools(["plans_list"], { createClient: () => scriptedClient("ok").client });
+    const again = await resolveStartupTools(["list_plans"], { createClient: () => scriptedClient("ok").client });
     expect(again.source).toBe("network");
     expect(again.tools).toEqual(TOOLS);
   });
@@ -112,7 +112,7 @@ describe("resolveStartupTools", () => {
   it("returns AUTH_FAILED as the error (not a throw) when there are no credentials", async () => {
     delete process.env.VOYAGIER_TOKEN;
     const { client, calls } = scriptedClient("ok");
-    const res = await resolveStartupTools(["plans_list"], { createClient: () => client });
+    const res = await resolveStartupTools(["list_plans"], { createClient: () => client });
     expect(res.source).toBe("none");
     expect(res.error?.code).toBe(CliErrorCode.AUTH_FAILED);
     expect(calls).toEqual([]);
@@ -120,12 +120,12 @@ describe("resolveStartupTools", () => {
 
   it("falls back to a stale cache and keeps the error when the fetch fails", async () => {
     writeToolsCache({ url: URL, fetchedAt: new Date(Date.now() - 48 * 3600_000).toISOString(), tools: [{ name: "old" }] });
-    const net = await resolveStartupTools(["plans_list"], { createClient: () => scriptedClient("network").client });
+    const net = await resolveStartupTools(["list_plans"], { createClient: () => scriptedClient("network").client });
     expect(net.source).toBe("stale-cache");
     expect(net.tools).toEqual([{ name: "old" }]);
     expect(net.error?.code).toBe(CliErrorCode.NETWORK);
     clearToolsCache();
-    const auth = await resolveStartupTools(["plans_list"], { createClient: () => scriptedClient("auth").client });
+    const auth = await resolveStartupTools(["list_plans"], { createClient: () => scriptedClient("auth").client });
     expect(auth.source).toBe("none");
     expect(auth.error?.code).toBe(CliErrorCode.AUTH_FAILED);
   });
@@ -148,15 +148,15 @@ describe("invocation classification", () => {
     expect(isLocalInvocation(["auth", "login"])).toBe(true);
     expect(isLocalInvocation(["login"])).toBe(true);
     expect(isLocalInvocation(["--verbose", "doctor"])).toBe(true);
-    expect(isLocalInvocation(["plans_list"])).toBe(false);
-    expect(isLocalInvocation(["--verbose", "plans_list"])).toBe(false);
+    expect(isLocalInvocation(["list_plans"])).toBe(false);
+    expect(isLocalInvocation(["--verbose", "list_plans"])).toBe(false);
     expect(isLocalInvocation(["--json", "plans", "list"])).toBe(false);
   });
 
   it("commandToken skips leading global flags and stops at help/version", () => {
-    expect(commandToken(["--verbose", "plans_list", "--json"])).toBe("plans_list");
-    expect(commandToken(["plans_list"])).toBe("plans_list");
-    expect(commandToken(["--verbose", "--help", "plans_list"])).toBeNull();
+    expect(commandToken(["--verbose", "list_plans", "--json"])).toBe("list_plans");
+    expect(commandToken(["list_plans"])).toBe("list_plans");
+    expect(commandToken(["--verbose", "--help", "list_plans"])).toBeNull();
     expect(commandToken(["-V"])).toBeNull();
     expect(commandToken(["--verbose"])).toBeNull();
     expect(commandToken([])).toBeNull();
