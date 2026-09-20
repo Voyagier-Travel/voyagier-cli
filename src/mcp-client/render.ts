@@ -79,9 +79,39 @@ function hhmm(v: unknown): string {
   return m ? m[1] : s;
 }
 
+/**
+ * Inputs of the invoking command that a renderer repeats in a copy-pasteable
+ * follow-up line. The payload does not echo them, so the caller threads them
+ * through: `planId` for `get_plan_quote`'s acceptance line, `query` and
+ * `limit` for `get_options`' next-page line.
+ */
+export interface RenderHints {
+  planId?: string;
+  query?: string;
+  limit?: number;
+}
+
+/** Characters that need no quoting in a POSIX shell word. */
+const SHELL_BARE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
+/**
+ * Quote a value for a copy-pasteable shell line: bare when it is a plain
+ * word, otherwise single-quoted with embedded single quotes closed, escaped
+ * and reopened (`'\''`), which is safe for every character in sh/bash/zsh.
+ */
+export function shellQuote(value: string): string {
+  if (value !== "" && SHELL_BARE_WORD.test(value)) return value;
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 // ── options digest (search_*, get_search_status, promote_search, get_options)
 
-function renderTopOptions(summary: Rec): string[] {
+/**
+ * `queried` says the user passed a `query` to the command: then a digest whose
+ * matchedCount equals optionCount is still a filtered one (every option
+ * matched) and is worded as such.
+ */
+function renderTopOptions(summary: Rec, queried = false): string[] {
   const lines: string[] = [];
   const options = arr(summary.topOptions).filter(isRec);
   const callouts = isRec(summary.callouts) ? summary.callouts : {};
@@ -131,7 +161,7 @@ function renderTopOptions(summary: Rec): string[] {
   const count = num(summary.optionCount);
   const matched = num(summary.matchedCount);
   const shown = options.length;
-  if (matched != null && count != null && matched < count) {
+  if (matched != null && count != null && (matched < count || (queried && matched === count))) {
     // A query filter narrowed the digest: the page is a slice of the matches,
     // not of all options, so the options beyond the matches are never "more".
     if (matched > shown) {
@@ -182,15 +212,20 @@ function renderParticipantChoices(payload: Rec): string[] {
 
 /**
  * The next page of the options digest, when the server says there is one
- * (`optionsSummary.nextCursor`). The payload does not echo the `query` the
- * page was read with, so the hint repeats only the cursor; add `--query` by
- * hand when one was used.
+ * (`optionsSummary.nextCursor`). The tool's contract is to send the cursor
+ * back "with the same query", and the payload does not echo the inputs the
+ * page was read with, so the line repeats the `--query` and `--limit` the
+ * user passed (from `hints`), shell-quoted.
  */
-function renderOptionsCursor(payload: Rec, summary: Rec): string[] {
+function renderOptionsCursor(payload: Rec, summary: Rec, hints: RenderHints = {}): string[] {
   const cursor = str(summary.nextCursor);
   if (!cursor) return [];
   const selectionId = str(payload.id) ?? "<selection_id>";
-  return [chalk.dim(`  more options: voyagier get_options --selection_id ${selectionId} --cursor ${cursor}`)];
+  const repeat = [
+    typeof hints.query === "string" ? ` --query ${shellQuote(hints.query)}` : "",
+    typeof hints.limit === "number" && Number.isFinite(hints.limit) ? ` --limit ${hints.limit}` : "",
+  ].join("");
+  return [chalk.dim(`  more options: voyagier get_options --selection_id ${selectionId} --cursor ${cursor}${repeat}`)];
 }
 
 /** search_flights / search_hotels / search_activities / get_search_status / promote_search */
@@ -215,8 +250,8 @@ export function renderSearchResult(payload: unknown): string | null {
   return lines.filter((l) => l !== "").join("\n");
 }
 
-/** get_options / refresh_options */
-export function renderSelectionOptions(payload: unknown): string | null {
+/** get_options / refresh_options. `hints` carries the invoking command's `query` and `limit`. */
+export function renderSelectionOptions(payload: unknown, hints: RenderHints = {}): string | null {
   if (!isRec(payload)) return null;
   const fetchStatus = isRec(payload.fetchStatus) ? payload.fetchStatus : null;
   const summary = isRec(payload.optionsSummary) ? payload.optionsSummary : null;
@@ -237,9 +272,9 @@ export function renderSelectionOptions(payload: unknown): string | null {
     if (q?.summary) lines.push(chalk.dim(`  searched: ${String(q.summary)}`));
     if (q?.degenerateHint) lines.push(chalk.yellow(`  hint: ${String(q.degenerateHint)}`));
   }
-  if (summary) lines.push(...renderTopOptions(summary));
+  if (summary) lines.push(...renderTopOptions(summary, typeof hints.query === "string"));
   lines.push(...renderParticipantChoices(payload));
-  if (summary) lines.push(...renderOptionsCursor(payload, summary));
+  if (summary) lines.push(...renderOptionsCursor(payload, summary, hints));
   return lines.join("\n");
 }
 
@@ -404,7 +439,8 @@ export function renderQuote(payload: unknown): string | null {
 
 // ── registry
 
-export type ToolRenderer = (payload: unknown) => string | null;
+/** Renderers may ignore `hints`; those that print a follow-up command read the inputs they need from it. */
+export type ToolRenderer = (payload: unknown, hints?: RenderHints) => string | null;
 
 /**
  * Root payload fields each renderer reads. `unwrapToolPayload` uses them to
@@ -448,17 +484,18 @@ export const TOOL_RENDERERS: Record<string, ToolRenderer> = {
 
 /**
  * Render a tool payload for a human. Returns null when no renderer applies or
- * the renderer does not recognize the shape (caller prints JSON).
+ * the renderer does not recognize the shape (caller prints JSON). `hints` are
+ * the invoking command's inputs the renderers repeat (see `RenderHints`).
  */
-export function renderToolPayload(tool: string, parsed: unknown, planIdHint?: string): string | null {
+export function renderToolPayload(tool: string, parsed: unknown, hints: RenderHints = {}): string | null {
   const renderer = TOOL_RENDERERS[tool];
   if (!renderer) return null;
   let payload = unwrapToolPayload(parsed, TOOL_FIELDS[tool] ?? []);
   // get_plan_quote's payload carries no plan id; thread the one the user
   // passed so the acceptance command is copy-pasteable.
-  if (tool === "get_plan_quote" && isRec(payload) && planIdHint) payload = { ...payload, tripPlanId: planIdHint };
+  if (tool === "get_plan_quote" && isRec(payload) && hints.planId) payload = { ...payload, tripPlanId: hints.planId };
   try {
-    return renderer(payload);
+    return renderer(payload, hints);
   } catch {
     return null;
   }

@@ -15,7 +15,7 @@ import { getTraceId } from "../telemetry.js";
 import { sanitizeExternalData, sanitizeExternalText } from "../utils.js";
 import { verbose } from "../verbose.js";
 import { McpClient, sanitizeToolDescriptor, type McpToolDescriptor, type McpToolResult } from "./client.js";
-import { renderToolPayload } from "./render.js";
+import { renderToolPayload, type RenderHints } from "./render.js";
 import { applyFlagsToCommand, buildToolArguments, flagSpecsFromSchema, TOOL_NAME_PATTERN, type FlagSpec } from "./schema-flags.js";
 import { CliError } from "../errors.js";
 import { warn } from "../output.js";
@@ -151,11 +151,17 @@ export async function runTool(
     writeJson(parsed);
     return;
   }
-  const planIdHint = typeof args.plan_id === "string" ? args.plan_id : undefined;
+  // Inputs the renderers repeat in their copy-pasteable follow-up lines
+  // (get_plan_quote's acceptance command, get_options' next page).
+  const hints: RenderHints = {
+    planId: typeof args.plan_id === "string" ? args.plan_id : undefined,
+    query: typeof args.query === "string" ? args.query : undefined,
+    limit: typeof args.limit === "number" ? args.limit : undefined,
+  };
   // structuredContent arrives outside the text-block path parseToolContent
   // sanitizes; render.ts assumes sanitized input, so strip escapes here too.
   const forRender = result.structuredContent !== undefined ? sanitizeExternalData(result.structuredContent) : parsed;
-  const rendered = renderToolPayload(tool.name, forRender, planIdHint);
+  const rendered = renderToolPayload(tool.name, forRender, hints);
   if (rendered !== null && rendered.trim() !== "") {
     writeHuman(rendered);
     return;

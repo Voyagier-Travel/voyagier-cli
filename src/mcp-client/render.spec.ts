@@ -1,6 +1,6 @@
 import { describe, it, expect } from "@jest/globals";
 import { readFileSync } from "node:fs";
-import { TOOL_RENDERERS, renderItinerary, renderPlanStatus, renderQuote, renderSearchResult, renderSelectionOptions, renderToolPayload, unwrapToolPayload } from "./render.js";
+import { TOOL_RENDERERS, renderItinerary, renderPlanStatus, renderQuote, renderSearchResult, renderSelectionOptions, renderToolPayload, shellQuote, unwrapToolPayload } from "./render.js";
 import type { McpToolDescriptor } from "./client.js";
 
 const FIXTURE_TOOLS: McpToolDescriptor[] = JSON.parse(
@@ -204,6 +204,28 @@ describe("renderSelectionOptions", () => {
     expect(out).toContain("… 3 more (showing top 2)");
     expect(out.split("\n").at(-1)).toBe("  more options: voyagier get_options --selection_id sel-h1 --cursor eyJvIjoyfQ");
     expect(out).not.toContain("--query");
+    expect(out).not.toContain("--limit");
+    // Same through the tool entry point with no hints (the get_options command without --query/--limit).
+    expect(strip(renderToolPayload("get_options", HOTEL_PAGE))).toBe(out);
+  });
+
+  it("repeats the query and page size the page was read with, shell-quoted, in the next-page line", () => {
+    // The get_options contract: pass nextCursor back as cursor, with the same query.
+    const filtered = { ...HOTEL_PAGE, optionsSummary: { ...HOTEL_PAGE.optionsSummary, optionCount: 12, matchedCount: 5 } };
+    const out = strip(renderToolPayload("get_options", filtered, { query: "Grand O'Hara hotel", limit: 2 }));
+    expect(out.split("\n").at(-1)).toBe("  more options: voyagier get_options --selection_id sel-h1 --cursor eyJvIjoyfQ --query 'Grand O'\\''Hara hotel' --limit 2");
+    // A plain word needs no quotes; limit alone threads too.
+    expect(strip(renderToolPayload("get_options", filtered, { query: "grand" }))).toMatch(/--cursor eyJvIjoyfQ --query grand$/);
+    expect(strip(renderToolPayload("get_options", filtered, { limit: 2 }))).toMatch(/--cursor eyJvIjoyfQ --limit 2$/);
+  });
+
+  it("words a queried digest as matching even when every option matched", () => {
+    // matchedCount 5 of optionCount 5 with a --query: filtered, not "3 more (showing top 2)".
+    const out = strip(renderToolPayload("get_options", HOTEL_PAGE, { query: "hotel" }));
+    expect(out).toContain("… 3 more (showing top 2 of 5 matching, 5 total)");
+    const all = strip(renderToolPayload("get_options", { ...HOTEL_PAGE, optionsSummary: { ...HOTEL_PAGE.optionsSummary, optionCount: 2, matchedCount: 2 } }, { query: "hotel" }));
+    expect(all).toContain("  (2 matching of 2 total)");
+    expect(all).not.toContain("more (");
   });
 
   it("omits the select_option hint when every row is decided, and the cursor line on the last page", () => {
@@ -299,7 +321,7 @@ describe("renderQuote", () => {
           acceptance: { expectTotalCents: 81240, itemIds: ["i-1"] },
           checkoutBlockers: [{ kind: "TRAVELLER_DATA", label: "Date of birth" }],
         },
-        "plan-9",
+        { planId: "plan-9" },
       ),
     );
     expect(out).toContain("• TP 203 BWI→LIS  $812.40  bookable");
@@ -314,6 +336,17 @@ describe("renderQuote", () => {
     expect(out).toContain("No items in the cart yet.");
     expect(out).toContain("No gated booking possible: no bookable items in the cart");
     expect(renderQuote({ something: "else" })).toBeNull();
+  });
+});
+
+describe("shellQuote", () => {
+  it("leaves plain words bare and single-quotes everything else, escaping embedded single quotes", () => {
+    expect(shellQuote("grand")).toBe("grand");
+    expect(shellQuote("eyJvIjoyfQ==")).toBe("eyJvIjoyfQ==");
+    expect(shellQuote("two words")).toBe("'two words'");
+    expect(shellQuote("O'Hara")).toBe("'O'\\''Hara'");
+    expect(shellQuote("$(rm -rf) `x` ; & | > \"q\"")).toBe("'$(rm -rf) `x` ; & | > \"q\"'");
+    expect(shellQuote("")).toBe("''");
   });
 });
 

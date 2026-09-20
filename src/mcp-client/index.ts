@@ -7,6 +7,6 @@ export { flagSpecsFromSchema, buildToolArguments, applyFlagsToCommand } from "./
 export type { FlagSpec } from "./schema-flags.js";
 export { registerGeneratedCommands, runTool, parseToolContent, createDefaultClient } from "./generated-commands.js";
 export type { GeneratedCommandContext } from "./generated-commands.js";
-export { renderToolPayload, unwrapToolPayload, TOOL_RENDERERS } from "./render.js";
+export { renderToolPayload, unwrapToolPayload, shellQuote, TOOL_RENDERERS, type RenderHints } from "./render.js";
 export { resolveStartupTools, refreshToolsCache, isLocalInvocation, commandToken, LOCAL_COMMANDS } from "./startup.js";
 export type { StartupTools } from "./startup.js";

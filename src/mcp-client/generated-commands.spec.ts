@@ -225,6 +225,24 @@ describe("generated commands", () => {
     expect(human[0]).toContain("Structured");
   });
 
+  it("threads the command's --query and --limit into the get_options next-page line, shell-quoted", async () => {
+    const { client, calls } = clientReturning(() =>
+      text({
+        __typename: "TripPlanHotelSelection",
+        id: "sel-1",
+        fetchStatus: { status: "Ready" },
+        optionsSummary: { optionCount: 12, matchedCount: 5, nextCursor: "c2", topOptions: [{ index: 1, optionId: "o1", name: "Grand O'Hara" }, { index: 2, optionId: "o2", name: "Grand Plaza" }] },
+      }),
+    );
+    const { run, human } = harness(client);
+    await run(["get_options", "--selection_id", "sel-1", "--query", "Grand O'Hara", "--limit", "2"]);
+    expect(calls).toEqual([{ name: "get_options", args: { selection_id: "sel-1", query: "Grand O'Hara", limit: 2 } }]);
+    // eslint-disable-next-line no-control-regex
+    const out = human[0].replace(/\u001b\[[0-9;]*m/g, "");
+    expect(out).toContain("… 3 more (showing top 2 of 5 matching, 12 total)");
+    expect(out.split("\n").at(-1)).toBe("  more options: voyagier get_options --selection_id sel-1 --cursor c2 --query 'Grand O'\\''Hara' --limit 2");
+  });
+
   it("surfaces an isError result as API_ERROR with the tool's text", async () => {
     const { client } = clientReturning(() => ({ isError: true, content: [{ type: "text", text: "Trip plan p1 not found" }] }));
     const { run } = harness(client);
