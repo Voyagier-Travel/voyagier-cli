@@ -49,7 +49,11 @@ export const REMOVED_COMMANDS: readonly RemovedCommand[] = [
   { command: "plans goal-add-with-selection", tools: ["add_goal", "promote_search"] },
   { command: "plans goal-update", tools: ["update_goal"] },
   { command: "plans goal-remove", tools: ["delete_goal"] },
-  { command: "plans goal-assign-travellers", tools: ["update_goal"] },
+  {
+    command: "plans goal-assign-travellers",
+    tools: ["move_travellers"],
+    note: "A goal's travellers are set when it is created (add_goal --scope / --include_all_travellers). To change who an existing goal's rows cover, use move_travellers on the goal's selection (row ids from get_plan_choices).",
+  },
   { command: "plans goal-add-item", tools: ["promote_search"] },
   { command: "plans goal-add-item-with-selection", tools: ["promote_search"] },
   { command: "plans goal-reorder", tools: ["update_goal"] },

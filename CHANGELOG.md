@@ -85,7 +85,7 @@ Generated from `src/removed-commands.ts` — the same table drives the runtime r
 | `voyagier plans goal-add-with-selection` | `voyagier add_goal`, `voyagier promote_search` |  |
 | `voyagier plans goal-update` | `voyagier update_goal` |  |
 | `voyagier plans goal-remove` | `voyagier delete_goal` |  |
-| `voyagier plans goal-assign-travellers` | `voyagier update_goal` |  |
+| `voyagier plans goal-assign-travellers` | `voyagier move_travellers` | A goal's travellers are set when it is created (add_goal --scope / --include_all_travellers). To change who an existing goal's rows cover, use move_travellers on the goal's selection (row ids from get_plan_choices). |
 | `voyagier plans goal-add-item` | `voyagier promote_search` |  |
 | `voyagier plans goal-add-item-with-selection` | `voyagier promote_search` |  |
 | `voyagier plans goal-reorder` | `voyagier update_goal` |  |
