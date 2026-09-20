@@ -94,17 +94,20 @@ function checkAuth(deps: DoctorDeps): DoctorCheck {
  * Initialize against the MCP server and list its tools. Refreshes the local
  * tool cache on success so the command surface matches the server.
  */
-async function checkMcp(deps: DoctorDeps, url: string): Promise<{ check: DoctorCheck; tools: McpToolDescriptor[]; client: McpClient | null }> {
+async function checkMcp(deps: DoctorDeps, url: string, currentVersion: string): Promise<{ check: DoctorCheck; tools: McpToolDescriptor[]; client: McpClient | null }> {
   const now = (deps.now ?? Date.now)();
   const previous = readToolsCache();
-  // Absolute timestamps only (agents diff these across runs).
+  // Absolute timestamps only (agents diff these across runs). An entry another
+  // CLI version wrote was not used by commands since the upgrade; say so.
   const previousNote =
     previous && previous.url === url
-      ? `previous list ${previous.fetchedAt}${toolsCacheAgeMs(previous, now) >= TOOLS_CACHE_TTL_MS ? " (expired)" : ""}`
+      ? `previous list ${previous.fetchedAt}` +
+        (toolsCacheAgeMs(previous, now) >= TOOLS_CACHE_TTL_MS ? " (expired)" : "") +
+        (previous.cliVersion !== currentVersion ? ` (ignored: written by CLI ${previous.cliVersion ?? "pre-4.1"}, running ${currentVersion})` : "")
       : "no previous list";
   let client: McpClient;
   try {
-    client = (deps.createClient ?? (() => createDefaultClient("0.0.0")))();
+    client = (deps.createClient ?? (() => createDefaultClient(currentVersion)))();
   } catch (err) {
     return {
       check: { name: "mcp", status: "FAIL", message: sanitizeExternalText(err instanceof Error ? err.message : String(err)) },
@@ -113,7 +116,7 @@ async function checkMcp(deps: DoctorDeps, url: string): Promise<{ check: DoctorC
     };
   }
   try {
-    const cache = await refreshToolsCache(client, url, now);
+    const cache = await refreshToolsCache(client, url, currentVersion, now);
     const server = cache.server?.name ? ` · server ${cache.server.name}${cache.server.version ? ` ${cache.server.version}` : ""}` : "";
     const surfaceHash = cache.surfaceHash ?? toolsSurfaceHash(cache.tools);
     const surfaceChanged = previous?.url === url && previous.surfaceHash !== undefined && previous.surfaceHash !== surfaceHash;
@@ -420,7 +423,7 @@ export async function runDoctor(currentVersion: string, deps: DoctorDeps = {}): 
     mcp = { name: "mcp", status: "WARN", message: `MCP check skipped (no credentials; endpoint ${url})` };
     whoami = { name: "whoami", status: "WARN", message: "Identity check skipped (no credentials)" };
   } else {
-    const probe = await checkMcp(deps, url as string);
+    const probe = await checkMcp(deps, url as string, currentVersion);
     mcp = probe.check;
     whoami = await checkWhoami(probe.client, probe.tools);
   }

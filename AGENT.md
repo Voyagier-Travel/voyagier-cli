@@ -104,7 +104,7 @@ The MCP endpoint is rate limited per token: **180 requests per minute** is the c
 ### State files (`~/.voyagier/`)
 
 - `credentials.json` — PAT + API URL (managed by `voyagier auth`)
-- `tools-cache.json` — the server's `tools/list` and `instructions`, refreshed when older than 24 hours, by `voyagier doctor`, and when you run a command the cache does not know. Delete it to force a refresh.
+- `tools-cache.json` — the server's `tools/list` and `instructions`, refreshed when older than 24 hours, when the CLI version that wrote it differs from the one running, by `voyagier doctor`, and when you run a command the cache does not know. Delete it to force a refresh.
 
 Override the directory with `VOYAGIER_CONFIG_DIR`.
 

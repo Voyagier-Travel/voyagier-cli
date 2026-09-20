@@ -92,7 +92,7 @@ describe("runDoctor", () => {
   it("PASSes auth + mcp (tool count, surface hash, refreshed cache) and skips whoami when the server lacks the tool", async () => {
     const previousAt = new Date(Date.now() - 3 * 3600_000).toISOString();
     const previousHash = toolsSurfaceHash([{ name: "old" }]);
-    writeToolsCache({ url: URL, fetchedAt: previousAt, surfaceHash: previousHash, tools: [{ name: "old" }] });
+    writeToolsCache({ url: URL, fetchedAt: previousAt, surfaceHash: previousHash, cliVersion: "1.8.1", tools: [{ name: "old" }] });
     const report = await runDoctor("1.8.1", { createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch(), now: () => Date.parse("2026-09-10T22:00:00.000Z") });
     expect(check(report, "auth").status).toBe("PASS");
     const mcp = check(report, "mcp");
@@ -102,6 +102,7 @@ describe("runDoctor", () => {
     // Absolute timestamps only — no relative "3h ago".
     expect(mcp.message).toContain("tool list refreshed 2026-09-10T22:00:00.000Z");
     expect(mcp.message).toContain(`previous list ${previousAt}`);
+    expect(mcp.message).not.toContain("ignored");
     expect(mcp.message).not.toMatch(/ago\b/);
     expect(mcp.details).toMatchObject({ toolCount: 2, surfaceHash: hash, previousSurfaceHash: previousHash, listedAt: "2026-09-10T22:00:00.000Z", tools: ["get_plan_status", "list_plans"] });
     expect(readToolsCache()?.tools).toEqual(TOOLS);
@@ -110,6 +111,20 @@ describe("runDoctor", () => {
     expect(whoami.message).toMatch(/does not publish a whoami tool yet/);
     expect(check(report, "version")).toMatchObject({ status: "PASS", message: "Running latest (v1.8.1)" });
     expect(report.overall).toBe("PASS");
+  });
+
+  it("says when the previous tool list was ignored because another CLI version wrote it, and stamps the refreshed one", async () => {
+    const previousAt = new Date(Date.now() - 3 * 3600_000).toISOString();
+    writeToolsCache({ url: URL, fetchedAt: previousAt, tools: [{ name: "plans_list" }] });
+    const report = await runDoctor("4.1.0", { createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch() });
+    const mcp = check(report, "mcp");
+    expect(mcp.status).toBe("PASS");
+    expect(mcp.message).toContain(`previous list ${previousAt} (ignored: written by CLI pre-4.1, running 4.1.0)`);
+    expect(readToolsCache()).toMatchObject({ cliVersion: "4.1.0", tools: TOOLS });
+
+    writeToolsCache({ url: URL, fetchedAt: previousAt, cliVersion: "4.0.0", tools: [{ name: "plans_list" }] });
+    const again = await runDoctor("4.1.0", { createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch() });
+    expect(check(again, "mcp").message).toContain("(ignored: written by CLI 4.0.0, running 4.1.0)");
   });
 
   it("calls whoami when the server publishes it and reports the identity", async () => {

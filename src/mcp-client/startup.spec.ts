@@ -8,6 +8,8 @@ import { getMcpUrl, DEFAULT_MCP_URL } from "./url.js";
 /**
  * Startup tool resolution: fresh cache → no network; local commands → no
  * network; otherwise fetch, cache, and fall back to a stale cache on failure.
+ * A cache another CLI version wrote (or a pre-4.1 one without a version) is
+ * never used.
  * The jest bootstrap points CONFIG_DIR at a sandbox, so the cache file here is
  * throwaway.
  */
@@ -45,7 +47,7 @@ describe("resolveStartupTools", () => {
   });
 
   it("uses a fresh cache without touching the network", async () => {
-    writeToolsCache({ url: URL, fetchedAt: new Date().toISOString(), tools: TOOLS });
+    writeToolsCache({ url: URL, fetchedAt: new Date().toISOString(), cliVersion: "0.0.0", tools: TOOLS });
     const { client, calls } = scriptedClient("ok");
     const res = await resolveStartupTools(["list_plans"], { createClient: () => client });
     expect(res.source).toBe("cache");
@@ -63,6 +65,12 @@ describe("resolveStartupTools", () => {
     expect(readToolsCache()?.surfaceHash).toMatch(/^[0-9a-f]{16}$/);
   });
 
+  it("stamps the cache with the CLI version it was given", async () => {
+    const { client } = scriptedClient("ok");
+    await resolveStartupTools(["list_plans"], { createClient: () => client, version: "4.1.0" });
+    expect(readToolsCache()?.cliVersion).toBe("4.1.0");
+  });
+
   it("treats a tool command preceded by global flags as a tool invocation (fetches with an empty cache)", async () => {
     for (const argv of [["--verbose", "list_plans"], ["--json", "list_plans"], ["--stacktrace", "--verbose", "list_plans", "--limit", "1"]]) {
       clearToolsCache();
@@ -75,10 +83,10 @@ describe("resolveStartupTools", () => {
   });
 
   it("refetches when the cache is expired or for another endpoint", async () => {
-    writeToolsCache({ url: URL, fetchedAt: new Date(Date.now() - 48 * 3600_000).toISOString(), tools: [{ name: "old" }] });
+    writeToolsCache({ url: URL, fetchedAt: new Date(Date.now() - 48 * 3600_000).toISOString(), cliVersion: "0.0.0", tools: [{ name: "old" }] });
     const { client } = scriptedClient("ok");
     expect((await resolveStartupTools(["list_plans"], { createClient: () => client })).source).toBe("network");
-    writeToolsCache({ url: "https://elsewhere.example.test/mcp", fetchedAt: new Date().toISOString(), tools: [{ name: "other" }] });
+    writeToolsCache({ url: "https://elsewhere.example.test/mcp", fetchedAt: new Date().toISOString(), cliVersion: "0.0.0", tools: [{ name: "other" }] });
     const again = await resolveStartupTools(["list_plans"], { createClient: () => scriptedClient("ok").client });
     expect(again.source).toBe("network");
     expect(again.tools).toEqual(TOOLS);
@@ -92,7 +100,7 @@ describe("resolveStartupTools", () => {
       expect(res.tools).toEqual([]);
     }
     expect(calls).toEqual([]);
-    writeToolsCache({ url: URL, fetchedAt: new Date(Date.now() - 48 * 3600_000).toISOString(), tools: [{ name: "old" }] });
+    writeToolsCache({ url: URL, fetchedAt: new Date(Date.now() - 48 * 3600_000).toISOString(), cliVersion: "0.0.0", tools: [{ name: "old" }] });
     const stale = await resolveStartupTools(["doctor"], { createClient: () => client });
     expect(stale.source).toBe("stale-cache");
     expect(stale.tools).toEqual([{ name: "old" }]);
@@ -119,7 +127,7 @@ describe("resolveStartupTools", () => {
   });
 
   it("falls back to a stale cache and keeps the error when the fetch fails", async () => {
-    writeToolsCache({ url: URL, fetchedAt: new Date(Date.now() - 48 * 3600_000).toISOString(), tools: [{ name: "old" }] });
+    writeToolsCache({ url: URL, fetchedAt: new Date(Date.now() - 48 * 3600_000).toISOString(), cliVersion: "0.0.0", tools: [{ name: "old" }] });
     const net = await resolveStartupTools(["list_plans"], { createClient: () => scriptedClient("network").client });
     expect(net.source).toBe("stale-cache");
     expect(net.tools).toEqual([{ name: "old" }]);
@@ -130,8 +138,66 @@ describe("resolveStartupTools", () => {
     expect(auth.error?.code).toBe(CliErrorCode.AUTH_FAILED);
   });
 
+  describe("after a CLI upgrade", () => {
+    const RETIRED_TOOLS = [{ name: "plans_list" }, { name: "plan_status" }];
+    /** A cache as 4.0 wrote it: fresh by time, no cliVersion, the retired tool names. */
+    const write40Cache = () => writeToolsCache({ url: URL, fetchedAt: new Date(Date.now() - 60_000).toISOString(), tools: RETIRED_TOOLS });
+
+    it("does not use a fresh-by-time cache that carries no cliVersion: refetches and registers the current names", async () => {
+      write40Cache();
+      const { client, calls } = scriptedClient("ok");
+      const res = await resolveStartupTools(["plans_list"], { createClient: () => client, version: "4.1.0" });
+      expect(res.source).toBe("network");
+      expect(calls).toEqual(["initialize", "notifications/initialized", "tools/list"]);
+      expect(res.tools.map((t) => t.name)).toEqual(["list_plans"]);
+      expect(res.tools.map((t) => t.name)).not.toContain("plans_list");
+      expect(res.ignoredCache).toEqual({ fetchedAt: expect.any(String), cliVersion: null });
+      expect(readToolsCache()).toMatchObject({ cliVersion: "4.1.0", tools: TOOLS });
+    });
+
+    it("does not use a fresh cache written by another CLI version", async () => {
+      writeToolsCache({ url: URL, fetchedAt: new Date().toISOString(), cliVersion: "4.0.0", tools: RETIRED_TOOLS });
+      const { client, calls } = scriptedClient("ok");
+      const res = await resolveStartupTools(["list_plans"], { createClient: () => client, version: "4.1.0" });
+      expect(res.source).toBe("network");
+      expect(calls).toContain("tools/list");
+      expect(res.tools).toEqual(TOOLS);
+      expect(res.ignoredCache).toMatchObject({ cliVersion: "4.0.0" });
+    });
+
+    it("uses a fresh cache written by the same CLI version (unchanged behaviour)", async () => {
+      writeToolsCache({ url: URL, fetchedAt: new Date().toISOString(), cliVersion: "4.1.0", tools: TOOLS });
+      const { client, calls } = scriptedClient("ok");
+      const res = await resolveStartupTools(["list_plans"], { createClient: () => client, version: "4.1.0" });
+      expect(res.source).toBe("cache");
+      expect(res.tools).toEqual(TOOLS);
+      expect(res.ignoredCache).toBeUndefined();
+      expect(calls).toEqual([]);
+    });
+
+    it("does not list the previous version's tools for help or local commands either", async () => {
+      write40Cache();
+      const { client, calls } = scriptedClient("ok");
+      for (const argv of [["--help"], [], ["doctor"]]) {
+        const res = await resolveStartupTools(argv, { createClient: () => client, version: "4.1.0" });
+        expect(res.source).toBe("none");
+        expect(res.tools).toEqual([]);
+        expect(res.ignoredCache).toEqual({ fetchedAt: expect.any(String), cliVersion: null });
+      }
+      expect(calls).toEqual([]);
+    });
+
+    it("does not fall back to the previous version's tools when the refetch fails", async () => {
+      write40Cache();
+      const res = await resolveStartupTools(["plans_list"], { createClient: () => scriptedClient("network").client, version: "4.1.0" });
+      expect(res.source).toBe("none");
+      expect(res.tools).toEqual([]);
+      expect(res.error?.code).toBe(CliErrorCode.NETWORK);
+    });
+  });
+
   it("force refetches even with a fresh cache", async () => {
-    writeToolsCache({ url: URL, fetchedAt: new Date().toISOString(), tools: [{ name: "old" }] });
+    writeToolsCache({ url: URL, fetchedAt: new Date().toISOString(), cliVersion: "0.0.0", tools: [{ name: "old" }] });
     const { client, calls } = scriptedClient("ok");
     const res = await resolveStartupTools(["doctor"], { createClient: () => client, force: true });
     expect(res.source).toBe("network");

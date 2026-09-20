@@ -77,10 +77,11 @@ export function loadAgentDocs(): { content: string; fromFallback: boolean } {
 export async function loadServerInstructions(deps: AgentDocsDeps = {}): Promise<ServerInstructions> {
   const url = getMcpUrl();
   const now = deps.now ?? Date.now();
+  const cliVersion = deps.version ?? "0.0.0";
   const cache = readToolsCache();
   const stale = cache && cache.url === url && typeof cache.instructions === "string" ? cache.instructions : null;
 
-  if (isToolsCacheFresh(cache, url, now) && typeof cache.instructions === "string" && cache.instructions.trim()) {
+  if (isToolsCacheFresh(cache, url, cliVersion, now) && typeof cache.instructions === "string" && cache.instructions.trim()) {
     return { instructions: cache.instructions, source: "cache" };
   }
 
@@ -90,8 +91,8 @@ export async function loadServerInstructions(deps: AgentDocsDeps = {}): Promise<
   }
 
   try {
-    const client = (deps.createClient ?? (() => createDefaultClient(deps.version ?? "0.0.0", { fetchImpl: deps.fetchImpl })))();
-    const fresh = await refreshToolsCache(client, url, now);
+    const client = (deps.createClient ?? (() => createDefaultClient(cliVersion, { fetchImpl: deps.fetchImpl })))();
+    const fresh = await refreshToolsCache(client, url, cliVersion, now);
     if (typeof fresh.instructions === "string" && fresh.instructions.trim()) {
       return { instructions: fresh.instructions, source: "network" };
     }

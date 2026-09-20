@@ -143,7 +143,7 @@ describe("agent-docs", () => {
     });
 
     it("uses a fresh cache entry without touching the network", async () => {
-      writeToolsCache({ url: DEFAULT_MCP_URL, fetchedAt: new Date(NOW - 60_000).toISOString(), instructions: "cached text", tools: [] }, CONFIG_DIR);
+      writeToolsCache({ url: DEFAULT_MCP_URL, fetchedAt: new Date(NOW - 60_000).toISOString(), cliVersion: "0.0.0", instructions: "cached text", tools: [] }, CONFIG_DIR);
       const { client, sent } = makeMockRemote({ instructions: REMOTE_INSTRUCTIONS });
       const result = await loadServerInstructions({ createClient: () => client, now: NOW });
       expect(result).toEqual({ instructions: "cached text", source: "cache" });
@@ -163,7 +163,7 @@ describe("agent-docs", () => {
 
     it("fetches when the cache is stale or has no instructions, and stores them in the tools cache", async () => {
       process.env.VOYAGIER_TOKEN = "pat_placeholder";
-      writeToolsCache({ url: DEFAULT_MCP_URL, fetchedAt: new Date(NOW - 60_000).toISOString(), tools: [] }, CONFIG_DIR);
+      writeToolsCache({ url: DEFAULT_MCP_URL, fetchedAt: new Date(NOW - 60_000).toISOString(), cliVersion: "0.0.0", tools: [] }, CONFIG_DIR);
       const { client, sent } = makeMockRemote({ instructions: REMOTE_INSTRUCTIONS, tools: FIXTURE_TOOLS });
       const result = await loadServerInstructions({ createClient: () => client, now: NOW });
       expect(result).toEqual({ instructions: REMOTE_INSTRUCTIONS, source: "network" });
@@ -171,6 +171,16 @@ describe("agent-docs", () => {
       const cache = readToolsCache(CONFIG_DIR);
       expect(cache?.instructions).toBe(REMOTE_INSTRUCTIONS);
       expect(cache?.tools).toHaveLength(FIXTURE_TOOLS.length);
+    });
+
+    it("refetches when a fresh-by-time entry was written by another CLI version", async () => {
+      process.env.VOYAGIER_TOKEN = "pat_placeholder";
+      writeToolsCache({ url: DEFAULT_MCP_URL, fetchedAt: new Date(NOW - 60_000).toISOString(), instructions: "cached text", tools: [] }, CONFIG_DIR);
+      const { client, sent } = makeMockRemote({ instructions: REMOTE_INSTRUCTIONS, tools: FIXTURE_TOOLS });
+      const result = await loadServerInstructions({ createClient: () => client, now: NOW, version: "4.1.0" });
+      expect(result).toEqual({ instructions: REMOTE_INSTRUCTIONS, source: "network" });
+      expect(sent.map((s) => s.body.method)).toContain("tools/list");
+      expect(readToolsCache(CONFIG_DIR)?.cliVersion).toBe("4.1.0");
     });
 
     it("without credentials: stale cache text with a note, or unavailable", async () => {

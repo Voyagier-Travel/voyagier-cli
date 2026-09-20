@@ -4,8 +4,10 @@
  *
  * File: `<CONFIG_DIR>/tools-cache.json` (honours VOYAGIER_CONFIG_DIR, like
  * credentials). Keyed by endpoint URL so switching VOYAGIER_MCP_URL never
- * reuses another server's tool table. Entries older than the TTL are treated
- * as a miss; `voyagier doctor` always refreshes.
+ * reuses another server's tool table, and by the CLI version that wrote it so
+ * an upgrade never reuses the previous release's tool table (its renderers,
+ * removal map and docs may assume different tool names). Entries older than
+ * the TTL are treated as a miss; `voyagier doctor` always refreshes.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, unlinkSync } from "fs";
 import { createHash } from "crypto";
@@ -22,6 +24,12 @@ export interface ToolsCache {
   url: string;
   /** ISO timestamp of the fetch. */
   fetchedAt: string;
+  /**
+   * `package.json` version of the CLI that wrote the entry. A different
+   * version — or none, as written by releases before 4.1 — makes the entry
+   * stale, so an upgraded CLI lists tools again on first use.
+   */
+  cliVersion?: string;
   /** Server identity from initialize, when known. */
   server?: { name?: string; version?: string };
   /** `toolsSurfaceHash(tools)` at fetch time — scripts compare it across runs. */
@@ -89,14 +97,23 @@ export function toolsCacheAgeMs(cache: ToolsCache, now: number = Date.now()): nu
   return Math.max(0, now - Date.parse(cache.fetchedAt));
 }
 
-/** True when the entry is for `url` and younger than the TTL. */
+/**
+ * True when the entry was written for `url` by this CLI version. Entries
+ * without a `cliVersion` (written before 4.1) never match.
+ */
+export function isToolsCacheForCli(cache: ToolsCache | null, url: string, cliVersion: string): cache is ToolsCache {
+  if (!cache) return false;
+  return cache.url === url && cache.cliVersion === cliVersion;
+}
+
+/** True when the entry is for `url`, written by this CLI version, and younger than the TTL. */
 export function isToolsCacheFresh(
   cache: ToolsCache | null,
   url: string,
+  cliVersion: string,
   now: number = Date.now(),
   ttlMs: number = TOOLS_CACHE_TTL_MS,
 ): cache is ToolsCache {
-  if (!cache) return false;
-  if (cache.url !== url) return false;
+  if (!isToolsCacheForCli(cache, url, cliVersion)) return false;
   return toolsCacheAgeMs(cache, now) < ttlMs;
 }

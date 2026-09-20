@@ -71,7 +71,10 @@ function buildFromStartup(startup: StartupTools): Command {
     // Diagnostics only, stderr only: stdout stays the payload channel.
     const hash = startup.tools.length ? toolsSurfaceHash(startup.tools) : "none";
     const fetched = startup.cache?.fetchedAt ?? "n/a";
-    process.stderr.write(`mcp: ${startup.url} · ${startup.tools.length} tools · surface ${hash} · source ${startup.source} · listed ${fetched}\n`);
+    const ignored = startup.ignoredCache
+      ? ` · ignored cache listed ${startup.ignoredCache.fetchedAt} by CLI ${startup.ignoredCache.cliVersion ?? "pre-4.1"}`
+      : "";
+    process.stderr.write(`mcp: ${startup.url} · ${startup.tools.length} tools · surface ${hash} · source ${startup.source} · listed ${fetched}${ignored}\n`);
   }
   return program;
 }
@@ -93,8 +96,8 @@ try {
       );
     }
     if (startup.source === "cache" || startup.source === "stale-cache") {
-      const fresh = await refreshToolsCache(createDefaultClient(pkg.version), startup.url);
-      startup = { ...startup, tools: fresh.tools, source: "network", cache: fresh };
+      const fresh = await refreshToolsCache(createDefaultClient(pkg.version), startup.url, pkg.version);
+      startup = { ...startup, tools: fresh.tools, source: "network", cache: fresh, ignoredCache: undefined };
       program = buildFromStartup(startup);
     }
     if (!knowsCommand(program, first)) {

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "@jest/globals";
 import { mkdtempSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { clearToolsCache, isToolsCacheFresh, readToolsCache, toolsCacheAgeMs, toolsCachePath, toolsSurfaceHash, TOOLS_CACHE_TTL_MS, writeToolsCache } from "./tools-cache.js";
+import { clearToolsCache, isToolsCacheForCli, isToolsCacheFresh, readToolsCache, toolsCacheAgeMs, toolsCachePath, toolsSurfaceHash, TOOLS_CACHE_TTL_MS, writeToolsCache } from "./tools-cache.js";
 
 const URL_A = "https://mcp.example.test/api/mcp";
 
@@ -31,14 +31,31 @@ describe("tools cache", () => {
     expect(readToolsCache(dir)).toBeNull();
   });
 
-  it("is fresh only for the same URL and within the TTL", () => {
+  it("is fresh only for the same URL, the same CLI version, and within the TTL", () => {
     const now = Date.parse("2026-09-10T12:00:00Z");
-    const cache = { url: URL_A, fetchedAt: new Date(now - 60_000).toISOString(), tools: [] };
-    expect(isToolsCacheFresh(cache, URL_A, now)).toBe(true);
-    expect(isToolsCacheFresh(cache, "https://other.example.test/mcp", now)).toBe(false);
-    expect(isToolsCacheFresh(cache, URL_A, now + TOOLS_CACHE_TTL_MS)).toBe(false);
-    expect(isToolsCacheFresh(null, URL_A, now)).toBe(false);
+    const cache = { url: URL_A, fetchedAt: new Date(now - 60_000).toISOString(), cliVersion: "4.1.0", tools: [] };
+    expect(isToolsCacheFresh(cache, URL_A, "4.1.0", now)).toBe(true);
+    expect(isToolsCacheFresh(cache, "https://other.example.test/mcp", "4.1.0", now)).toBe(false);
+    expect(isToolsCacheFresh(cache, URL_A, "4.1.0", now + TOOLS_CACHE_TTL_MS)).toBe(false);
+    expect(isToolsCacheFresh(null, URL_A, "4.1.0", now)).toBe(false);
     expect(toolsCacheAgeMs(cache, now)).toBe(60_000);
+  });
+
+  it("is stale when another CLI version wrote it, or when it carries no version (pre-4.1 entry)", () => {
+    const now = Date.parse("2026-09-10T12:00:00Z");
+    const fetchedAt = new Date(now - 60_000).toISOString();
+    const byOtherVersion = { url: URL_A, fetchedAt, cliVersion: "4.0.0", tools: [] };
+    const unversioned = { url: URL_A, fetchedAt, tools: [] };
+    expect(isToolsCacheFresh(byOtherVersion, URL_A, "4.1.0", now)).toBe(false);
+    expect(isToolsCacheFresh(unversioned, URL_A, "4.1.0", now)).toBe(false);
+    expect(isToolsCacheForCli(byOtherVersion, URL_A, "4.1.0")).toBe(false);
+    expect(isToolsCacheForCli(unversioned, URL_A, "4.1.0")).toBe(false);
+    expect(isToolsCacheForCli(byOtherVersion, URL_A, "4.0.0")).toBe(true);
+    expect(isToolsCacheForCli(null, URL_A, "4.1.0")).toBe(false);
+    // A pre-4.1 file on disk still parses: the predicate, not the reader, rejects it.
+    writeToolsCache(unversioned, dir);
+    expect(readToolsCache(dir)).toMatchObject({ url: URL_A, tools: [] });
+    expect(readToolsCache(dir)?.cliVersion).toBeUndefined();
   });
 
   it("creates the directory when missing", () => {
