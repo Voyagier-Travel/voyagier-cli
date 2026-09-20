@@ -12,6 +12,12 @@
  *  - object, array of objects,
  *    anything else                → `--name <json>` (a JSON literal)
  *
+ * Nullable properties — `type: [X, "null"]` or `anyOf: [{type: X}, {type: "null"}]`
+ * — keep X's flag kind and additionally accept the literal argument `null`,
+ * which is sent as JSON null (the server's own "pass null to clear"). Only
+ * a schema that allows null gets the sentinel; elsewhere `null` is an
+ * ordinary value of the base kind.
+ *
  * Required properties become Commander required options, so a missing one is
  * a parse error — which already flows through the CLI's VALIDATION envelope.
  */
@@ -36,10 +42,21 @@ export interface FlagSpec {
   description: string;
   /** Expected JSON shape for `json` flags (help text only). */
   jsonShape?: "object" | "array";
+  /** Schema allows null: the literal argument `null` is sent as JSON null. */
+  nullable?: boolean;
 }
 
 /** Flag names Commander or the CLI already own on every command. */
 const RESERVED_FLAGS = new Set(["json", "help", "version", "stacktrace", "verbose"]);
+
+/** The one argument spelling that means JSON null on a nullable flag. */
+const NULL_SENTINEL = "null";
+/**
+ * Parsed-option marker for "send JSON null". Commander treats a parser that
+ * returns null as "no value" (it stores "" or true), so the parser hands back
+ * this symbol and buildToolArguments turns it into null on the wire.
+ */
+export const JSON_NULL: unique symbol = Symbol("json null");
 
 /**
  * Property names become Commander option names and appear in help and error
@@ -57,6 +74,24 @@ function primaryType(schema: McpJsonSchema): string | undefined {
   return t;
 }
 
+/**
+ * Split a property into the schema that decides its flag kind and whether it
+ * also allows null. `type: [X, "null"]` and `anyOf: [{type: X}, {type: "null"}]`
+ * (the non-null member may carry `enum`, `items`, bounds) are nullable; any
+ * other shape is returned as-is, so the mapping below is unchanged for it.
+ */
+function resolveNullable(prop: McpJsonSchema): { base: McpJsonSchema; nullable: boolean } {
+  if (Array.isArray(prop.type)) return { base: prop, nullable: prop.type.includes("null") };
+  if (Array.isArray(prop.anyOf)) {
+    const members = prop.anyOf.filter((m): m is McpJsonSchema => typeof m === "object" && m !== null);
+    const nonNull = members.filter((m) => m.type !== "null");
+    if (members.length === prop.anyOf.length && nonNull.length === 1 && nonNull.length < members.length) {
+      return { base: nonNull[0], nullable: true };
+    }
+  }
+  return { base: prop, nullable: false };
+}
+
 /** Derive the flag specs for a tool input schema (object with properties). */
 export function flagSpecsFromSchema(schema: McpJsonSchema | undefined): FlagSpec[] {
   const properties = schema?.properties ?? {};
@@ -71,16 +106,18 @@ export function flagSpecsFromSchema(schema: McpJsonSchema | undefined): FlagSpec
     }
     const flag = RESERVED_FLAGS.has(param) ? `param-${param}` : param;
     const description = describe(prop);
-    const type = primaryType(prop);
-    const base = {
+    const { base: shape, nullable } = resolveNullable(prop);
+    const type = primaryType(shape);
+    const plain = {
       param,
       flag,
       attribute: attributeName(flag),
       required: required.has(param),
       description,
     };
-    if (Array.isArray(prop.enum) && prop.enum.length > 0 && (type === undefined || type === "string")) {
-      specs.push({ ...base, kind: "enum", enumValues: prop.enum.map(String) });
+    const base = nullable ? { ...plain, nullable } : plain;
+    if (Array.isArray(shape.enum) && shape.enum.length > 0 && (type === undefined || type === "string")) {
+      specs.push({ ...base, kind: "enum", enumValues: shape.enum.map(String) });
     } else if (type === "boolean") {
       specs.push({ ...base, kind: "boolean" });
     } else if (type === "integer") {
@@ -90,9 +127,11 @@ export function flagSpecsFromSchema(schema: McpJsonSchema | undefined): FlagSpec
     } else if (type === "string") {
       specs.push({ ...base, kind: "string" });
     } else if (type === "array") {
-      const itemType = prop.items ? primaryType(prop.items) : undefined;
+      const itemType = shape.items ? primaryType(shape.items) : undefined;
       if (itemType === "string" || itemType === "number" || itemType === "integer") {
-        specs.push({ ...base, kind: "array", itemKind: itemType });
+        // A repeatable flag has no unambiguous slot for a null sentinel, so a
+        // nullable array of scalars stays a plain repeatable flag.
+        specs.push({ ...plain, kind: "array", itemKind: itemType });
       } else {
         specs.push({ ...base, kind: "json", jsonShape: "array" });
       }
@@ -119,6 +158,12 @@ export function attributeName(flag: string): string {
 
 /** Human help suffix per kind, appended to the schema description. */
 function kindHint(spec: FlagSpec): string {
+  const hint = baseKindHint(spec);
+  if (!spec.nullable) return hint;
+  return hint ? `${hint.slice(0, -1)}; pass null to clear)` : "(pass null to clear)";
+}
+
+function baseKindHint(spec: FlagSpec): string {
   switch (spec.kind) {
     case "integer":
       return "(integer)";
@@ -160,6 +205,7 @@ function parseJsonValue(spec: FlagSpec, value: string): unknown {
   } catch {
     throw new InvalidArgumentError(`--${spec.flag} expects a JSON literal${spec.jsonShape ? ` (${spec.jsonShape})` : ""}.`);
   }
+  if (parsed === null && spec.nullable) return JSON_NULL;
   if (spec.jsonShape === "array" && !Array.isArray(parsed)) {
     throw new InvalidArgumentError(`--${spec.flag} expects a JSON array.`);
   }
@@ -169,23 +215,41 @@ function parseJsonValue(spec: FlagSpec, value: string): unknown {
   return parsed;
 }
 
+/** Wrap a scalar parser so the literal `null` yields JSON null on a nullable spec. */
+function nullableParser<T>(spec: FlagSpec, parse: (v: string) => T): (v: string) => T | typeof JSON_NULL {
+  if (!spec.nullable) return parse;
+  return (v: string) => (v === NULL_SENTINEL ? JSON_NULL : parse(v));
+}
+
 /** Build the Commander Option for one spec. */
 export function optionForSpec(spec: FlagSpec): Option {
   const desc = [spec.required ? "(required)" : "", spec.description, kindHint(spec)].filter(Boolean).join(" ");
   let option: Option;
   switch (spec.kind) {
     case "boolean":
-      option = new Option(`--${spec.flag} [value]`, desc).argParser((v: string) => parseBoolean(v));
+      option = new Option(`--${spec.flag} [value]`, desc).argParser(nullableParser(spec, (v: string) => parseBoolean(v)));
       break;
     case "integer":
     case "number": {
       const kind = spec.kind;
-      option = new Option(`--${spec.flag} <n>`, desc).argParser((v: string) => parseNumber(kind, v));
+      option = new Option(`--${spec.flag} <n>`, desc).argParser(nullableParser(spec, (v: string) => parseNumber(kind, v)));
       break;
     }
-    case "enum":
-      option = new Option(`--${spec.flag} <choice>`, desc).choices(spec.enumValues ?? []);
+    case "enum": {
+      const choices = spec.enumValues ?? [];
+      option = new Option(`--${spec.flag} <choice>`, desc).choices(choices);
+      if (spec.nullable) {
+        // .choices() installed the validating parser and the help listing;
+        // keep the listing, re-check the choice ourselves after the sentinel.
+        option.argParser(
+          nullableParser(spec, (v: string) => {
+            if (!choices.includes(v)) throw new InvalidArgumentError(`Allowed choices are ${choices.join(", ")}.`);
+            return v;
+          }),
+        );
+      }
       break;
+    }
     case "array": {
       const itemKind = spec.itemKind ?? "string";
       option = new Option(`--${spec.flag} <value...>`, desc).argParser((v: string, previous: unknown[] | undefined) => {
@@ -200,6 +264,7 @@ export function optionForSpec(spec: FlagSpec): Option {
     case "string":
     default:
       option = new Option(`--${spec.flag} <value>`, desc);
+      if (spec.nullable) option.argParser(nullableParser(spec, (v: string) => v));
   }
   if (spec.required) option.makeOptionMandatory(true);
   return option;
@@ -212,14 +277,19 @@ export function applyFlagsToCommand(cmd: Command, specs: FlagSpec[]): void {
 
 /**
  * Convert parsed Commander options into the tool's argument object. Only
- * flags the user passed are sent (no explicit nulls/undefined), so the
- * server's own defaults apply.
+ * flags the user passed are sent (nothing for an omitted flag), so the
+ * server's own defaults apply. A nullable flag given the literal `null` is
+ * sent as JSON null.
  */
 export function buildToolArguments(specs: FlagSpec[], opts: Record<string, unknown>): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   for (const spec of specs) {
     const value = opts[spec.attribute];
     if (value === undefined) continue;
+    if (value === JSON_NULL) {
+      args[spec.param] = null;
+      continue;
+    }
     if (spec.kind === "boolean") {
       args[spec.param] = typeof value === "string" ? parseBoolean(value) : Boolean(value);
       continue;

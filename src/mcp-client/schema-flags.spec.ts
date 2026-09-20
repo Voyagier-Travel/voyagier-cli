@@ -1,8 +1,8 @@
 import { describe, it, expect } from "@jest/globals";
 import { Command } from "commander";
 import { readFileSync } from "node:fs";
-import type { McpToolDescriptor } from "./client.js";
-import { applyFlagsToCommand, attributeName, buildToolArguments, flagSpecsFromSchema, parseBoolean } from "./schema-flags.js";
+import type { McpJsonSchema, McpToolDescriptor } from "./client.js";
+import { applyFlagsToCommand, attributeName, buildToolArguments, flagSpecsFromSchema, optionForSpec, parseBoolean } from "./schema-flags.js";
 
 const FIXTURE_TOOLS: McpToolDescriptor[] = JSON.parse(
   readFileSync(new URL("../mcp/fixtures/remote-tools.json", import.meta.url), "utf-8"),
@@ -16,7 +16,11 @@ function tool(name: string): McpToolDescriptor {
 
 /** Parse argv on a bare command carrying the tool's flags; return the tool arguments. */
 async function parseArgs(name: string, argv: string[]): Promise<Record<string, unknown>> {
-  const specs = flagSpecsFromSchema(tool(name).inputSchema);
+  return parseSchema(name, tool(name).inputSchema, argv);
+}
+
+async function parseSchema(name: string, schema: McpJsonSchema | undefined, argv: string[]): Promise<Record<string, unknown>> {
+  const specs = flagSpecsFromSchema(schema);
   let captured: Record<string, unknown> | null = null;
   const cmd = new Command(name).exitOverride().configureOutput({ writeErr: () => {}, writeOut: () => {} });
   applyFlagsToCommand(cmd, specs);
@@ -70,7 +74,75 @@ describe("flagSpecsFromSchema", () => {
   it("treats a nullable type union as its non-null member and appends the schema default to help", () => {
     const [spec] = flagSpecsFromSchema({ type: "object", properties: { n: { type: ["integer", "null"], description: "Count.", default: 3 } } });
     expect(spec.kind).toBe("integer");
+    expect(spec.nullable).toBe(true);
     expect(spec.description).toBe("Count. Default: 3.");
+  });
+
+  it("marks nullable properties from both type unions and anyOf, keeping the base kind", () => {
+    const specs = Object.fromEntries(
+      flagSpecsFromSchema({
+        type: "object",
+        properties: {
+          s: { type: ["string", "null"] },
+          a: { anyOf: [{ type: "string", maxLength: 32 }, { type: "null" }] },
+          i: { anyOf: [{ type: "integer", minimum: 0 }, { type: "null" }] },
+          e: { anyOf: [{ type: "string", enum: ["x", "y"] }, { type: "null" }] },
+          o: { anyOf: [{ type: "object" }, { type: "null" }] },
+          l: { type: ["array", "null"], items: { type: "string" } },
+          plain: { type: "string" },
+          union: { anyOf: [{ type: "string" }, { type: "integer" }] },
+        },
+      }).map((s) => [s.param, s]),
+    );
+    expect(specs.s).toMatchObject({ kind: "string", nullable: true });
+    expect(specs.a).toMatchObject({ kind: "string", nullable: true });
+    expect(specs.i).toMatchObject({ kind: "integer", nullable: true });
+    expect(specs.e).toMatchObject({ kind: "enum", enumValues: ["x", "y"], nullable: true });
+    expect(specs.o).toMatchObject({ kind: "json", jsonShape: "object", nullable: true });
+    // A repeatable flag has no slot for the sentinel: exposed as a plain array flag.
+    expect(specs.l).toMatchObject({ kind: "array", itemKind: "string" });
+    expect(specs.l.nullable).toBeUndefined();
+    // Non-nullable shapes are untouched: no `nullable` key, same kinds as before.
+    expect(specs.plain).toEqual({ param: "plain", flag: "plain", attribute: "plain", required: false, description: "", kind: "string" });
+    expect(specs.union).toMatchObject({ kind: "json" });
+    expect(specs.union.nullable).toBeUndefined();
+  });
+
+  it("resolves the fixture's nullable params to their base kinds, and none of them is required", () => {
+    const update = Object.fromEntries(flagSpecsFromSchema(tool("update_plan").inputSchema).map((s) => [s.param, s]));
+    expect(update.cover_media_id).toMatchObject({ kind: "string", nullable: true, required: false });
+    expect(update.description).toMatchObject({ kind: "string", nullable: true, required: false });
+    const event = Object.fromEntries(flagSpecsFromSchema(tool("update_guide_event").inputSchema).map((s) => [s.param, s]));
+    expect(event.local_time).toMatchObject({ kind: "string", nullable: true });
+    expect(event.duration_minutes).toMatchObject({ kind: "integer", nullable: true });
+
+    // The `null` sentinel is only unambiguous on an optional input. If the
+    // server ever publishes a REQUIRED nullable property this must be revisited.
+    const requiredNullable = FIXTURE_TOOLS.flatMap((t) =>
+      flagSpecsFromSchema(t.inputSchema)
+        .filter((s) => s.nullable && s.required)
+        .map((s) => `${t.name}.${s.param}`),
+    );
+    expect(requiredNullable).toEqual([]);
+    const nullableCount = FIXTURE_TOOLS.flatMap((t) => flagSpecsFromSchema(t.inputSchema).filter((s) => s.nullable)).length;
+    expect(nullableCount).toBeGreaterThan(0);
+  });
+
+  it("help text carries the null hint on nullable flags only", () => {
+    const specs = flagSpecsFromSchema({
+      type: "object",
+      properties: {
+        s: { type: ["string", "null"], description: "Cover." },
+        i: { anyOf: [{ type: "integer" }, { type: "null" }] },
+        plain: { type: "string", description: "Title." },
+        n: { type: "integer" },
+      },
+    });
+    const help = Object.fromEntries(specs.map((s) => [s.param, optionForSpec(s).description]));
+    expect(help.s).toBe("Cover. (pass null to clear)");
+    expect(help.i).toBe("(integer; pass null to clear)");
+    expect(help.plain).toBe("Title.");
+    expect(help.n).toBe("(integer)");
   });
 
   it("attributeName follows Commander's camelCase for dashed flags and keeps underscores", () => {
@@ -137,6 +209,48 @@ describe("parsing flags into tool arguments", () => {
       await expect(parseArgs("search_hotels", ["--location", "x", "--checkin", "d", "--checkout", "d", "--children_ages", bad])).rejects.toMatchObject({ code: "commander.invalidArgument" });
     }
     await expect(parseArgs("get_plan_status", [])).rejects.toMatchObject({ code: "commander.missingMandatoryOptionValue" });
+  });
+
+  it("sends JSON null for the literal `null` on nullable flags, from the fixture schemas", async () => {
+    expect(await parseArgs("update_plan", ["--plan_id", "p", "--cover_media_id", "null"])).toEqual({ plan_id: "p", cover_media_id: null });
+    expect(await parseArgs("update_plan", ["--plan_id", "p", "--cover_media_id", "m1", "--description", "null"])).toEqual({ plan_id: "p", cover_media_id: "m1", description: null });
+    // anyOf string|null is a plain string flag, not a JSON literal.
+    expect(await parseArgs("update_guide_event", ["--event_id", "e", "--local_time", "09:30"])).toEqual({ event_id: "e", local_time: "09:30" });
+    expect(await parseArgs("update_guide_event", ["--event_id", "e", "--local_time", "null", "--duration_minutes", "null"])).toEqual({ event_id: "e", local_time: null, duration_minutes: null });
+    expect(await parseArgs("update_guide_event", ["--event_id", "e", "--duration_minutes", "12"])).toEqual({ event_id: "e", duration_minutes: 12 });
+    await expect(parseArgs("update_guide_event", ["--event_id", "e", "--duration_minutes", "x"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+  });
+
+  it("keeps `null` a literal value on non-nullable flags, and case-sensitive on nullable ones", async () => {
+    const schema: McpJsonSchema = {
+      type: "object",
+      properties: {
+        s: { type: "string" },
+        n: { type: "integer" },
+        ns: { type: ["string", "null"] },
+        ne: { anyOf: [{ type: "string", enum: ["a", "b"] }, { type: "null" }] },
+        e: { type: "string", enum: ["a", "b"] },
+        nb: { type: ["boolean", "null"] },
+        no: { anyOf: [{ type: "object" }, { type: "null" }] },
+        o: { type: "object" },
+      },
+    };
+    expect(await parseSchema("t", schema, ["--s", "null"])).toEqual({ s: "null" });
+    await expect(parseSchema("t", schema, ["--n", "null"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    await expect(parseSchema("t", schema, ["--e", "null"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    await expect(parseSchema("t", schema, ["--o", "null"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+
+    expect(await parseSchema("t", schema, ["--ns", "null"])).toEqual({ ns: null });
+    expect(await parseSchema("t", schema, ["--ns", "abc"])).toEqual({ ns: "abc" });
+    expect(await parseSchema("t", schema, ["--ns", "NULL"])).toEqual({ ns: "NULL" });
+    expect(await parseSchema("t", schema, ["--ne", "null"])).toEqual({ ne: null });
+    expect(await parseSchema("t", schema, ["--ne", "a"])).toEqual({ ne: "a" });
+    await expect(parseSchema("t", schema, ["--ne", "c"])).rejects.toMatchObject({ code: "commander.invalidArgument", message: expect.stringContaining("Allowed choices are a, b.") });
+    expect(await parseSchema("t", schema, ["--nb", "null"])).toEqual({ nb: null });
+    expect(await parseSchema("t", schema, ["--nb", "false"])).toEqual({ nb: false });
+    expect(await parseSchema("t", schema, ["--no", "null"])).toEqual({ no: null });
+    expect(await parseSchema("t", schema, ["--no", '{"k":1}'])).toEqual({ no: { k: 1 } });
+    await expect(parseSchema("t", schema, ["--no", "[1]"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
   });
 
   it("every fixture tool registers without option-name conflicts", () => {

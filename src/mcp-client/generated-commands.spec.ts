@@ -239,6 +239,14 @@ describe("generated commands", () => {
     expect(calls[0].args).toEqual({ plan_id: "p1", travellers });
   });
 
+  it("sends JSON null on the wire for `null` on a nullable flag", async () => {
+    const { client, calls } = clientReturning(() => text({ id: "p1", coverMediaId: null }));
+    const { run } = harness(client);
+    await run(["update_plan", "--plan_id", "p1", "--cover_media_id", "null", "--json"]);
+    expect(calls[0].args).toEqual({ plan_id: "p1", cover_media_id: null });
+    expect("cover_media_id" in calls[0].args).toBe(true);
+  });
+
   it("parseToolContent: one block → value, several → array, non-JSON text stays a string", () => {
     expect(parseToolContent({ content: [{ type: "text", text: '{"a":1}' }] })).toEqual({ a: 1 });
     expect(parseToolContent({ content: [{ type: "text", text: "plain" }, { type: "text", text: "[1]" }] })).toEqual(["plain", [1]]);

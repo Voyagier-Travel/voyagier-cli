@@ -18,6 +18,7 @@ The hosted MCP server renamed its tools to verb-first names and grew from 30 to 
 - `select_option` examples drop `--selection_id`: `option_id` is the only required input; `participant_choice_id`, `traveller_ids` and `selection_id` are optional.
 
 ### Added
+- **Nullable flags accept `null`.** An input the schema declares nullable (`type: ["string", "null"]` or `anyOf` with a null member — `update_plan --description` / `--cover_media_id`, `update_guide_block --place_id` / `--start_place_id` / `--end_place_id`, `update_guide_event --description` / `--start_local` / `--local_time` / `--duration_minutes`) keeps its base type and additionally takes the literal `null`, sent as JSON null so the server's "pass null to clear" works from the CLI. `--help` marks these flags `(pass null to clear)`; `anyOf` unions with one non-null member are typed like that member instead of falling back to a JSON literal. On every other flag `null` stays an ordinary value.
 - `npm run refresh:mcp-fixture -- --from <file>` writes the fixture from a `tools/list` export on disk (bare array or `{ "tools": [...] }` envelope) through the same validation as the live mode. No token is needed, and the snapshot can follow the server's registry source rather than a deployment.
 - `voyagier search_tools --query <words>` and `voyagier get_tool_details --name <tool>` appear as commands like every other server tool; the docs point at them for discovery.
 
