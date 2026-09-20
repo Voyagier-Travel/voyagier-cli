@@ -188,10 +188,30 @@ describe("agent-docs", () => {
       expect(none.instructions).toBeNull();
       expect(none.source).toBe("unavailable");
       expect(none.note).toContain("voyagier login");
+      expect(none.note).not.toContain("cached copy");
 
-      writeToolsCache({ url: DEFAULT_MCP_URL, fetchedAt: new Date(NOW - 48 * 3600_000).toISOString(), instructions: "old text", tools: [] }, CONFIG_DIR);
-      const stale = await loadServerInstructions({ now: NOW });
+      // Same CLI version, past the TTL: the text is still this release's, so it is shown as stale.
+      writeToolsCache({ url: DEFAULT_MCP_URL, fetchedAt: new Date(NOW - 48 * 3600_000).toISOString(), cliVersion: "4.1.0", instructions: "old text", tools: [] }, CONFIG_DIR);
+      const stale = await loadServerInstructions({ now: NOW, version: "4.1.0" });
       expect(stale).toMatchObject({ instructions: "old text", source: "stale-cache" });
+      expect(stale.note).toContain("voyagier login");
+    });
+
+    it("without credentials never prints instructions another CLI version cached, and says why", async () => {
+      // A 4.0 entry (no cliVersion) after an upgrade to 4.1: startup rejects it, so must agent-docs.
+      writeToolsCache({ url: DEFAULT_MCP_URL, fetchedAt: new Date(NOW - 60_000).toISOString(), instructions: "old text naming retired tools", tools: [] }, CONFIG_DIR);
+      const pre41 = await loadServerInstructions({ now: NOW, version: "4.1.0" });
+      expect(pre41).toEqual({
+        instructions: null,
+        source: "unavailable",
+        note: "Not authenticated: run `voyagier login` (or set VOYAGIER_TOKEN) to fetch the server's guidance. A cached copy was ignored: written by CLI pre-4.1, running 4.1.0.",
+      });
+
+      writeToolsCache({ url: DEFAULT_MCP_URL, fetchedAt: new Date(NOW - 60_000).toISOString(), cliVersion: "4.1.0", instructions: "old text", tools: [] }, CONFIG_DIR);
+      const other = await loadServerInstructions({ now: NOW, version: "4.2.0" });
+      expect(other.instructions).toBeNull();
+      expect(other.source).toBe("unavailable");
+      expect(other.note).toContain("written by CLI 4.1.0, running 4.2.0");
     });
 
     it("on a fetch failure falls back to a stale entry, else reports the reason", async () => {
@@ -200,11 +220,26 @@ describe("agent-docs", () => {
       const unavailable = await loadServerInstructions({ createClient: failing, now: NOW });
       expect(unavailable.source).toBe("unavailable");
       expect(unavailable.note).toContain("AUTH_FAILED");
+      expect(unavailable.note).not.toContain("cached copy");
 
-      writeToolsCache({ url: DEFAULT_MCP_URL, fetchedAt: new Date(NOW - 48 * 3600_000).toISOString(), instructions: "old text", tools: [] }, CONFIG_DIR);
+      writeToolsCache({ url: DEFAULT_MCP_URL, fetchedAt: new Date(NOW - 48 * 3600_000).toISOString(), cliVersion: "0.0.0", instructions: "old text", tools: [] }, CONFIG_DIR);
       const fallback = await loadServerInstructions({ createClient: failing, now: NOW });
       expect(fallback).toMatchObject({ instructions: "old text", source: "stale-cache" });
       expect(fallback.note).toContain("Could not fetch");
+    });
+
+    it("on a fetch failure never falls back to instructions another CLI version cached, and says why", async () => {
+      process.env.VOYAGIER_TOKEN = "pat_placeholder";
+      const failing = () => makeMockRemote({ intercept: () => jsonResponse({ message: "Unauthorized" }, { status: 401 }) }).client;
+      writeToolsCache({ url: DEFAULT_MCP_URL, fetchedAt: new Date(NOW - 60_000).toISOString(), instructions: "old text naming retired tools", tools: [] }, CONFIG_DIR);
+      const result = await loadServerInstructions({ createClient: failing, now: NOW, version: "4.1.0" });
+      expect(result.instructions).toBeNull();
+      expect(result.source).toBe("unavailable");
+      expect(result.note).toContain("Could not fetch");
+      expect(result.note).toContain("AUTH_FAILED");
+      expect(result.note).toContain("A cached copy was ignored: written by CLI pre-4.1, running 4.1.0.");
+      // The rejected entry is left alone for doctor to report; nothing was refreshed.
+      expect(readToolsCache(CONFIG_DIR)?.instructions).toBe("old text naming retired tools");
     });
 
     it("reports a server that publishes no instructions", async () => {

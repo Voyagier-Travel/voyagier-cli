@@ -17,7 +17,7 @@ import { CliError } from "../errors.js";
 import type { McpClient } from "../mcp-client/client.js";
 import { createDefaultClient } from "../mcp-client/generated-commands.js";
 import { refreshToolsCache } from "../mcp-client/startup.js";
-import { isToolsCacheFresh, readToolsCache } from "../mcp-client/tools-cache.js";
+import { isToolsCacheForCli, isToolsCacheFresh, readToolsCache } from "../mcp-client/tools-cache.js";
 import { getMcpUrl } from "../mcp-client/url.js";
 import { jsonOutput } from "../output.js";
 
@@ -73,21 +73,30 @@ export function loadAgentDocs(): { content: string; fromFallback: boolean } {
  * The server's `instructions`: fresh cache → as is; otherwise fetch through
  * the client (which also refreshes the tools cache); on failure fall back to a
  * stale cache entry, else report why it is unavailable. Never throws.
+ *
+ * The stale fallback obeys the same gate as startup (`isToolsCacheForCli`):
+ * an entry another CLI version wrote — or a pre-4.1 one with no version — is
+ * never printed, because its text may name tools this release does not know.
+ * The note says so instead, in the words `doctor` uses.
  */
 export async function loadServerInstructions(deps: AgentDocsDeps = {}): Promise<ServerInstructions> {
   const url = getMcpUrl();
   const now = deps.now ?? Date.now();
   const cliVersion = deps.version ?? "0.0.0";
   const cache = readToolsCache();
-  const stale = cache && cache.url === url && typeof cache.instructions === "string" ? cache.instructions : null;
+  // An entry for this URL from another CLI version (or a pre-4.1 one with no version): never printed, but named in the note.
+  const otherVersionNote =
+    cache && cache.url === url && cache.cliVersion !== cliVersion ? ` A cached copy was ignored: written by CLI ${cache.cliVersion ?? "pre-4.1"}, running ${cliVersion}.` : "";
+  const stale = isToolsCacheForCli(cache, url, cliVersion) && typeof cache.instructions === "string" ? cache.instructions : null;
+  const fallback = (note: string): ServerInstructions =>
+    stale ? { instructions: stale, source: "stale-cache", note } : { instructions: null, source: "unavailable", note: `${note}${otherVersionNote}` };
 
   if (isToolsCacheFresh(cache, url, cliVersion, now) && typeof cache.instructions === "string" && cache.instructions.trim()) {
     return { instructions: cache.instructions, source: "cache" };
   }
 
   if (!credentialsExist()) {
-    const note = "Not authenticated: run `voyagier login` (or set VOYAGIER_TOKEN) to fetch the server's guidance.";
-    return stale ? { instructions: stale, source: "stale-cache", note } : { instructions: null, source: "unavailable", note };
+    return fallback("Not authenticated: run `voyagier login` (or set VOYAGIER_TOKEN) to fetch the server's guidance.");
   }
 
   try {
@@ -99,8 +108,7 @@ export async function loadServerInstructions(deps: AgentDocsDeps = {}): Promise<
     return { instructions: null, source: "unavailable", note: `The server at ${url} publishes no instructions.` };
   } catch (err) {
     const reason = err instanceof CliError ? `${err.code}: ${err.message.split("\n")[0]}` : err instanceof Error ? err.message : String(err);
-    const note = `Could not fetch the server's guidance from ${url} (${reason}).`;
-    return stale ? { instructions: stale, source: "stale-cache", note } : { instructions: null, source: "unavailable", note };
+    return fallback(`Could not fetch the server's guidance from ${url} (${reason}).`);
   }
 }
 
