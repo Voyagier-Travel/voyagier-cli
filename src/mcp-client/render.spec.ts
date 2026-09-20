@@ -162,6 +162,86 @@ describe("renderSelectionOptions", () => {
     expect(out).toContain("searched: BWI→LIS 2026-11-20, return same day");
     expect(out).toContain("hint: same-day return");
   });
+
+  // Field names as the live server returns them (2026-09-20): participantChoices[]
+  // { id, decided, travellerIds, travellerNames, locked, selectedOption { id, name } },
+  // optionsSummary { optionCount, matchedCount, truncated, nextCursor, topOptions, … };
+  // null fields are pruned, so an undecided row has no selectedOption and a last
+  // page has no nextCursor.
+  const HOTEL_PAGE = {
+    __typename: "TripPlanHotelSelection",
+    id: "sel-h1",
+    fetchStatus: { status: "Ready" },
+    optionsSummary: {
+      optionCount: 5,
+      matchedCount: 5,
+      truncated: true,
+      nextCursor: "eyJvIjoyfQ",
+      topOptions: [
+        { index: 1, optionId: "opt-a", name: "Hotel A", price: 1862.52, currency: "USD", isBookable: false },
+        { index: 2, optionId: "opt-b", name: "Hotel B", price: 2045.73, currency: "USD", isBookable: false },
+      ],
+      callouts: { cheapestIndex: 1 },
+    },
+    participantChoices: [
+      { id: "pc-decided", decided: true, travellerIds: ["t1"], travellerNames: ["Ana Example"], locked: false, selectedOption: { id: "opt-a", name: "Hotel A" } },
+      { id: "pc-open", decided: false, travellerIds: ["t2", "t3"], travellerNames: ["Bo Example", "Cy Example"], locked: false },
+    ],
+  };
+
+  it("lists the decision rows with their participant_choice_id and a select_option hint for the first undecided row", () => {
+    const out = strip(renderSelectionOptions(HOTEL_PAGE));
+    const lines = out.split("\n");
+    const rowsAt = lines.indexOf("  rows:");
+    expect(rowsAt).toBeGreaterThan(lines.findIndex((l) => l.includes("option_id opt-b")));
+    expect(lines[rowsAt + 1]).toBe("    participant_choice_id pc-decided  ·  Ana Example  ·  decided  ·  → Hotel A");
+    expect(lines[rowsAt + 2]).toBe("    participant_choice_id pc-open  ·  Bo Example, Cy Example  ·  undecided");
+    expect(lines[rowsAt + 3]).toBe("  decide a row: voyagier select_option --participant_choice_id pc-open --option_id <option_id>");
+  });
+
+  it("points at the next page with the server's cursor and the same selection id", () => {
+    const out = strip(renderSelectionOptions(HOTEL_PAGE));
+    expect(out).toContain("… 3 more (showing top 2)");
+    expect(out.split("\n").at(-1)).toBe("  more options: voyagier get_options --selection_id sel-h1 --cursor eyJvIjoyfQ");
+    expect(out).not.toContain("--query");
+  });
+
+  it("omits the select_option hint when every row is decided, and the cursor line on the last page", () => {
+    const allDecided = {
+      ...HOTEL_PAGE,
+      optionsSummary: { ...HOTEL_PAGE.optionsSummary, nextCursor: undefined, truncated: false },
+      participantChoices: [HOTEL_PAGE.participantChoices[0], { id: "pc-2", decided: true, travellerNames: ["Bo Example"], locked: true, selectedOption: { id: "opt-b", name: "Hotel B" } }],
+    };
+    const out = strip(renderSelectionOptions(allDecided));
+    expect(out).toContain("    participant_choice_id pc-2  ·  Bo Example  ·  decided  ·  locked  ·  → Hotel B");
+    expect(out).not.toContain("decide a row:");
+    expect(out).not.toContain("more options:");
+  });
+
+  it("says how many options matched a query filter when the server narrows the digest", () => {
+    const filtered = { ...HOTEL_PAGE, optionsSummary: { ...HOTEL_PAGE.optionsSummary, optionCount: 12, matchedCount: 5 } };
+    expect(strip(renderSelectionOptions(filtered))).toContain("… 3 more (showing top 2 of 5 matching, 12 total)");
+  });
+
+  it("renders a payload without rows or a cursor exactly as before, and skips malformed rows", () => {
+    const { participantChoices: _rows, ...noRows } = HOTEL_PAGE;
+    const { nextCursor: _c, ...summaryNoCursor } = HOTEL_PAGE.optionsSummary;
+    const out = strip(renderSelectionOptions({ ...noRows, optionsSummary: summaryNoCursor }));
+    expect(out).toBe(
+      [
+        "HotelSelection  ·  status Ready  ·  selection_id sel-h1",
+        "  [1]  Hotel A  ·  $1,862.52  ·  not bookable  ·  [cheapest]",
+        "       option_id opt-a",
+        "  [2]  Hotel B  ·  $2,045.73  ·  not bookable",
+        "       option_id opt-b",
+        "  … 3 more (showing top 2)",
+      ].join("\n"),
+    );
+    // Unknown shapes skip the section rather than failing the render.
+    const odd = strip(renderSelectionOptions({ ...noRows, optionsSummary: { ...summaryNoCursor, nextCursor: 7 }, participantChoices: ["x", { decided: false }, null] }));
+    expect(odd).toBe(out);
+    expect(strip(renderSelectionOptions({ ...noRows, participantChoices: "not-an-array" }))).toContain("option_id opt-a");
+  });
 });
 
 describe("renderItinerary", () => {

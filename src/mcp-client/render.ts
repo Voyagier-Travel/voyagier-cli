@@ -129,10 +129,62 @@ function renderTopOptions(summary: Rec): string[] {
     if (optionId) lines.push(chalk.dim(`       option_id ${optionId}`));
   }
   const count = num(summary.optionCount);
-  if (count != null && count > options.length) {
+  const matched = num(summary.matchedCount);
+  if (matched != null && count != null && matched < count && matched > options.length) {
+    // A query filter narrowed the digest: the page is a slice of the matches, not of all options.
+    lines.push(chalk.dim(`  … ${matched - options.length} more (showing top ${options.length} of ${matched} matching, ${count} total)`));
+  } else if (count != null && count > options.length) {
     lines.push(chalk.dim(`  … ${count - options.length} more (showing top ${options.length})`));
   }
   return lines;
+}
+
+/**
+ * The selection's decision rows (`participantChoices`): one line per row with
+ * the `participant_choice_id` that `select_option` takes, the travellers it
+ * covers, whether it is decided and the current option. Ends with a
+ * copy-pasteable `select_option` for the first undecided row. Empty when the
+ * payload carries no rows. Server field names: `id`, `decided`,
+ * `travellerNames`, `locked`, `selectedOption { id, name }`.
+ */
+function renderParticipantChoices(payload: Rec): string[] {
+  const rows = arr(payload.participantChoices).filter(isRec);
+  if (!rows.length) return [];
+  const lines: string[] = [chalk.dim("  rows:")];
+  let firstUndecided: string | null = null;
+  for (const row of rows) {
+    const id = str(row.id);
+    if (!id) continue;
+    const parts: string[] = [chalk.cyan(`participant_choice_id ${id}`)];
+    const names = arr(row.travellerNames).map(String).filter(Boolean);
+    if (names.length) parts.push(chalk.white(names.join(", ")));
+    const decided = row.decided === true;
+    parts.push(decided ? chalk.green("decided") : chalk.yellow("undecided"));
+    if (row.locked === true) parts.push(chalk.dim("locked"));
+    const selected = isRec(row.selectedOption) ? row.selectedOption : null;
+    const selectedName = selected ? str(selected.name) : null;
+    if (selectedName) parts.push(`→ ${selectedName}`);
+    lines.push(`    ${parts.join("  ·  ")}`);
+    if (!decided && !firstUndecided) firstUndecided = id;
+  }
+  if (lines.length === 1) return [];
+  if (firstUndecided) {
+    lines.push(chalk.dim(`  decide a row: voyagier select_option --participant_choice_id ${firstUndecided} --option_id <option_id>`));
+  }
+  return lines;
+}
+
+/**
+ * The next page of the options digest, when the server says there is one
+ * (`optionsSummary.nextCursor`). The payload does not echo the `query` the
+ * page was read with, so the hint repeats only the cursor; add `--query` by
+ * hand when one was used.
+ */
+function renderOptionsCursor(payload: Rec, summary: Rec): string[] {
+  const cursor = str(summary.nextCursor);
+  if (!cursor) return [];
+  const selectionId = str(payload.id) ?? "<selection_id>";
+  return [chalk.dim(`  more options: voyagier get_options --selection_id ${selectionId} --cursor ${cursor}`)];
 }
 
 /** search_flights / search_hotels / search_activities / get_search_status / promote_search */
@@ -180,6 +232,8 @@ export function renderSelectionOptions(payload: unknown): string | null {
     if (q?.degenerateHint) lines.push(chalk.yellow(`  hint: ${String(q.degenerateHint)}`));
   }
   if (summary) lines.push(...renderTopOptions(summary));
+  lines.push(...renderParticipantChoices(payload));
+  if (summary) lines.push(...renderOptionsCursor(payload, summary));
   return lines.join("\n");
 }
 
