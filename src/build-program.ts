@@ -101,11 +101,12 @@ Every trip-planning command is an MCP tool: voyagier <tool_name> --<param> <valu
 Flags follow the tool's input schema; see: voyagier <tool_name> --help
 
 AI Agent Quick Start:
-  voyagier plans_list --json
+  voyagier list_plans --json
   voyagier search_destinations --query "Lisbon" --json
-  voyagier plan_trip --client_id <CLIENT_ID> --title "Trip" --travel_destination_id <DEST_ID> --json
-  voyagier plan_status --plan_id <PLAN_ID> --json
-  voyagier quote --plan_id <PLAN_ID> --json
+  voyagier create_plan --client_id <CLIENT_ID> --title "Trip" --travel_destination_id <DEST_ID> --json
+  voyagier get_plan_status --plan_id <PLAN_ID> --json
+  voyagier get_plan_quote --plan_id <PLAN_ID> --json
+  voyagier search_tools --query "hotel dates" --json
 
 Full reference: voyagier agent-docs`,
     );

@@ -170,7 +170,10 @@ async function checkWhoami(client: McpClient | null, tools: McpToolDescriptor[])
   }
   try {
     const result = await client.toolsCall("whoami", {});
-    const payload = unwrapToolPayload(parseToolContent(result));
+    // The server returns the bare identity object; the field list keeps a
+    // one-field reply (e.g. `{ email }`) from being mistaken for the legacy
+    // `{ <operation>: … }` envelope.
+    const payload = unwrapToolPayload(parseToolContent(result), ["email", "name", "username", "isTravelAdvisor", "isTripPlanner", "isAdmin"]);
     const rec = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
     const who =
       (typeof rec.email === "string" && rec.email) ||
