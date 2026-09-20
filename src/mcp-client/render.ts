@@ -130,11 +130,17 @@ function renderTopOptions(summary: Rec): string[] {
   }
   const count = num(summary.optionCount);
   const matched = num(summary.matchedCount);
-  if (matched != null && count != null && matched < count && matched > options.length) {
-    // A query filter narrowed the digest: the page is a slice of the matches, not of all options.
-    lines.push(chalk.dim(`  … ${matched - options.length} more (showing top ${options.length} of ${matched} matching, ${count} total)`));
-  } else if (count != null && count > options.length) {
-    lines.push(chalk.dim(`  … ${count - options.length} more (showing top ${options.length})`));
+  const shown = options.length;
+  if (matched != null && count != null && matched < count) {
+    // A query filter narrowed the digest: the page is a slice of the matches,
+    // not of all options, so the options beyond the matches are never "more".
+    if (matched > shown) {
+      lines.push(chalk.dim(`  … ${matched - shown} more (showing top ${shown} of ${matched} matching, ${count} total)`));
+    } else {
+      lines.push(chalk.dim(`  (${matched} matching of ${count} total)`));
+    }
+  } else if (count != null && count > shown) {
+    lines.push(chalk.dim(`  … ${count - shown} more (showing top ${shown})`));
   }
   return lines;
 }

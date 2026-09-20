@@ -223,6 +223,22 @@ describe("renderSelectionOptions", () => {
     expect(strip(renderSelectionOptions(filtered))).toContain("… 3 more (showing top 2 of 5 matching, 12 total)");
   });
 
+  it("never counts non-matching options as \"more\" when the page already shows every match", () => {
+    // matchedCount 2, optionCount 12, two topOptions: the other ten do not match the query.
+    const allMatchesShown = { ...HOTEL_PAGE, optionsSummary: { ...HOTEL_PAGE.optionsSummary, optionCount: 12, matchedCount: 2 } };
+    const out = strip(renderSelectionOptions(allMatchesShown));
+    expect(out).not.toContain("more (");
+    expect(out).toContain("  (2 matching of 12 total)");
+    expect(out).not.toContain("10 more");
+  });
+
+  it("keeps the count-based \"more\" line when the server reports no matchedCount", () => {
+    const { matchedCount: _m, ...noMatched } = HOTEL_PAGE.optionsSummary;
+    const out = strip(renderSelectionOptions({ ...HOTEL_PAGE, optionsSummary: { ...noMatched, optionCount: 12 } }));
+    expect(out).toContain("… 10 more (showing top 2)");
+    expect(out).not.toContain("matching");
+  });
+
   it("renders a payload without rows or a cursor exactly as before, and skips malformed rows", () => {
     const { participantChoices: _rows, ...noRows } = HOTEL_PAGE;
     const { nextCursor: _c, ...summaryNoCursor } = HOTEL_PAGE.optionsSummary;
