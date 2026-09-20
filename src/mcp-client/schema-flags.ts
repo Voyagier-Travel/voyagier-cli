@@ -16,7 +16,9 @@
  * — keep X's flag kind and additionally accept the literal argument `null`,
  * which is sent as JSON null (the server's own "pass null to clear"). Only
  * a schema that allows null gets the sentinel; elsewhere `null` is an
- * ordinary value of the base kind.
+ * ordinary value of the base kind. On a repeatable (array of scalars) flag
+ * the sentinel must be the flag's only value: `--x null` sends null,
+ * `--x null a` or `--x a null` is a parse error.
  *
  * Required properties become Commander required options, so a missing one is
  * a parse error — which already flows through the CLI's VALIDATION envelope.
@@ -129,9 +131,7 @@ export function flagSpecsFromSchema(schema: McpJsonSchema | undefined): FlagSpec
     } else if (type === "array") {
       const itemType = shape.items ? primaryType(shape.items) : undefined;
       if (itemType === "string" || itemType === "number" || itemType === "integer") {
-        // A repeatable flag has no unambiguous slot for a null sentinel, so a
-        // nullable array of scalars stays a plain repeatable flag.
-        specs.push({ ...plain, kind: "array", itemKind: itemType });
+        specs.push({ ...base, kind: "array", itemKind: itemType });
       } else {
         specs.push({ ...base, kind: "json", jsonShape: "array" });
       }
@@ -252,10 +252,20 @@ export function optionForSpec(spec: FlagSpec): Option {
     }
     case "array": {
       const itemKind = spec.itemKind ?? "string";
-      option = new Option(`--${spec.flag} <value...>`, desc).argParser((v: string, previous: unknown[] | undefined) => {
-        const item = itemKind === "string" ? v : parseNumber(itemKind, v);
-        return [...(previous ?? []), item];
-      });
+      option = new Option(`--${spec.flag} <value...>`, desc).argParser(
+        (v: string, previous: unknown[] | typeof JSON_NULL | undefined) => {
+          if (spec.nullable && (v === NULL_SENTINEL || previous === JSON_NULL)) {
+            // The sentinel stands for the whole array, so it cannot sit next
+            // to a value: `--x null` clears, `--x null a` / `--x a null` fail.
+            if (previous !== undefined) {
+              throw new InvalidArgumentError(`--${spec.flag}: null clears the whole list and cannot be combined with other values.`);
+            }
+            return JSON_NULL;
+          }
+          const item = itemKind === "string" ? v : parseNumber(itemKind, v);
+          return [...((previous as unknown[] | undefined) ?? []), item];
+        },
+      );
       break;
     }
     case "json":

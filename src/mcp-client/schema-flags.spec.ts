@@ -99,9 +99,8 @@ describe("flagSpecsFromSchema", () => {
     expect(specs.i).toMatchObject({ kind: "integer", nullable: true });
     expect(specs.e).toMatchObject({ kind: "enum", enumValues: ["x", "y"], nullable: true });
     expect(specs.o).toMatchObject({ kind: "json", jsonShape: "object", nullable: true });
-    // A repeatable flag has no slot for the sentinel: exposed as a plain array flag.
-    expect(specs.l).toMatchObject({ kind: "array", itemKind: "string" });
-    expect(specs.l.nullable).toBeUndefined();
+    // A nullable array of scalars stays a repeatable flag and keeps its nullability (lone `null` clears).
+    expect(specs.l).toMatchObject({ kind: "array", itemKind: "string", nullable: true });
     // Non-nullable shapes are untouched: no `nullable` key, same kinds as before.
     expect(specs.plain).toEqual({ param: "plain", flag: "plain", attribute: "plain", required: false, description: "", kind: "string" });
     expect(specs.union).toMatchObject({ kind: "json" });
@@ -251,6 +250,40 @@ describe("parsing flags into tool arguments", () => {
     expect(await parseSchema("t", schema, ["--no", "null"])).toEqual({ no: null });
     expect(await parseSchema("t", schema, ["--no", '{"k":1}'])).toEqual({ no: { k: 1 } });
     await expect(parseSchema("t", schema, ["--no", "[1]"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+  });
+
+  it("sends JSON null for a lone `null` on a nullable scalar array, and refuses to mix it with values", async () => {
+    const schema: McpJsonSchema = {
+      type: "object",
+      properties: {
+        tags: { type: ["array", "null"], items: { type: "string" } },
+        nums: { anyOf: [{ type: "array", items: { type: "integer" } }, { type: "null" }] },
+        plain: { type: "array", items: { type: "string" } },
+      },
+    };
+    const specs = Object.fromEntries(flagSpecsFromSchema(schema).map((s) => [s.param, s]));
+    expect(specs.tags).toMatchObject({ kind: "array", itemKind: "string", nullable: true });
+    expect(specs.nums).toMatchObject({ kind: "array", itemKind: "integer", nullable: true });
+    expect(specs.plain).toMatchObject({ kind: "array", itemKind: "string" });
+    expect(specs.plain.nullable).toBeUndefined();
+    expect(optionForSpec(specs.tags).description).toContain("(repeatable strings; pass null to clear)");
+    expect(optionForSpec(specs.plain).description).toContain("(repeatable strings)");
+    expect(optionForSpec(specs.plain).description).not.toContain("null");
+
+    expect(await parseSchema("t", schema, ["--tags", "null"])).toEqual({ tags: null });
+    expect(await parseSchema("t", schema, ["--nums", "null"])).toEqual({ nums: null });
+    expect(await parseSchema("t", schema, ["--tags", "a", "b"])).toEqual({ tags: ["a", "b"] });
+    expect(await parseSchema("t", schema, ["--tags", "a", "--tags", "b"])).toEqual({ tags: ["a", "b"] });
+    expect(await parseSchema("t", schema, ["--nums", "1", "2"])).toEqual({ nums: [1, 2] });
+    // Non-nullable arrays keep `null` as an ordinary item.
+    expect(await parseSchema("t", schema, ["--plain", "null"])).toEqual({ plain: ["null"] });
+    // The sentinel stands for the whole list, so it cannot sit next to a value.
+    for (const argv of [["--tags", "null", "a"], ["--tags", "a", "null"], ["--tags", "null", "--tags", "a"], ["--tags", "a", "--tags", "null"]]) {
+      await expect(parseSchema("t", schema, argv)).rejects.toMatchObject({
+        code: "commander.invalidArgument",
+        message: expect.stringContaining("cannot be combined with other values"),
+      });
+    }
   });
 
   it("every fixture tool registers without option-name conflicts", () => {

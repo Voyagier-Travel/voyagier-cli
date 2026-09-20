@@ -266,7 +266,10 @@ export function renderSearchResult(payload: unknown): string | null {
   return lines.filter(l => l !== "").join("\n");
 }
 
-/** get_options / refresh_options. `hints` carries the invoking command's `query` and `limit`. */
+/**
+ * get_options. `hints` carries the invoking command's `query` and `limit`.
+ * (`refresh_options` returns bare `true` and prints JSON like any other tool.)
+ */
 export function renderSelectionOptions(payload: unknown, hints: RenderHints = {}): string | null {
   if (!isRec(payload)) return null;
   const fetchStatus = isRec(payload.fetchStatus) ? payload.fetchStatus : null;
@@ -526,7 +529,6 @@ const TOOL_FIELDS: Record<string, readonly string[]> = {
   get_search_status: RENDERER_FIELDS.searchResult,
   promote_search: RENDERER_FIELDS.searchResult,
   get_options: RENDERER_FIELDS.selectionOptions,
-  refresh_options: RENDERER_FIELDS.selectionOptions,
   get_plan_itinerary: RENDERER_FIELDS.itinerary,
   get_plan_quote: RENDERER_FIELDS.quote,
 };
@@ -540,7 +542,6 @@ export const TOOL_RENDERERS: Record<string, ToolRenderer> = {
   get_search_status: renderSearchResult,
   promote_search: renderSearchResult,
   get_options: renderSelectionOptions,
-  refresh_options: renderSelectionOptions,
   get_plan_itinerary: renderItinerary,
   get_plan_quote: renderQuote,
 };
