@@ -33,7 +33,6 @@ import { createDefaultClient, parseToolContent } from "../mcp-client/generated-c
 import { readToolsCache, toolsCacheAgeMs, toolsSurfaceHash, TOOLS_CACHE_TTL_MS } from "../mcp-client/tools-cache.js";
 import { refreshToolsCache } from "../mcp-client/startup.js";
 import { getMcpUrl } from "../mcp-client/url.js";
-import { unwrapToolPayload } from "../mcp-client/render.js";
 
 export type CheckStatus = "PASS" | "WARN" | "FAIL";
 
@@ -170,7 +169,7 @@ async function checkWhoami(client: McpClient | null, tools: McpToolDescriptor[])
   }
   try {
     const result = await client.toolsCall("whoami", {});
-    const payload = unwrapToolPayload(parseToolContent(result));
+    const payload = parseToolContent(result);
     const rec = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
     const who =
       (typeof rec.email === "string" && rec.email) ||

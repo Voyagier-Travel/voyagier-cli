@@ -1,9 +1,10 @@
 /**
  * Thin human renderers for the handful of tools people read at a terminal.
- * Everything else prints pretty JSON. Renderers are driven by the payload
- * shape the server returns today (a `{ <operation>: {...} }` object per text
- * block); once the server publishes `structuredContent`/`outputSchema` they
- * switch to that without changing the command surface.
+ * Everything else prints pretty JSON. Renderers read the payload the server
+ * returns today: each text block is the tool's result object itself (bare, no
+ * `{ <operation>: … }` wrapper, empty fields pruned); once the server
+ * publishes `structuredContent`/`outputSchema` they switch to that without
+ * changing the command surface.
  *
  * Every renderer receives data that has already been through
  * `sanitizeExternalData` — supplier strings are display text, never
@@ -31,19 +32,6 @@ function arr(v: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
 }
 
-/**
- * The server wraps each result as `{ <graphqlOperation>: payload }`. Unwrap
- * that single root key so renderers see the payload itself; anything else is
- * returned untouched.
- */
-export function unwrapToolPayload(parsed: unknown): unknown {
-  if (!isRec(parsed)) return parsed;
-  const keys = Object.keys(parsed);
-  if (keys.length !== 1) return parsed;
-  const inner = parsed[keys[0]];
-  return inner !== null && typeof inner === "object" ? inner : parsed;
-}
-
 function price(p: unknown, currency?: unknown): string {
   const n = num(p);
   if (n === null) return "";
@@ -64,7 +52,7 @@ function hhmm(v: unknown): string {
   return m ? m[1] : s;
 }
 
-// ── options digest (search_*, search_status, promote_search, get_selection_options)
+// ── options digest (search_*, get_search_status, promote_search, get_options)
 
 function renderTopOptions(summary: Rec): string[] {
   const lines: string[] = [];
@@ -120,7 +108,7 @@ function renderTopOptions(summary: Rec): string[] {
   return lines;
 }
 
-/** search_flights / search_hotels / search_activities / search_status / promote_search */
+/** search_flights / search_hotels / search_activities / get_search_status / promote_search */
 export function renderSearchResult(payload: unknown): string | null {
   if (!isRec(payload)) return null;
   const summary = isRec(payload.optionsSummary) ? payload.optionsSummary : null;
@@ -136,13 +124,13 @@ export function renderSearchResult(payload: unknown): string | null {
   if (fetchError) lines.push(chalk.red(`  ${fetchError}`));
   const count = summary ? num(summary.optionCount) : null;
   if (summary && count != null) {
-    lines.push(count === 0 ? chalk.dim("  0 options yet — if status is Fetching, poll search_status / get_selection_options") : "");
+    lines.push(count === 0 ? chalk.dim("  0 options yet — if status is Fetching, poll get_search_status / get_options") : "");
     lines.push(...renderTopOptions(summary));
   }
   return lines.filter((l) => l !== "").join("\n");
 }
 
-/** get_selection_options */
+/** get_options */
 export function renderSelectionOptions(payload: unknown): string | null {
   if (!isRec(payload)) return null;
   const fetchStatus = isRec(payload.fetchStatus) ? payload.fetchStatus : null;
@@ -177,7 +165,7 @@ function statusColor(status: string): string {
   return status;
 }
 
-// ── plan_status
+// ── get_plan_status
 
 export function renderPlanStatus(payload: unknown): string | null {
   if (!isRec(payload) || !str(payload.readiness)) return null;
@@ -258,7 +246,7 @@ export function renderPlanStatus(payload: unknown): string | null {
   return lines.join("\n");
 }
 
-// ── itinerary
+// ── get_plan_itinerary
 
 export function renderItinerary(payload: unknown): string | null {
   if (!isRec(payload)) return null;
@@ -291,7 +279,7 @@ export function renderItinerary(payload: unknown): string | null {
   return lines.join("\n");
 }
 
-// ── quote
+// ── get_plan_quote
 
 export function renderQuote(payload: unknown): string | null {
   // The server prunes empty fields, so `items` is absent when nothing is carted.
@@ -319,7 +307,7 @@ export function renderQuote(payload: unknown): string | null {
     lines.push(
       "",
       chalk.bold("  To book at exactly this price:"),
-      `    voyagier book --plan_id ${planId ?? "<plan_id>"} --expect_total_cents ${acceptance.expectTotalCents}${ids.length ? ` --item_ids ${ids.join(" ")}` : ""}`,
+      `    voyagier book_plan --plan_id ${planId ?? "<plan_id>"} --expect_total_cents ${acceptance.expectTotalCents}${ids.length ? ` --item_ids ${ids.join(" ")}` : ""}`,
     );
   } else if (str(payload.acceptanceUnavailableReason)) {
     lines.push("", chalk.yellow(`  No gated booking possible: ${payload.acceptanceUnavailableReason}`));
@@ -331,31 +319,34 @@ export function renderQuote(payload: unknown): string | null {
 
 export type ToolRenderer = (payload: unknown) => string | null;
 
-/** Tool name → renderer. Tools not listed print JSON. */
+/**
+ * Tool name → renderer. Tools not listed print JSON (`refresh_options` is not
+ * listed: it returns `true`).
+ */
 export const TOOL_RENDERERS: Record<string, ToolRenderer> = {
-  plan_status: renderPlanStatus,
+  get_plan_status: renderPlanStatus,
   search_flights: renderSearchResult,
   search_hotels: renderSearchResult,
   search_activities: renderSearchResult,
-  search_status: renderSearchResult,
+  get_search_status: renderSearchResult,
   promote_search: renderSearchResult,
-  get_selection_options: renderSelectionOptions,
-  refresh_options: renderSelectionOptions,
-  itinerary: renderItinerary,
-  quote: renderQuote,
+  get_options: renderSelectionOptions,
+  get_plan_itinerary: renderItinerary,
+  get_plan_quote: renderQuote,
 };
 
 /**
  * Render a tool payload for a human. Returns null when no renderer applies or
- * the renderer does not recognize the shape (caller prints JSON).
+ * the renderer does not recognize the shape (caller prints JSON). `parsed` is
+ * the tool's text block as the server sent it; renderers read it directly.
  */
 export function renderToolPayload(tool: string, parsed: unknown, planIdHint?: string): string | null {
   const renderer = TOOL_RENDERERS[tool];
   if (!renderer) return null;
-  let payload = unwrapToolPayload(parsed);
-  // quote's payload carries no plan id; thread the one the user passed so the
-  // acceptance command is copy-pasteable.
-  if (tool === "quote" && isRec(payload) && planIdHint) payload = { ...payload, tripPlanId: planIdHint };
+  let payload = parsed;
+  // get_plan_quote's payload carries no plan id; thread the one the user
+  // passed so the acceptance command is copy-pasteable.
+  if (tool === "get_plan_quote" && isRec(payload) && planIdHint) payload = { ...payload, tripPlanId: planIdHint };
   try {
     return renderer(payload);
   } catch {
