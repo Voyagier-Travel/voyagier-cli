@@ -31,28 +31,32 @@ A trip plan is a **goal graph**: the plan ships with goals (flights, hotel, date
 
 ```bash
 # 1) Find or create the client
-voyagier clients_list --query "Doe" --json
-voyagier client_create --name "Doe Family" --client_type Individual --email "doe@example.com" --json
+voyagier list_clients --query "Doe" --json
+voyagier create_client --name "Doe Family" --client_type Individual --email "doe@example.com" --json
 
 # 2) Resolve the destination, then scaffold the plan with its party
 voyagier search_destinations --query "Lisbon" --json
-voyagier plan_trip --client_id <CLIENT_ID> --title "Doe — Lisbon" \
+voyagier create_plan --client_id <CLIENT_ID> --title "Doe — Lisbon" \
   --travel_destination_id <DESTINATION_ID> --start_date 2026-11-20 --end_date 2026-11-27 \
   --travellers '[{"first_name":"Jane","last_name":"Doe","type":"Adult"}]' --json
 
 # 3) Explore flights (no plan is touched), poll, then promote the result onto the plan's goal
 voyagier search_flights --from BWI --to LIS --date 2026-11-20 --return 2026-11-27
-voyagier search_status --search_id <SEARCH_ID>
+voyagier get_search_status --search_id <SEARCH_ID>
 voyagier promote_search --plan_id <PLAN_ID> --search_id <SEARCH_ID> --goal_id <GOAL_ID> --json
 
 # 4) Options → pick
-voyagier get_selection_options --selection_id <SELECTION_ID>
-voyagier select_option --selection_id <SELECTION_ID> --option_id <OPTION_ID> --json
+voyagier get_options --selection_id <SELECTION_ID>
+voyagier select_option --option_id <OPTION_ID> --json
 
 # 5) Readiness, quote, book at exactly the quoted price
-voyagier plan_status --plan_id <PLAN_ID>
-voyagier quote --plan_id <PLAN_ID>
-voyagier book --plan_id <PLAN_ID> --expect_total_cents <CENTS> --item_ids <ID> <ID> --json
+voyagier get_plan_status --plan_id <PLAN_ID>
+voyagier get_plan_quote --plan_id <PLAN_ID>
+voyagier book_plan --plan_id <PLAN_ID> --expect_total_cents <CENTS> --item_ids <ID> <ID> --json
+
+# Not sure which tool? Ask the server.
+voyagier search_tools --query "hotel dates" --json
+voyagier get_tool_details --name set_hotel_dates --json
 ```
 
 `voyagier <tool_name> --help` prints the server's description of the tool and one flag per input, with types and required-ness.
@@ -60,8 +64,8 @@ voyagier book --plan_id <PLAN_ID> --expect_total_cents <CENTS> --item_ids <ID> <
 ## How the command surface works
 
 - **`voyagier --help`** lists the local commands and one command per tool the server publishes.
-- **Flags mirror the tool's input schema.** `plan_id` is `--plan_id`; required inputs are required flags. Strings, integers, numbers, booleans (`--force` / `--force false`), enums (allowed values in `--help`), arrays (`--item_ids a b`, or repeat the flag) and JSON literals for objects (`--travellers '[…]'`).
-- **Output.** `--json` prints the tool's result as JSON: `{ "<operation>": <payload> }`. Without it, `plan_status`, the `search_*` tools, `get_selection_options`, `itinerary` and `quote` render a compact human view; other tools pretty-print the JSON.
+- **Flags mirror the tool's input schema.** `plan_id` is `--plan_id`; required inputs are required flags. Strings, integers, numbers, booleans (`--force` / `--force false`), enums (allowed values in `--help`), arrays (`--item_ids a b`, or repeat the flag) and JSON literals for objects (`--travellers '[…]'`). Flags whose schema allows null (marked `(pass null to clear)` in `--help`) also take the literal `null`, sent as JSON null: `voyagier update_plan --plan_id <id> --cover_media_id null` clears the cover photo.
+- **Output.** `--json` prints the tool's result as JSON: the payload object itself, with no wrapper key. Without it, `get_plan_status`, `search_flights` / `search_hotels` / `search_activities` / `get_search_status` / `promote_search`, `get_options`, `get_plan_itinerary` and `get_plan_quote` render a compact human view; every other tool (including `search_destinations`, `search_tools` and `refresh_options`) pretty-prints the JSON.
 - **Errors** use one envelope everywhere: `{ "error": true, "code", "message", "details"? }`, exit 1. `AUTH_FAILED`, `PERMISSION_DENIED`, `RATE_LIMITED` (with `details.retryAfterSeconds`), `VALIDATION`, `API_ERROR` (the tool's own error text), `NETWORK`, `COMMAND_REMOVED`.
 - **Tool cache.** The server's tool list is cached in `~/.voyagier/tools-cache.json` for 24 hours. `voyagier doctor` refreshes it, and so does running a tool name the cache does not know yet. `doctor` and `--verbose` report a stable hash of the tool surface (names + input schemas) so scripts can detect a contract change.
 - **Agent substrate.** Non-interactive; under `--json` stdout carries exactly one JSON document (diagnostics, spinners and warnings go to stderr); stable exit codes (0 / 1 handled / 2 unexpected); absolute timestamps in rendered output.
@@ -70,7 +74,7 @@ voyagier book --plan_id <PLAN_ID> --expect_total_cents <CENTS> --item_ids <ID> <
 
 | Command | Description |
 |---------|-------------|
-| `voyagier <tool_name>` | One command per MCP tool, for example `plans_list`, `search_destinations`, `plan_trip`, `search_flights`, `promote_search`, `get_selection_options`, `select_option`, `plan_status`, `quote`, `book`. `voyagier --help` lists the server's current set |
+| `voyagier <tool_name>` | One command per MCP tool, for example `list_plans`, `search_destinations`, `create_plan`, `search_flights`, `promote_search`, `get_options`, `select_option`, `get_plan_status`, `get_plan_quote`, `book_plan`. `voyagier --help` lists the server's current set; `search_tools` and `get_tool_details` find and describe tools from inside the CLI |
 | `voyagier doctor` | Self-check: credentials, MCP server connection + tool list, identity, state, version |
 | `voyagier auth` | Manage the Personal Access Token (`login`, `set-token`, `status`, `logout`, `setup`) |
 | `voyagier mcp install <client>` | Point an MCP client (Claude Code, Cursor, Claude Desktop) at the Voyagier MCP server |
@@ -150,8 +154,8 @@ Voyagier access is granted, not open signup — **request access at [voyagier.co
 
 Once your account is granted API access, mint a personal access token at [travel.voyagier.com/me/settings/tokens](https://travel.voyagier.com/me/settings/tokens) and you're in. Two account tiers use the CLI today:
 
-- **Travel advisors** — manage a book of clients (`clients_list`, `client_create`); plans are created against a client (`--client_id`).
-- **Trip planners** — customers planning their own travel. `clients_list` returns your own record with `isSelf: true`; pass its id as `--client_id`.
+- **Travel advisors** — manage a book of clients (`list_clients`, `create_client`); plans are created against a client (`--client_id`).
+- **Trip planners** — customers planning their own travel. `list_clients` returns your own record with `isSelf: true`; pass its id as `--client_id`.
 
 Non-admin tokens expire (90 days max, 30 by default) — mint a fresh one when yours lapses.
 

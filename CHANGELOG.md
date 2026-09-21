@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ---
 
+## [4.1.0] — 2026-09-21
+
+The hosted MCP server renamed its tools to verb-first names and grew from 30 to 80 published tools; this release brings the CLI's docs, human renderers and 3.x migration map up to that registry. The proxy and the generated command surface are unchanged: they always reflected the live `tools/list`.
+
+### Changed
+- **Verb-first tool names.** The server's tools are now `create_plan`, `list_plans`, `get_plan_status`, `get_plan_itinerary`, `get_plan_quote`, `book_plan`, `get_search_status`, `get_options`, `get_plan_choices`, `add_goal` / `update_goal` / `delete_goal`, `list_clients` / `get_client` / `create_client` / `update_client`, `add_travellers` / `list_travellers` / `update_traveller` / `delete_traveller`, `list_bookings` / `get_booking`, `set_plan_dates`, `list_collaborators` / `remove_collaborator`, `update_plan` / `delete_plan`. `choose_room_slot` is gone: `set_room_count` sets how many rooms the hotel goal shops and books (on the goal's RoomArrangement selection); each room slot row is then decided with `select_option` (row ids from `get_plan_choices`). `set_room_rates` only edits the rate list of an imported or hand-added room. `plans goal-assign-travellers` maps to `move_travellers` (`update_goal` does not assign travellers). The 3.x removal messages, the migration table below (regenerated in the 4.0.0 section), AGENT.md, README, the skill file and the `--help` quick start use the new names; every mapped replacement is live, none is "planned" any more.
+- **Human renderers** follow the rename: `get_plan_status`, `get_search_status`, `get_options`, `get_plan_itinerary` and `get_plan_quote` render the compact view that `plan_status`, `search_status`, `get_selection_options`, `itinerary` and `quote` had. `refresh_options` returns `true` and prints JSON like every other tool; it no longer shares the `get_options` renderer. The copy-pasteable acceptance line reads `voyagier book_plan …`.
+- **Results are the bare payload.** The server returns each tool's payload object directly; the `{ "<operation>": payload }` envelope is gone. `--json` prints exactly the parsed text block, and the renderers read the payload as sent — the single-root-key unwrap is removed, so a genuine one-field result such as `{ "items": [] }` is never opened up.
+- **Checked-in registry snapshot** (`src/mcp/fixtures/remote-tools.json`) refreshed to the 80 tools the server publishes (78 planning tools plus the discovery tools `search_tools` and `get_tool_details`). The specs that build the offline command surface run against this list.
+- `select_option` examples drop `--selection_id`: `option_id` is the only required input; the row and traveller inputs are optional.
+
+### Added
+- **Nullable flags accept `null`.** An input the schema declares nullable (`type: ["string", "null"]` or `anyOf` with a null member — `update_plan --description` / `--cover_media_id`, `update_guide_block --place_id` / `--start_place_id` / `--end_place_id`, `update_guide_event --description` / `--start_local` / `--local_time` / `--duration_minutes`) keeps its base type and additionally takes the literal `null`, sent as JSON null so the server's "pass null to clear" works from the CLI. `--help` marks these flags `(pass null to clear)`; `anyOf` unions with one non-null member are typed like that member instead of falling back to a JSON literal. A nullable array of strings or numbers stays a repeatable flag and takes `null` as its only value (`--x null` clears the list; `null` next to another value is an error). On every other flag `null` stays an ordinary value.
+- `npm run refresh:mcp-fixture -- --from <file>` writes the fixture from a `tools/list` export on disk (bare array or `{ "tools": [...] }` envelope) through the same validation as the live mode. No token is needed, and the snapshot can follow the server's registry source rather than a deployment.
+- `voyagier search_tools --query <words>` and `voyagier get_tool_details --name <tool>` appear as commands like every other server tool; the docs point at them for discovery.
+
 ## [4.0.0] — 2026-09-12
 
 ### ⚠️ BREAKING — the CLI is a client of the Voyagier MCP server
@@ -41,66 +57,66 @@ The hosted MCP endpoint is limited per token to **180 requests per minute**, acr
 
 #### Migration table
 
-Generated from `src/removed-commands.ts` — the same table drives the runtime removal messages, and a spec fails when this section drifts from it. Replacements marked as planned are tools the server has not published yet; the removal message says so at runtime and points at `voyagier doctor` to refresh the tool list.
+Generated from `src/removed-commands.ts` — the same table drives the runtime removal messages, and a spec fails when this section drifts from it. Tool names are the server's current, verb-first names (regenerated in 4.1.0). When a server has not published a replacement yet, the removal message says so at runtime and points at `voyagier doctor` to refresh the tool list.
 
 | 3.x command | 4.0 replacement | Note |
 |---|---|---|
 | `voyagier destinations search` | `voyagier search_destinations` |  |
-| `voyagier plan-trip` | `voyagier plan_trip` | Pass travellers as a JSON array with --travellers. |
-| `voyagier plan-status` | `voyagier plan_status` |  |
-| `voyagier plans create` | `voyagier plan_trip` |  |
-| `voyagier plans list` | `voyagier plans_list` |  |
-| `voyagier plans get` | `voyagier plan_status`, `voyagier itinerary`, `voyagier choices_view` | There is no raw plan read; use the read view you need. |
-| `voyagier plans summary` | `voyagier itinerary` |  |
-| `voyagier plans update` | `voyagier plan_update` |  |
-| `voyagier plans delete` | `voyagier plan_delete` |  |
-| `voyagier plans items` | `voyagier plan_status`, `voyagier choices_view` |  |
-| `voyagier plans remove-item` | `voyagier goal_delete` |  |
+| `voyagier plan-trip` | `voyagier create_plan` | Pass travellers as a JSON array with --travellers. |
+| `voyagier plan-status` | `voyagier get_plan_status` |  |
+| `voyagier plans create` | `voyagier create_plan` |  |
+| `voyagier plans list` | `voyagier list_plans` |  |
+| `voyagier plans get` | `voyagier get_plan_status`, `voyagier get_plan_itinerary`, `voyagier get_plan_choices` | There is no raw plan read; use the read view you need. |
+| `voyagier plans summary` | `voyagier get_plan_itinerary` |  |
+| `voyagier plans update` | `voyagier update_plan` |  |
+| `voyagier plans delete` | `voyagier delete_plan` |  |
+| `voyagier plans items` | `voyagier get_plan_status`, `voyagier get_plan_choices` |  |
+| `voyagier plans remove-item` | `voyagier delete_goal` |  |
 | `voyagier plans share` | `voyagier share_plan`, `voyagier invite_collaborator` | share_plan grants the plan's client access; invite_collaborator adds another user. |
-| `voyagier plans collaborators` | `voyagier collaborators_list` |  |
-| `voyagier plans unshare` | `voyagier collaborator_remove` |  |
-| `voyagier plans shared` | `voyagier plans_list` | Use --relationship shared. |
+| `voyagier plans collaborators` | `voyagier list_collaborators` |  |
+| `voyagier plans unshare` | `voyagier remove_collaborator` |  |
+| `voyagier plans shared` | `voyagier list_plans` | Use --relationship shared. |
 | `voyagier plans comments` | — |  |
 | `voyagier plans vote` | — |  |
-| `voyagier plans bookable` | `voyagier quote` |  |
-| `voyagier plans goals` | `voyagier plan_status` |  |
-| `voyagier plans goal` | `voyagier plan_status` |  |
-| `voyagier plans goal-add` | `voyagier goal_add` |  |
-| `voyagier plans goal-add-with-selection` | `voyagier goal_add`, `voyagier promote_search` |  |
-| `voyagier plans goal-update` | `voyagier goal_update` |  |
-| `voyagier plans goal-remove` | `voyagier goal_delete` |  |
-| `voyagier plans goal-assign-travellers` | `voyagier goal_update` |  |
+| `voyagier plans bookable` | `voyagier get_plan_quote` |  |
+| `voyagier plans goals` | `voyagier get_plan_status` |  |
+| `voyagier plans goal` | `voyagier get_plan_status` |  |
+| `voyagier plans goal-add` | `voyagier add_goal` |  |
+| `voyagier plans goal-add-with-selection` | `voyagier add_goal`, `voyagier promote_search` |  |
+| `voyagier plans goal-update` | `voyagier update_goal` |  |
+| `voyagier plans goal-remove` | `voyagier delete_goal` |  |
+| `voyagier plans goal-assign-travellers` | `voyagier move_travellers` | A goal's travellers are set when it is created (add_goal --scope / --include_all_travellers). To change who an existing goal's rows cover, use move_travellers on the goal's selection (row ids from get_plan_choices). |
 | `voyagier plans goal-add-item` | `voyagier promote_search` |  |
 | `voyagier plans goal-add-item-with-selection` | `voyagier promote_search` |  |
-| `voyagier plans goal-reorder` | `voyagier goal_update` |  |
-| `voyagier travellers add` | `voyagier travellers_add` | Takes a JSON array of travellers. |
-| `voyagier travellers list` | `voyagier travellers_list` |  |
-| `voyagier travellers remove` | `voyagier travellers_remove` |  |
-| `voyagier travellers update` | `voyagier travellers_update` |  |
+| `voyagier plans goal-reorder` | `voyagier update_goal` |  |
+| `voyagier travellers add` | `voyagier add_travellers` | Takes a JSON array of travellers. |
+| `voyagier travellers list` | `voyagier list_travellers` |  |
+| `voyagier travellers remove` | `voyagier delete_traveller` |  |
+| `voyagier travellers update` | `voyagier update_traveller` |  |
 | `voyagier search airports` | — | search_flights accepts IATA codes or city names in --from / --to. |
 | `voyagier search flights` | `voyagier search_flights`, `voyagier promote_search` | search_flights explores; promote_search puts a result on a plan goal. |
 | `voyagier search hotels` | `voyagier search_hotels`, `voyagier promote_search` | As above. |
 | `voyagier search activities` | `voyagier search_activities`, `voyagier promote_search` | As above. |
-| `voyagier select` | `voyagier select_option` | Row-addressed picks: --participant_choice_id (rows from choices_view). |
-| `voyagier selection-options` | `voyagier get_selection_options` |  |
+| `voyagier select` | `voyagier select_option` | Row-addressed picks: --participant_choice_id (rows from get_plan_choices). |
+| `voyagier selection-options` | `voyagier get_options` |  |
 | `voyagier refresh-options` | `voyagier refresh_options` |  |
-| `voyagier choices-view` | `voyagier choices_view` |  |
-| `voyagier choose-room-slot` | `voyagier choose_room_slot` |  |
-| `voyagier traveller-choices list` | `voyagier choices_view` |  |
-| `voyagier cart` | `voyagier quote` |  |
-| `voyagier quote` | `voyagier quote` |  |
+| `voyagier choices-view` | `voyagier get_plan_choices` |  |
+| `voyagier choose-room-slot` | `voyagier set_room_count`, `voyagier select_option` | set_room_count sets how many rooms the hotel goal shops and books, on the goal's RoomArrangement ("Number of Rooms") selection (id from get_plan_choices or get_plan_status); each room slot row is then decided with select_option (row ids from get_plan_choices). set_room_rates only edits the rate list of an imported or hand-added room. |
+| `voyagier traveller-choices list` | `voyagier get_plan_choices` |  |
+| `voyagier cart` | `voyagier get_plan_quote` |  |
+| `voyagier quote` | `voyagier get_plan_quote` |  |
 | `voyagier send` | `voyagier share_plan` | share_plan returns the client link; you deliver it. |
-| `voyagier book` | `voyagier book` | The price gate is --expect_total_cents (integer cents) plus --item_ids from quote. |
-| `voyagier bookings list` | `voyagier bookings_list` |  |
-| `voyagier bookings get` | `voyagier booking_get` |  |
+| `voyagier book` | `voyagier book_plan` | The price gate is --expect_total_cents (integer cents) plus --item_ids from get_plan_quote. |
+| `voyagier bookings list` | `voyagier list_bookings` |  |
+| `voyagier bookings get` | `voyagier get_booking` |  |
 | `voyagier whoami` | `voyagier whoami` |  |
-| `voyagier clients list` | `voyagier clients_list` |  |
-| `voyagier clients get` | `voyagier client_get` |  |
-| `voyagier clients create` | `voyagier client_create` |  |
-| `voyagier clients update` | `voyagier client_update` |  |
+| `voyagier clients list` | `voyagier list_clients` |  |
+| `voyagier clients get` | `voyagier get_client` |  |
+| `voyagier clients create` | `voyagier create_client` |  |
+| `voyagier clients update` | `voyagier update_client` |  |
 | `voyagier clients archive` | — |  |
-| `voyagier clients upsert` | `voyagier clients_list`, `voyagier client_create` | Look up by name first, then create. |
-| `voyagier itinerary` | `voyagier itinerary` |  |
+| `voyagier clients upsert` | `voyagier list_clients`, `voyagier create_client` | Look up by name first, then create. |
+| `voyagier itinerary` | `voyagier get_plan_itinerary` |  |
 | `voyagier listings list` | — |  |
 | `voyagier listings recent` | — |  |
 | `voyagier listings add-to-selection` | `voyagier promote_search` | Pass --listing_ids. |
