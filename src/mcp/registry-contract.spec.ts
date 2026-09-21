@@ -12,8 +12,10 @@
  * is a documentation aid for the specs that build the generated command
  * surface (build-program, schema-flags, doc-drift, removed-commands); it is not
  * an allowlist and the proxy never reads it. Refresh with
- * `npm run refresh:mcp-fixture` (needs a token in the environment; run locally,
- * never in CI).
+ * `npm run refresh:mcp-fixture -- --from <tools.json>` from the server
+ * repository's registry export (no token, reflects the registry source), or
+ * with `VOYAGIER_TOKEN=<token> npm run refresh:mcp-fixture` against the live
+ * server (run locally, never in CI).
  */
 import { describe, it, expect } from "@jest/globals";
 import { readFileSync } from "node:fs";
