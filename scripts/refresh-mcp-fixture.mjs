@@ -88,9 +88,14 @@ function writeFixture(tools, source) {
   if (!Array.isArray(tools) || tools.length === 0) {
     fail(`${source} returned no tools — expected a non-empty tools array.`);
   }
-  const bad = tools.filter((t) => !t || typeof t !== "object" || typeof t.name !== "string" || !t.inputSchema);
+  const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+  const bad = tools.filter(
+    (t) => !isPlainObject(t) || typeof t.name !== "string" || t.name.trim().length === 0 || !isPlainObject(t.inputSchema),
+  );
   if (bad.length) {
-    fail(`${source}: ${bad.length} entr${bad.length === 1 ? "y is" : "ies are"} not a tool descriptor (need name + inputSchema).`);
+    fail(
+      `${source}: ${bad.length} entr${bad.length === 1 ? "y is" : "ies are"} not a tool descriptor (need a non-empty string name and an object inputSchema). Nothing was written.`,
+    );
   }
   const names = tools.map((t) => t.name);
   const dupes = names.filter((n, i) => names.indexOf(n) !== i);
