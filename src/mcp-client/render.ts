@@ -507,7 +507,7 @@ const RENDERER_FIELDS = {
     "nextActions",
   ],
   searchResult: ["optionsSummary", "status", "fetchStatus", "type", "id", "fetchError"],
-  selectionOptions: ["fetchStatus", "optionsSummary", "id"],
+  selectionOptions: ["fetchStatus", "optionsSummary", "id", "participantChoices", "__typename"],
   itinerary: ["tripPlanEvents", "events", "startDate", "endDate", "title"],
   quote: [
     "chargeableTotalCents",

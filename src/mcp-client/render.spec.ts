@@ -117,6 +117,12 @@ describe("unwrapToolPayload", () => {
     // A field the renderer reads is a payload, not an envelope.
     expect(unwrapToolPayload({ items: [] }, ["items", "chargeableTotalCents"])).toEqual({ items: [] });
     expect(unwrapToolPayload({ tripPlanEvents: [] }, ["tripPlanEvents"])).toEqual({ tripPlanEvents: [] });
+    // Every root field a renderer reads is a known field: a get_options payload
+    // reduced to its decision rows is not an envelope and reaches the JSON
+    // fallback intact (renderToolPayload returns null, the caller prints the input).
+    const rowsOnly = { participantChoices: [{ id: "pc1", decided: false }] };
+    expect(renderToolPayload("get_options", rowsOnly)).toBeNull();
+    expect(rowsOnly).toEqual({ participantChoices: [{ id: "pc1", decided: false }] });
     // Keys that cannot be a GraphQL operation name are never unwrapped.
     expect(unwrapToolPayload({ __typename: { x: 1 } })).toEqual({ __typename: { x: 1 } });
     expect(unwrapToolPayload({ plan_id: { x: 1 } })).toEqual({ plan_id: { x: 1 } });
