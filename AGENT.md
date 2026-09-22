@@ -13,8 +13,9 @@
 The same tools are what claude.ai, Claude Desktop and any other MCP client see. There is one implementation of every verb, on the server; the CLI adds output formatting and nothing else. **The server's text is the contract:** how tools relate, what to call next, how searches complete and how booking is gated all live in the server's `instructions` (printed by `voyagier agent-docs`) and in each tool's description (`voyagier <tool_name> --help`). This file covers only what the CLI itself adds.
 
 - **One command per tool.** `voyagier --help` lists them; `voyagier <tool_name> --help` prints the tool's own description and one flag per input-schema property.
-- **Flags mirror the schema.** Property `plan_id` is `--plan_id`. Required properties are required flags (a missing one is a `VALIDATION` error before any network call). Types: string → `--x <value>`, integer/number → `--x <n>`, boolean → `--x` (or `--x false`), enum → `--x <choice>` with the allowed values in `--help`, array of strings/numbers → repeat the flag or pass several values (`--item_ids a b`), object or array of objects → a JSON literal (`--travellers '[{"first_name":"Jane","last_name":"Doe"}]'`).
-- **Output.** `--json` prints the tool's result content parsed as JSON — the server returns one text block holding `{ "<operation>": <payload> }`, and that is exactly what you get. Without `--json`, `plan_status`, `search_flights`/`search_hotels`/`search_activities`/`search_status`/`promote_search`, `get_selection_options`/`refresh_options`, `itinerary` and `quote` render a compact human view; every other tool prints the same JSON pretty-printed.
+- **Flags mirror the schema.** Property `plan_id` is `--plan_id`. Required properties are required flags (a missing one is a `VALIDATION` error before any network call). Types: string → `--x <value>`, integer/number → `--x <n>`, boolean → `--x` (or `--x false`), enum → `--x <choice>` with the allowed values in `--help`, array of strings/numbers → repeat the flag or pass several values (`--item_ids a b`), object or array of objects → a JSON literal (`--travellers '[{"first_name":"Jane","last_name":"Doe"}]'`). A property the schema declares nullable keeps its type and also accepts the literal `null`, sent as JSON null — the server's "pass null to clear" (`voyagier update_plan --plan_id <id> --cover_media_id null`); its `--help` line is marked `(pass null to clear)` (inside the type hint when there is one, e.g. `(integer; pass null to clear)`), and on any other flag `null` gets no special treatment: a string flag sends the text `null`, and a number, enum or object flag rejects it like any other invalid input. On a nullable repeatable flag `null` must be the only value (`--x null` clears the list; `--x null a` is an error).
+- **Output.** `--json` prints the tool's result content parsed as JSON — the server returns one text block holding the tool's payload object, and that is exactly what you get. Without `--json`, `get_plan_status`, `search_flights`/`search_hotels`/`search_activities`/`get_search_status`/`promote_search`, `get_options`, `get_plan_itinerary` and `get_plan_quote` render a compact human view; every other tool (including `refresh_options`, which returns `true`) prints the same JSON pretty-printed.
+- **Discovery.** `search_tools --query <words>` finds tools by what they do; `get_tool_details --name <tool>` returns one tool's full description and input schema. Both are server tools, so their answers match what `voyagier --help` and `voyagier <tool_name> --help` show.
 - **Local commands** (no server tool behind them): `auth`, `doctor`, `mcp install`, `mcp`, `agent-docs`, `telemetry`.
 - **Self-check.** `voyagier doctor --json` verifies credentials, connects to the MCP server, counts its tools, refreshes the local tool cache, and calls `whoami` when the server publishes it.
 
@@ -33,8 +34,12 @@ voyagier agent-docs
 voyagier search_hotels --help
 
 # Any tool, with --json for a parseable result
-voyagier plans_list --limit 5 --json
+voyagier list_plans --limit 5 --json
 voyagier search_destinations --query "Lisbon" --json
+
+# Find a tool by what it does, then read its contract
+voyagier search_tools --query "hotel dates" --json
+voyagier get_tool_details --name set_hotel_dates --json
 ```
 
 Read a tool's `--help` before calling it, and follow the server's `instructions` for the order of operations. When a tool's description says to poll another tool, poll that tool.
@@ -59,7 +64,7 @@ Substrate guarantees, every generated command: non-interactive (no prompts); und
 
 ### Success payload shape
 
-A tool result is `{ "<operation>": <payload> }`, one key (the operation name is the server’s, e.g. `myTripPlans`). For example `plans_list --json` prints `{ "myTripPlans": { "items": [...], "count", "page", "limit" } }` and `plan_status --json` prints `{ "tripPlanStatus": { ... } }`. The server omits empty and null fields, so test for presence (`.tripPlanQuote.items // []`) rather than assuming a key exists. When in doubt, pipe `--json` through `jq keys`.
+A tool result is the tool's payload object, with no wrapper key. For example `list_plans --json` prints `{ "items": [...], "count": 3, "page": 1, "limit": 5 }` and `get_plan_status --json` prints `{ "tripPlanId": ..., "readiness": ..., "summary": { ... }, ... }`. The server omits empty and null fields, so test for presence (`.items // []`) rather than assuming a key exists. When in doubt, pipe `--json` through `jq keys`.
 
 ### Error envelope (uniform across commands)
 
@@ -94,7 +99,7 @@ Server-side outcomes such as a price change or a blocked booking arrive as `API_
 
 ### Rate limits
 
-The MCP endpoint is rate limited per token: **180 requests per minute** is the ceiling for everything a token does, across the CLI, the stdio proxy and any MCP client. Scripted loops (polling `search_status` or `get_selection_options`) should back off; the CLI surfaces `RATE_LIMITED` with `details.retryAfterSeconds` when the server sends `Retry-After`.
+The MCP endpoint is rate limited per token: **180 requests per minute** is the ceiling for everything a token does, across the CLI, the stdio proxy and any MCP client. Scripted loops (polling `get_search_status` or `get_options`) should back off; the CLI surfaces `RATE_LIMITED` with `details.retryAfterSeconds` when the server sends `Retry-After`.
 
 ### State files (`~/.voyagier/`)
 
@@ -148,23 +153,31 @@ voyagier mcp                          # stdio proxy for the hosted server
 
 Every 3.x trip-planning command is replaced by a tool. Running an old command prints the replacement and exits 1 (`COMMAND_REMOVED`). The full table is in the CHANGELOG under 4.0.0; the short version:
 
-| 3.x | 4.0 |
+| 3.x | 4.x |
 |---|---|
-| `plan-trip`, `plans create` | `plan_trip` |
-| `plans list` | `plans_list` |
-| `plan-status`, `plans goals` | `plan_status` |
+| `plan-trip`, `plans create` | `create_plan` |
+| `plans list` | `list_plans` |
+| `plan-status`, `plans goals` | `get_plan_status` |
+| `itinerary`, `plans summary` | `get_plan_itinerary` |
 | `search flights` / `hotels` / `activities` | `search_flights` / `search_hotels` / `search_activities`, then `promote_search` |
-| `selection-options` | `get_selection_options` |
+| `selection-options` | `get_options` |
+| `choices-view`, `traveller-choices list` | `get_plan_choices` |
 | `select` | `select_option` |
-| `travellers add` / `list` / `update` | `travellers_add` / `travellers_list` / `travellers_update` |
-| `clients list` / `create` | `clients_list` / `client_create` |
-| `cart`, `plans bookable` | `quote` |
-| `book` | `book` (gate is `--expect_total_cents` + `--item_ids` from `quote`) |
+| `choose-room-slot` | `set_room_count` sets how many rooms the hotel goal shops and books, on the goal's RoomArrangement ("Number of Rooms") selection (id from `get_plan_choices` or `get_plan_status`); each room slot row is then decided with `select_option` (row ids from `get_plan_choices`). `set_room_rates` only edits the rate list of an imported or hand-added room. |
+| `travellers add` / `list` / `update` / `remove` | `add_travellers` / `list_travellers` / `update_traveller` / `delete_traveller` |
+| `clients list` / `get` / `create` / `update` | `list_clients` / `get_client` / `create_client` / `update_client` |
+| `plans goal-add` / `goal-update` / `goal-remove` | `add_goal` / `update_goal` / `delete_goal` |
+| `plans goal-assign-travellers` | `move_travellers` on the goal's selection (row ids from `get_plan_choices`); `update_goal` does not assign travellers |
+| `plans update` / `delete` | `update_plan` / `delete_plan` |
+| `cart`, `quote`, `plans bookable` | `get_plan_quote` |
+| `book` | `book_plan` (gate is `--expect_total_cents` + `--item_ids` from `get_plan_quote`) |
+| `bookings list` / `get` | `list_bookings` / `get_booking` |
 | `send`, `plans share` | `share_plan` (client access) / `invite_collaborator` (another user) |
+| `plans collaborators` / `unshare` | `list_collaborators` / `remove_collaborator` |
 | `destinations search` | `search_destinations` |
-| `itinerary`, `quote`, `choices-view`, `choose-room-slot`, `refresh-options` | same name, now a tool with `--plan_id` / `--selection_id` flags |
+| `refresh-options`, `whoami` | same name, now a tool |
 
-Flags changed from kebab-case (`--plan`) to the tool's snake_case property names (`--plan_id`). JSON payloads are the server's `{ "<operation>": ... }` shape rather than the 3.x per-command shapes.
+Tool names are verb-first (`get_plan_status`, `list_plans`, `create_plan`); the earlier names (`plan_status`, `plans_list`, `plan_trip`, `quote`, `book`, `itinerary`) are no longer published by the server. Flags changed from kebab-case (`--plan`) to the tool's snake_case property names (`--plan_id`). JSON payloads are the tool's payload object rather than the 3.x per-command shapes.
 
 ---
 

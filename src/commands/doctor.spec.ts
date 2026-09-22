@@ -15,7 +15,7 @@ import { compareSemver, registerDoctorCommand, rollUpStatus, runDoctor, type Doc
 const URL = "https://mcp.example.test/api/mcp";
 const TOOLS = [{ name: "plans_list" }, { name: "plan_status" }];
 
-type Mode = "ok" | "ok-with-whoami" | "auth" | "network" | "server-error" | "whoami-fails";
+type Mode = "ok" | "ok-with-whoami" | "whoami-wrapped" | "auth" | "network" | "server-error" | "whoami-fails";
 
 function scriptedClient(mode: Mode): McpClient {
   const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
@@ -32,7 +32,8 @@ function scriptedClient(mode: Mode): McpClient {
     }
     if (body.method === "tools/call" && body.params?.name === "whoami") {
       if (mode === "whoami-fails") return respond({ jsonrpc: "2.0", id: body.id, result: { isError: true, content: [{ type: "text", text: "profile unavailable" }] } });
-      return respond({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: JSON.stringify({ me: { email: "jane@example.com", isTravelAdvisor: true } }) }] } });
+      if (mode === "whoami-wrapped") return respond({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: JSON.stringify({ me: { email: "jane@example.com" } }) }] } });
+      return respond({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: JSON.stringify({ email: "jane@example.com", isTravelAdvisor: true }) }] } });
     }
     return respond({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "nope" } });
   }) as unknown as typeof fetch;
@@ -115,6 +116,12 @@ describe("runDoctor", () => {
   it("calls whoami when the server publishes it and reports the identity", async () => {
     const report = await runDoctor("1.8.1", { createClient: () => scriptedClient("ok-with-whoami"), credentialsExist: () => true, fetchImpl: registryFetch() });
     expect(check(report, "whoami")).toMatchObject({ status: "PASS", message: "Authenticated as jane@example.com (traveladvisor)" });
+  });
+
+  it("reads the whoami payload as sent: a single-key object is not opened to find an identity", async () => {
+    // The server returns the bare payload; the retired { <operation>: … } envelope is not unwrapped.
+    const report = await runDoctor("1.8.1", { createClient: () => scriptedClient("whoami-wrapped"), credentialsExist: () => true, fetchImpl: registryFetch() });
+    expect(check(report, "whoami")).toMatchObject({ status: "PASS", message: "Authenticated as unknown" });
   });
 
   it("WARNs (not FAILs) when whoami itself errors", async () => {

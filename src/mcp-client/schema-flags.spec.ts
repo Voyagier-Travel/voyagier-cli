@@ -1,8 +1,8 @@
 import { describe, it, expect } from "@jest/globals";
 import { Command } from "commander";
 import { readFileSync } from "node:fs";
-import type { McpToolDescriptor } from "./client.js";
-import { applyFlagsToCommand, attributeName, buildToolArguments, flagSpecsFromSchema, parseBoolean } from "./schema-flags.js";
+import type { McpJsonSchema, McpToolDescriptor } from "./client.js";
+import { applyFlagsToCommand, attributeName, buildToolArguments, flagSpecsFromSchema, optionForSpec, parseBoolean } from "./schema-flags.js";
 
 const FIXTURE_TOOLS: McpToolDescriptor[] = JSON.parse(
   readFileSync(new URL("../mcp/fixtures/remote-tools.json", import.meta.url), "utf-8"),
@@ -16,7 +16,11 @@ function tool(name: string): McpToolDescriptor {
 
 /** Parse argv on a bare command carrying the tool's flags; return the tool arguments. */
 async function parseArgs(name: string, argv: string[]): Promise<Record<string, unknown>> {
-  const specs = flagSpecsFromSchema(tool(name).inputSchema);
+  return parseSchema(name, tool(name).inputSchema, argv);
+}
+
+async function parseSchema(name: string, schema: McpJsonSchema | undefined, argv: string[]): Promise<Record<string, unknown>> {
+  const specs = flagSpecsFromSchema(schema);
   let captured: Record<string, unknown> | null = null;
   const cmd = new Command(name).exitOverride().configureOutput({ writeErr: () => {}, writeOut: () => {} });
   applyFlagsToCommand(cmd, specs);
@@ -35,25 +39,29 @@ describe("flagSpecsFromSchema", () => {
     expect(byParam.checkin).toMatchObject({ kind: "string", required: true });
     expect(byParam.adults).toMatchObject({ kind: "integer", required: false });
     expect(byParam.children_ages).toMatchObject({ kind: "array", itemKind: "integer" });
-    expect(byParam.hotel_name.description).toMatch(/SPECIFIC property/);
+    // Descriptions flow from the schema into the flag help. The check uses a
+    // required property: the server currently publishes optional properties
+    // without their descriptions.
+    expect(byParam.location.description).toMatch(/Stay location/);
+    expect(byParam.checkin.description).toMatch(/Check-in date/);
   });
 
   it("maps enums, booleans, arrays of strings and object/array-of-object to the right kinds", () => {
-    const plansList = Object.fromEntries(flagSpecsFromSchema(tool("plans_list").inputSchema).map((s) => [s.param, s]));
+    const plansList = Object.fromEntries(flagSpecsFromSchema(tool("list_plans").inputSchema).map((s) => [s.param, s]));
     expect(plansList.relationship).toMatchObject({ kind: "enum", enumValues: ["owner", "shared"] });
     expect(plansList.limit).toMatchObject({ kind: "integer" });
 
     const refresh = Object.fromEntries(flagSpecsFromSchema(tool("refresh_options").inputSchema).map((s) => [s.param, s]));
     expect(refresh.force).toMatchObject({ kind: "boolean" });
 
-    const book = Object.fromEntries(flagSpecsFromSchema(tool("book").inputSchema).map((s) => [s.param, s]));
+    const book = Object.fromEntries(flagSpecsFromSchema(tool("book_plan").inputSchema).map((s) => [s.param, s]));
     expect(book.item_ids).toMatchObject({ kind: "array", itemKind: "string", required: true });
     expect(book.expect_total_cents).toMatchObject({ kind: "integer", required: true });
 
-    const travellersAdd = Object.fromEntries(flagSpecsFromSchema(tool("travellers_add").inputSchema).map((s) => [s.param, s]));
+    const travellersAdd = Object.fromEntries(flagSpecsFromSchema(tool("add_travellers").inputSchema).map((s) => [s.param, s]));
     expect(travellersAdd.travellers).toMatchObject({ kind: "json", jsonShape: "array", required: true });
 
-    const update = Object.fromEntries(flagSpecsFromSchema(tool("travellers_update").inputSchema).map((s) => [s.param, s]));
+    const update = Object.fromEntries(flagSpecsFromSchema(tool("update_traveller").inputSchema).map((s) => [s.param, s]));
     expect(update.passport).toMatchObject({ kind: "json", jsonShape: "object" });
   });
 
@@ -66,7 +74,74 @@ describe("flagSpecsFromSchema", () => {
   it("treats a nullable type union as its non-null member and appends the schema default to help", () => {
     const [spec] = flagSpecsFromSchema({ type: "object", properties: { n: { type: ["integer", "null"], description: "Count.", default: 3 } } });
     expect(spec.kind).toBe("integer");
+    expect(spec.nullable).toBe(true);
     expect(spec.description).toBe("Count. Default: 3.");
+  });
+
+  it("marks nullable properties from both type unions and anyOf, keeping the base kind", () => {
+    const specs = Object.fromEntries(
+      flagSpecsFromSchema({
+        type: "object",
+        properties: {
+          s: { type: ["string", "null"] },
+          a: { anyOf: [{ type: "string", maxLength: 32 }, { type: "null" }] },
+          i: { anyOf: [{ type: "integer", minimum: 0 }, { type: "null" }] },
+          e: { anyOf: [{ type: "string", enum: ["x", "y"] }, { type: "null" }] },
+          o: { anyOf: [{ type: "object" }, { type: "null" }] },
+          l: { type: ["array", "null"], items: { type: "string" } },
+          plain: { type: "string" },
+          union: { anyOf: [{ type: "string" }, { type: "integer" }] },
+        },
+      }).map((s) => [s.param, s]),
+    );
+    expect(specs.s).toMatchObject({ kind: "string", nullable: true });
+    expect(specs.a).toMatchObject({ kind: "string", nullable: true });
+    expect(specs.i).toMatchObject({ kind: "integer", nullable: true });
+    expect(specs.e).toMatchObject({ kind: "enum", enumValues: ["x", "y"], nullable: true });
+    expect(specs.o).toMatchObject({ kind: "json", jsonShape: "object", nullable: true });
+    // A nullable array of scalars stays a repeatable flag and keeps its nullability (lone `null` clears).
+    expect(specs.l).toMatchObject({ kind: "array", itemKind: "string", nullable: true });
+    // Non-nullable shapes are untouched: no `nullable` key, same kinds as before.
+    expect(specs.plain).toEqual({ param: "plain", flag: "plain", attribute: "plain", required: false, description: "", kind: "string" });
+    expect(specs.union).toMatchObject({ kind: "json" });
+    expect(specs.union.nullable).toBeUndefined();
+  });
+
+  it("resolves the fixture's nullable params to their base kinds, and none of them is required", () => {
+    const update = Object.fromEntries(flagSpecsFromSchema(tool("update_plan").inputSchema).map((s) => [s.param, s]));
+    expect(update.cover_media_id).toMatchObject({ kind: "string", nullable: true, required: false });
+    expect(update.description).toMatchObject({ kind: "string", nullable: true, required: false });
+    const event = Object.fromEntries(flagSpecsFromSchema(tool("update_guide_event").inputSchema).map((s) => [s.param, s]));
+    expect(event.local_time).toMatchObject({ kind: "string", nullable: true });
+    expect(event.duration_minutes).toMatchObject({ kind: "integer", nullable: true });
+
+    // The `null` sentinel is only unambiguous on an optional input. If the
+    // server ever publishes a REQUIRED nullable property this must be revisited.
+    const requiredNullable = FIXTURE_TOOLS.flatMap((t) =>
+      flagSpecsFromSchema(t.inputSchema)
+        .filter((s) => s.nullable && s.required)
+        .map((s) => `${t.name}.${s.param}`),
+    );
+    expect(requiredNullable).toEqual([]);
+    const nullableCount = FIXTURE_TOOLS.flatMap((t) => flagSpecsFromSchema(t.inputSchema).filter((s) => s.nullable)).length;
+    expect(nullableCount).toBeGreaterThan(0);
+  });
+
+  it("help text carries the null hint on nullable flags only", () => {
+    const specs = flagSpecsFromSchema({
+      type: "object",
+      properties: {
+        s: { type: ["string", "null"], description: "Cover." },
+        i: { anyOf: [{ type: "integer" }, { type: "null" }] },
+        plain: { type: "string", description: "Title." },
+        n: { type: "integer" },
+      },
+    });
+    const help = Object.fromEntries(specs.map((s) => [s.param, optionForSpec(s).description]));
+    expect(help.s).toBe("Cover. (pass null to clear)");
+    expect(help.i).toBe("(integer; pass null to clear)");
+    expect(help.plain).toBe("Title.");
+    expect(help.n).toBe("(integer)");
   });
 
   it("attributeName follows Commander's camelCase for dashed flags and keeps underscores", () => {
@@ -91,7 +166,7 @@ describe("flagSpecsFromSchema", () => {
 
 describe("parsing flags into tool arguments", () => {
   it("sends only the flags that were passed, typed", async () => {
-    const args = await parseArgs("plans_list", ["--limit", "2", "--relationship", "owner"]);
+    const args = await parseArgs("list_plans", ["--limit", "2", "--relationship", "owner"]);
     expect(args).toEqual({ limit: 2, relationship: "owner" });
   });
 
@@ -102,7 +177,7 @@ describe("parsing flags into tool arguments", () => {
       checkout: "2026-10-04",
       children_ages: [4, 9],
     });
-    expect(await parseArgs("book", ["--plan_id", "p", "--expect_total_cents", "1000", "--item_ids", "a", "--item_ids", "b"])).toEqual({
+    expect(await parseArgs("book_plan", ["--plan_id", "p", "--expect_total_cents", "1000", "--item_ids", "a", "--item_ids", "b"])).toEqual({
       plan_id: "p",
       expect_total_cents: 1000,
       item_ids: ["a", "b"],
@@ -119,20 +194,96 @@ describe("parsing flags into tool arguments", () => {
 
   it("parses JSON flags and validates their shape", async () => {
     const travellers = [{ first_name: "Jane", last_name: "Doe" }];
-    expect(await parseArgs("travellers_add", ["--plan_id", "p", "--travellers", JSON.stringify(travellers)])).toEqual({ plan_id: "p", travellers });
-    await expect(parseArgs("travellers_add", ["--plan_id", "p", "--travellers", '{"not":"an array"}'])).rejects.toMatchObject({ code: "commander.invalidArgument" });
-    await expect(parseArgs("travellers_add", ["--plan_id", "p", "--travellers", "nope"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    expect(await parseArgs("add_travellers", ["--plan_id", "p", "--travellers", JSON.stringify(travellers)])).toEqual({ plan_id: "p", travellers });
+    await expect(parseArgs("add_travellers", ["--plan_id", "p", "--travellers", '{"not":"an array"}'])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    await expect(parseArgs("add_travellers", ["--plan_id", "p", "--travellers", "nope"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
   });
 
   it("rejects a value outside an enum, a non-integer, non-finite numbers, and a missing required flag", async () => {
-    await expect(parseArgs("plans_list", ["--relationship", "friend"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
-    await expect(parseArgs("plans_list", ["--limit", "2.5"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    await expect(parseArgs("list_plans", ["--relationship", "friend"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    await expect(parseArgs("list_plans", ["--limit", "2.5"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
     // Number("Infinity") / Number("1e309") are non-finite; JSON.stringify would send null.
     for (const bad of ["Infinity", "-Infinity", "1e309", "NaN"]) {
-      await expect(parseArgs("plans_list", ["--limit", bad])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+      await expect(parseArgs("list_plans", ["--limit", bad])).rejects.toMatchObject({ code: "commander.invalidArgument" });
       await expect(parseArgs("search_hotels", ["--location", "x", "--checkin", "d", "--checkout", "d", "--children_ages", bad])).rejects.toMatchObject({ code: "commander.invalidArgument" });
     }
-    await expect(parseArgs("plan_status", [])).rejects.toMatchObject({ code: "commander.missingMandatoryOptionValue" });
+    await expect(parseArgs("get_plan_status", [])).rejects.toMatchObject({ code: "commander.missingMandatoryOptionValue" });
+  });
+
+  it("sends JSON null for the literal `null` on nullable flags, from the fixture schemas", async () => {
+    expect(await parseArgs("update_plan", ["--plan_id", "p", "--cover_media_id", "null"])).toEqual({ plan_id: "p", cover_media_id: null });
+    expect(await parseArgs("update_plan", ["--plan_id", "p", "--cover_media_id", "m1", "--description", "null"])).toEqual({ plan_id: "p", cover_media_id: "m1", description: null });
+    // anyOf string|null is a plain string flag, not a JSON literal.
+    expect(await parseArgs("update_guide_event", ["--event_id", "e", "--local_time", "09:30"])).toEqual({ event_id: "e", local_time: "09:30" });
+    expect(await parseArgs("update_guide_event", ["--event_id", "e", "--local_time", "null", "--duration_minutes", "null"])).toEqual({ event_id: "e", local_time: null, duration_minutes: null });
+    expect(await parseArgs("update_guide_event", ["--event_id", "e", "--duration_minutes", "12"])).toEqual({ event_id: "e", duration_minutes: 12 });
+    await expect(parseArgs("update_guide_event", ["--event_id", "e", "--duration_minutes", "x"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+  });
+
+  it("keeps `null` a literal value on non-nullable flags, and case-sensitive on nullable ones", async () => {
+    const schema: McpJsonSchema = {
+      type: "object",
+      properties: {
+        s: { type: "string" },
+        n: { type: "integer" },
+        ns: { type: ["string", "null"] },
+        ne: { anyOf: [{ type: "string", enum: ["a", "b"] }, { type: "null" }] },
+        e: { type: "string", enum: ["a", "b"] },
+        nb: { type: ["boolean", "null"] },
+        no: { anyOf: [{ type: "object" }, { type: "null" }] },
+        o: { type: "object" },
+      },
+    };
+    expect(await parseSchema("t", schema, ["--s", "null"])).toEqual({ s: "null" });
+    await expect(parseSchema("t", schema, ["--n", "null"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    await expect(parseSchema("t", schema, ["--e", "null"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    await expect(parseSchema("t", schema, ["--o", "null"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+
+    expect(await parseSchema("t", schema, ["--ns", "null"])).toEqual({ ns: null });
+    expect(await parseSchema("t", schema, ["--ns", "abc"])).toEqual({ ns: "abc" });
+    expect(await parseSchema("t", schema, ["--ns", "NULL"])).toEqual({ ns: "NULL" });
+    expect(await parseSchema("t", schema, ["--ne", "null"])).toEqual({ ne: null });
+    expect(await parseSchema("t", schema, ["--ne", "a"])).toEqual({ ne: "a" });
+    await expect(parseSchema("t", schema, ["--ne", "c"])).rejects.toMatchObject({ code: "commander.invalidArgument", message: expect.stringContaining("Allowed choices are a, b.") });
+    expect(await parseSchema("t", schema, ["--nb", "null"])).toEqual({ nb: null });
+    expect(await parseSchema("t", schema, ["--nb", "false"])).toEqual({ nb: false });
+    expect(await parseSchema("t", schema, ["--no", "null"])).toEqual({ no: null });
+    expect(await parseSchema("t", schema, ["--no", '{"k":1}'])).toEqual({ no: { k: 1 } });
+    await expect(parseSchema("t", schema, ["--no", "[1]"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+  });
+
+  it("sends JSON null for a lone `null` on a nullable scalar array, and refuses to mix it with values", async () => {
+    const schema: McpJsonSchema = {
+      type: "object",
+      properties: {
+        tags: { type: ["array", "null"], items: { type: "string" } },
+        nums: { anyOf: [{ type: "array", items: { type: "integer" } }, { type: "null" }] },
+        plain: { type: "array", items: { type: "string" } },
+      },
+    };
+    const specs = Object.fromEntries(flagSpecsFromSchema(schema).map((s) => [s.param, s]));
+    expect(specs.tags).toMatchObject({ kind: "array", itemKind: "string", nullable: true });
+    expect(specs.nums).toMatchObject({ kind: "array", itemKind: "integer", nullable: true });
+    expect(specs.plain).toMatchObject({ kind: "array", itemKind: "string" });
+    expect(specs.plain.nullable).toBeUndefined();
+    expect(optionForSpec(specs.tags).description).toContain("(repeatable strings; pass null to clear)");
+    expect(optionForSpec(specs.plain).description).toContain("(repeatable strings)");
+    expect(optionForSpec(specs.plain).description).not.toContain("null");
+
+    expect(await parseSchema("t", schema, ["--tags", "null"])).toEqual({ tags: null });
+    expect(await parseSchema("t", schema, ["--nums", "null"])).toEqual({ nums: null });
+    expect(await parseSchema("t", schema, ["--tags", "a", "b"])).toEqual({ tags: ["a", "b"] });
+    expect(await parseSchema("t", schema, ["--tags", "a", "--tags", "b"])).toEqual({ tags: ["a", "b"] });
+    expect(await parseSchema("t", schema, ["--nums", "1", "2"])).toEqual({ nums: [1, 2] });
+    // Non-nullable arrays keep `null` as an ordinary item.
+    expect(await parseSchema("t", schema, ["--plain", "null"])).toEqual({ plain: ["null"] });
+    // The sentinel stands for the whole list, so it cannot sit next to a value.
+    for (const argv of [["--tags", "null", "a"], ["--tags", "a", "null"], ["--tags", "null", "--tags", "a"], ["--tags", "a", "--tags", "null"]]) {
+      await expect(parseSchema("t", schema, argv)).rejects.toMatchObject({
+        code: "commander.invalidArgument",
+        message: expect.stringContaining("cannot be combined with other values"),
+      });
+    }
   });
 
   it("every fixture tool registers without option-name conflicts", () => {

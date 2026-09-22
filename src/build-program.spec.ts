@@ -42,8 +42,8 @@ function withExitOverride(cmd: Command): Command {
   return cmd;
 }
 
-async function parse(args: string[]): Promise<{ code?: string; exitCode?: number; message?: string }> {
-  const program = withExitOverride(buildProgram("0.0.0-test", FIXTURE_TOOLS));
+async function parse(args: string[], tools: McpToolDescriptor[] = FIXTURE_TOOLS): Promise<{ code?: string; exitCode?: number; message?: string }> {
+  const program = withExitOverride(buildProgram("0.0.0-test", tools));
   // --json is detected by scanning process.argv (options aren't parsed yet when
   // the parser errors), so the harness must reflect the real argv here, exactly
   // as the production entrypoint sees it.
@@ -120,7 +120,7 @@ describe("command surface", () => {
 
   it("uses the tool's title as the command summary and its description as the help body", () => {
     const program = buildProgram("0.0.0-test", FIXTURE_TOOLS);
-    const cmd = program.commands.find((c) => c.name() === "plans_list")!;
+    const cmd = program.commands.find((c) => c.name() === "list_plans")!;
     expect(cmd.summary()).toBe("List trip plans");
     expect(cmd.description()).toContain("plan-discovery entry point");
   });
@@ -128,7 +128,7 @@ describe("command surface", () => {
 
 describe("argument-parse errors under --json", () => {
   it("emits a VALIDATION envelope on stdout and exits 1 for an unknown option", async () => {
-    const { code, exitCode } = await parse(["plan_status", "--plan_id", "p1", "--nope", "--json"]);
+    const { code, exitCode } = await parse(["get_plan_status", "--plan_id", "p1", "--nope", "--json"]);
 
     // CommanderError still propagates (exitOverride path), exit code 1.
     expect(code).toBe("commander.unknownOption");
@@ -143,8 +143,8 @@ describe("argument-parse errors under --json", () => {
   });
 
   it("emits a VALIDATION envelope for a missing required option", async () => {
-    // `plan_status` requires --plan_id (from the tool's inputSchema.required).
-    const { exitCode } = await parse(["plan_status", "--json"]);
+    // `get_plan_status` requires --plan_id (from the tool's inputSchema.required).
+    const { exitCode } = await parse(["get_plan_status", "--json"]);
     expect(exitCode).toBe(1);
     expect(stderr.join("")).toBe("");
     const payload = JSON.parse(stdout.join(""));
@@ -154,7 +154,7 @@ describe("argument-parse errors under --json", () => {
   });
 
   it("emits a VALIDATION envelope for an invalid typed value", async () => {
-    const { code, exitCode } = await parse(["plans_list", "--limit", "abc", "--json"]);
+    const { code, exitCode } = await parse(["list_plans", "--limit", "abc", "--json"]);
     expect(code).toBe("commander.invalidArgument");
     expect(exitCode).toBe(1);
     const payload = JSON.parse(stdout.join(""));
@@ -165,7 +165,7 @@ describe("argument-parse errors under --json", () => {
 
 describe("argument-parse errors without --json (byte-identical to before)", () => {
   it("writes bare error text to stderr and no JSON to stdout", async () => {
-    const { code, exitCode } = await parse(["plan_status", "--plan_id", "p1", "--nope"]);
+    const { code, exitCode } = await parse(["get_plan_status", "--plan_id", "p1", "--nope"]);
 
     expect(code).toBe("commander.unknownOption");
     expect(exitCode).toBe(1);
@@ -180,7 +180,7 @@ describe("argument-parse errors without --json (byte-identical to before)", () =
     // Everything after the lone `--` is a positional value, so this `--json`
     // is data — the parse failure must take the TEXT path (stderr), NOT emit a
     // JSON envelope. Guards the argv scan against matching past the terminator.
-    const { code, exitCode } = await parse(["plan_status", "--plan_id", "p1", "--nope", "--", "--json"]);
+    const { code, exitCode } = await parse(["get_plan_status", "--plan_id", "p1", "--nope", "--", "--json"]);
 
     expect(code).toBe("commander.unknownOption");
     expect(exitCode).toBe(1);
@@ -194,14 +194,25 @@ describe("removed 3.x commands", () => {
     const { code, message } = await parse(["plans", "list", "--active", "--json"]);
     expect(code).toBe("COMMAND_REMOVED");
     expect(message).toContain("This command was removed in 4.0.");
-    expect(message).toContain("voyagier plans_list [flags]");
+    expect(message).toContain("voyagier list_plans [flags]");
   });
 
   it("name the planned tool when the server does not publish it yet", async () => {
-    const { code, message } = await parse(["whoami"]);
+    // Every replacement is live in the snapshot, so model a server that has
+    // not shipped whoami: the stub must exist and say the tool is upcoming.
+    const withoutWhoami = FIXTURE_TOOLS.filter((t) => t.name !== "whoami");
+    const { code, message } = await parse(["whoami"], withoutWhoami);
     expect(code).toBe("COMMAND_REMOVED");
     expect(message).toContain("voyagier whoami");
     expect(message).toMatch(/not yet published/);
+  });
+
+  it("leave a live tool of the same name in place (the generated command wins)", async () => {
+    // whoami is both a 3.x command and a server tool: the generated command wins.
+    const program = buildProgram("0.0.0-test", FIXTURE_TOOLS);
+    const cmd = program.commands.find((c) => c.name() === "whoami");
+    expect(cmd).toBeDefined();
+    expect((cmd as unknown as { _hidden?: boolean })._hidden).toBeFalsy();
   });
 
   it("say so when there is no replacement tool", async () => {
@@ -217,8 +228,19 @@ describe("help and version are unaffected", () => {
     expect(exitCode).toBe(0);
     const all = stdout.join("") + stderr.join("");
     expect(all).toContain("Usage:");
-    expect(all).toContain("plans_list");
+    expect(all).toContain("list_plans");
     expect(all).not.toContain('"error": true');
+  });
+
+  it("--help quick start uses the verb-first tool names with create_plan's required flags", async () => {
+    await parse(["--help"]);
+    const all = stdout.join("") + stderr.join("");
+    expect(all).toContain("voyagier list_plans --json");
+    expect(all).toContain('voyagier create_plan --client_id <CLIENT_ID> --title "Trip" --travel_destination_id <DEST_ID> --json');
+    expect(all).toContain("voyagier get_plan_status --plan_id <PLAN_ID> --json");
+    expect(all).toContain("voyagier get_plan_quote --plan_id <PLAN_ID> --json");
+    expect(all).toContain('voyagier search_tools --query "hotel dates" --json');
+    expect(all).not.toMatch(/voyagier (plans_list|plan_trip|plan_status|quote) /);
   });
 
   it("--help with --json in argv is still help, not a JSON error", async () => {
@@ -242,7 +264,7 @@ describe("argvRequestsJson (shared by parse-error and CliError paths)", () => {
   // src/index.ts uses this same helper for its top-level CliError handler, so
   // these cases pin JSON-mode detection for ALL error paths at once.
   it("detects --json as an option token", () => {
-    expect(argvRequestsJson(["node", "voyagier", "plans_list", "--json"])).toBe(true);
+    expect(argvRequestsJson(["node", "voyagier", "list_plans", "--json"])).toBe(true);
   });
 
   it("ignores --json after a bare -- terminator (positional data)", () => {
@@ -254,6 +276,6 @@ describe("argvRequestsJson (shared by parse-error and CliError paths)", () => {
   });
 
   it("is false when --json is absent", () => {
-    expect(argvRequestsJson(["node", "voyagier", "plans_list"])).toBe(false);
+    expect(argvRequestsJson(["node", "voyagier", "list_plans"])).toBe(false);
   });
 });

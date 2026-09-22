@@ -68,7 +68,7 @@ describe("agent-docs", () => {
       // No plan-building step sequence: no `book` invocation as a runnable line.
       const runnable = content.split("\n").filter((l) => /^\s*voyagier\s/.test(l));
       expect(runnable.some((l) => /^\s*voyagier\s+book\b/.test(l))).toBe(false);
-      expect(runnable.some((l) => /^\s*voyagier\s+plan_trip\b/.test(l))).toBe(false);
+      expect(runnable.some((l) => /^\s*voyagier\s+create_plan\b/.test(l))).toBe(false);
     });
 
     it("does not enumerate the server's tool list (it is the server's, read from tools/list)", () => {
@@ -101,9 +101,10 @@ describe("agent-docs", () => {
 
     it("documents the JSON result shape, the rate-limit ceiling and the stdio proxy", () => {
       if (!live) return;
-      expect(content).toContain('{ "<operation>": <payload> }');
-      // One placeholder vocabulary: the GraphQL-era name must not linger anywhere.
-      expect(content).not.toMatch(/graphqlOperation/);
+      // Results are the bare payload object; the envelope-era wording must not linger.
+      expect(content).toContain("A tool result is the tool's payload object, with no wrapper key.");
+      expect(content).not.toContain('{ "<operation>"');
+      expect(content).not.toMatch(/graphqlOperation|myTripPlans|tripPlanStatus|tripPlanQuote/);
       expect(content).toContain("180 requests per minute");
       expect(content).toContain("voyagier mcp");
       expect(content).toMatch(/proxy/);
@@ -117,7 +118,7 @@ describe("agent-docs", () => {
     it("documents the 3.x migration and the COMMAND_REMOVED behaviour", () => {
       if (!live) return;
       expect(content).toContain("## Migration from 3.x");
-      expect(content).toContain("`plan_trip`");
+      expect(content).toContain("`create_plan`");
       expect(content).toContain("COMMAND_REMOVED");
     });
 

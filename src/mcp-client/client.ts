@@ -30,6 +30,7 @@ export interface McpJsonSchema {
   description?: string;
   enum?: unknown[];
   items?: McpJsonSchema;
+  anyOf?: McpJsonSchema[];
   properties?: Record<string, McpJsonSchema>;
   required?: string[];
   default?: unknown;
