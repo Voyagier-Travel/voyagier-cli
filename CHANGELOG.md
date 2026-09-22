@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **Checked-in registry snapshot** (`src/mcp/fixtures/remote-tools.json`) refreshed from the server's registry export: `create_plan` no longer requires `client_id` (advisors pass the client the plan is for; trip planners omit it and the plan is created on their own client), the `list_clients` description follows, and the descriptions of `search_flights`, `get_search_status`, `select_option`, `refresh_options` and `get_plan_quote` plus the nullable `update_traveller --date_of_birth` match the published `tools/list`. Requires the matching server change (VOY-2315). README describes the two account tiers accordingly.
+
 ## [4.1.0] — 2026-09-21
 
 The hosted MCP server renamed its tools to verb-first names and grew from 30 to 80 published tools; this release brings the CLI's docs, human renderers and 3.x migration map up to that registry. The proxy and the generated command surface are unchanged: they always reflected the live `tools/list`.
