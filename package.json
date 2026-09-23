@@ -46,7 +46,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "chalk": "^6.0.0",
     "commander": "^15.0.0",
-    "zod": "^4.6.4"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@golevelup/ts-jest": "^3.0.0",
