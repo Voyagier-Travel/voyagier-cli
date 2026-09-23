@@ -168,7 +168,7 @@ Every 3.x trip-planning command is replaced by a tool. Running an old command pr
 | `clients list` / `get` / `create` / `update` | `list_clients` / `get_client` / `create_client` / `update_client` |
 | `plans goal-add` / `goal-update` / `goal-remove` | `add_goal` / `update_goal` / `delete_goal` |
 | `plans goal-assign-travellers` | `move_travellers` on the goal's selection (row ids from `get_plan_choices`); `update_goal` does not assign travellers |
-| `plans update` / `delete` | `update_plan` / `delete_plan` |
+| `plans update` / `delete` | `update_plan` / `archive_plan` |
 | `cart`, `quote`, `plans bookable` | `get_plan_quote` |
 | `book` | `book_plan` (gate is `--expect_total_cents` + `--item_ids` from `get_plan_quote`) |
 | `bookings list` / `get` | `list_bookings` / `get_booking` |
