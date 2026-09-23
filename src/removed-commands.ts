@@ -33,7 +33,7 @@ export const REMOVED_COMMANDS: readonly RemovedCommand[] = [
   { command: "plans get", tools: ["get_plan_status", "get_plan_itinerary", "get_plan_choices"], note: "There is no raw plan read; use the read view you need." },
   { command: "plans summary", tools: ["get_plan_itinerary"] },
   { command: "plans update", tools: ["update_plan"] },
-  { command: "plans delete", tools: ["delete_plan"] },
+  { command: "plans delete", tools: ["archive_plan"], note: "Plans are archived (hidden), not deleted." },
   { command: "plans items", tools: ["get_plan_status", "get_plan_choices"] },
   { command: "plans remove-item", tools: ["delete_goal"] },
   { command: "plans share", tools: ["share_plan", "invite_collaborator"], note: "share_plan grants the plan's client access; invite_collaborator adds another user." },

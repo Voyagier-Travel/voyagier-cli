@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 - **Checked-in registry snapshot** (`src/mcp/fixtures/remote-tools.json`) refreshed from the server's registry export: `create_plan` no longer requires `client_id` (advisors pass the client the plan is for; trip planners omit it and the plan is created on their own client) and the `list_clients` description follows. Every other descriptor is unchanged. Requires the matching server change (VOY-2315). README describes the two account tiers accordingly.
 - **Checked-in registry snapshot** gains `delete_client` (advisor-only, destructive: removes a client record that has no trip plans attached; the self client can never be deleted). Like every server tool it appears as `voyagier delete_client --client_id <CLIENT_ID>` on deploy with no CLI change. Requires the matching server change (VOY-2316).
+- **Checked-in registry snapshot** (`src/mcp/fixtures/remote-tools.json`) refreshed from the server's registry export: the server renamed `delete_plan` to `archive_plan` (archiving hides a plan from its owner, client and collaborators instead of deleting it). Like every server tool it appears as `voyagier archive_plan --plan_id <PLAN_ID>` on deploy with no CLI change; the 3.x migration map (`plans delete`) and AGENT.md now point at `archive_plan`. Every other descriptor is unchanged apart from the `get_plan_quote` description.
 
 ## [4.1.0] — 2026-09-21
 
@@ -75,7 +76,7 @@ Generated from `src/removed-commands.ts` — the same table drives the runtime r
 | `voyagier plans get` | `voyagier get_plan_status`, `voyagier get_plan_itinerary`, `voyagier get_plan_choices` | There is no raw plan read; use the read view you need. |
 | `voyagier plans summary` | `voyagier get_plan_itinerary` |  |
 | `voyagier plans update` | `voyagier update_plan` |  |
-| `voyagier plans delete` | `voyagier delete_plan` |  |
+| `voyagier plans delete` | `voyagier archive_plan` | Plans are archived (hidden), not deleted. |
 | `voyagier plans items` | `voyagier get_plan_status`, `voyagier get_plan_choices` |  |
 | `voyagier plans remove-item` | `voyagier delete_goal` |  |
 | `voyagier plans share` | `voyagier share_plan`, `voyagier invite_collaborator` | share_plan grants the plan's client access; invite_collaborator adds another user. |
