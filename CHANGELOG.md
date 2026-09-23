@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Changed
-- **Checked-in registry snapshot** (`src/mcp/fixtures/remote-tools.json`) refreshed from the server's registry export: `create_plan` no longer requires `client_id` (advisors pass the client the plan is for; trip planners omit it and the plan is created on their own client), the `list_clients` description follows, and the descriptions of `search_flights`, `get_search_status`, `select_option`, `refresh_options` and `get_plan_quote` plus the nullable `update_traveller --date_of_birth` match the published `tools/list`. Requires the matching server change (VOY-2315). README describes the two account tiers accordingly.
+- **Checked-in registry snapshot** (`src/mcp/fixtures/remote-tools.json`) refreshed from the server's registry export: `create_plan` no longer requires `client_id` (advisors pass the client the plan is for; trip planners omit it and the plan is created on their own client) and the `list_clients` description follows. Every other descriptor is unchanged. Requires the matching server change (VOY-2315). README describes the two account tiers accordingly.
 - **Checked-in registry snapshot** gains `delete_client` (advisor-only, destructive: removes a client record that has no trip plans attached; the self client can never be deleted). Like every server tool it appears as `voyagier delete_client --client_id <CLIENT_ID>` on deploy with no CLI change. Requires the matching server change (VOY-2316).
 
 ## [4.1.0] — 2026-09-21
