@@ -103,7 +103,8 @@ Flags follow the tool's input schema; see: voyagier <tool_name> --help
 AI Agent Quick Start:
   voyagier list_plans --json
   voyagier search_destinations --query "Lisbon" --json
-  voyagier create_plan --client_id <CLIENT_ID> --title "Trip" --travel_destination_id <DEST_ID> --json
+  voyagier create_plan --client_id <CLIENT_ID> --title "Trip" --travel_destination_id <DEST_ID> --json   # advisors: client_id from list_clients
+  voyagier create_plan --title "Trip" --travel_destination_id <DEST_ID> --json                          # trip planners: omit client_id (your own trip)
   voyagier get_plan_status --plan_id <PLAN_ID> --json
   voyagier get_plan_quote --plan_id <PLAN_ID> --json
   voyagier search_tools --query "hotel dates" --json

@@ -60,13 +60,19 @@ A trip plan is a **goal graph**. `create_plan` scaffolds the plan + goals (fligh
 # 0. Health check
 voyagier doctor --json
 
-# 1. Find or create the client — plans require one (planning for yourself: use the entry with isSelf: true)
+# 1. Advisors only: find or create the client the plan is for. Trip planners (planning your own
+#    travel) skip this step — create_plan puts the plan on your own client record automatically.
 voyagier list_clients --query "Doe" --json
 voyagier create_client --name "Doe Family" --client_type Individual --email "doe@example.com" --json
 
 # 2. Resolve the destination, then scaffold the plan with its party
 voyagier search_destinations --query "Lisbon" --json
+# advisors: pass the client
 voyagier create_plan --client_id <CLIENT_ID> --title "Doe — Lisbon" --travel_destination_id <DEST_ID> \
+  --start_date 2026-11-20 --end_date 2026-11-27 \
+  --travellers '[{"first_name":"Jane","last_name":"Doe","type":"Adult"}]' --json
+# trip planners: omit --client_id (the plan is your own trip)
+voyagier create_plan --title "Lisbon" --travel_destination_id <DEST_ID> \
   --start_date 2026-11-20 --end_date 2026-11-27 \
   --travellers '[{"first_name":"Jane","last_name":"Doe","type":"Adult"}]' --json
 
