@@ -94,12 +94,16 @@ function renderTopOptions(summary: Rec): string[] {
     }
     const p = price(opt.price, opt.currency);
     if (p) parts.push(chalk.green(p));
-    // The row's bookability STATE (exploration | decision | bookable |
-    // unavailable), never a "not bookable" verdict: journey and hotel rows are
-    // never the bookable unit; the Fare & Cabin fare / room rate leaf is.
-    const bookability = str(opt.bookability);
-    if (bookability === "unavailable") parts.push(chalk.yellow(bookability));
-    else if (bookability && bookability !== "bookable") parts.push(chalk.dim(bookability));
+    // stage says only where the row lives; an exploration row is tagged so.
+    // Only LEAF rows (fare, room rate, activity option) carry bookable +
+    // bookableReason — the same pair quote lines use. A journey or hotel row
+    // is never the bookable unit, so it gets no verdict of any kind.
+    if (str(opt.stage) === "exploration") parts.push(chalk.dim("exploration"));
+    if (opt.bookable === true) parts.push(chalk.green("bookable"));
+    else if (opt.bookable === false) {
+      const reason = str(opt.bookableReason);
+      parts.push(chalk.yellow(`not bookable${reason ? `: ${reason}` : ""}`));
+    }
     const t = tag(index);
     if (t) parts.push(t);
     lines.push(`  ${idx}  ${parts.join("  ·  ")}`);
@@ -190,7 +194,11 @@ export function renderPlanStatus(payload: unknown): string | null {
     }
     if (num(summary.goalsBooked) != null) bits.push(`booked ${summary.goalsBooked}`);
     if (num(summary.blockerCount) != null) bits.push(`blockers ${summary.blockerCount}`);
-    if (summary.bookableNow === true) bits.push(chalk.green("bookable now"));
+    // The plan-level bookable + bookableReason pair (was bookableNow).
+    if (summary.bookable === true) bits.push(chalk.green("bookable now"));
+    else if (summary.bookable === false && str(summary.bookableReason)) {
+      bits.push(chalk.yellow(`not bookable: ${String(summary.bookableReason)}`));
+    }
     if (bits.length) lines.push(`  ${bits.join("  ·  ")}`);
   }
 
@@ -198,7 +206,7 @@ export function renderPlanStatus(payload: unknown): string | null {
   if (cart) {
     const total = price(cart.total, cart.currency);
     lines.push(
-      `  cart: ${num(cart.itemCount) ?? 0} item(s), ${num(cart.bookableCount) ?? 0} bookable${total ? `, total ${chalk.green(total)}` : ""}`,
+      `  cart: ${num(cart.itemCount) ?? 0} item(s), ${num(cart.bookableItemCount) ?? 0} bookable${total ? `, total ${chalk.green(total)}` : ""}`,
     );
   }
 
