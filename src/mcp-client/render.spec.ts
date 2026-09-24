@@ -44,15 +44,17 @@ const SEARCH = {
         name: "TAP Air Portugal",
         price: 812.4,
         currency: "USD",
-        isBookable: true,
+        bookability: "exploration",
         airlines: ["TP"],
         segments: [
           { origin: "BWI", destination: "LIS", departureTime: "2026-11-20T17:40:00", arrivalTime: "2026-11-21T06:55:00", durationLabel: "8h 15m", stops: 0 },
           { origin: "LIS", destination: "BWI", departureTime: "2026-11-27T11:10:00", arrivalTime: "2026-11-27T15:05:00", durationLabel: "8h 55m", stops: 1 },
         ],
       },
-      { index: 1, optionId: "opt-2", name: "Grand Hotel", price: 1290, currency: "USD", rating: 4.5, amenities: ["Pool", "Spa", "Gym", "Bar", "Wifi"] },
+      { index: 1, optionId: "opt-2", name: "Grand Hotel", price: 1290, currency: "USD", bookability: "exploration", rating: 4.5, amenities: ["Pool", "Spa", "Gym", "Bar", "Wifi"] },
     ],
+    nextStep:
+      "Exploration results are not on a plan. To book one: promote_search with its listing_id onto the plan’s outbound goal, select_option the journey, then decide the Fare & Cabin choice, get_plan_quote, book_plan.",
     callouts: { cheapestIndex: 0, fastestIndex: 0, highestRatedIndex: 1 },
   },
 };
@@ -84,10 +86,53 @@ describe("renderSearchResult", () => {
     const out = strip(renderToolPayload("search_flights", SEARCH));
     expect(out).toContain("status Ready");
     expect(out).toContain("id srch-1");
-    expect(out).toContain("[0]  TP  ·  BWI→LIS 17:40–06:55 8h 15m nonstop  ·  LIS→BWI 11:10–15:05 8h 55m 1 stop  ·  $812.40  ·  [cheapest, fastest]");
+    expect(out).toContain("[0]  TP  ·  BWI→LIS 17:40–06:55 8h 15m nonstop  ·  LIS→BWI 11:10–15:05 8h 55m 1 stop  ·  $812.40  ·  exploration  ·  [cheapest, fastest]");
     expect(out).toContain("option_id opt-1");
-    expect(out).toContain("[1]  Grand Hotel  ·  ⭐4.5  ·  Pool, Spa, Gym, Bar  ·  $1,290.00  ·  [top rated]");
+    expect(out).toContain("[1]  Grand Hotel  ·  ⭐4.5  ·  Pool, Spa, Gym, Bar  ·  $1,290.00  ·  exploration  ·  [top rated]");
     expect(out).toContain("… 40 more (showing top 2)");
+    expect(out).toContain("next: Exploration results are not on a plan. To book one: promote_search with its listing_id");
+    expect(out).not.toContain("not bookable");
+  });
+
+  // The server replaced the row boolean isBookable with a bookability STATE
+  // and a one-sentence nextStep: a journey or hotel row is never the bookable
+  // unit, so the renderer names the state and never prints a verdict.
+  it("tags each row with its bookability state, never a not-bookable verdict, and prints the next step", () => {
+    const out = strip(
+      renderSearchResult({
+        id: "s",
+        type: "Hotel",
+        status: "Ready",
+        optionsSummary: {
+          optionCount: 3,
+          topOptions: [
+            { index: 1, optionId: "a", name: "Hotel A", price: 100, currency: "USD", bookability: "decision" },
+            { index: 2, optionId: "b", name: "Hotel B", price: 200, currency: "USD", bookability: "unavailable" },
+            { index: 3, optionId: "c", name: "Flexible Rate", price: 300, currency: "USD", bookability: "bookable" },
+          ],
+          nextStep: "Selecting a hotel creates the Room and Rate choices; bookability lives on the rate row.",
+        },
+      }),
+    );
+    expect(out).toContain("[1]  Hotel A  ·  $100.00  ·  decision");
+    expect(out).toContain("[2]  Hotel B  ·  $200.00  ·  unavailable");
+    expect(out).toContain("[3]  Flexible Rate  ·  $300.00\n");
+    expect(out).not.toContain("bookable  ·");
+    expect(out).toContain("next: Selecting a hotel creates the Room and Rate choices; bookability lives on the rate row.");
+    expect(out).not.toContain("not bookable");
+  });
+
+  it("prints no next step and no state tag when the server sends neither", () => {
+    const out = strip(
+      renderSearchResult({
+        id: "s",
+        status: "Ready",
+        optionsSummary: { optionCount: 1, topOptions: [{ index: 1, optionId: "a", name: "Hotel A", price: 100, currency: "USD", isBookable: false }] },
+      }),
+    );
+    expect(out).toContain("[1]  Hotel A  ·  $100.00\n");
+    expect(out).not.toContain("not bookable");
+    expect(out).not.toContain("next:");
   });
 
   it("says when a search is still fetching and surfaces fetchError", () => {

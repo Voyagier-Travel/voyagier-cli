@@ -94,7 +94,12 @@ function renderTopOptions(summary: Rec): string[] {
     }
     const p = price(opt.price, opt.currency);
     if (p) parts.push(chalk.green(p));
-    if (opt.isBookable === false) parts.push(chalk.dim("not bookable"));
+    // The row's bookability STATE (exploration | decision | bookable |
+    // unavailable), never a "not bookable" verdict: journey and hotel rows are
+    // never the bookable unit; the Fare & Cabin fare / room rate leaf is.
+    const bookability = str(opt.bookability);
+    if (bookability === "unavailable") parts.push(chalk.yellow(bookability));
+    else if (bookability && bookability !== "bookable") parts.push(chalk.dim(bookability));
     const t = tag(index);
     if (t) parts.push(t);
     lines.push(`  ${idx}  ${parts.join("  ·  ")}`);
@@ -105,6 +110,9 @@ function renderTopOptions(summary: Rec): string[] {
   if (count != null && count > options.length) {
     lines.push(chalk.dim(`  … ${count - options.length} more (showing top ${options.length})`));
   }
+  // The server's one-sentence next step for exploration and decision rows.
+  const nextStep = str(summary.nextStep);
+  if (nextStep) lines.push(chalk.dim(`  next: ${nextStep}`));
   return lines;
 }
 
