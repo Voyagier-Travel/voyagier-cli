@@ -95,9 +95,10 @@ function renderTopOptions(summary: Rec): string[] {
     const p = price(opt.price, opt.currency);
     if (p) parts.push(chalk.green(p));
     // stage says only where the row lives; an exploration row is tagged so.
-    // Only LEAF rows (fare, room rate, activity option) carry bookable +
-    // bookableReason — the same pair quote lines use. A journey or hotel row
-    // is never the bookable unit, so it gets no verdict of any kind.
+    // Only rows that book as themselves (fare, room rate, activity option,
+    // imported or custom item) carry bookable + bookableReason — the same pair
+    // quote lines use. A journey or hotel row is never the bookable unit, so
+    // it gets no verdict of any kind.
     if (str(opt.stage) === "exploration") parts.push(chalk.dim("exploration"));
     if (opt.bookable === true) parts.push(chalk.green("bookable"));
     else if (opt.bookable === false) {
