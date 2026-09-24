@@ -46,7 +46,7 @@ Read a tool's `--help` before calling it, and follow the server's `instructions`
 
 **Use ids in full.** Option, selection, goal and plan ids are the whole uuid a tool returned. Never paste supplier text (hotel names, fare descriptions) into a flag; use the id.
 
-**Hotel search.** For a neighbourhood, write `--location "District, City"` (`"Shinjuku, Tokyo"`) — the search anchors there at 3 mi — and pass `--country JP` when you know it; every hotel row carries `distanceMi` from the searched point, and `--radius_miles` overrides the default radius.
+**Hotel search.** For a neighbourhood, write `--location "District, City"` (`"Shinjuku, Tokyo"`) — the search anchors there at 3 mi — and pass `--country JP` when you know it. A hotel row carries `distanceMi` (miles from the searched point) when the server could place the property; treat it as optional and never assume it on every row. `--radius_miles` overrides the default radius.
 
 ---
 

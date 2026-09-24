@@ -103,8 +103,9 @@ describe("renderSearchResult", () => {
     expect(renderSearchResult("x")).toBeNull();
   });
 
-  // Hotel rows carry distanceMi from the searched point (server-computed, in
-  // miles); the digest shows it after the rating and omits it when absent.
+  // Hotel rows may carry distanceMi from the searched point (server-computed,
+  // in miles); the digest shows it after the rating, always with one decimal,
+  // and omits it when absent.
   it("shows a hotel row's distanceMi as `· 1.2 mi`, in the server's order, and nothing when the row has none", () => {
     const out = strip(
       renderSearchResult({
@@ -124,6 +125,25 @@ describe("renderSearchResult", () => {
     expect(out).toContain("[1]  Kimpton Shinjuku  ·  $400.00");
     expect(out).not.toContain("undefined mi");
     expect(out.indexOf("Park Hyatt Tokyo")).toBeLessThan(out.indexOf("Kimpton Shinjuku"));
+  });
+
+  it("formats a whole-number distanceMi with one decimal so rows line up", () => {
+    const out = strip(
+      renderSearchResult({
+        id: "s",
+        type: "Hotel",
+        status: "Ready",
+        optionsSummary: {
+          optionCount: 2,
+          topOptions: [
+            { index: 0, optionId: "h-two", name: "Hotel Gracery", price: 200, currency: "USD", rating: 4.1, distanceMi: 2 },
+            { index: 1, optionId: "h-zero", name: "Hotel Sunroute", price: 150, currency: "USD", distanceMi: 0 },
+          ],
+        },
+      }),
+    );
+    expect(out).toContain("[0]  Hotel Gracery  ·  ⭐4.1  ·  2.0 mi  ·  $200.00");
+    expect(out).toContain("[1]  Hotel Sunroute  ·  0.0 mi  ·  $150.00");
   });
 });
 
