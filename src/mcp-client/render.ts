@@ -87,6 +87,9 @@ function renderTopOptions(summary: Rec): string[] {
       if (name) parts.push(chalk.white(name));
       const rating = num(opt.rating);
       if (rating != null) parts.push(chalk.yellow(`⭐${rating}`));
+      // Hotel rows: miles from the searched point, as the server computed it.
+      const distanceMi = num(opt.distanceMi);
+      if (distanceMi != null) parts.push(chalk.dim(`${distanceMi} mi`));
       const amenities = arr(opt.amenities).map(String);
       if (amenities.length) parts.push(chalk.dim(amenities.slice(0, 4).join(", ")));
       const duration = str(opt.durationLabel);
