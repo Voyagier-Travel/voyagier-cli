@@ -15,7 +15,7 @@ const PLAN_STATUS = {
   tripPlanId: "plan-1",
   title: "Doe — Lisbon",
   readiness: "Blocked",
-  summary: { goalsTotal: 4, goalsDecided: 2, goalsBooked: 0, blockerCount: 2, bookableNow: false },
+  summary: { goalsTotal: 4, goalsDecided: 2, goalsBooked: 0, blockerCount: 2, bookable: false, bookableReason: "The cart holds no bookable item yet." },
   blockers: [
     { kind: "TravellerData", message: "Jane Doe is missing dateOfBirth", refs: { travellerId: "trv-1" } },
     { kind: "RequirementUnmet", message: "Flights: Cabin class", unverified: true, refs: { goalId: "g-1", selectionId: "s-1" } },
@@ -23,7 +23,7 @@ const PLAN_STATUS = {
   nextActions: [{ action: "SelectOption", detail: "Pick a fare", selectionId: "s-1" }],
   waiting: [{ kind: "OptionsPending", message: "Hotel inventory is loading", refs: { selectionId: "s-2" } }],
   travellers: [{ travellerId: "trv-1", name: "Jane Doe", missing: ["dateOfBirth"] }],
-  cart: { itemCount: 1, bookableCount: 0, total: 412.5, currency: "USD" },
+  cart: { itemCount: 1, bookableItemCount: 0, total: 412.5, currency: "USD" },
   goals: [
     { goalId: "g-1", name: "Flights", type: "Flight", isDecided: true, isReady: true },
     { goalId: "g-2", name: "Accommodation", type: "Hotel", isDecided: false, isReady: false },
@@ -44,15 +44,17 @@ const SEARCH = {
         name: "TAP Air Portugal",
         price: 812.4,
         currency: "USD",
-        isBookable: true,
+        stage: "exploration",
         airlines: ["TP"],
         segments: [
           { origin: "BWI", destination: "LIS", departureTime: "2026-11-20T17:40:00", arrivalTime: "2026-11-21T06:55:00", durationLabel: "8h 15m", stops: 0 },
           { origin: "LIS", destination: "BWI", departureTime: "2026-11-27T11:10:00", arrivalTime: "2026-11-27T15:05:00", durationLabel: "8h 55m", stops: 1 },
         ],
       },
-      { index: 1, optionId: "opt-2", name: "Grand Hotel", price: 1290, currency: "USD", rating: 4.5, amenities: ["Pool", "Spa", "Gym", "Bar", "Wifi"] },
+      { index: 1, optionId: "opt-2", name: "Grand Hotel", price: 1290, currency: "USD", stage: "exploration", rating: 4.5, amenities: ["Pool", "Spa", "Gym", "Bar", "Wifi"] },
     ],
+    nextStep:
+      "Exploration results are not on a plan. To book one: promote_search with its listing_id onto the plan’s outbound goal, select_option the journey, then decide the Fare & Cabin choice, get_plan_quote, book_plan.",
     callouts: { cheapestIndex: 0, fastestIndex: 0, highestRatedIndex: 1 },
   },
 };
@@ -64,6 +66,7 @@ describe("renderPlanStatus", () => {
     expect(out).toContain("readiness Blocked");
     expect(out).toContain("goals decided 2/4");
     expect(out).toContain("cart: 1 item(s), 0 bookable, total $412.50");
+    expect(out).toContain("not bookable: The cart holds no bookable item yet.");
     expect(out).toMatch(/decided\s+Flights \(Flight\) goal_id g-1/);
     expect(out).toMatch(/open\s+Accommodation \(Hotel\)/);
     expect(out).toContain("TravellerData: Jane Doe is missing dateOfBirth");
@@ -71,6 +74,22 @@ describe("renderPlanStatus", () => {
     expect(out).toContain("OptionsPending: Hotel inventory is loading");
     expect(out).toContain("Jane Doe: dateOfBirth traveller_id trv-1");
     expect(out).toContain("SelectOption: Pick a fare  (selectionId s-1)");
+  });
+
+  it("reads the plan-level bookable pair: green when bookable, the server's reason when not", () => {
+    const ready = strip(
+      renderPlanStatus({
+        ...PLAN_STATUS,
+        readiness: "ReadyToBook",
+        summary: { ...PLAN_STATUS.summary, bookable: true, bookableReason: null },
+        cart: { itemCount: 2, bookableItemCount: 2, total: 812.4, currency: "USD" },
+      }),
+    );
+    expect(ready).toContain("bookable now");
+    expect(ready).toContain("cart: 2 item(s), 2 bookable, total $812.40");
+    expect(ready).not.toContain("not bookable");
+    const legacy = strip(renderPlanStatus({ ...PLAN_STATUS, summary: { goalsTotal: 1, goalsDecided: 0, goalsBooked: 0, blockerCount: 0, bookableNow: true } }));
+    expect(legacy).not.toContain("bookable now");
   });
 
   it("returns null for a shape without readiness", () => {
@@ -84,10 +103,53 @@ describe("renderSearchResult", () => {
     const out = strip(renderToolPayload("search_flights", SEARCH));
     expect(out).toContain("status Ready");
     expect(out).toContain("id srch-1");
-    expect(out).toContain("[0]  TP  ·  BWI→LIS 17:40–06:55 8h 15m nonstop  ·  LIS→BWI 11:10–15:05 8h 55m 1 stop  ·  $812.40  ·  [cheapest, fastest]");
+    expect(out).toContain("[0]  TP  ·  BWI→LIS 17:40–06:55 8h 15m nonstop  ·  LIS→BWI 11:10–15:05 8h 55m 1 stop  ·  $812.40  ·  exploration  ·  [cheapest, fastest]");
     expect(out).toContain("option_id opt-1");
-    expect(out).toContain("[1]  Grand Hotel  ·  ⭐4.5  ·  Pool, Spa, Gym, Bar  ·  $1,290.00  ·  [top rated]");
+    expect(out).toContain("[1]  Grand Hotel  ·  ⭐4.5  ·  Pool, Spa, Gym, Bar  ·  $1,290.00  ·  exploration  ·  [top rated]");
     expect(out).toContain("… 40 more (showing top 2)");
+    expect(out).toContain("next: Exploration results are not on a plan. To book one: promote_search with its listing_id");
+    expect(out).not.toContain("not bookable");
+  });
+
+  // The server replaced the row boolean isBookable with `stage` (where the
+  // row lives) and, on LEAF rows only, the quote pair bookable + bookableReason.
+  // A journey or hotel row is never the bookable unit, so the renderer prints
+  // no verdict for it; a leaf's verdict comes with the server's reason.
+  it("tags exploration rows, prints the leaf pair only where the server sends it, and prints the next step", () => {
+    const out = strip(
+      renderSearchResult({
+        id: "s",
+        type: "Hotel",
+        status: "Ready",
+        optionsSummary: {
+          optionCount: 3,
+          topOptions: [
+            { index: 1, optionId: "a", name: "Hotel A", price: 100, currency: "USD", stage: "on_plan" },
+            { index: 2, optionId: "b", name: "Flexible Rate", price: 200, currency: "USD", stage: "on_plan", bookable: true, bookableReason: null },
+            { index: 3, optionId: "c", name: "Sold-out Rate", price: 300, currency: "USD", stage: "on_plan", bookable: false, bookableReason: "Not available from the supplier for these dates." },
+          ],
+          nextStep: "Selecting a hotel creates the Room and Rate choices; the rate rows carry bookable.",
+        },
+      }),
+    );
+    expect(out).toContain("[1]  Hotel A  ·  $100.00\n");
+    expect(out).toContain("[2]  Flexible Rate  ·  $200.00  ·  bookable\n");
+    expect(out).toContain("[3]  Sold-out Rate  ·  $300.00  ·  not bookable: Not available from the supplier for these dates.");
+    expect(out).not.toContain("on_plan");
+    expect(out).toContain("next: Selecting a hotel creates the Room and Rate choices; the rate rows carry bookable.");
+  });
+
+  it("prints no verdict and no next step when the server sends neither, even for a legacy isBookable row", () => {
+    const out = strip(
+      renderSearchResult({
+        id: "s",
+        status: "Ready",
+        optionsSummary: { optionCount: 1, topOptions: [{ index: 1, optionId: "a", name: "Hotel A", price: 100, currency: "USD", isBookable: false }] },
+      }),
+    );
+    expect(out).toContain("[1]  Hotel A  ·  $100.00\n");
+    expect(out).not.toContain("bookable");
+    expect(out).not.toContain("next:");
   });
 
   it("says when a search is still fetching and surfaces fetchError", () => {

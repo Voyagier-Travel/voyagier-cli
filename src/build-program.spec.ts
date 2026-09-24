@@ -236,7 +236,9 @@ describe("help and version are unaffected", () => {
     await parse(["--help"]);
     const all = stdout.join("") + stderr.join("");
     expect(all).toContain("voyagier list_plans --json");
-    expect(all).toContain('voyagier create_plan --client_id <CLIENT_ID> --title "Trip" --travel_destination_id <DEST_ID> --json');
+    // Account-appropriate invocations: advisors pass client_id, trip planners omit it.
+    expect(all).toContain('voyagier create_plan --client_id <CLIENT_ID> --title "Trip" --travel_destination_id <DEST_ID> --json   # advisors: client_id from list_clients');
+    expect(all).toContain('voyagier create_plan --title "Trip" --travel_destination_id <DEST_ID> --json                          # trip planners: omit client_id (your own trip)');
     expect(all).toContain("voyagier get_plan_status --plan_id <PLAN_ID> --json");
     expect(all).toContain("voyagier get_plan_quote --plan_id <PLAN_ID> --json");
     expect(all).toContain('voyagier search_tools --query "hotel dates" --json');
