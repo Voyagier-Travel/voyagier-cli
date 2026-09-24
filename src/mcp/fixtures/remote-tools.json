@@ -549,7 +549,7 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 9,
-          "description": "Adult passengers (default 1). 12–17s count here."
+          "description": "Passengers aged 18+ (default 1). Put 12–17s in children_ages, never here as well — the search counts them as adults itself."
         },
         "children_ages": {
           "type": "array",
@@ -558,7 +558,7 @@
             "minimum": 0,
             "maximum": 17
           },
-          "description": "Ages (at travel) of under-18 travellers. Under-2s travel as lap infants."
+          "description": "Ages (at travel) of every under-18 traveller, listed once — here, never also in adults. 12–17s price as adults, 2–11s as children, under-2s travel as lap infants."
         },
         "max_stops": {
           "type": "integer",
@@ -627,7 +627,7 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 32,
-          "description": "Adult guests (default 1). 12–17s count here. Max 9 guests PER ROOM — large parties need rooms."
+          "description": "Guests aged 18+ (default 1). Put 12–17s in children_ages, never here as well — the search counts them as adults itself. Max 9 guests PER ROOM — large parties need rooms."
         },
         "children_ages": {
           "type": "array",
@@ -636,7 +636,7 @@
             "minimum": 0,
             "maximum": 17
           },
-          "description": "Ages of under-18 guests (under-12s price as children)."
+          "description": "Ages of every under-18 guest, listed once — here, never also in adults. 12–17s count as adults; under-12s price as children."
         },
         "rooms": {
           "type": "integer",
