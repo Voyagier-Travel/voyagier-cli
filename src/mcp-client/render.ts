@@ -98,12 +98,10 @@ function renderTopOptions(summary: Rec): string[] {
     }
     const p = price(opt.price, opt.currency);
     if (p) parts.push(chalk.green(p));
-    // stage says only where the row lives; an exploration row is tagged so.
     // Only rows that book as themselves (fare, room rate, activity option,
     // imported or custom item) carry bookable + bookableReason — the same pair
-    // quote lines use. A journey or hotel row is never the bookable unit, so
-    // it gets no verdict of any kind.
-    if (str(opt.stage) === "exploration") parts.push(chalk.dim("exploration"));
+    // quote lines use. Every other row, and every search-result row, carries
+    // no bookable key at all, so it gets no verdict of any kind.
     if (opt.bookable === true) parts.push(chalk.green("bookable"));
     else if (opt.bookable === false) {
       const reason = str(opt.bookableReason);
@@ -119,9 +117,6 @@ function renderTopOptions(summary: Rec): string[] {
   if (count != null && count > options.length) {
     lines.push(chalk.dim(`  … ${count - options.length} more (showing top ${options.length})`));
   }
-  // The server's one-sentence next step for exploration and decision rows.
-  const nextStep = str(summary.nextStep);
-  if (nextStep) lines.push(chalk.dim(`  next: ${nextStep}`));
   return lines;
 }
 
@@ -199,11 +194,7 @@ export function renderPlanStatus(payload: unknown): string | null {
     }
     if (num(summary.goalsBooked) != null) bits.push(`booked ${summary.goalsBooked}`);
     if (num(summary.blockerCount) != null) bits.push(`blockers ${summary.blockerCount}`);
-    // The plan-level bookable + bookableReason pair (was bookableNow).
-    if (summary.bookable === true) bits.push(chalk.green("bookable now"));
-    else if (summary.bookable === false && str(summary.bookableReason)) {
-      bits.push(chalk.yellow(`not bookable: ${String(summary.bookableReason)}`));
-    }
+    if (summary.bookableNow === true) bits.push(chalk.green("bookable now"));
     if (bits.length) lines.push(`  ${bits.join("  ·  ")}`);
   }
 
@@ -211,7 +202,7 @@ export function renderPlanStatus(payload: unknown): string | null {
   if (cart) {
     const total = price(cart.total, cart.currency);
     lines.push(
-      `  cart: ${num(cart.itemCount) ?? 0} item(s), ${num(cart.bookableItemCount) ?? 0} bookable${total ? `, total ${chalk.green(total)}` : ""}`,
+      `  cart: ${num(cart.itemCount) ?? 0} item(s), ${num(cart.bookableCount) ?? 0} bookable${total ? `, total ${chalk.green(total)}` : ""}`,
     );
   }
 
