@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [4.2.0] — 2026-09-25
+
+Registry snapshot catch-up plus two digest changes. The hotel distance / `country` / `radius_miles` entry and the bookable-pair entry describe the server contract the CLI now renders; each reaches your commands when the matching server change deploys (VOY-2350 / VOY-2340).
+
 ### Added
 - **Hotel distance on the options digest.** A hotel row on `search_hotels`, `get_search_status`, `promote_search` and `get_options` output shows `· 1.2 mi` when the server's `optionsSummary.topOptions[].distanceMi` is present (miles from the searched point, one decimal); rows without one are unchanged. Checked-in registry snapshot (`src/mcp/fixtures/remote-tools.json`) refreshed from the server's registry export: `search_hotels` gains optional `country` (ISO 3166-1 alpha-2) and `radius_miles` flags and its description says to write `District, City` for a neighbourhood (the search anchors there at 3 mi; `radius_miles` overrides); hotel rows carry `distanceMi`. Requires the matching server change (VOY-2350 / VOY-2351). AGENT.md gains one line on hotel search.
 
