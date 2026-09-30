@@ -2,7 +2,7 @@ import { describe, it, expect } from "@jest/globals";
 import { Command } from "commander";
 import { readFileSync } from "node:fs";
 import type { McpJsonSchema, McpToolDescriptor } from "./client.js";
-import { applyFlagsToCommand, attributeName, buildToolArguments, flagSpecsFromSchema, optionForSpec, parseBoolean } from "./schema-flags.js";
+import { applyFlagsToCommand, attributeName, buildToolArguments, flagSpecsFromSchema, optionForSpec, parseBoolean, resolveRef } from "./schema-flags.js";
 
 const FIXTURE_TOOLS: McpToolDescriptor[] = JSON.parse(
   readFileSync(new URL("../mcp/fixtures/remote-tools.json", import.meta.url), "utf-8"),
@@ -158,6 +158,97 @@ describe("flagSpecsFromSchema", () => {
     }
   });
 
+  it("resolves a local $ref on an items schema, so the fixture's exclude_airlines is a repeatable string flag like airlines", () => {
+    for (const name of ["search_flights", "get_search_status"]) {
+      const specs = Object.fromEntries(flagSpecsFromSchema(tool(name).inputSchema).map((s) => [s.param, s]));
+      expect(specs.airlines).toMatchObject({ kind: "array", itemKind: "string" });
+      expect(specs.exclude_airlines).toMatchObject({ kind: "array", itemKind: "string" });
+      expect(specs.exclude_airlines.jsonShape).toBeUndefined();
+      // The referrer's own description is kept, not the target's.
+      expect(specs.exclude_airlines.description).toMatch(/^Never these airlines/);
+      expect(optionForSpec(specs.exclude_airlines).flags).toBe("--exclude_airlines <value...>");
+    }
+  });
+
+  it("resolves #/definitions and #/$defs references on properties and items, chained, with sibling keywords winning", () => {
+    const schema: McpJsonSchema = {
+      type: "object",
+      definitions: {
+        code: { type: "string", pattern: "^[A-Z]{2}$", description: "target text" },
+        codes: { type: "array", items: { $ref: "#/definitions/code" } },
+        "a/b": { type: "integer" },
+        a: { b: { type: "boolean" } },
+        "x~1": { type: "number" },
+      },
+      $defs: { count: { type: "integer" }, alias: { $ref: "#/definitions/codes" }, deep: { $ref: "#/$defs/alias" } },
+      properties: {
+        one: { $ref: "#/definitions/code" },
+        described: { $ref: "#/definitions/code", description: "mine" },
+        many: { type: "array", items: { $ref: "#/definitions/code" } },
+        viaDefs: { $ref: "#/$defs/count" },
+        list: { $ref: "#/definitions/codes" },
+        chained: { $ref: "#/$defs/deep" },
+        nullableRef: { anyOf: [{ $ref: "#/definitions/codes" }, { type: "null" }] },
+        viaProperty: { $ref: "#/properties/one" },
+        escaped: { $ref: "#/definitions/a~1b" },
+        // RFC 6901 §6: the fragment is percent-decoded as a whole, so %2F is a separator.
+        percentSlash: { $ref: "#/definitions/a%2Fb" },
+        // RFC 6901 §4: ~1 is unescaped before ~0, so ~01 is the literal key "x~1".
+        tildeOrder: { $ref: "#/definitions/x~01" },
+      },
+    };
+    const specs = Object.fromEntries(flagSpecsFromSchema(schema).map((s) => [s.param, s]));
+    expect(specs.one).toMatchObject({ kind: "string", description: "target text" });
+    expect(specs.described).toMatchObject({ kind: "string", description: "mine" });
+    expect(specs.many).toMatchObject({ kind: "array", itemKind: "string" });
+    expect(specs.viaDefs).toMatchObject({ kind: "integer" });
+    expect(specs.list).toMatchObject({ kind: "array", itemKind: "string" });
+    expect(specs.chained).toMatchObject({ kind: "array", itemKind: "string" });
+    expect(specs.nullableRef).toMatchObject({ kind: "array", itemKind: "string", nullable: true });
+    expect(specs.viaProperty).toMatchObject({ kind: "string", description: "target text" });
+    expect(specs.escaped).toMatchObject({ kind: "integer" });
+    expect(specs.percentSlash).toMatchObject({ kind: "boolean" });
+    expect(specs.tildeOrder).toMatchObject({ kind: "number" });
+  });
+
+  it("leaves a reference it cannot resolve locally as a JSON flag, and never loops on a cycle", () => {
+    const schema: McpJsonSchema = {
+      type: "object",
+      definitions: { a: { $ref: "#/definitions/b" }, b: { $ref: "#/definitions/a" } },
+      properties: {
+        dangling: { $ref: "#/definitions/missing" },
+        remote: { $ref: "https://example.test/schema.json#/x" },
+        cyclic: { $ref: "#/definitions/a" },
+        danglingItems: { type: "array", items: { $ref: "#/definitions/missing" } },
+      },
+    };
+    const specs = Object.fromEntries(flagSpecsFromSchema(schema).map((s) => [s.param, s]));
+    expect(specs.dangling).toMatchObject({ kind: "json" });
+    expect(specs.remote).toMatchObject({ kind: "json" });
+    expect(specs.cyclic).toMatchObject({ kind: "json" });
+    expect(specs.danglingItems).toMatchObject({ kind: "json", jsonShape: "array" });
+    // The resolver hands back the node minus $ref, so callers never see one.
+    expect(resolveRef(schema, { $ref: "#/definitions/a" })).toEqual({});
+    expect(resolveRef(schema, { type: "string" })).toEqual({ type: "string" });
+  });
+
+  it("gives every repeatable array flag a --no-<flag> companion that sends [], and nothing else one", () => {
+    const specs = flagSpecsFromSchema(tool("get_search_status").inputSchema);
+    const cmd = new Command("get_search_status");
+    applyFlagsToCommand(cmd, specs);
+    const longs = cmd.options.map((o) => o.long);
+    expect(longs).toEqual(expect.arrayContaining(["--airlines", "--no-airlines", "--exclude_airlines", "--no-exclude_airlines"]));
+    expect(longs).not.toContain("--no-search_id");
+    expect(longs).not.toContain("--no-limit");
+    expect(longs).not.toContain("--no-sort");
+    const negated = cmd.options.find((o) => o.long === "--no-airlines")!;
+    expect(negated.description).toBe("Send an empty list for --airlines (where the tool clears a stored value on []).");
+    // JSON-array flags take the literal `[]`; they get no negation.
+    const travellers = new Command("add_travellers");
+    applyFlagsToCommand(travellers, flagSpecsFromSchema(tool("add_travellers").inputSchema));
+    expect(travellers.options.map((o) => o.long)).not.toContain("--no-travellers");
+  });
+
   it("handles an absent or empty schema", () => {
     expect(flagSpecsFromSchema(undefined)).toEqual([]);
     expect(flagSpecsFromSchema({ type: "object" })).toEqual([]);
@@ -284,6 +375,45 @@ describe("parsing flags into tool arguments", () => {
         message: expect.stringContaining("cannot be combined with other values"),
       });
     }
+  });
+
+  it("sends [] for --no-<flag> on an array flag, nothing when the flag is omitted, and the last spelling wins", async () => {
+    expect(await parseArgs("get_search_status", ["--search_id", "s"])).toEqual({ search_id: "s" });
+    expect(await parseArgs("get_search_status", ["--search_id", "s", "--no-airlines"])).toEqual({ search_id: "s", airlines: [] });
+    expect(await parseArgs("get_search_status", ["--search_id", "s", "--no-airlines", "--no-exclude_airlines"])).toEqual({
+      search_id: "s",
+      airlines: [],
+      exclude_airlines: [],
+    });
+    // The referenced items schema parses exactly like the inline one.
+    expect(await parseArgs("get_search_status", ["--search_id", "s", "--exclude_airlines", "UA", "DL"])).toEqual({ search_id: "s", exclude_airlines: ["UA", "DL"] });
+    expect(await parseArgs("search_flights", ["--from", "BWI", "--to", "LIS", "--date", "2026-11-20", "--exclude_airlines", "UA", "--exclude_airlines", "DL", "--airlines", "TP"])).toEqual({
+      from: "BWI",
+      to: "LIS",
+      date: "2026-11-20",
+      exclude_airlines: ["UA", "DL"],
+      airlines: ["TP"],
+    });
+    // Commander's negation shares the attribute: whichever comes last wins.
+    expect(await parseArgs("get_search_status", ["--search_id", "s", "--airlines", "UA", "--no-airlines"])).toEqual({ search_id: "s", airlines: [] });
+    expect(await parseArgs("get_search_status", ["--search_id", "s", "--no-airlines", "--airlines", "UA", "DL"])).toEqual({ search_id: "s", airlines: ["UA", "DL"] });
+    // A literal "[]" is a value, not a clear.
+    expect(await parseArgs("get_search_status", ["--search_id", "s", "--airlines", "[]"])).toEqual({ search_id: "s", airlines: ["[]"] });
+    // Numeric arrays negate the same way.
+    expect(await parseArgs("search_hotels", ["--location", "Lisbon", "--checkin", "2026-10-01", "--checkout", "2026-10-04", "--no-children_ages"])).toEqual({
+      location: "Lisbon",
+      checkin: "2026-10-01",
+      checkout: "2026-10-04",
+      children_ages: [],
+    });
+  });
+
+  it("--no-<flag> and the null sentinel are distinct on a nullable array: [] versus null", async () => {
+    const schema: McpJsonSchema = { type: "object", properties: { tags: { type: ["array", "null"], items: { type: "string" } } } };
+    expect(await parseSchema("t", schema, ["--no-tags"])).toEqual({ tags: [] });
+    expect(await parseSchema("t", schema, ["--tags", "null"])).toEqual({ tags: null });
+    expect(await parseSchema("t", schema, ["--no-tags", "--tags", "null"])).toEqual({ tags: null });
+    expect(await parseSchema("t", schema, ["--tags", "null", "--no-tags"])).toEqual({ tags: [] });
   });
 
   it("every fixture tool registers without option-name conflicts", () => {
