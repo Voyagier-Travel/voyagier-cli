@@ -90,7 +90,7 @@ export const REMOVED_COMMANDS: readonly RemovedCommand[] = [
   { command: "clients get", tools: ["get_client"] },
   { command: "clients create", tools: ["create_client"] },
   { command: "clients update", tools: ["update_client"] },
-  { command: "clients archive", tools: [] },
+  { command: "clients archive", tools: ["archive_client"], note: "restore_client brings an archived client back; list_clients --archived lists them." },
   { command: "clients upsert", tools: ["list_clients", "create_client"], note: "Look up by name first, then create." },
   // Reads without a tool
   { command: "itinerary", tools: ["get_plan_itinerary"] },

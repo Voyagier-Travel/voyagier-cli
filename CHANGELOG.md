@@ -8,7 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+- **Checked-in registry snapshot** (`src/mcp/fixtures/remote-tools.json`) refreshed from the server's registry export (82 tools). Client records are archived rather than deleted: `delete_client` is gone, `archive_client` and `restore_client` (both `--client_id`) are added, and `list_clients` gains `--archived` to list archived clients; `create_plan` / `update_plan` refuse an archived client. Standalone flight searches gain airline filters and paging: `search_flights` takes `--airlines` / `--exclude_airlines`, and `get_search_status` takes `--airlines`, `--exclude_airlines`, `--cursor`, `--limit` and `--sort`. The `search_hotels` `country` description says it also restricts results to that country and is part of the search identity; `radius_miles` says the server scales the default radius to the geocoded place. Like every server tool these reach your commands on deploy with no CLI change. The 3.x migration table maps `voyagier clients archive` to `archive_client`.
 
 ## [4.2.0] — 2026-09-25
 
@@ -131,7 +132,7 @@ Generated from `src/removed-commands.ts` — the same table drives the runtime r
 | `voyagier clients get` | `voyagier get_client` |  |
 | `voyagier clients create` | `voyagier create_client` |  |
 | `voyagier clients update` | `voyagier update_client` |  |
-| `voyagier clients archive` | — |  |
+| `voyagier clients archive` | `voyagier archive_client` | restore_client brings an archived client back; list_clients --archived lists them. |
 | `voyagier clients upsert` | `voyagier list_clients`, `voyagier create_client` | Look up by name first, then create. |
 | `voyagier itinerary` | `voyagier get_plan_itinerary` |  |
 | `voyagier listings list` | — |  |
