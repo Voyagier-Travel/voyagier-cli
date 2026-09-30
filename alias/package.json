@@ -1,6 +1,6 @@
 {
   "name": "voyagier",
-  "version": "4.2.0",
+  "version": "4.3.0",
   "description": "The official Voyagier CLI. Book real travel from your terminal: search flights, hotels and activities, plan trips, and check out with a price-gated booking. Same releases as @voyagier/cli.",
   "type": "module",
   "bin": {
@@ -14,7 +14,7 @@
     "README.md"
   ],
   "dependencies": {
-    "@voyagier/cli": "^4.2.0"
+    "@voyagier/cli": "^4.3.0"
   },
   "keywords": [
     "travel",
