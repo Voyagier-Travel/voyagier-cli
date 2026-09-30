@@ -135,7 +135,8 @@ jobs:
             NEW_VERSION="${{ steps.mode.outputs.recover_tag }}"
             git checkout -q "$NEW_VERSION"
           else
-            NEW_VERSION=$(npm --no-git-tag-version version ${{ steps.determine-bump.outputs.bump }})
+            NEW_VERSION=$(npm --no-git-tag-version version ${{ steps.determine-bump.outputs.bump }})            
+            (cd alias && npm pkg set "version=${NEW_VERSION#v}" "dependencies.@voyagier/cli=^${NEW_VERSION#v}")
           fi
           echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $NEW_VERSION"
@@ -193,7 +194,7 @@ jobs:
             exit 0
           fi
           git checkout -b "$BRANCH"
-          git add package.json package-lock.json
+          git add package.json package-lock.json alias/package.json
           git commit -m "chore: release $VERSION_TAG"
           git tag -a "$VERSION_TAG" -m "Release $VERSION_TAG"
           git push --atomic origin "$BRANCH" "$VERSION_TAG"
