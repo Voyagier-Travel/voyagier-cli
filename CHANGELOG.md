@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [4.3.0] — 2026-09-30
+
+Flag generation and search-output changes, a registry snapshot catch-up, and the `voyagier` package now ships at the same version as `@voyagier/cli`.
+
 ### Added
 - **`--no-<flag>` sends `[]` on every repeatable array flag.** An omitted array flag still sends nothing (the server's stored or default value applies) and `null` on a nullable flag still sends JSON null; `--no-airlines` sends `airlines: []`, the server's "pass an empty list to clear" where a tool defines it (`voyagier get_search_status --search_id <id> --no-airlines --no-exclude_airlines` reads every carrier of a stored search). The companion appears in `--help` under the flag it negates; JSON-array flags keep taking the literal `[]`. README and AGENT.md describe the convention.
 - **Search digest footer.** The human view of `search_flights`, `search_hotels`, `search_activities`, `get_search_status` and `promote_search` now prints, from `optionsSummary`: `matchedCount` of `optionCount` when a filter is active, the carrier counts (`airlines`, `TP 9  UA 5`), `noMatchReason` when a filter matched no carrier, the next page as a copy-pasteable `voyagier get_search_status --search_id <id> --cursor <nextCursor>` line (values shell-quoted) when `nextCursor` is present, and the server's `nextStep` / `howToRefine` sentences. Rows without these fields render as before; `--json` output is unchanged.
