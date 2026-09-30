@@ -45,6 +45,24 @@ function priceCents(p: unknown, currency?: unknown): string {
   return price(n / 100, currency);
 }
 
+function bool(v: unknown): boolean | null {
+  return typeof v === "boolean" ? v : null;
+}
+
+/** Characters that need no quoting in a POSIX shell word. */
+const SHELL_BARE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
+/**
+ * Quote a value for a copy-pasteable shell line: bare when it is a plain
+ * word, otherwise single-quoted with embedded single quotes escaped. Every
+ * server-provided value interpolated into a `voyagier …` line goes through
+ * this — sanitizeExternalData strips control characters, not shell syntax.
+ */
+export function shellQuote(value: string): string {
+  if (value !== "" && SHELL_BARE_WORD.test(value)) return value;
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 function hhmm(v: unknown): string {
   const s = str(v);
   if (!s) return "";
@@ -54,7 +72,7 @@ function hhmm(v: unknown): string {
 
 // ── options digest (search_*, get_search_status, promote_search, get_options)
 
-function renderTopOptions(summary: Rec): string[] {
+function renderTopOptions(summary: Rec, opts: { omitMoreLine?: boolean } = {}): string[] {
   const lines: string[] = [];
   const options = arr(summary.topOptions).filter(isRec);
   const callouts = isRec(summary.callouts) ? summary.callouts : {};
@@ -80,7 +98,8 @@ function renderTopOptions(summary: Rec): string[] {
         const times = [hhmm(seg.departureTime), hhmm(seg.arrivalTime)].filter(Boolean).join("–");
         const stops = num(seg.stops);
         const stopLabel = stops === 0 ? "nonstop" : stops != null ? `${stops} stop${stops === 1 ? "" : "s"}` : "";
-        parts.push([route, times, str(seg.durationLabel), stopLabel].filter(Boolean).join(" "));
+        const legs = renderLegs(seg.legs);
+        parts.push([route, times, str(seg.durationLabel), stopLabel, legs ? chalk.dim(legs) : ""].filter(Boolean).join(" "));
       }
     } else {
       const name = str(opt.name);
@@ -110,13 +129,113 @@ function renderTopOptions(summary: Rec): string[] {
     const t = tag(index);
     if (t) parts.push(t);
     lines.push(`  ${idx}  ${parts.join("  ·  ")}`);
+    const fare = renderFareConditions(opt);
+    if (fare) lines.push(chalk.dim(`       ${fare}`));
     const optionId = str(opt.optionId);
     if (optionId) lines.push(chalk.dim(`       option_id ${optionId}`));
   }
   const count = num(summary.optionCount);
-  if (count != null && count > options.length) {
+  if (!opts.omitMoreLine && count != null && count > options.length) {
     lines.push(chalk.dim(`  … ${count - options.length} more (showing top ${options.length})`));
   }
+  return lines;
+}
+
+/**
+ * One segment's legs as "EK 384 (op. FZ), EK 12" — marketing carrier + flight
+ * number, with the operating carrier when it differs. Empty when the segment
+ * carries no legs or no leg names a carrier.
+ */
+function renderLegs(legs: unknown): string {
+  const out: string[] = [];
+  for (const leg of arr(legs).filter(isRec)) {
+    const marketing = str(leg.marketingCarrier);
+    const operating = str(leg.operatingCarrier);
+    const flightNumber = num(leg.flightNumber) ?? str(leg.flightNumber);
+    const carrier = marketing ?? operating;
+    if (!carrier) continue;
+    const head = flightNumber != null ? `${carrier} ${flightNumber}` : carrier;
+    out.push(marketing && operating && operating !== marketing ? `${head} (op. ${operating})` : head);
+  }
+  return out.join(", ");
+}
+
+/**
+ * The fare conditions a flight row carries for the fare its price buys:
+ * cabin, refundable / changeable, baggage, fare basis codes, base fare and
+ * taxes. Every field is optional; a row with none of them renders nothing.
+ * Null `baggage.checked` is "unknown", not "no bags", so it is left out.
+ */
+function renderFareConditions(opt: Rec): string {
+  const bits: string[] = [];
+  const cabin = str(opt.cabinClass);
+  if (cabin) bits.push(cabin);
+  const refundable = bool(opt.refundable);
+  if (refundable != null) bits.push(refundable ? "refundable" : "non-refundable");
+  const changeable = bool(opt.changeable);
+  if (changeable != null) bits.push(changeable ? "changeable" : "no changes");
+  const baggage = isRec(opt.baggage) ? opt.baggage : null;
+  if (baggage) {
+    const bags: string[] = [];
+    const carryOn = str(baggage.carryOn);
+    if (carryOn) bags.push(`carry-on ${carryOn}`);
+    const checked = str(baggage.checked);
+    if (checked) bags.push(`checked ${checked}`);
+    if (bags.length) bits.push(`bags: ${bags.join(", ")}`);
+  }
+  const fareBasis = arr(opt.fareBasis).map(String).filter((s) => s.trim());
+  if (fareBasis.length) bits.push(`fare basis ${fareBasis.join("/")}`);
+  const baseFare = price(opt.baseFare, opt.currency);
+  const taxes = price(opt.taxes, opt.currency);
+  if (baseFare && taxes) bits.push(`base ${baseFare} + taxes ${taxes}`);
+  else if (baseFare) bits.push(`base fare ${baseFare}`);
+  else if (taxes) bits.push(`taxes ${taxes}`);
+  return bits.join("  ·  ");
+}
+
+/**
+ * Footer under an options digest: how many rows matched of how many the
+ * search holds, the carrier facet, why nothing matched, the next page as a
+ * copy-pasteable command, and the server's nextStep / howToRefine sentences.
+ * Only fields the payload carries are printed.
+ */
+function renderSearchFooter(payload: Rec, summary: Rec): string[] {
+  const lines: string[] = [];
+  const optionCount = num(summary.optionCount);
+  const matchedCount = num(summary.matchedCount);
+  if (matchedCount != null && optionCount != null && matchedCount !== optionCount) {
+    lines.push(chalk.dim(`  ${matchedCount} of ${optionCount} options match the current filters`));
+  }
+  const noMatchReason = str(summary.noMatchReason);
+  if (noMatchReason) lines.push(chalk.yellow(`  no match: ${noMatchReason}`));
+  const facet = arr(summary.airlines)
+    .filter(isRec)
+    .map((f) => {
+      const key = str(f.key) ?? str(f.code);
+      const count = num(f.count);
+      return key && count != null ? `${key} ${count}` : null;
+    })
+    .filter((s): s is string => s !== null);
+  if (facet.length) lines.push(chalk.dim(`  airlines: ${facet.join("  ")}`));
+  const nextCursor = str(summary.nextCursor);
+  if (nextCursor) {
+    // The cursor is opaque and the payload carries no offset, so the rows
+    // left after THIS page are unknown on page 2+; say "more", not a number.
+    // The command line is printed only when it is copy-pasteable: a bare
+    // `<search_id>` placeholder would be read by the shell as a redirection.
+    const searchId = str(payload.id) ?? str(payload.searchId);
+    if (searchId) {
+      lines.push(
+        `  more → voyagier get_search_status --search_id ${shellQuote(searchId)} --cursor ${shellQuote(nextCursor)}${chalk.dim("  (repeat the same sort and filters)")}`,
+      );
+    } else {
+      lines.push(chalk.dim("  more results available"));
+    }
+  }
+  const nextStep = str(summary.nextStep);
+  if (nextStep) lines.push(chalk.dim(`  next: ${nextStep}`));
+  const howToRefine = str(summary.howToRefine);
+  if (howToRefine) lines.push(chalk.dim(`  refine: ${howToRefine}`));
   return lines;
 }
 
@@ -137,8 +256,12 @@ export function renderSearchResult(payload: unknown): string | null {
   const count = summary ? num(summary.optionCount) : null;
   if (summary && count != null) {
     lines.push(count === 0 ? chalk.dim("  0 options yet — if status is Fetching, poll get_search_status / get_options") : "");
-    lines.push(...renderTopOptions(summary));
+    // A summary that carries matchedCount is server-paged: topOptions is one
+    // page of an opaque-cursor list, so "N more" cannot be computed from the
+    // rows on hand. The footer states the matched total and the next page.
+    lines.push(...renderTopOptions(summary, { omitMoreLine: num(summary.matchedCount) != null || str(summary.nextCursor) !== null }));
   }
+  if (summary) lines.push(...renderSearchFooter(payload, summary));
   return lines.filter((l) => l !== "").join("\n");
 }
 

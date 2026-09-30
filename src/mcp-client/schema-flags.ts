@@ -8,9 +8,23 @@
  *  - number / integer             → `--name <n>` (validated; integer must be whole)
  *  - boolean                      → `--name [true|false]` (bare flag = true)
  *  - string with enum             → `--name <choice>` with Commander choices
- *  - array of string/number/int   → `--name <value...>` (repeatable / space-separated)
+ *  - array of string/number/int   → `--name <value...>` (repeatable / space-separated),
+ *                                   plus `--no-name`, which sends the empty array `[]`
  *  - object, array of objects,
  *    anything else                → `--name <json>` (a JSON literal)
+ *
+ * A property or items schema may be a local JSON-schema reference
+ * (`{"$ref": "#/…"}` — `#/definitions/x`, `#/$defs/x`, or any pointer into the
+ * tool's own inputSchema). References are resolved against the root schema
+ * before the flag kind is decided, so a referenced `{type: "string"}` items
+ * schema yields the same repeatable string flag as an inline one. Sibling
+ * keywords beside the `$ref` (a `description`, say) win over the target's.
+ *
+ * Empty arrays: an omitted array flag sends nothing, so the server's stored
+ * or default value applies. `--no-<flag>` sends `[]` explicitly — the server's
+ * own "pass an empty list to clear" for the tools that define it. It is the
+ * negation Commander already understands, so `--no-airlines` and `--airlines`
+ * share one option value; the last one on the command line wins.
  *
  * Nullable properties — `type: [X, "null"]` or `anyOf: [{type: X}, {type: "null"}]`
  * — keep X's flag kind and additionally accept the literal argument `null`,
@@ -70,6 +84,69 @@ export const PARAM_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** Tool names become command words. */
 export const TOOL_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
+/** Local reference into the tool's own schema: `#` followed by a JSON pointer. */
+const LOCAL_REF = /^#(\/.*)?$/;
+/** Longest chain of `$ref` → `$ref` we follow before giving up (cycle guard). */
+const MAX_REF_DEPTH = 16;
+
+/**
+ * Percent-decode a URI fragment into a JSON pointer (RFC 6901 §6). This runs
+ * on the WHOLE fragment before it is split, so `%2F` is a separator while
+ * `~1` stays a literal slash inside one token.
+ */
+function fragmentToPointer(fragment: string): string {
+  try {
+    return decodeURIComponent(fragment);
+  } catch {
+    // Not valid percent-encoding: use as-is.
+    return fragment;
+  }
+}
+
+/** Unescape one JSON-pointer token: `~1` → `/` first, then `~0` → `~` (RFC 6901 §4). */
+function pointerToken(token: string): string {
+  return token.replace(/~1/g, "/").replace(/~0/g, "~");
+}
+
+/** Walk `root` along a local `$ref`; undefined when the pointer leaves the schema. */
+function lookupLocalRef(root: McpJsonSchema, ref: string): McpJsonSchema | undefined {
+  const m = LOCAL_REF.exec(ref);
+  if (!m) return undefined;
+  const pointer = fragmentToPointer(m[1] ?? "");
+  let node: unknown = root;
+  for (const token of pointer.split("/").slice(1)) {
+    if (node === null || typeof node !== "object") return undefined;
+    node = (node as Record<string, unknown>)[pointerToken(token)];
+  }
+  return node !== null && typeof node === "object" && !Array.isArray(node) ? (node as McpJsonSchema) : undefined;
+}
+
+/**
+ * Resolve a schema node that may be a local `$ref` (or a chain of them) into
+ * the schema it points at, keeping any sibling keywords the referrer carries.
+ * A node without `$ref`, or one whose reference cannot be resolved locally
+ * (remote URL, dangling pointer, cycle), is returned as-is minus the `$ref`,
+ * so the caller's type mapping falls through to the JSON-literal kind.
+ */
+export function resolveRef(root: McpJsonSchema, node: McpJsonSchema): McpJsonSchema {
+  let current = node;
+  const seen = new Set<string>();
+  for (let depth = 0; depth < MAX_REF_DEPTH && typeof current.$ref === "string"; depth++) {
+    const { $ref, ...siblings } = current;
+    if (seen.has($ref)) return siblings;
+    seen.add($ref);
+    const target = lookupLocalRef(root, $ref);
+    if (!target) return siblings;
+    // Referrer keywords override the target's (JSON Schema 2019-09 semantics).
+    current = { ...target, ...siblings };
+  }
+  if (typeof current.$ref === "string") {
+    const { $ref: _dropped, ...siblings } = current;
+    return siblings;
+  }
+  return current;
+}
+
 function primaryType(schema: McpJsonSchema): string | undefined {
   const t = schema.type;
   if (Array.isArray(t)) return t.find((x) => x !== "null");
@@ -82,10 +159,12 @@ function primaryType(schema: McpJsonSchema): string | undefined {
  * (the non-null member may carry `enum`, `items`, bounds) are nullable; any
  * other shape is returned as-is, so the mapping below is unchanged for it.
  */
-function resolveNullable(prop: McpJsonSchema): { base: McpJsonSchema; nullable: boolean } {
+function resolveNullable(root: McpJsonSchema, prop: McpJsonSchema): { base: McpJsonSchema; nullable: boolean } {
   if (Array.isArray(prop.type)) return { base: prop, nullable: prop.type.includes("null") };
   if (Array.isArray(prop.anyOf)) {
-    const members = prop.anyOf.filter((m): m is McpJsonSchema => typeof m === "object" && m !== null);
+    const members = prop.anyOf
+      .filter((m): m is McpJsonSchema => typeof m === "object" && m !== null)
+      .map((m) => resolveRef(root, m));
     const nonNull = members.filter((m) => m.type !== "null");
     if (members.length === prop.anyOf.length && nonNull.length === 1 && nonNull.length < members.length) {
       return { base: nonNull[0], nullable: true };
@@ -96,10 +175,11 @@ function resolveNullable(prop: McpJsonSchema): { base: McpJsonSchema; nullable: 
 
 /** Derive the flag specs for a tool input schema (object with properties). */
 export function flagSpecsFromSchema(schema: McpJsonSchema | undefined): FlagSpec[] {
-  const properties = schema?.properties ?? {};
-  const required = new Set(schema?.required ?? []);
+  const root: McpJsonSchema = schema ?? {};
+  const properties = root.properties ?? {};
+  const required = new Set(root.required ?? []);
   const specs: FlagSpec[] = [];
-  for (const [param, prop] of Object.entries(properties)) {
+  for (const [param, rawProp] of Object.entries(properties)) {
     if (!PARAM_NAME_PATTERN.test(param)) {
       throw new CliError(
         CliErrorCode.VALIDATION,
@@ -107,8 +187,9 @@ export function flagSpecsFromSchema(schema: McpJsonSchema | undefined): FlagSpec
       );
     }
     const flag = RESERVED_FLAGS.has(param) ? `param-${param}` : param;
+    const prop = resolveRef(root, rawProp);
     const description = describe(prop);
-    const { base: shape, nullable } = resolveNullable(prop);
+    const { base: shape, nullable } = resolveNullable(root, prop);
     const type = primaryType(shape);
     const plain = {
       param,
@@ -129,7 +210,7 @@ export function flagSpecsFromSchema(schema: McpJsonSchema | undefined): FlagSpec
     } else if (type === "string") {
       specs.push({ ...base, kind: "string" });
     } else if (type === "array") {
-      const itemType = shape.items ? primaryType(shape.items) : undefined;
+      const itemType = shape.items ? primaryType(resolveRef(root, shape.items)) : undefined;
       if (itemType === "string" || itemType === "number" || itemType === "integer") {
         specs.push({ ...base, kind: "array", itemKind: itemType });
       } else {
@@ -253,17 +334,19 @@ export function optionForSpec(spec: FlagSpec): Option {
     case "array": {
       const itemKind = spec.itemKind ?? "string";
       option = new Option(`--${spec.flag} <value...>`, desc).argParser(
-        (v: string, previous: unknown[] | typeof JSON_NULL | undefined) => {
-          if (spec.nullable && (v === NULL_SENTINEL || previous === JSON_NULL)) {
+        (v: string, previous: unknown[] | typeof JSON_NULL | false | undefined) => {
+          // `false` is an earlier `--no-<flag>`; the later positive flag wins.
+          const prior = previous === false ? undefined : previous;
+          if (spec.nullable && (v === NULL_SENTINEL || prior === JSON_NULL)) {
             // The sentinel stands for the whole array, so it cannot sit next
             // to a value: `--x null` clears, `--x null a` / `--x a null` fail.
-            if (previous !== undefined) {
+            if (prior !== undefined) {
               throw new InvalidArgumentError(`--${spec.flag}: null clears the whole list and cannot be combined with other values.`);
             }
             return JSON_NULL;
           }
           const item = itemKind === "string" ? v : parseNumber(itemKind, v);
-          return [...((previous as unknown[] | undefined) ?? []), item];
+          return [...(Array.isArray(prior) ? prior : []), item];
         },
       );
       break;
@@ -280,16 +363,30 @@ export function optionForSpec(spec: FlagSpec): Option {
   return option;
 }
 
-/** Register every spec on `cmd`. */
+/**
+ * The `--no-<flag>` companion of a repeatable array flag: sends `[]`. It is a
+ * Commander negatable option, so it writes `false` to the same attribute as
+ * the positive flag; buildToolArguments turns that into an empty array. It
+ * must be registered AFTER the positive option, or Commander would give the
+ * attribute a default of `true`.
+ */
+export function emptyArrayOptionForSpec(spec: FlagSpec): Option {
+  return new Option(`--no-${spec.flag}`, `Send an empty list for --${spec.flag} (where the tool clears a stored value on []).`);
+}
+
+/** Register every spec on `cmd` (array flags also get their `--no-<flag>`). */
 export function applyFlagsToCommand(cmd: Command, specs: FlagSpec[]): void {
-  for (const spec of specs) cmd.addOption(optionForSpec(spec));
+  for (const spec of specs) {
+    cmd.addOption(optionForSpec(spec));
+    if (spec.kind === "array") cmd.addOption(emptyArrayOptionForSpec(spec));
+  }
 }
 
 /**
  * Convert parsed Commander options into the tool's argument object. Only
  * flags the user passed are sent (nothing for an omitted flag), so the
  * server's own defaults apply. A nullable flag given the literal `null` is
- * sent as JSON null.
+ * sent as JSON null; an array flag negated with `--no-<flag>` is sent as `[]`.
  */
 export function buildToolArguments(specs: FlagSpec[], opts: Record<string, unknown>): Record<string, unknown> {
   const args: Record<string, unknown> = {};
@@ -302,6 +399,10 @@ export function buildToolArguments(specs: FlagSpec[], opts: Record<string, unkno
     }
     if (spec.kind === "boolean") {
       args[spec.param] = typeof value === "string" ? parseBoolean(value) : Boolean(value);
+      continue;
+    }
+    if (spec.kind === "array" && value === false) {
+      args[spec.param] = [];
       continue;
     }
     args[spec.param] = value;

@@ -239,6 +239,50 @@ describe("generated commands", () => {
     expect(calls[0].args).toEqual({ plan_id: "p1", travellers });
   });
 
+  it("sends [] for --no-airlines and a repeatable list for the $ref'd --exclude_airlines; under --json the payload is one stdout document with the footer fields untouched", async () => {
+    const payload = {
+      id: "srch-1",
+      type: "Flight",
+      status: "Ready",
+      optionsSummary: { optionCount: 42, matchedCount: 17, nextCursor: "eyJvIjoxMH0=", airlines: [{ key: "TP", count: 9 }], noMatchReason: null, topOptions: [] },
+    };
+    const { client, calls } = clientReturning(() => text(payload));
+    const stderrWrites: string[] = [];
+    const stdoutWrites: string[] = [];
+    const errSpy = jest.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      stderrWrites.push(String(chunk));
+      return true;
+    });
+    const outSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdoutWrites.push(String(chunk));
+      return true;
+    });
+    try {
+      const program = new Command().exitOverride();
+      registerGeneratedCommands(program, FIXTURE_TOOLS, { version: "0", createClient: () => client });
+      await program.parseAsync(["node", "voyagier", "get_search_status", "--search_id", "srch-1", "--no-airlines", "--exclude_airlines", "UA", "DL", "--json"]);
+    } finally {
+      errSpy.mockRestore();
+      outSpy.mockRestore();
+    }
+    expect(calls).toEqual([{ name: "get_search_status", args: { search_id: "srch-1", airlines: [], exclude_airlines: ["UA", "DL"] } }]);
+    expect(stderrWrites).toEqual([]);
+    expect(stdoutWrites).toHaveLength(1);
+    expect(JSON.parse(stdoutWrites[0])).toEqual(payload);
+  });
+
+  it("human output of a paged search carries the next-page command; --json does not", async () => {
+    const payload = { id: "srch-1", status: "Ready", optionsSummary: { optionCount: 3, matchedCount: 3, nextCursor: "c2", topOptions: [{ index: 0, name: "Grand Hotel", price: 100, currency: "USD" }] } };
+    const { client } = clientReturning(() => text(payload));
+    const { run, human, json } = harness(client);
+    await run(["search_hotels", "--location", "Lisbon", "--checkin", "2026-10-01", "--checkout", "2026-10-04"]);
+    expect(human).toHaveLength(1);
+    // eslint-disable-next-line no-control-regex
+    expect(human[0].replace(/\u001b\[[0-9;]*m/g, "")).toContain("more → voyagier get_search_status --search_id srch-1 --cursor c2");
+    await run(["get_search_status", "--search_id", "srch-1", "--cursor", "c2", "--json"]);
+    expect(json).toEqual([payload]);
+  });
+
   it("sends JSON null on the wire for `null` on a nullable flag", async () => {
     const { client, calls } = clientReturning(() => text({ id: "p1", coverMediaId: null }));
     const { run } = harness(client);

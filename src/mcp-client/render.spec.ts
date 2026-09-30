@@ -1,5 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
-import { TOOL_RENDERERS, renderItinerary, renderPlanStatus, renderQuote, renderSearchResult, renderSelectionOptions, renderToolPayload } from "./render.js";
+import { TOOL_RENDERERS, renderItinerary, renderPlanStatus, renderQuote, renderSearchResult, renderSelectionOptions, renderToolPayload, shellQuote } from "./render.js";
 
 /**
  * Renderer contract on fixture payloads shaped like the server's tool results:
@@ -151,6 +151,158 @@ describe("renderSearchResult", () => {
     expect(out).not.toContain("next:");
   });
 
+  it("renders a flight row without fare or leg fields exactly as before (no conditions line, no carrier codes)", () => {
+    const out = strip(renderToolPayload("search_flights", SEARCH));
+    const lines = out.split("\n");
+    const row = lines.findIndex((l) => l.startsWith("  [0]"));
+    expect(lines[row]).toBe("  [0]  TP  ·  BWI→LIS 17:40–06:55 8h 15m nonstop  ·  LIS→BWI 11:10–15:05 8h 55m 1 stop  ·  $812.40  ·  [cheapest, fastest]");
+    expect(lines[row + 1]).toBe("       option_id opt-1");
+    expect(out).not.toMatch(/refundable|changeable|bags:|fare basis|base |taxes|\(op\. /);
+  });
+
+  it("shows a flight row's fare conditions and per-segment legs when the server sends them", () => {
+    const row = {
+      index: 0,
+      optionId: "opt-9",
+      price: 1240.5,
+      currency: "USD",
+      airlines: ["EK", "FZ"],
+      cabinClass: "Economy",
+      refundable: false,
+      changeable: true,
+      fareBasis: ["KLXESAU1", "KLXESAU1/CH"],
+      baggage: { carryOn: "1 piece, 7 kg", checked: null },
+      baseFare: 980,
+      taxes: 260.5,
+      segments: [
+        {
+          origin: "JFK",
+          destination: "DXB",
+          departureTime: "2026-11-20T22:20:00",
+          arrivalTime: "2026-11-21T19:10:00",
+          durationLabel: "12h 50m",
+          stops: 0,
+          legs: [{ marketingCarrier: "EK", operatingCarrier: "EK", flightNumber: 204 }],
+        },
+        {
+          origin: "DXB",
+          destination: "JFK",
+          departureTime: "2026-11-28T08:30:00",
+          arrivalTime: "2026-11-28T14:25:00",
+          durationLabel: "14h 55m",
+          stops: 1,
+          legs: [
+            { marketingCarrier: "EK", operatingCarrier: "FZ", flightNumber: 384 },
+            { marketingCarrier: "EK", operatingCarrier: null, flightNumber: 201 },
+          ],
+        },
+      ],
+    };
+    const out = strip(renderSearchResult({ id: "srch-2", type: "Flight", status: "Ready", optionsSummary: { optionCount: 1, topOptions: [row] } }));
+    expect(out).toContain("JFK→DXB 22:20–19:10 12h 50m nonstop EK 204  ·  DXB→JFK 08:30–14:25 14h 55m 1 stop EK 384 (op. FZ), EK 201  ·  $1,240.50");
+    expect(out).toContain("       Economy  ·  non-refundable  ·  changeable  ·  bags: carry-on 1 piece, 7 kg  ·  fare basis KLXESAU1/KLXESAU1/CH  ·  base $980.00 + taxes $260.50");
+    // Null checked baggage is "unknown", never printed as a number of bags.
+    expect(out).not.toContain("checked");
+    expect(out).toContain("option_id opt-9");
+
+    // Partial fields: only what is present, no dangling separators.
+    const partial = strip(
+      renderSearchResult({
+        id: "srch-3",
+        status: "Ready",
+        optionsSummary: {
+          optionCount: 1,
+          topOptions: [
+            {
+              index: 0,
+              price: 300,
+              currency: "EUR",
+              refundable: true,
+              baggage: { carryOn: null, checked: "1 x 23 kg" },
+              taxes: 45,
+              segments: [{ origin: "LIS", destination: "MAD", legs: [{ marketingCarrier: null, operatingCarrier: "IB", flightNumber: "3102" }, { marketingCarrier: null }] }],
+            },
+          ],
+        },
+      }),
+    );
+    expect(partial).toContain("LIS→MAD IB 3102");
+    expect(partial).toContain("       refundable  ·  bags: checked 1 x 23 kg  ·  taxes 45.00 EUR");
+    expect(partial).not.toContain("changeable");
+  });
+
+  it("footer: matched/total counts, the airline facet, noMatchReason, a shell-quoted next-page command and the server's sentences", () => {
+    const paged = {
+      id: "srch-1",
+      type: "Flight",
+      status: "Ready",
+      optionsSummary: {
+        optionCount: 42,
+        matchedCount: 17,
+        nextCursor: "eyJvIjoxMH0=",
+        airlines: [
+          { key: "TP", count: 9 },
+          { key: "UA", count: 5 },
+          { key: "LH", count: 3 },
+        ],
+        nextStep: "promote_search with listing_id onto the plan's flight goal.",
+        howToRefine: "get_search_status with this id and cursor / sort / airlines.",
+        topOptions: SEARCH.optionsSummary.topOptions,
+      },
+    };
+    const out = strip(renderToolPayload("get_search_status", paged));
+    expect(out).toContain("17 of 42 options match the current filters");
+    expect(out).toContain("airlines: TP 9  UA 5  LH 3");
+    // The cursor is opaque and the payload has no offset, so no remaining count is computed.
+    expect(out).toContain("more → voyagier get_search_status --search_id srch-1 --cursor eyJvIjoxMH0=  (repeat the same sort and filters)");
+    expect(out).not.toMatch(/\d+ more/);
+    expect(out).not.toContain("(showing top");
+    expect(out).toContain("next: promote_search with listing_id onto the plan's flight goal.");
+    expect(out).toContain("refine: get_search_status with this id and cursor / sort / airlines.");
+    expect(out).not.toContain("no match");
+    // Same text for search_flights: the footer is part of the shared renderer.
+    expect(strip(renderToolPayload("search_flights", paged))).toContain("--cursor eyJvIjoxMH0=");
+
+    // Hostile ids and cursors are quoted for the shell; the id is the search's own.
+    const hostile = strip(renderSearchResult({ ...paged, id: "s;rm -rf x", optionsSummary: { ...paged.optionsSummary, nextCursor: "c'ur sor" } }));
+    expect(hostile).toContain("voyagier get_search_status --search_id 's;rm -rf x' --cursor 'c'\\''ur sor'");
+
+    // A cursor without a search id: no command line (a bare placeholder would be a shell redirection).
+    const noId = strip(renderSearchResult({ ...paged, id: undefined, optionsSummary: { ...paged.optionsSummary, nextCursor: "eyJvIjoxMH0=" } }));
+    expect(noId).toContain("more results available");
+    expect(noId).not.toContain("voyagier get_search_status");
+    expect(noId).not.toContain("<");
+    // searchId is accepted as the id field too.
+    expect(strip(renderSearchResult({ ...paged, id: undefined, searchId: "srch-2" }))).toContain("--search_id srch-2 --cursor eyJvIjoxMH0=");
+
+    // Last page (no cursor) of a paged summary: the matched total is stated, no "… N more" arithmetic.
+    const lastPage = strip(renderSearchResult({ ...paged, optionsSummary: { ...paged.optionsSummary, nextCursor: null } }));
+    expect(lastPage).toContain("17 of 42 options match the current filters");
+    expect(lastPage).not.toMatch(/\d+ more/);
+    expect(lastPage).not.toContain("→ voyagier");
+    // A summary without matchedCount (single, unpaged digest) keeps the "… N more" line as before.
+    expect(strip(renderToolPayload("search_flights", SEARCH))).toContain("… 40 more (showing top 2)");
+
+    // A filter no carrier matches: 0 rows, the reason, and the carriers that are there.
+    const none = strip(
+      renderSearchResult({
+        id: "srch-1",
+        type: "Flight",
+        status: "Ready",
+        optionsSummary: { optionCount: 42, matchedCount: 0, noMatchReason: "airlines [ZZ] matches no carrier; this list carries TP (30), UA (12)", airlines: [{ key: "TP", count: 30 }, { key: "UA", count: 12 }], topOptions: [] },
+      }),
+    );
+    expect(none).toContain("0 of 42 options match the current filters");
+    expect(none).toContain("no match: airlines [ZZ] matches no carrier; this list carries TP (30), UA (12)");
+    expect(none).toContain("airlines: TP 30  UA 12");
+    expect(none).not.toContain("0 options yet");
+
+    // Equal counts print no filter line; a summary without the fields prints no footer at all.
+    const plain = strip(renderToolPayload("search_flights", SEARCH));
+    expect(plain).not.toMatch(/match the current filters|airlines:|→ voyagier|next:|refine:/);
+    expect(strip(renderSearchResult({ ...SEARCH, optionsSummary: { ...SEARCH.optionsSummary, matchedCount: 42 } }))).not.toContain("match the current filters");
+  });
+
   it("says when a search is still fetching and surfaces fetchError", () => {
     const out = strip(renderSearchResult({ id: "s", type: "Hotel", status: "Fetching", optionsSummary: { optionCount: 0, topOptions: [] } }));
     expect(out).toContain("status Fetching");
@@ -205,6 +357,18 @@ describe("renderSearchResult", () => {
     );
     expect(out).toContain("[0]  Hotel Gracery  ·  ⭐4.1  ·  2.0 mi  ·  $200.00");
     expect(out).toContain("[1]  Hotel Sunroute  ·  0.0 mi  ·  $150.00");
+  });
+});
+
+describe("shellQuote", () => {
+  it("leaves plain words bare and single-quotes everything else", () => {
+    expect(shellQuote("srch-1")).toBe("srch-1");
+    expect(shellQuote("eyJvIjoyfQ==")).toBe("eyJvIjoyfQ==");
+    expect(shellQuote("")).toBe("''");
+    expect(shellQuote("a b")).toBe("'a b'");
+    expect(shellQuote("x;rm -rf y")).toBe("'x;rm -rf y'");
+    expect(shellQuote("it's")).toBe("'it'\\''s'");
+    expect(shellQuote("$HOME")).toBe("'$HOME'");
   });
 });
 
