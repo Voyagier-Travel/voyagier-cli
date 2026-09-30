@@ -13,6 +13,14 @@
  *  - object, array of objects,
  *    anything else                → `--name <json>` (a JSON literal)
  *
+ * A JSON-literal flag whose schema names its keys (an object's `properties`,
+ * or an array's `items.properties`) lists them in help — `(JSON array of
+ * {code*, traveller_names, traveller_ids})`, `*` marking a required key —
+ * followed by one `Keys:` clause per key with its type and description, so
+ * `--help` shows the nested contract the server publishes instead of a bare
+ * "(JSON array)". The same shape line is used in the parse error for a
+ * malformed literal.
+ *
  * A property or items schema may be a local JSON-schema reference
  * (`{"$ref": "#/…"}` — `#/definitions/x`, `#/$defs/x`, or any pointer into the
  * tool's own inputSchema). References are resolved against the root schema
@@ -58,9 +66,26 @@ export interface FlagSpec {
   description: string;
   /** Expected JSON shape for `json` flags (help text only). */
   jsonShape?: "object" | "array";
+  /**
+   * Keys of the object (or of each array item) a `json` flag expects, when
+   * the schema names them. Help text only; parsing stays a plain JSON parse.
+   */
+  jsonKeys?: JsonKeyDoc[];
   /** Schema allows null: the literal argument `null` is sent as JSON null. */
   nullable?: boolean;
 }
+
+/** One documented key of a JSON-literal flag's object (or array item). */
+export interface JsonKeyDoc {
+  name: string;
+  required: boolean;
+  /** Short type word for help (`string`, `integer`, `string[]`, `object`, `A|B`). */
+  type?: string;
+  description?: string;
+}
+
+/** Keys beyond this are listed by name only, without their descriptions. */
+const MAX_DESCRIBED_KEYS = 12;
 
 /** Flag names Commander or the CLI already own on every command. */
 const RESERVED_FLAGS = new Set(["json", "help", "version", "stacktrace", "verbose"]);
@@ -214,15 +239,78 @@ export function flagSpecsFromSchema(schema: McpJsonSchema | undefined): FlagSpec
       if (itemType === "string" || itemType === "number" || itemType === "integer") {
         specs.push({ ...base, kind: "array", itemKind: itemType });
       } else {
-        specs.push({ ...base, kind: "json", jsonShape: "array" });
+        const item = shape.items ? resolveRef(root, shape.items) : undefined;
+        specs.push({ ...base, kind: "json", jsonShape: "array", ...withJsonKeys(root, item) });
       }
     } else if (type === "object") {
-      specs.push({ ...base, kind: "json", jsonShape: "object" });
+      specs.push({ ...base, kind: "json", jsonShape: "object", ...withJsonKeys(root, shape) });
     } else {
       specs.push({ ...base, kind: "json" });
     }
   }
   return specs;
+}
+
+/** `{ jsonKeys }` for an object schema that names its properties; `{}` otherwise. */
+function withJsonKeys(root: McpJsonSchema, schema: McpJsonSchema | undefined): { jsonKeys?: JsonKeyDoc[] } {
+  const keys = schema ? jsonKeysFromSchema(root, schema) : [];
+  return keys.length > 0 ? { jsonKeys: keys } : {};
+}
+
+/**
+ * Document the properties of an object schema. Property names are remote
+ * KEYS (the string sanitizer only touches values), so a name that fails the
+ * flag-name allowlist is left out rather than printed.
+ */
+export function jsonKeysFromSchema(root: McpJsonSchema, schema: McpJsonSchema): JsonKeyDoc[] {
+  const properties = schema.properties;
+  if (!properties || typeof properties !== "object") return [];
+  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+  const keys: JsonKeyDoc[] = [];
+  for (const [name, rawProp] of Object.entries(properties)) {
+    if (!PARAM_NAME_PATTERN.test(name)) continue;
+    const prop = rawProp && typeof rawProp === "object" ? resolveRef(root, rawProp) : {};
+    const description = describe(prop);
+    const type = typeWord(root, prop);
+    keys.push({ name, required: required.has(name), ...(type ? { type } : {}), ...(description ? { description } : {}) });
+  }
+  return keys;
+}
+
+/** Short type word for a nested key: enum choices, `string[]`, `object`, or the scalar type. */
+function typeWord(root: McpJsonSchema, prop: McpJsonSchema): string | undefined {
+  const { base } = resolveNullable(root, prop);
+  if (Array.isArray(base.enum) && base.enum.length > 0) return base.enum.map(String).join("|");
+  const type = primaryType(base);
+  if (type === "array") {
+    const itemType = base.items ? primaryType(resolveRef(root, base.items)) : undefined;
+    return `${itemType ?? "any"}[]`;
+  }
+  return type;
+}
+
+/** `{code*, traveller_names, traveller_ids}` — the key list of a json flag, `*` = required. */
+function jsonShapeSummary(spec: FlagSpec): string | undefined {
+  if (!spec.jsonKeys || spec.jsonKeys.length === 0) return undefined;
+  const list = spec.jsonKeys.map((k) => (k.required ? `${k.name}*` : k.name)).join(", ");
+  const braces = `{${list}}`;
+  return spec.jsonShape === "array" ? `JSON array of ${braces}` : `JSON ${braces}`;
+}
+
+/**
+ * The `Keys:` clause of a json flag's help — one entry per documented key
+ * with its type and description; past MAX_DESCRIBED_KEYS the names alone.
+ */
+function jsonKeysHelp(spec: FlagSpec): string {
+  const keys = spec.jsonKeys ?? [];
+  if (keys.length === 0) return "";
+  if (keys.length > MAX_DESCRIBED_KEYS) return `Keys: ${keys.map((k) => (k.required ? `${k.name} (required)` : k.name)).join(", ")}.`;
+  const entries = keys.map((k) => {
+    const meta = [k.required ? "required" : "", k.type ?? ""].filter(Boolean).join(", ");
+    const head = meta ? `${k.name} (${meta})` : k.name;
+    return k.description ? `${head} — ${k.description.replace(/\.\s*$/, "")}` : head;
+  });
+  return `Keys: ${entries.join("; ")}.`;
 }
 
 function describe(prop: McpJsonSchema): string {
@@ -254,8 +342,11 @@ function baseKindHint(spec: FlagSpec): string {
       return "(true|false; bare flag = true)";
     case "array":
       return `(repeatable ${spec.itemKind}s)`;
-    case "json":
+    case "json": {
+      const summary = jsonShapeSummary(spec);
+      if (summary) return `(${summary})`;
       return spec.jsonShape ? `(JSON ${spec.jsonShape})` : "(JSON)";
+    }
     default:
       return "";
   }
@@ -284,14 +375,15 @@ function parseJsonValue(spec: FlagSpec, value: string): unknown {
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new InvalidArgumentError(`--${spec.flag} expects a JSON literal${spec.jsonShape ? ` (${spec.jsonShape})` : ""}.`);
+    const shape = jsonShapeSummary(spec) ?? spec.jsonShape;
+    throw new InvalidArgumentError(`--${spec.flag} expects a JSON literal${shape ? ` (${shape})` : ""}.`);
   }
   if (parsed === null && spec.nullable) return JSON_NULL;
   if (spec.jsonShape === "array" && !Array.isArray(parsed)) {
-    throw new InvalidArgumentError(`--${spec.flag} expects a JSON array.`);
+    throw new InvalidArgumentError(`--${spec.flag} expects a ${jsonShapeSummary(spec) ?? "JSON array"}.`);
   }
   if (spec.jsonShape === "object" && (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))) {
-    throw new InvalidArgumentError(`--${spec.flag} expects a JSON object.`);
+    throw new InvalidArgumentError(`--${spec.flag} expects a ${jsonShapeSummary(spec) ?? "JSON object"}.`);
   }
   return parsed;
 }
@@ -304,7 +396,9 @@ function nullableParser<T>(spec: FlagSpec, parse: (v: string) => T): (v: string)
 
 /** Build the Commander Option for one spec. */
 export function optionForSpec(spec: FlagSpec): Option {
-  const desc = [spec.required ? "(required)" : "", spec.description, kindHint(spec)].filter(Boolean).join(" ");
+  const desc = [spec.required ? "(required)" : "", spec.description, kindHint(spec), spec.kind === "json" ? jsonKeysHelp(spec) : ""]
+    .filter(Boolean)
+    .join(" ");
   let option: Option;
   switch (spec.kind) {
     case "boolean":

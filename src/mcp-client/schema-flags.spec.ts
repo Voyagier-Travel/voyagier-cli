@@ -416,6 +416,106 @@ describe("parsing flags into tool arguments", () => {
     expect(await parseSchema("t", schema, ["--tags", "null", "--no-tags"])).toEqual({ tags: [] });
   });
 
+  describe("JSON-literal flags document their keys", () => {
+    it("lists the keys of an array-of-objects flag from items.properties, marking required ones", () => {
+      const specs = Object.fromEntries(flagSpecsFromSchema(tool("set_airport").inputSchema).map((s) => [s.param, s]));
+      expect(specs.groups).toMatchObject({ kind: "json", jsonShape: "array", required: true });
+      expect(specs.groups.jsonKeys).toEqual([
+        { name: "code", required: true, type: "string", description: expect.stringMatching(/IATA/) },
+        { name: "traveller_names", required: false, type: "string[]", description: expect.any(String) },
+        { name: "traveller_ids", required: false, type: "string[]", description: expect.any(String) },
+      ]);
+      const help = optionForSpec(specs.groups).description;
+      expect(help).toContain("(JSON array of {code*, traveller_names, traveller_ids})");
+      expect(help).toMatch(/Keys: code \(required, string\) — IATA airport or metro code/);
+      expect(help).toMatch(/traveller_names \(string\[\]\) — /);
+      expect(help).not.toContain("(JSON array)");
+    });
+
+    it("lists the keys of an object flag from properties, with enum choices as the type", () => {
+      const schema: McpJsonSchema = {
+        type: "object",
+        properties: {
+          passport: {
+            type: "object",
+            description: "Passport.",
+            properties: {
+              number: { type: "string", description: "Document number." },
+              country: { type: "string", enum: ["US", "CA"] },
+              expires: { type: ["string", "null"] },
+            },
+            required: ["number"],
+          },
+        },
+      };
+      const [spec] = flagSpecsFromSchema(schema);
+      expect(spec.jsonKeys).toEqual([
+        { name: "number", required: true, type: "string", description: "Document number." },
+        { name: "country", required: false, type: "US|CA" },
+        { name: "expires", required: false, type: "string" },
+      ]);
+      const help = optionForSpec(spec).description;
+      expect(help).toBe("Passport. (JSON {number*, country, expires}) Keys: number (required, string) — Document number; country (US|CA); expires (string).");
+    });
+
+    it("keeps the bare shape hint when the schema names no keys", () => {
+      const specs = Object.fromEntries(
+        flagSpecsFromSchema({ type: "object", properties: { o: { type: "object" }, a: { type: "array", items: { type: "object" } }, x: {} } }).map((s) => [s.param, s]),
+      );
+      expect(specs.o.jsonKeys).toBeUndefined();
+      expect(optionForSpec(specs.o).description).toBe("(JSON object)");
+      expect(optionForSpec(specs.a).description).toBe("(JSON array)");
+      expect(optionForSpec(specs.x).description).toBe("(JSON)");
+    });
+
+    it("documents the keys of a nullable object flag (anyOf with null) from the fixture", () => {
+      const specs = Object.fromEntries(flagSpecsFromSchema(tool("update_traveller").inputSchema).map((s) => [s.param, s]));
+      expect(specs.passport).toMatchObject({ kind: "json", jsonShape: "object", nullable: true });
+      expect(specs.passport.jsonKeys?.map((k) => k.name)).toEqual(["passport_number", "issue_country", "nationality_country", "expiration_date"]);
+      const help = optionForSpec(specs.passport).description;
+      expect(help).toContain("(JSON {passport_number*, issue_country*, nationality_country*, expiration_date*}; pass null to clear)");
+      expect(help).toMatch(/Keys: passport_number \(required, string\) — Passport number;/);
+    });
+
+    it("resolves a local $ref on the items schema and on nested properties", () => {
+      const schema: McpJsonSchema = {
+        type: "object",
+        properties: { rows: { type: "array", items: { $ref: "#/$defs/row" } } },
+        $defs: { row: { type: "object", properties: { id: { $ref: "#/$defs/id" }, qty: { type: "integer" } }, required: ["id"] }, id: { type: "string", description: "Row id." } },
+      };
+      const [spec] = flagSpecsFromSchema(schema);
+      expect(spec.jsonKeys).toEqual([
+        { name: "id", required: true, type: "string", description: "Row id." },
+        { name: "qty", required: false, type: "integer" },
+      ]);
+      expect(optionForSpec(spec).description).toContain("(JSON array of {id*, qty})");
+    });
+
+    it("leaves out a key whose name is not a valid flag name and lists many keys by name only", () => {
+      const props: Record<string, McpJsonSchema> = { "bad key": { type: "string" } };
+      for (let i = 0; i < 13; i++) props[`k${i}`] = { type: "string", description: `Key ${i}.` };
+      const [spec] = flagSpecsFromSchema({ type: "object", properties: { o: { type: "object", properties: props, required: ["k0"] } } });
+      expect(spec.jsonKeys?.map((k) => k.name)).toEqual(Array.from({ length: 13 }, (_, i) => `k${i}`));
+      const help = optionForSpec(spec).description;
+      expect(help).toContain("(JSON {k0*, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10, k11, k12})");
+      expect(help).toContain("Keys: k0 (required), k1, k2,");
+      expect(help).not.toContain("Key 0.");
+      expect(help).not.toContain("bad key");
+    });
+
+    it("names the expected shape in the parse error for a malformed or mis-shaped literal", async () => {
+      const argv = ["--selection_id", "sel"];
+      await expect(parseArgs("set_airport", [...argv, "--groups", "not json"])).rejects.toThrow(
+        "--groups expects a JSON literal (JSON array of {code*, traveller_names, traveller_ids}).",
+      );
+      await expect(parseArgs("set_airport", [...argv, "--groups", '{"code":"BWI"}'])).rejects.toThrow(
+        "--groups expects a JSON array of {code*, traveller_names, traveller_ids}.",
+      );
+      // A well-formed literal still parses; nothing is validated against the keys client-side.
+      expect(await parseArgs("set_airport", [...argv, "--groups", '[{"code":"BWI"}]'])).toEqual({ selection_id: "sel", groups: [{ code: "BWI" }] });
+    });
+  });
+
   it("every fixture tool registers without option-name conflicts", () => {
     for (const t of FIXTURE_TOOLS) {
       const cmd = new Command(t.name);
