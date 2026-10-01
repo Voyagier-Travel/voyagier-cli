@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- **Checked-in registry snapshot** (`src/mcp/fixtures/remote-tools.json`) refreshed from the server's registry export (88 tools, up from 82). Every tool now carries an explicit `destructiveHint` (`false` on read-only and non-destructive tools, where it was previously omitted) and an `openWorldHint`, so an MCP host reads the annotation instead of inferring it. Six client-roster tools are added: `list_client_travellers` (a client's traveller roster, `--client_id`), `add_client_travellers` (`--client_id`, `--travellers`), `update_client_traveller` (`--client_traveller_id` plus the fields to change), `add_traveller_document` (passport, national ID, Known Traveler / Redress number, frequent-flyer or hotel loyalty number for a plan traveller; `--traveller_id`, `--type`, `--number` and the document's own fields), `set_plan_lead` (`--plan_id`, `--traveller_id`; `null` clears the lead) and `save_travellers_to_client` (`--plan_id`, `--traveller_ids`). `create_plan` gains `--save_travellers_to_client` and `add_travellers` gains `--save_to_client` (both default true; false for one-off travellers). `search_flights`, `search_hotels`, `search_activities`, `get_search_status` and `get_plan_quote` gain `--display_currency`, an ISO 4217 code the server estimates prices in for display (the charge stays in the source currency). Like every server tool these reach your commands on deploy with no CLI change. `set_plan_lead --traveller_id` is the first required flag that also accepts `null`; the flag must be given and `null` is the one spelling that sends JSON null, which the schema-flags spec now pins.
+
 ## [4.4.0] — 2026-09-30
 
 JSON-literal flags document their keys in `--help`.
