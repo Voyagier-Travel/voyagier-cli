@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [4.4.0] — 2026-09-30
+
+JSON-literal flags document their keys in `--help`.
+
 ### Added
 - **JSON-literal flags list their keys in `--help`.** A flag that takes an object or an array of objects now shows the keys the server's schema names — `(JSON array of {code*, traveller_names, traveller_ids})`, `*` marking a required key — followed by a `Keys:` clause with each key's type (`string`, `integer`, `string[]`, enum choices as `A|B`) and description, so `voyagier set_airport --help`, `create_plan --help` (`--travellers`) and `update_traveller --help` (`--passport`) read the nested contract without the raw schema. Local `$ref`s on the item and key schemas are resolved; a key name that is not a valid flag name is left out; past twelve keys the names alone are listed. A malformed or mis-shaped literal is rejected with the same shape line (`--groups expects a JSON array of {code*, …}`). Flags whose schema names no keys keep the previous `(JSON array)` / `(JSON object)` hint; parsing and `--json` output are unchanged.
 
