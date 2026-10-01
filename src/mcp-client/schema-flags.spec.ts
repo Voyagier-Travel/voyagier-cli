@@ -107,7 +107,7 @@ describe("flagSpecsFromSchema", () => {
     expect(specs.union.nullable).toBeUndefined();
   });
 
-  it("resolves the fixture's nullable params to their base kinds, and none of them is required", () => {
+  it("resolves the fixture's nullable params to their base kinds; the only required one is set_plan_lead.traveller_id", async () => {
     const update = Object.fromEntries(flagSpecsFromSchema(tool("update_plan").inputSchema).map((s) => [s.param, s]));
     expect(update.cover_media_id).toMatchObject({ kind: "string", nullable: true, required: false });
     expect(update.description).toMatchObject({ kind: "string", nullable: true, required: false });
@@ -115,14 +115,26 @@ describe("flagSpecsFromSchema", () => {
     expect(event.local_time).toMatchObject({ kind: "string", nullable: true });
     expect(event.duration_minutes).toMatchObject({ kind: "integer", nullable: true });
 
-    // The `null` sentinel is only unambiguous on an optional input. If the
-    // server ever publishes a REQUIRED nullable property this must be revisited.
+    // A required nullable property means "always say, and null is a valid
+    // answer". The sentinel stays unambiguous: the flag must be given, and
+    // `null` is the one spelling that sends JSON null. set_plan_lead is the
+    // only tool published this way (traveller_id null clears the lead); pin
+    // the list so a new one is a deliberate decision, not a surprise.
     const requiredNullable = FIXTURE_TOOLS.flatMap((t) =>
       flagSpecsFromSchema(t.inputSchema)
         .filter((s) => s.nullable && s.required)
         .map((s) => `${t.name}.${s.param}`),
     );
-    expect(requiredNullable).toEqual([]);
+    expect(requiredNullable).toEqual(["set_plan_lead.traveller_id"]);
+    const lead = Object.fromEntries(flagSpecsFromSchema(tool("set_plan_lead").inputSchema).map((s) => [s.param, s]));
+    expect(lead.traveller_id).toMatchObject({ kind: "string", nullable: true, required: true });
+    expect(optionForSpec(lead.traveller_id).description).toBe(
+      "(required) Plan traveller id (from list_travellers), or null to clear the lead. (pass null to clear)",
+    );
+    await expect(parseArgs("set_plan_lead", ["--plan_id", "p1", "--traveller_id", "t1"])).resolves.toEqual({ plan_id: "p1", traveller_id: "t1" });
+    await expect(parseArgs("set_plan_lead", ["--plan_id", "p1", "--traveller_id", "null"])).resolves.toEqual({ plan_id: "p1", traveller_id: null });
+    // Required means required: omitting the flag is still an error, null or not.
+    await expect(parseArgs("set_plan_lead", ["--plan_id", "p1"])).rejects.toThrow(/traveller_id/);
     const nullableCount = FIXTURE_TOOLS.flatMap((t) => flagSpecsFromSchema(t.inputSchema).filter((s) => s.nullable)).length;
     expect(nullableCount).toBeGreaterThan(0);
   });
