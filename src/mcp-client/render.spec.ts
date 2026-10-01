@@ -231,6 +231,40 @@ describe("renderSearchResult", () => {
     expect(partial).not.toContain("changeable");
   });
 
+  it("labels a fare by the cabin it books, naming the requested slot only when it differs, and says when cabins are mixed", () => {
+    const fareRow = (fields: Record<string, unknown>) =>
+      strip(
+        renderSearchResult({
+          id: "srch-4",
+          type: "Flight",
+          status: "Ready",
+          optionsSummary: { optionCount: 1, topOptions: [{ index: 0, price: 2100, currency: "USD", refundable: false, ...fields }] },
+        }),
+      );
+    // Booked cabin wins over the requested slot; the slot is kept in parentheses since the row was shopped under it.
+    expect(fareRow({ cabinClass: "premium-economy", bookedCabin: "business" })).toContain("       business (requested premium-economy)  ·  non-refundable");
+    // Same cabin both ways: one label, no parenthetical.
+    expect(fareRow({ cabinClass: "economy", bookedCabin: "economy" })).toContain("       economy  ·  non-refundable");
+    expect(fareRow({ cabinClass: "Economy", bookedCabin: "economy" })).toContain("       economy  ·  non-refundable");
+    // No booked cabin from the server: the requested slot is all there is.
+    expect(fareRow({ cabinClass: "economy" })).toContain("       economy  ·  non-refundable");
+    expect(fareRow({ cabinClass: "economy", bookedCabin: null })).toContain("       economy  ·  non-refundable");
+    // Mixed cabins are said, not hidden behind one cabin name.
+    expect(fareRow({ cabinClass: "business", bookedCabin: "business", mixedCabin: true, segmentCabins: ["business", "economy"] })).toContain(
+      "       business (mixed cabins)  ·  non-refundable",
+    );
+    expect(fareRow({ cabinClass: "premium-economy", bookedCabin: "business", mixedCabin: true })).toContain(
+      "       business (mixed cabins; requested premium-economy)  ·  non-refundable",
+    );
+    expect(fareRow({ cabinClass: "economy", mixedCabin: false })).toContain("       economy  ·  non-refundable");
+    // Fare & Cabin rows carry the booked cabin inside their `fare` block.
+    expect(fareRow({ cabinClass: "premium-economy", fare: { cabinClass: "premium-economy", bookedCabin: "business", mixedCabin: false } })).toContain(
+      "       business (requested premium-economy)  ·  non-refundable",
+    );
+    // No cabin at all: the conditions line starts with the next field.
+    expect(fareRow({})).toContain("       non-refundable");
+  });
+
   it("footer: matched/total counts, the airline facet, noMatchReason, a shell-quoted next-page command and the server's sentences", () => {
     const paged = {
       id: "srch-1",
@@ -432,9 +466,42 @@ describe("renderQuote", () => {
     );
     expect(out).toContain("• TP 203 BWI→LIS  $812.40  bookable");
     expect(out).toContain("• Grand Hotel  $1,290.00  not bookable: room not picked");
+    expect(out).not.toMatch(/economy|business|requested/);
     expect(out).toContain("chargeable total $812.40  (81240 cents)");
     expect(out).toContain("TRAVELLER_DATA: Date of birth");
     expect(out).toContain("voyagier book_plan --plan_id plan-9 --expect_total_cents 81240 --item_ids i-1");
+  });
+
+  it("shows a flight line's booked cabin under the line, with the requested slot only when it differs", () => {
+    const out = strip(
+      renderQuote({
+        items: [
+          { selectionId: "s-1", name: "SQ 25 JFK→FRA", priceCents: 412000, currency: "USD", bookable: true, cabinClass: "premium-economy", bookedCabin: "business" },
+          { selectionId: "s-2", name: "LH 400 FRA→JFK", priceCents: 98000, currency: "USD", bookable: true, cabinClass: "economy", bookedCabin: "economy" },
+          { selectionId: "s-3", name: "Grand Hotel", priceCents: 129000, currency: "USD", bookable: true },
+          // A quote line whose booked cabin is null (pruned or explicit) is unknown or mixed: never relabelled with the slot.
+          { selectionId: "s-4", name: "AF 7 JFK→CDG", priceCents: 150000, currency: "USD", bookable: true, cabinClass: "business", bookedCabin: null },
+          { selectionId: "s-5", name: "AF 8 CDG→JFK", priceCents: 150000, currency: "USD", bookable: true, cabinClass: "business" },
+          { selectionId: "s-6", name: "AF 9 CDG→NCE", priceCents: 50000, currency: "USD", bookable: true, cabinClass: "business", mixedCabin: true },
+        ],
+        chargeableTotalCents: 989000,
+        currency: "USD",
+      }),
+    );
+    const lines = out.split("\n");
+    const sq = lines.findIndex((l) => l.includes("SQ 25"));
+    expect(lines[sq + 1]).toBe("      business (requested premium-economy)");
+    expect(lines[sq + 2]).toBe("      selection_id s-1");
+    const lh = lines.findIndex((l) => l.includes("LH 400"));
+    expect(lines[lh + 1]).toBe("      economy");
+    const hotel = lines.findIndex((l) => l.includes("Grand Hotel"));
+    expect(lines[hotel + 1]).toBe("      selection_id s-3");
+    const af7 = lines.findIndex((l) => l.includes("AF 7"));
+    expect(lines[af7 + 1]).toBe("      cabin unknown or mixed (requested business)");
+    const af8 = lines.findIndex((l) => l.includes("AF 8"));
+    expect(lines[af8 + 1]).toBe("      cabin unknown or mixed (requested business)");
+    const af9 = lines.findIndex((l) => l.includes("AF 9"));
+    expect(lines[af9 + 1]).toBe("      mixed cabins (requested business)");
   });
 
   it("handles a pruned payload with nothing carted", () => {

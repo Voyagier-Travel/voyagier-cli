@@ -161,6 +161,41 @@ function renderLegs(legs: unknown): string {
 }
 
 /**
+ * The cabin label for a fare: the cabin its fare basis codes actually book
+ * (`bookedCabin`), falling back to the slot it was requested under
+ * (`cabinClass`) when the server does not say. The two differ when a supplier
+ * fills a cabin request with a fare from another cabin (a "premium-economy"
+ * request filled with a business fare): the client flies the booked cabin, so
+ * that is the label, and the requested slot follows in parentheses because it
+ * is still the name the row was shopped under. A fare that books different
+ * cabins on different segments says so. Fields are read from the row itself
+ * and from its nested `fare` block (Fare & Cabin rows carry both). Null when
+ * neither cabin is present.
+ *
+ * `bookedCabinRequired` is for quote lines: there the server always states the
+ * booked cabin when it knows it, and a line with a requested slot but no
+ * booked cabin means the cabin is unknown or mixed. The label says that
+ * instead of falling back, because the quote is what gets relayed with the
+ * total. Search rows keep the fallback: their `cabinClass` is the fare's own
+ * cabin and most rows carry no booked cabin at all.
+ */
+function fareCabinLabel(rec: Rec, opts: { bookedCabinRequired?: boolean } = {}): string | null {
+  const fare = isRec(rec.fare) ? rec.fare : null;
+  const requested = str(rec.cabinClass) ?? (fare ? str(fare.cabinClass) : null);
+  const booked = str(rec.bookedCabin) ?? (fare ? str(fare.bookedCabin) : null);
+  const mixed = bool(rec.mixedCabin) ?? (fare ? bool(fare.mixedCabin) : null);
+  if (!booked && !requested) return null;
+  if (!booked && opts.bookedCabinRequired) {
+    return `${mixed === true ? "mixed cabins" : "cabin unknown or mixed"} (requested ${requested})`;
+  }
+  const label = (booked ?? requested) as string;
+  const notes: string[] = [];
+  if (mixed === true) notes.push("mixed cabins");
+  if (booked && requested && booked.toLowerCase() !== requested.toLowerCase()) notes.push(`requested ${requested}`);
+  return notes.length ? `${label} (${notes.join("; ")})` : label;
+}
+
+/**
  * The fare conditions a flight row carries for the fare its price buys:
  * cabin, refundable / changeable, baggage, fare basis codes, base fare and
  * taxes. Every field is optional; a row with none of them renders nothing.
@@ -168,7 +203,7 @@ function renderLegs(legs: unknown): string {
  */
 function renderFareConditions(opt: Rec): string {
   const bits: string[] = [];
-  const cabin = str(opt.cabinClass);
+  const cabin = fareCabinLabel(opt);
   if (cabin) bits.push(cabin);
   const refundable = bool(opt.refundable);
   if (refundable != null) bits.push(refundable ? "refundable" : "non-refundable");
@@ -426,6 +461,11 @@ export function renderQuote(payload: unknown): string | null {
     const bookable = it.bookable === true ? chalk.green("bookable") : chalk.yellow(`not bookable${str(it.bookableReason) ? `: ${it.bookableReason}` : ""}`);
     const p = num(it.priceCents) != null ? priceCents(it.priceCents, it.currency) : price(it.price, it.currency);
     lines.push(`  • ${str(it.name) ?? "item"}  ${chalk.green(p)}  ${bookable}`);
+    // Flight lines: the cabin the client flies, read before the total is
+    // relayed. A line with no booked cabin is said to be unknown or mixed,
+    // never relabelled with the requested slot.
+    const cabin = fareCabinLabel(it, { bookedCabinRequired: true });
+    if (cabin) lines.push(chalk.dim(`      ${cabin}`));
     if (str(it.selectionId)) lines.push(chalk.dim(`      selection_id ${it.selectionId}${str(it.optionId) ? `  option_id ${it.optionId}` : ""}`));
   }
   const total = priceCents(payload.chargeableTotalCents, payload.currency);
