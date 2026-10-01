@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- **Fare rows and quote lines are labelled by the cabin the fare books (VOY-2277).** The conditions line under a flight row, and a new line under each flight quote line, read `bookedCabin` (the cabin the fare basis codes book into) and fall back to `cabinClass` (the slot the fare was requested under) only when the server sends no booked cabin. When the two differ the requested slot follows in parentheses (`business (requested premium-economy)`), and a fare that books different cabins on different segments says `(mixed cabins)`. Fare & Cabin rows that carry the cabin inside their `fare` block are read the same way. `--json` output is unchanged.
+- **Checked-in registry snapshot** (`src/mcp/fixtures/remote-tools.json`) refreshed from the server's registry export (88 tools). Tool descriptions now explain flight price status (`priceStatus`: INDICATIVE | REPRICING | REPRICED, with `fetchedAt` and `stale`) on flight summaries, `fetchStatus` and quote lines, the quote's `priceWarnings[]`, the `bookedCabin` / `cabinClass` distinction on fare rows and quote lines, per-leg `origin` / `destination` on summary segments, the lead-traveller gate in `get_plan_status`, and serial plan writes (`PLAN_BUSY`). Six client-roster tools are added (`list_client_travellers`, `add_client_travellers`, `update_client_traveller`, `add_traveller_document`, `set_plan_lead`, `save_travellers_to_client`), `create_plan` / `add_travellers` gain roster flags and the search, status and quote tools gain `--display_currency`. No tool removed or renamed. Like every server tool these reach your commands on deploy with no CLI change; the snapshot feeds the docs and generated-surface specs and the server-side parity check. `set_plan_lead --traveller_id` is the first required flag that also accepts `null`, which the schema-flags spec now pins.
+
 ## [4.4.0] — 2026-09-30
 
 JSON-literal flags document their keys in `--help`.
