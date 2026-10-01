@@ -479,8 +479,12 @@ describe("renderQuote", () => {
           { selectionId: "s-1", name: "SQ 25 JFK→FRA", priceCents: 412000, currency: "USD", bookable: true, cabinClass: "premium-economy", bookedCabin: "business" },
           { selectionId: "s-2", name: "LH 400 FRA→JFK", priceCents: 98000, currency: "USD", bookable: true, cabinClass: "economy", bookedCabin: "economy" },
           { selectionId: "s-3", name: "Grand Hotel", priceCents: 129000, currency: "USD", bookable: true },
+          // A quote line whose booked cabin is null (pruned or explicit) is unknown or mixed: never relabelled with the slot.
+          { selectionId: "s-4", name: "AF 7 JFK→CDG", priceCents: 150000, currency: "USD", bookable: true, cabinClass: "business", bookedCabin: null },
+          { selectionId: "s-5", name: "AF 8 CDG→JFK", priceCents: 150000, currency: "USD", bookable: true, cabinClass: "business" },
+          { selectionId: "s-6", name: "AF 9 CDG→NCE", priceCents: 50000, currency: "USD", bookable: true, cabinClass: "business", mixedCabin: true },
         ],
-        chargeableTotalCents: 639000,
+        chargeableTotalCents: 989000,
         currency: "USD",
       }),
     );
@@ -492,6 +496,12 @@ describe("renderQuote", () => {
     expect(lines[lh + 1]).toBe("      economy");
     const hotel = lines.findIndex((l) => l.includes("Grand Hotel"));
     expect(lines[hotel + 1]).toBe("      selection_id s-3");
+    const af7 = lines.findIndex((l) => l.includes("AF 7"));
+    expect(lines[af7 + 1]).toBe("      cabin unknown or mixed (requested business)");
+    const af8 = lines.findIndex((l) => l.includes("AF 8"));
+    expect(lines[af8 + 1]).toBe("      cabin unknown or mixed (requested business)");
+    const af9 = lines.findIndex((l) => l.includes("AF 9"));
+    expect(lines[af9 + 1]).toBe("      mixed cabins (requested business)");
   });
 
   it("handles a pruned payload with nothing carted", () => {
