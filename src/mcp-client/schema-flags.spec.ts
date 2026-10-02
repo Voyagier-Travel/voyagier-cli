@@ -486,7 +486,7 @@ describe("parsing flags into tool arguments", () => {
       expect(specs.passport.jsonKeys?.map((k) => k.name)).toEqual(["passport_number", "issue_country", "nationality_country", "expiration_date"]);
       const help = optionForSpec(specs.passport).description;
       expect(help).toContain("(JSON {passport_number*, issue_country*, nationality_country*, expiration_date*}; pass null to clear)");
-      expect(help).toMatch(/Keys: passport_number \(required, string\) — Passport number;/);
+      expect(help).toMatch(/Keys: passport_number \(required, string\) — Passport number: letters and digits only \(no spaces, hyphens or punctuation\);/);
     });
 
     it("resolves a local $ref on the items schema and on nested properties", () => {
