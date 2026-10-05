@@ -10,7 +10,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -59,7 +61,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -95,7 +99,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -128,7 +134,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": false
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -153,7 +161,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -212,7 +222,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -237,7 +248,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -316,7 +329,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -395,7 +409,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -421,7 +436,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -447,7 +463,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -474,7 +491,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -581,7 +600,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -629,7 +649,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -655,7 +676,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": true
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -695,7 +717,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -729,7 +752,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -763,7 +787,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -862,7 +887,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": true
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -954,7 +980,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": true
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1012,7 +1039,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": true
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1073,7 +1101,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": true
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1138,7 +1167,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1177,7 +1208,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1202,7 +1235,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1243,7 +1278,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1284,7 +1320,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": true
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1346,7 +1383,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1371,7 +1409,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1459,7 +1499,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1485,7 +1526,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": true
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1517,7 +1559,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1548,7 +1591,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1587,7 +1631,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1617,7 +1662,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": true
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1642,7 +1688,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1671,7 +1719,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1727,7 +1777,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": true
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1802,7 +1853,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1827,7 +1879,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1929,7 +1983,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1963,7 +2018,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -1998,7 +2054,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2023,7 +2080,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2048,7 +2107,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2073,7 +2134,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2136,7 +2199,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2179,7 +2243,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2205,7 +2270,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": true
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2230,7 +2296,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2255,7 +2323,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2281,7 +2351,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": true
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2307,7 +2378,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2348,7 +2420,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": true
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2384,7 +2457,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2420,7 +2495,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": true
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2445,7 +2521,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2470,7 +2548,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2514,7 +2594,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2546,7 +2627,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": true
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2582,7 +2664,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2614,7 +2697,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": true
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2663,7 +2747,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2736,7 +2821,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": true
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2762,7 +2848,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2788,7 +2875,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2818,7 +2906,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": true
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2853,7 +2942,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": true
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2892,7 +2982,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2927,7 +3018,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -2962,7 +3054,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3009,7 +3102,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3070,7 +3164,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3105,7 +3200,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3140,7 +3236,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3166,7 +3263,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": true
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3244,7 +3342,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3334,7 +3433,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3360,7 +3460,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": true
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3416,7 +3517,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3459,7 +3561,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3485,7 +3588,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": true
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3530,7 +3634,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": true
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3560,7 +3665,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3702,7 +3809,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false
+      "destructiveHint": false,
+      "openWorldHint": true
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3739,7 +3847,8 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": true
+      "destructiveHint": true,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3770,7 +3879,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
@@ -3795,7 +3906,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#"
     },
     "annotations": {
-      "readOnlyHint": true
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     },
     "execution": {
       "taskSupport": "forbidden"
