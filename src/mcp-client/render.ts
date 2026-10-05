@@ -188,16 +188,19 @@ const CABIN_NOT_REPORTED = "cabin per flight not reported";
 function fareCabinLabel(rec: Rec): string | null {
   const fare = isRec(rec.fare) ? rec.fare : null;
   const legs = Array.isArray(rec.legs) ? rec.legs : fare && Array.isArray(fare.legs) ? fare.legs : null;
-  const flights = arr(legs)
-    .filter(isRec)
-    .map((leg) => {
-      const cabin = str(leg.cabin);
-      if (!cabin) return null;
-      const route = [str(leg.origin), str(leg.destination)].filter(Boolean).join("→");
-      return route ? `${route} ${cabinWord(cabin)}` : cabinWord(cabin);
-    })
-    .filter((s): s is string => s !== null);
-  if (flights.length) return flights.join(" · ");
+  const legRecs = arr(legs).filter(isRec);
+  // A leg without a cabin keeps its place as "not reported": dropping it would
+  // make the remaining flights read as the whole fare's cabin.
+  if (legRecs.some((leg) => str(leg.cabin) !== null)) {
+    return legRecs
+      .map((leg) => {
+        const cabin = str(leg.cabin);
+        const word = cabin ? cabinWord(cabin) : "cabin not reported";
+        const route = [str(leg.origin), str(leg.destination)].filter(Boolean).join("→");
+        return route ? `${route} ${word}` : word;
+      })
+      .join(" · ");
+  }
   const isFlightFare = "legs" in rec || str(rec.cabinClass) !== null || str(rec.bookedCabin) !== null || (fare !== null && ("legs" in fare || str(fare.cabinClass) !== null));
   return isFlightFare ? CABIN_NOT_REPORTED : null;
 }

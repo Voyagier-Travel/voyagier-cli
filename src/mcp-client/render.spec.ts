@@ -270,8 +270,12 @@ describe("renderSearchResult", () => {
       expect(out).toContain("       cabin per flight not reported  ·  non-refundable");
       expect(out).not.toMatch(/\b(economy|business)\b/i);
     }
-    // A leg without a cabin is skipped; one without a route still names its cabin.
-    expect(fareRow({ fare: { legs: [{ origin: "BWI", destination: "ORD" }, { cabin: "first" }] } })).toContain("       First  ·  non-refundable");
+    // A leg without a cabin keeps its place as not reported (never dropped, so the other flights do not read as the whole fare); one without a route still names its cabin.
+    expect(fareRow({ fare: { legs: [{ origin: "BWI", destination: "ORD" }, { cabin: "first" }] } })).toContain(
+      "       BWI→ORD cabin not reported · First  ·  non-refundable",
+    );
+    // No leg carries a cabin: the whole line is not reported.
+    expect(fareRow({ fare: { legs: [{ origin: "BWI", destination: "ORD" }] } })).toContain("       cabin per flight not reported  ·  non-refundable");
     // No cabin fields at all (a hotel or activity row): the conditions line starts with the next field.
     expect(fareRow({})).toContain("       non-refundable");
     expect(fareRow({})).not.toContain("cabin per flight");
