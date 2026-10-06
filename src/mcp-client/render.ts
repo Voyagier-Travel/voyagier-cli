@@ -160,39 +160,49 @@ function renderLegs(legs: unknown): string {
   return out.join(", ");
 }
 
+/** Wire value for a cabin to display text: `premium-economy` → `Premium economy`. */
+function cabinWord(v: string): string {
+  const s = v.replace(/[-_]+/g, " ").trim();
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}
+
+/** The sentence printed for a flight fare whose per-flight cabins the server did not report. */
+const CABIN_NOT_REPORTED = "cabin per flight not reported";
+
 /**
- * The cabin label for a fare: the cabin its fare basis codes actually book
- * (`bookedCabin`), falling back to the slot it was requested under
- * (`cabinClass`) when the server does not say. The two differ when a supplier
- * fills a cabin request with a fare from another cabin (a "premium-economy"
- * request filled with a business fare): the client flies the booked cabin, so
- * that is the label, and the requested slot follows in parentheses because it
- * is still the name the row was shopped under. A fare that books different
- * cabins on different segments says so. Fields are read from the row itself
- * and from its nested `fare` block (Fare & Cabin rows carry both). Null when
- * neither cabin is present.
+ * The cabin a fare flies, per flight, from its `legs` — one entry per operated
+ * flight in flight order, each with the cabin booked on that flight. A fare
+ * has no single cabin: a BWI→CDG fare can fly BWI→ORD in economy and ORD→CDG
+ * in business, so the label names every flight ("BWI→ORD Economy · ORD→CDG
+ * Business"). The legs are read from the row itself (quote lines) or from its
+ * nested `fare` block (Fare & Cabin rows).
  *
- * `bookedCabinRequired` is for quote lines: there the server always states the
- * booked cabin when it knows it, and a line with a requested slot but no
- * booked cabin means the cabin is unknown or mixed. The label says that
- * instead of falling back, because the quote is what gets relayed with the
- * total. Search rows keep the fallback: their `cabinClass` is the fare's own
- * cabin and most rows carry no booked cabin at all.
+ * `cabinClass` is only the slot the fare was priced under (or, on a supplier
+ * primary fare, the lowest cabin across its legs) and `bookedCabin` is a
+ * deprecated one-cabin summary; neither is the cabin flown, so neither is
+ * printed. When a flight fare carries no legs (null, or omitted) the cabin per
+ * flight is unknown and the label says so instead of falling back to a field
+ * that would be read as the cabin. Null for a row that is not a flight fare
+ * (no legs, no slot, no fare block).
  */
-function fareCabinLabel(rec: Rec, opts: { bookedCabinRequired?: boolean } = {}): string | null {
+function fareCabinLabel(rec: Rec): string | null {
   const fare = isRec(rec.fare) ? rec.fare : null;
-  const requested = str(rec.cabinClass) ?? (fare ? str(fare.cabinClass) : null);
-  const booked = str(rec.bookedCabin) ?? (fare ? str(fare.bookedCabin) : null);
-  const mixed = bool(rec.mixedCabin) ?? (fare ? bool(fare.mixedCabin) : null);
-  if (!booked && !requested) return null;
-  if (!booked && opts.bookedCabinRequired) {
-    return `${mixed === true ? "mixed cabins" : "cabin unknown or mixed"} (requested ${requested})`;
+  const legs = Array.isArray(rec.legs) ? rec.legs : fare && Array.isArray(fare.legs) ? fare.legs : null;
+  const legRecs = arr(legs).filter(isRec);
+  // A leg without a cabin keeps its place as "not reported": dropping it would
+  // make the remaining flights read as the whole fare's cabin.
+  if (legRecs.some((leg) => str(leg.cabin) !== null)) {
+    return legRecs
+      .map((leg) => {
+        const cabin = str(leg.cabin);
+        const word = cabin ? cabinWord(cabin) : "cabin not reported";
+        const route = [str(leg.origin), str(leg.destination)].filter(Boolean).join("→");
+        return route ? `${route} ${word}` : word;
+      })
+      .join(" · ");
   }
-  const label = (booked ?? requested) as string;
-  const notes: string[] = [];
-  if (mixed === true) notes.push("mixed cabins");
-  if (booked && requested && booked.toLowerCase() !== requested.toLowerCase()) notes.push(`requested ${requested}`);
-  return notes.length ? `${label} (${notes.join("; ")})` : label;
+  const isFlightFare = "legs" in rec || str(rec.cabinClass) !== null || str(rec.bookedCabin) !== null || (fare !== null && ("legs" in fare || str(fare.cabinClass) !== null));
+  return isFlightFare ? CABIN_NOT_REPORTED : null;
 }
 
 /**
@@ -461,10 +471,10 @@ export function renderQuote(payload: unknown): string | null {
     const bookable = it.bookable === true ? chalk.green("bookable") : chalk.yellow(`not bookable${str(it.bookableReason) ? `: ${it.bookableReason}` : ""}`);
     const p = num(it.priceCents) != null ? priceCents(it.priceCents, it.currency) : price(it.price, it.currency);
     lines.push(`  • ${str(it.name) ?? "item"}  ${chalk.green(p)}  ${bookable}`);
-    // Flight lines: the cabin the client flies, read before the total is
-    // relayed. A line with no booked cabin is said to be unknown or mixed,
-    // never relabelled with the requested slot.
-    const cabin = fareCabinLabel(it, { bookedCabinRequired: true });
+    // Flight lines: the cabin the client flies on each flight, read before
+    // the total is relayed. A line with no legs is said to be unreported,
+    // never relabelled with the slot the fare was priced under.
+    const cabin = fareCabinLabel(it);
     if (cabin) lines.push(chalk.dim(`      ${cabin}`));
     if (str(it.selectionId)) lines.push(chalk.dim(`      selection_id ${it.selectionId}${str(it.optionId) ? `  option_id ${it.optionId}` : ""}`));
   }

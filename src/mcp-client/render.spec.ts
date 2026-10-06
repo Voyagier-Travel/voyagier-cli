@@ -200,7 +200,11 @@ describe("renderSearchResult", () => {
     };
     const out = strip(renderSearchResult({ id: "srch-2", type: "Flight", status: "Ready", optionsSummary: { optionCount: 1, topOptions: [row] } }));
     expect(out).toContain("JFK→DXB 22:20–19:10 12h 50m nonstop EK 204  ·  DXB→JFK 08:30–14:25 14h 55m 1 stop EK 384 (op. FZ), EK 201  ·  $1,240.50");
-    expect(out).toContain("       Economy  ·  non-refundable  ·  changeable  ·  bags: carry-on 1 piece, 7 kg  ·  fare basis KLXESAU1/KLXESAU1/CH  ·  base $980.00 + taxes $260.50");
+    // A search row carries the slot the fare was priced under, not the cabin per flight: the line says so instead of printing the slot.
+    expect(out).toContain(
+      "       cabin per flight not reported  ·  non-refundable  ·  changeable  ·  bags: carry-on 1 piece, 7 kg  ·  fare basis KLXESAU1/KLXESAU1/CH  ·  base $980.00 + taxes $260.50",
+    );
+    expect(out).not.toContain("Economy");
     // Null checked baggage is "unknown", never printed as a number of bags.
     expect(out).not.toContain("checked");
     expect(out).toContain("option_id opt-9");
@@ -231,7 +235,7 @@ describe("renderSearchResult", () => {
     expect(partial).not.toContain("changeable");
   });
 
-  it("labels a fare by the cabin it books, naming the requested slot only when it differs, and says when cabins are mixed", () => {
+  it("labels a fare by the cabin on each flight from its legs, and never by cabinClass or bookedCabin", () => {
     const fareRow = (fields: Record<string, unknown>) =>
       strip(
         renderSearchResult({
@@ -241,28 +245,40 @@ describe("renderSearchResult", () => {
           optionsSummary: { optionCount: 1, topOptions: [{ index: 0, price: 2100, currency: "USD", refundable: false, ...fields }] },
         }),
       );
-    // Booked cabin wins over the requested slot; the slot is kept in parentheses since the row was shopped under it.
-    expect(fareRow({ cabinClass: "premium-economy", bookedCabin: "business" })).toContain("       business (requested premium-economy)  ·  non-refundable");
-    // Same cabin both ways: one label, no parenthetical.
-    expect(fareRow({ cabinClass: "economy", bookedCabin: "economy" })).toContain("       economy  ·  non-refundable");
-    expect(fareRow({ cabinClass: "Economy", bookedCabin: "economy" })).toContain("       economy  ·  non-refundable");
-    // No booked cabin from the server: the requested slot is all there is.
-    expect(fareRow({ cabinClass: "economy" })).toContain("       economy  ·  non-refundable");
-    expect(fareRow({ cabinClass: "economy", bookedCabin: null })).toContain("       economy  ·  non-refundable");
-    // Mixed cabins are said, not hidden behind one cabin name.
-    expect(fareRow({ cabinClass: "business", bookedCabin: "business", mixedCabin: true, segmentCabins: ["business", "economy"] })).toContain(
-      "       business (mixed cabins)  ·  non-refundable",
+    const bwiOrd = { origin: "BWI", destination: "ORD", carrier: "UA", flightNumber: 512, cabin: "economy", bookingCode: "K" };
+    const ordCdg = { origin: "ORD", destination: "CDG", carrier: "UA", flightNumber: 986, cabin: "business", bookingCode: "D" };
+    // A Fare & Cabin row carries its legs inside the `fare` block: one cabin per flight, in flight order.
+    const mixed = fareRow({ cabinClass: "economy", fare: { cabinClass: "economy", bookedCabin: null, legs: [bwiOrd, ordCdg] } });
+    expect(mixed).toContain("       BWI→ORD Economy · ORD→CDG Business  ·  non-refundable");
+    // The slot the fare was priced under is not the cabin flown and is not printed as one.
+    expect(mixed).not.toMatch(/\beconomy\b/);
+    // Same cabin on every flight: still one entry per flight, never collapsed to the deprecated bookedCabin.
+    expect(fareRow({ cabinClass: "premium-economy", fare: { cabinClass: "premium-economy", bookedCabin: "business", legs: [{ ...bwiOrd, cabin: "business" }, ordCdg] } })).toContain(
+      "       BWI→ORD Business · ORD→CDG Business  ·  non-refundable",
     );
-    expect(fareRow({ cabinClass: "premium-economy", bookedCabin: "business", mixedCabin: true })).toContain(
-      "       business (mixed cabins; requested premium-economy)  ·  non-refundable",
+    expect(fareRow({ fare: { legs: [{ ...bwiOrd, cabin: "premium-economy" }] } })).toContain("       BWI→ORD Premium economy  ·  non-refundable");
+    // Null legs: the per-flight cabin is unknown for that fare; the row name, cabinClass and bookedCabin are not relayed in its place.
+    for (const row of [
+      { cabinClass: "economy", fare: { cabinClass: "economy", bookedCabin: "economy", legs: null } },
+      { cabinClass: "business", fare: { cabinClass: "business", bookedCabin: null } },
+      { cabinClass: "business", fare: { cabinClass: "business", legs: [] } },
+      // A search row carries only the slot: the cabin is per flight and the row does not have it.
+      { cabinClass: "economy" },
+      { cabinClass: "premium-economy", bookedCabin: "business" },
+    ]) {
+      const out = fareRow(row);
+      expect(out).toContain("       cabin per flight not reported  ·  non-refundable");
+      expect(out).not.toMatch(/\b(economy|business)\b/i);
+    }
+    // A leg without a cabin keeps its place as not reported (never dropped, so the other flights do not read as the whole fare); one without a route still names its cabin.
+    expect(fareRow({ fare: { legs: [{ origin: "BWI", destination: "ORD" }, { cabin: "first" }] } })).toContain(
+      "       BWI→ORD cabin not reported · First  ·  non-refundable",
     );
-    expect(fareRow({ cabinClass: "economy", mixedCabin: false })).toContain("       economy  ·  non-refundable");
-    // Fare & Cabin rows carry the booked cabin inside their `fare` block.
-    expect(fareRow({ cabinClass: "premium-economy", fare: { cabinClass: "premium-economy", bookedCabin: "business", mixedCabin: false } })).toContain(
-      "       business (requested premium-economy)  ·  non-refundable",
-    );
-    // No cabin at all: the conditions line starts with the next field.
+    // No leg carries a cabin: the whole line is not reported.
+    expect(fareRow({ fare: { legs: [{ origin: "BWI", destination: "ORD" }] } })).toContain("       cabin per flight not reported  ·  non-refundable");
+    // No cabin fields at all (a hotel or activity row): the conditions line starts with the next field.
     expect(fareRow({})).toContain("       non-refundable");
+    expect(fareRow({})).not.toContain("cabin per flight");
   });
 
   it("footer: matched/total counts, the airline facet, noMatchReason, a shell-quoted next-page command and the server's sentences", () => {
@@ -472,36 +488,55 @@ describe("renderQuote", () => {
     expect(out).toContain("voyagier book_plan --plan_id plan-9 --expect_total_cents 81240 --item_ids i-1");
   });
 
-  it("shows a flight line's booked cabin under the line, with the requested slot only when it differs", () => {
+  it("shows a flight line's cabin per flight under the line, and says when the server did not report it", () => {
     const out = strip(
       renderQuote({
         items: [
-          { selectionId: "s-1", name: "SQ 25 JFK→FRA", priceCents: 412000, currency: "USD", bookable: true, cabinClass: "premium-economy", bookedCabin: "business" },
-          { selectionId: "s-2", name: "LH 400 FRA→JFK", priceCents: 98000, currency: "USD", bookable: true, cabinClass: "economy", bookedCabin: "economy" },
+          {
+            selectionId: "s-1",
+            name: "UA 512 / UA 986 BWI→CDG",
+            priceCents: 412000,
+            currency: "USD",
+            bookable: true,
+            cabinClass: "economy",
+            bookedCabin: null,
+            legs: [
+              { origin: "BWI", destination: "ORD", carrier: "UA", flightNumber: 512, cabin: "economy", bookingCode: "K" },
+              { origin: "ORD", destination: "CDG", carrier: "UA", flightNumber: 986, cabin: "business", bookingCode: "D" },
+            ],
+          },
+          {
+            selectionId: "s-2",
+            name: "LH 400 FRA→JFK",
+            priceCents: 98000,
+            currency: "USD",
+            bookable: true,
+            cabinClass: "premium-economy",
+            bookedCabin: "business",
+            legs: [{ origin: "FRA", destination: "JFK", carrier: "LH", flightNumber: 400, cabin: "business", bookingCode: "D" }],
+          },
           { selectionId: "s-3", name: "Grand Hotel", priceCents: 129000, currency: "USD", bookable: true },
-          // A quote line whose booked cabin is null (pruned or explicit) is unknown or mixed: never relabelled with the slot.
-          { selectionId: "s-4", name: "AF 7 JFK→CDG", priceCents: 150000, currency: "USD", bookable: true, cabinClass: "business", bookedCabin: null },
+          // A quote line whose legs are null (pruned or explicit) has no known cabin: never relabelled with the slot or the deprecated bookedCabin.
+          { selectionId: "s-4", name: "AF 7 JFK→CDG", priceCents: 150000, currency: "USD", bookable: true, cabinClass: "business", bookedCabin: "business", legs: null },
           { selectionId: "s-5", name: "AF 8 CDG→JFK", priceCents: 150000, currency: "USD", bookable: true, cabinClass: "business" },
-          { selectionId: "s-6", name: "AF 9 CDG→NCE", priceCents: 50000, currency: "USD", bookable: true, cabinClass: "business", mixedCabin: true },
         ],
-        chargeableTotalCents: 989000,
+        chargeableTotalCents: 939000,
         currency: "USD",
       }),
     );
     const lines = out.split("\n");
-    const sq = lines.findIndex((l) => l.includes("SQ 25"));
-    expect(lines[sq + 1]).toBe("      business (requested premium-economy)");
-    expect(lines[sq + 2]).toBe("      selection_id s-1");
+    const ua = lines.findIndex((l) => l.includes("UA 512"));
+    expect(lines[ua + 1]).toBe("      BWI→ORD Economy · ORD→CDG Business");
+    expect(lines[ua + 2]).toBe("      selection_id s-1");
     const lh = lines.findIndex((l) => l.includes("LH 400"));
-    expect(lines[lh + 1]).toBe("      economy");
+    expect(lines[lh + 1]).toBe("      FRA→JFK Business");
     const hotel = lines.findIndex((l) => l.includes("Grand Hotel"));
     expect(lines[hotel + 1]).toBe("      selection_id s-3");
     const af7 = lines.findIndex((l) => l.includes("AF 7"));
-    expect(lines[af7 + 1]).toBe("      cabin unknown or mixed (requested business)");
+    expect(lines[af7 + 1]).toBe("      cabin per flight not reported");
     const af8 = lines.findIndex((l) => l.includes("AF 8"));
-    expect(lines[af8 + 1]).toBe("      cabin unknown or mixed (requested business)");
-    const af9 = lines.findIndex((l) => l.includes("AF 9"));
-    expect(lines[af9 + 1]).toBe("      mixed cabins (requested business)");
+    expect(lines[af8 + 1]).toBe("      cabin per flight not reported");
+    expect(out).not.toMatch(/premium-economy|requested|mixed/);
   });
 
   it("handles a pruned payload with nothing carted", () => {
