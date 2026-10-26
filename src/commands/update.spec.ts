@@ -2,7 +2,6 @@ import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals
 import { Command } from "commander";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
-import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { CliErrorCode } from "../errors.js";
@@ -18,6 +17,7 @@ import {
   NPX_MESSAGE,
   REGISTRY_LATEST_URL,
   SOURCE_MESSAGE,
+  localMessage,
   type SpawnImpl,
   type SpawnedChild,
   type UpdateResult,
@@ -244,6 +244,50 @@ describe("npmInvocation", () => {
   it("falls back to npm.cmd through the shell only on Windows when no JS entry exists", () => {
     expect(npmInvocation("npm.cmd", "/n/node.exe", "win32")).toEqual({ cmd: "npm.cmd", argsPrefix: [], shell: true });
     expect(npmInvocation("npm", "/n/node", "linux")).toEqual({ cmd: "npm", argsPrefix: [], shell: false });
+  });
+});
+
+describe("detectInstallMode: project-local installs", () => {
+  /** `<project>/package.json` + `<project>/node_modules/@voyagier/cli` (`npm install @voyagier/cli`), optionally through the alias. */
+  function localLayout(opts: { alias?: boolean; packageJson?: boolean } = {}) {
+    const project = tempDir();
+    if (opts.packageJson !== false) writeFileSync(join(project, "package.json"), "{}");
+    const ownerDir = opts.alias ? join(project, "node_modules", "voyagier") : join(project, "node_modules", "@voyagier", "cli");
+    const packageDir = opts.alias ? join(ownerDir, "node_modules", "@voyagier", "cli") : ownerDir;
+    mkdirSync(join(packageDir, "dist"), { recursive: true });
+    writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name: "@voyagier/cli", version: CURRENT }));
+    const modulePath = join(packageDir, "dist", "index.js");
+    writeFileSync(modulePath, "");
+    return { project, ownerDir, packageDir, modulePath };
+  }
+
+  it("classifies a project dependency as local, with the project dir, for the plain and alias layouts", () => {
+    const plain = localLayout();
+    expect(detectInstallMode(plain.modulePath, "linux")).toEqual({ mode: "local", packageDir: plain.packageDir, package: "@voyagier/cli", ownerDir: plain.ownerDir, projectDir: plain.project });
+    const alias = localLayout({ alias: true });
+    expect(detectInstallMode(alias.modulePath, "win32")).toMatchObject({ mode: "local", package: "voyagier", ownerDir: alias.ownerDir, projectDir: alias.project });
+  });
+
+  it("on POSIX a node_modules outside lib/ is local even without a package.json; on Windows the package.json decides", () => {
+    const noPkg = localLayout({ packageJson: false });
+    expect(detectInstallMode(noPkg.modulePath, "linux").mode).toBe("local");
+    expect(detectInstallMode(noPkg.modulePath, "win32").mode).toBe("global"); // %APPDATA%\\npm\\node_modules shape
+  });
+
+  it("refuses to spawn npm for a local install and points at the project", async () => {
+    const plain = localLayout();
+    const npm = fakeSpawn();
+    const result = await runUpdate(CURRENT, {}, { modulePath: plain.modulePath, execPath: "/usr/bin/node", platform: "linux", fetchImpl: registryFetch().fetchImpl, spawnImpl: npm.spawnImpl });
+    expect(npm.calls).toHaveLength(0);
+    expect(result).toMatchObject({ ok: false, mode: "local", package: "@voyagier/cli", latest: LATEST, updated: false, exitCode: 1, error: { code: CliErrorCode.VALIDATION, message: localMessage(plain.project) } });
+    expect(result.error?.message).toContain("npm install @voyagier/cli@latest");
+  });
+
+  it("--check still reports for a local install", async () => {
+    const plain = localLayout();
+    const result = await runUpdate(CURRENT, { check: true }, { modulePath: plain.modulePath, execPath: "/usr/bin/node", platform: "linux", fetchImpl: registryFetch().fetchImpl, spawnImpl: fakeSpawn().spawnImpl });
+    expect(result).toMatchObject({ ok: false, mode: "local", latest: LATEST, exitCode: 1 });
+    expect(result.error).toBeUndefined();
   });
 });
 

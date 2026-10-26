@@ -17,6 +17,9 @@
  *                through node (no shell, no `.cmd`, same on every OS), pinned
  *                to the prefix the binary lives in with `--prefix`, then
  *                verifies the package.json this process was loaded from.
+ *   - local    — a project's `node_modules` (`npm install @voyagier/cli` then
+ *                `npx voyagier update`): refuse before touching npm and point
+ *                at `npm install @voyagier/cli@latest` in that project (exit 1).
  *   - source   — anything else (git checkout, `npm link`): refuse and point
  *                at `git pull && npm run build` (exit 1).
  *
@@ -46,7 +49,7 @@ const REGISTRY_TIMEOUT_MS = 5000;
 /** Lines of npm output surfaced when an install fails for a reason other than EACCES. */
 const NPM_OUTPUT_TAIL_LINES = 20;
 
-export type UpdateMode = "global" | "npx" | "source";
+export type UpdateMode = "global" | "npx" | "local" | "source";
 export type NpmSource = "prefix" | "execPath" | "PATH";
 export type InstalledPackage = typeof PACKAGE_NAME | typeof ALIAS_PACKAGE_NAME;
 
@@ -100,6 +103,9 @@ export interface UpdateResult {
 
 export const NPX_MESSAGE = `Zero-install runs always use the latest version: npx ${PACKAGE_NAME}@latest`;
 export const SOURCE_MESSAGE = "This CLI runs from a source checkout; update it with: git pull && npm run build";
+export function localMessage(projectDir: string): string {
+  return `This CLI is installed in a project at ${projectDir}, not globally; update it there with: npm install ${PACKAGE_NAME}@latest`;
+}
 export function eaccesMessage(prefix: string): string {
   return (
     `Permission denied writing to ${prefix}. Re-run with sudo, or install a copy you own: ` +
@@ -120,6 +126,8 @@ export function packageDirFromModulePath(modulePath: string): string | null {
 
 export interface InstallInfo {
   mode: UpdateMode;
+  /** For `local`: the project directory that owns the node_modules. */
+  projectDir?: string;
   /** The @voyagier/cli dir this process was loaded from (what gets verified after an install). */
   packageDir: string | null;
   /** The package npm installed at the prefix: @voyagier/cli itself, or the alias that depends on it. */
@@ -136,8 +144,32 @@ function isSymlink(path: string): boolean {
   }
 }
 
+/** The `node_modules` directory that directly holds `ownerDir` (scoped or not). */
+function nodeModulesOf(ownerDir: string): string | null {
+  let dir = ownerDir;
+  while (basename(dir) !== "node_modules") {
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+  return dir;
+}
+
+/**
+ * A global prefix has no package.json beside its node_modules, and on POSIX
+ * npm always lays it out as `<prefix>/lib/node_modules`. Anything else is a
+ * project's dependency tree, which `npm install -g --prefix` would not touch.
+ */
+function isProjectLocal(ownerDir: string, platform: NodeJS.Platform): { local: boolean; projectDir: string } {
+  const nodeModules = nodeModulesOf(ownerDir);
+  const above = nodeModules ? dirname(nodeModules) : dirname(ownerDir);
+  if (existsSync(join(above, "package.json"))) return { local: true, projectDir: above };
+  if (platform !== "win32" && basename(above) !== "lib") return { local: true, projectDir: above };
+  return { local: false, projectDir: above };
+}
+
 /** Classify how the running binary was installed. */
-export function detectInstallMode(modulePath: string): InstallInfo {
+export function detectInstallMode(modulePath: string, platform: NodeJS.Platform = process.platform): InstallInfo {
   const none = { packageDir: null, package: null, ownerDir: null };
   if (modulePath.includes("/_npx/") || modulePath.includes("\\_npx\\")) return { mode: "npx", ...none };
   const packageDir = packageDirFromModulePath(modulePath);
@@ -147,11 +179,16 @@ export function detectInstallMode(modulePath: string): InstallInfo {
   // Alias layout: <prefix>/lib/node_modules/voyagier/node_modules/@voyagier/cli
   const nodeModules = dirname(dirname(packageDir));
   const maybeAlias = dirname(nodeModules);
+  let pkg: InstalledPackage = PACKAGE_NAME;
+  let ownerDir = packageDir;
   if (basename(maybeAlias) === ALIAS_PACKAGE_NAME && basename(dirname(maybeAlias)) === "node_modules") {
     if (isSymlink(maybeAlias)) return { mode: "source", packageDir, package: null, ownerDir: null };
-    return { mode: "global", packageDir, package: ALIAS_PACKAGE_NAME, ownerDir: maybeAlias };
+    pkg = ALIAS_PACKAGE_NAME;
+    ownerDir = maybeAlias;
   }
-  return { mode: "global", packageDir, package: PACKAGE_NAME, ownerDir: packageDir };
+  const { local, projectDir } = isProjectLocal(ownerDir, platform);
+  if (local) return { mode: "local", packageDir, package: pkg, ownerDir, projectDir };
+  return { mode: "global", packageDir, package: pkg, ownerDir };
 }
 
 /**
@@ -310,7 +347,7 @@ export async function runUpdate(currentVersion: string, opts: UpdateOptions = {}
   const platform = deps.platform ?? process.platform;
   const checkedAt = (deps.now ?? (() => new Date()))().toISOString();
 
-  const info = detectInstallMode(modulePath);
+  const info = detectInstallMode(modulePath, platform);
   const { mode } = info;
   const base = { mode, current: currentVersion, latest: null as string | null, updated: false, checkedAt };
   const fail = (code: CliErrorCode, message: string, extra: Partial<UpdateResult> = {}): UpdateResult => ({
@@ -342,6 +379,9 @@ export async function runUpdate(currentVersion: string, opts: UpdateOptions = {}
 
   if (mode === "source") {
     return fail(CliErrorCode.VALIDATION, SOURCE_MESSAGE, { latest });
+  }
+  if (mode === "local") {
+    return fail(CliErrorCode.VALIDATION, localMessage(info.projectDir as string), { latest, package: info.package as InstalledPackage });
   }
 
   // mode === "global"
