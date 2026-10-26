@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, sep } from "node:path";
+import { dirname, join, sep, win32 } from "node:path";
 import { CliErrorCode } from "../errors.js";
 import {
   detectInstallMode,
@@ -13,6 +13,7 @@ import {
   runUpdate,
   eaccesMessage,
   npmInvocation,
+  quoteForShell,
   prefixFromPackageDir,
   NPX_MESSAGE,
   REGISTRY_LATEST_URL,
@@ -184,7 +185,9 @@ describe("packageDirFromModulePath / detectInstallMode", () => {
     expect(packageDirFromModulePath("/usr/lib/node_modules/@voyagier/cli/dist/index.js")).toBe(
       ["", "usr", "lib", "node_modules", "@voyagier", "cli"].join(sep),
     );
-    expect(packageDirFromModulePath("C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@voyagier\\cli\\dist\\index.js")).not.toBeNull();
+    expect(packageDirFromModulePath("C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@voyagier\\cli\\dist\\index.js", win32)).toBe(
+      "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@voyagier\\cli",
+    );
     expect(packageDirFromModulePath("/home/me/code/voyagier-cli/dist/index.js")).toBeNull();
     // A nested dependency named differently is not our package.
     expect(packageDirFromModulePath("/usr/lib/node_modules/other/node_modules/@voyagier/cli/dist/index.js")).not.toBeNull();
@@ -225,6 +228,29 @@ describe("resolveNpm", () => {
   });
 });
 
+describe("packageDirFromModulePath: path shapes", () => {
+  it("keeps a Windows UNC root intact (walks parents instead of splitting on separators)", () => {
+    // Exercised through node:path's posix flavour here; the point is that the
+    // leading separators of the input survive unchanged in the output.
+    const unc = "\\\\server\\share\\npm\\node_modules\\@voyagier\\cli\\dist\\index.js";
+    expect(packageDirFromModulePath(unc, win32)).toBe("\\\\server\\share\\npm\\node_modules\\@voyagier\\cli");
+    expect(packageDirFromModulePath("/usr/local/lib/node_modules/@voyagier/cli/dist/commands/update.js")).toBe("/usr/local/lib/node_modules/@voyagier/cli");
+    expect(packageDirFromModulePath("/home/me/src/voyagier-cli/dist/index.js")).toBeNull();
+  });
+});
+
+describe("quoteForShell", () => {
+  it("quotes only arguments containing whitespace (Windows npm.cmd fallback)", () => {
+    expect(quoteForShell(["install", "-g", "--prefix", "C:\\Users\\Jane Doe\\AppData\\Roaming\\npm", "@voyagier/cli@latest"])).toEqual([
+      "install",
+      "-g",
+      "--prefix",
+      '"C:\\Users\\Jane Doe\\AppData\\Roaming\\npm"',
+      "@voyagier/cli@latest",
+    ]);
+  });
+});
+
 describe("npmInvocation", () => {
   it("runs npm-cli.js with the node beside that npm (POSIX symlink layout)", () => {
     const layout = globalLayout();
@@ -241,9 +267,28 @@ describe("npmInvocation", () => {
     expect(npmInvocation(npmCmd, "/elsewhere/node.exe", "win32")).toEqual({ cmd: "/elsewhere/node.exe", argsPrefix: [cli], shell: false });
   });
 
+  it("a bare PATH npm still runs npm-cli.js when the running node ships one", () => {
+    const layout = globalLayout(); // <root>/lib/node_modules/npm/bin/npm-cli.js beside <root>/bin/node
+    expect(npmInvocation("npm", layout.execPath, "linux")).toEqual({ cmd: layout.execPath, argsPrefix: [layout.npmCli], shell: false });
+  });
+
+  it("Windows shell fallback quotes a prefix with spaces when spawning", async () => {
+    const layout = globalLayout({ siblingNpm: false });
+    const spaced = join(layout.root, "Program Files", "npm");
+    const npm = fakeSpawn({ onSpawn: () => layout.writeInstalledVersion(LATEST) });
+    // Force the fallback: execPath in a dir with no npm-cli.js, no npm anywhere, win32.
+    const result = await runUpdate(CURRENT, {}, { ...baseDeps(layout), execPath: join(spaced, "node.exe"), platform: "win32", fetchImpl: registryFetch().fetchImpl, spawnImpl: npm.spawnImpl });
+    expect(npm.calls[0].cmd).toBe("npm.cmd");
+    expect(npm.calls[0].opts).toMatchObject({ shell: true });
+    const prefixArg = npm.calls[0].args[npm.calls[0].args.indexOf("--prefix") + 1];
+    expect(prefixArg.startsWith('"') && prefixArg.endsWith('"')).toBe(/\s/.test(layout.prefix));
+    expect(result.updated).toBe(true);
+  });
+
   it("falls back to npm.cmd through the shell only on Windows when no JS entry exists", () => {
-    expect(npmInvocation("npm.cmd", "/n/node.exe", "win32")).toEqual({ cmd: "npm.cmd", argsPrefix: [], shell: true });
-    expect(npmInvocation("npm", "/n/node", "linux")).toEqual({ cmd: "npm", argsPrefix: [], shell: false });
+    const bare = join(tempDir(), "node"); // a node with no npm anywhere near it
+    expect(npmInvocation("npm.cmd", bare + ".exe", "win32")).toEqual({ cmd: "npm.cmd", argsPrefix: [], shell: true });
+    expect(npmInvocation("npm", bare, "linux")).toEqual({ cmd: "npm", argsPrefix: [], shell: false });
   });
 });
 
@@ -277,9 +322,11 @@ describe("detectInstallMode: project-local installs", () => {
   it("refuses to spawn npm for a local install and points at the project", async () => {
     const plain = localLayout();
     const npm = fakeSpawn();
-    const result = await runUpdate(CURRENT, {}, { modulePath: plain.modulePath, execPath: "/usr/bin/node", platform: "linux", fetchImpl: registryFetch().fetchImpl, spawnImpl: npm.spawnImpl });
+    const registry = registryFetch({ status: 503 }); // refusal must not depend on the registry
+    const result = await runUpdate(CURRENT, {}, { modulePath: plain.modulePath, execPath: "/usr/bin/node", platform: "linux", fetchImpl: registry.fetchImpl, spawnImpl: npm.spawnImpl });
     expect(npm.calls).toHaveLength(0);
-    expect(result).toMatchObject({ ok: false, mode: "local", package: "@voyagier/cli", latest: LATEST, updated: false, exitCode: 1, error: { code: CliErrorCode.VALIDATION, message: localMessage(plain.project) } });
+    expect(registry.calls).toEqual([]);
+    expect(result).toMatchObject({ ok: false, mode: "local", package: "@voyagier/cli", latest: null, updated: false, exitCode: 1, error: { code: CliErrorCode.VALIDATION, message: localMessage(plain.project) } });
     expect(result.error?.message).toContain("npm install @voyagier/cli@latest");
   });
 
@@ -455,15 +502,17 @@ describe("runUpdate", () => {
     expect(result).toMatchObject({ ok: true, mode: "npx", latest: null, updated: false, exitCode: 0, lines: [NPX_MESSAGE] });
   });
 
-  it("source mode (symlinked package dir): refuses with the git pull hint, exit 1, no spawn", async () => {
+  it("source mode (symlinked package dir): refuses with the git pull hint before any registry call, exit 1, no spawn", async () => {
     const linked = linkedLayout();
     const npm = fakeSpawn();
-    const result = await runUpdate(CURRENT, {}, { modulePath: linked.modulePath, execPath: "/usr/bin/node", fetchImpl: registryFetch().fetchImpl, spawnImpl: npm.spawnImpl });
+    const registry = registryFetch({ throws: new Error("ENOTFOUND registry.npmjs.org") });
+    const result = await runUpdate(CURRENT, {}, { modulePath: linked.modulePath, execPath: "/usr/bin/node", fetchImpl: registry.fetchImpl, spawnImpl: npm.spawnImpl });
     expect(npm.calls).toEqual([]);
+    expect(registry.calls).toEqual([]);
     expect(result).toMatchObject({
       ok: false,
       mode: "source",
-      latest: LATEST,
+      latest: null,
       updated: false,
       exitCode: 1,
       error: { code: CliErrorCode.VALIDATION, message: SOURCE_MESSAGE },
@@ -623,7 +672,7 @@ describe("voyagier update (command)", () => {
       ok: false,
       mode: "source",
       current: CURRENT,
-      latest: LATEST,
+      latest: null,
       updated: false,
       checkedAt: "2026-10-26T12:00:00.000Z",
       error: { code: CliErrorCode.VALIDATION, message: SOURCE_MESSAGE },

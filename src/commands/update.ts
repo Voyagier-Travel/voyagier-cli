@@ -35,7 +35,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
-import { basename, dirname, join, sep } from "node:path";
+import nodePath, { basename, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gracefulExit } from "../exit.js";
 import { CliErrorCode } from "../errors.js";
@@ -113,15 +113,22 @@ export function eaccesMessage(prefix: string): string {
   );
 }
 
-/** The `@voyagier/cli` package directory that contains `modulePath`, or null when it is not under node_modules. */
-export function packageDirFromModulePath(modulePath: string): string | null {
-  const parts = modulePath.split(/[\\/]+/);
-  for (let i = parts.length - 1; i >= 2; i--) {
-    if (parts[i - 2] === "node_modules" && parts[i - 1] === "@voyagier" && parts[i] === "cli") {
-      return parts.slice(0, i + 1).join(sep);
+/**
+ * The `@voyagier/cli` package directory that contains `modulePath`, or null
+ * when it is not under node_modules. Walks parents with the native path
+ * functions rather than splitting on separators, so a Windows UNC root
+ * (`\\\\server\\share\\…`, e.g. redirected AppData) keeps both leading slashes.
+ */
+export function packageDirFromModulePath(modulePath: string, path: Pick<typeof nodePath, "basename" | "dirname"> = nodePath): string | null {
+  let dir = path.dirname(modulePath);
+  for (;;) {
+    if (path.basename(dir) === "cli" && path.basename(path.dirname(dir)) === "@voyagier" && path.basename(path.dirname(path.dirname(dir))) === "node_modules") {
+      return dir;
     }
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
   }
-  return null;
 }
 
 export interface InstallInfo {
@@ -250,6 +257,11 @@ export function npmInvocation(
   platform: NodeJS.Platform = process.platform,
 ): { cmd: string; argsPrefix: string[]; shell: boolean } {
   const candidates: string[] = [];
+  // A bare `npm` from PATH has no directory to look in; npm ships with node, so
+  // the running node's own install is the next best place to find npm-cli.js.
+  const nodeDir = dirname(execPath);
+  candidates.push(join(nodeDir, "node_modules", "npm", "bin", "npm-cli.js"));
+  candidates.push(join(nodeDir, "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"));
   if (npm.includes(sep) || npm.includes("/")) {
     try {
       const real = realpathSync(npm);
@@ -260,7 +272,8 @@ export function npmInvocation(
     candidates.push(join(dirname(npm), "node_modules", "npm", "bin", "npm-cli.js"));
     candidates.push(join(dirname(npm), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"));
   }
-  const cli = candidates.find((c) => existsSync(c));
+  // Prefer the entry that belongs to the chosen npm (pushed last) over the running node's.
+  const cli = [...candidates].reverse().find((c) => existsSync(c));
   if (cli) {
     // Run with the node that ships beside that npm when there is one, else ourselves.
     const nodeName = platform === "win32" ? "node.exe" : "node";
@@ -268,6 +281,15 @@ export function npmInvocation(
     return { cmd: existsSync(siblingNode) ? siblingNode : execPath, argsPrefix: [cli], shell: false };
   }
   return { cmd: npm, argsPrefix: [], shell: platform === "win32" };
+}
+
+/**
+ * With `shell: true` Node joins the argv with spaces and hands the string to
+ * cmd.exe unquoted, so a prefix like `C:\\Users\\Jane Doe\\AppData\\Roaming\\npm`
+ * would be split. Quote any argument with whitespace for that one path.
+ */
+export function quoteForShell(args: string[]): string[] {
+  return args.map((a) => (/\s/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a));
 }
 
 async function fetchLatest(fetchImpl: typeof fetch): Promise<{ latest: string } | { error: string }> {
@@ -303,7 +325,7 @@ function runNpmInstall(
     try {
       const opts: SpawnOptions = { stdio: ["ignore", "pipe", "pipe"], env };
       if (shell) opts.shell = true;
-      child = spawnImpl(cmd, args, opts);
+      child = spawnImpl(cmd, shell ? quoteForShell(args) : args, opts);
     } catch (err) {
       done(-1, err instanceof Error ? err.message : String(err));
       return;
@@ -363,6 +385,14 @@ export async function runUpdate(currentVersion: string, opts: UpdateOptions = {}
     return { ...base, ok: true, exitCode: 0, lines: [NPX_MESSAGE] };
   }
 
+  // Installs that cannot be updated from here are refused before any network
+  // call, so a registry outage never hides the actionable instruction. `--check`
+  // still consults the registry for every mode.
+  if (!opts.check) {
+    if (mode === "source") return fail(CliErrorCode.VALIDATION, SOURCE_MESSAGE);
+    if (mode === "local") return fail(CliErrorCode.VALIDATION, localMessage(info.projectDir as string), { package: info.package as InstalledPackage });
+  }
+
   const registry = await fetchLatest(fetchImpl);
   if ("error" in registry) return fail(CliErrorCode.NETWORK, registry.error);
   const latest = registry.latest;
@@ -377,14 +407,7 @@ export async function runUpdate(currentVersion: string, opts: UpdateOptions = {}
     return { ...withLatest, ok: !outdated, exitCode: outdated ? 1 : 0, lines: [line] };
   }
 
-  if (mode === "source") {
-    return fail(CliErrorCode.VALIDATION, SOURCE_MESSAGE, { latest });
-  }
-  if (mode === "local") {
-    return fail(CliErrorCode.VALIDATION, localMessage(info.projectDir as string), { latest, package: info.package as InstalledPackage });
-  }
-
-  // mode === "global"
+  // mode === "global" (source/local returned above)
   const packageDir = info.packageDir as string;
   const pkg = info.package as InstalledPackage;
   const prefix = prefixFromPackageDir(info.ownerDir as string);
