@@ -21,6 +21,8 @@ export const LOCAL_COMMANDS: ReadonlySet<string> = new Set([
   "auth",
   "login",
   "doctor",
+  "update",
+  "upgrade",
   "mcp",
   "agent-docs",
   "telemetry",

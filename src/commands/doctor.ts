@@ -304,7 +304,7 @@ async function checkVersion(currentVersion: string, fetchImpl: typeof fetch): Pr
     return {
       name: "version",
       status: "WARN",
-      message: `v${data.version} available; running v${currentVersion}. Update: npm i -g @voyagier/cli@latest`,
+      message: `v${data.version} available; running v${currentVersion}. Run: voyagier update`,
       details: { current: currentVersion, latest: data.version },
     };
   } catch (err) {

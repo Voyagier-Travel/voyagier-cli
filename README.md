@@ -15,6 +15,7 @@ npm install -g voyagier             # or the canonical package: @voyagier/cli
 voyagier auth login                 # browser flow; keeps the token out of shell history
 voyagier doctor                     # credentials, MCP connection, tool count, version
 voyagier mcp install claude-code    # point an MCP client at the hosted server (also: cursor, claude-desktop)
+voyagier update                     # later: bring a global install to the latest release
 ```
 
 `voyagier` is a convenience alias that tracks the latest compatible `@voyagier/cli` release. Pinning an exact version? Use the canonical package: `npm install -g @voyagier/cli@<version>`.
@@ -76,6 +77,7 @@ voyagier get_tool_details --name set_hotel_dates --json
 |---------|-------------|
 | `voyagier <tool_name>` | One command per MCP tool, for example `list_plans`, `search_destinations`, `create_plan`, `search_flights`, `promote_search`, `get_options`, `select_option`, `get_plan_status`, `get_plan_quote`, `book_plan`. `voyagier --help` lists the server's current set; `search_tools` and `get_tool_details` find and describe tools from inside the CLI |
 | `voyagier doctor` | Self-check: credentials, MCP server connection + tool list, identity, state, version |
+| `voyagier update` | Update a global npm install to the latest release (alias `upgrade`; `--check` reports without installing, `--json` for scripts) |
 | `voyagier auth` | Manage the Personal Access Token (`login`, `set-token`, `status`, `logout`, `setup`) |
 | `voyagier mcp install <client>` | Point an MCP client (Claude Code, Cursor, Claude Desktop) at the Voyagier MCP server |
 | `voyagier mcp` | Run a stdio MCP server that proxies the hosted Voyagier MCP server |
