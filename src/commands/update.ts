@@ -76,7 +76,7 @@ export type SpawnImpl = (cmd: string, args: string[], opts: SpawnOptions) => Spa
 export interface UpdateDeps {
   fetchImpl?: typeof fetch;
   spawnImpl?: SpawnImpl;
-  /** Real path of the running script (default: this module's own, realpath'd). */
+  /** Path of the running script as loaded (default: this module's own). Real-pathed internally; re-resolved after an install. */
   scriptPath?: string;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
@@ -169,7 +169,8 @@ export function detectInstall(scriptPath: string, env: NodeJS.ProcessEnv = proce
   ) {
     return info("pnpm");
   }
-  if (p.includes("/.yarn/global")) return info("yarn");
+  // Yarn Classic: ~/.config/yarn/global on Linux (its package.json sits beside node_modules, so this must precede the project check).
+  if (p.includes("/.yarn/global") || p.includes("/.config/yarn/global") || p.includes("/Yarn/Data/global")) return info("yarn");
   if (p.includes("/.bun/install/global")) return info("bun");
   if (p.includes("/.volta/") || p.includes("/Volta/")) return info("volta");
   // A project dependency: the node_modules that holds the package sits beside a package.json.
@@ -219,8 +220,11 @@ function runCommand(
 /**
  * Which npm owns this copy. Asks the npm on PATH for its global root once
  * (Vercel's check). Inside it → `npm`. Outside it → the npm that ships with
- * this copy's prefix, run directly on POSIX; on Windows only reported, because
- * a path is never handed to cmd.exe.
+ * this copy's prefix, run directly on POSIX with `--prefix` (npm's own
+ * `#!/usr/bin/env node` would otherwise pick the PATH node and derive the
+ * other toolchain's prefix); on Windows only reported, because a path is never
+ * handed to cmd.exe. The prefix here comes from the global root npm reported
+ * for this copy, not from guessing at the module path.
  */
 export async function resolveNpm(
   info: InstallInfo,
@@ -247,8 +251,8 @@ export async function resolveNpm(
   const above = dirname(root);
   const prefix = platform !== "win32" && basename(above) === "lib" ? dirname(above) : above;
   const ownNpm = platform === "win32" ? join(prefix, "npm.cmd") : join(prefix, "bin", "npm");
-  const args = ["install", "-g", `${info.package}@latest`];
-  const display = `${ownNpm} ${args.join(" ")}`;
+  const args = ["install", "-g", "--prefix", prefix, `${info.package}@latest`];
+  const display = `${ownNpm} ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(" ")}`;
   if (!existsSync(ownNpm)) {
     return { unreachable: `This copy (${root}) is not managed by the npm on PATH (${reported}) and no npm was found at ${ownNpm}. Update it with the npm that installed it: ${display}` };
   }
@@ -287,13 +291,23 @@ function tail(text: string, n: number): string {
     .join("\n");
 }
 
-function defaultScriptPath(): string {
-  const own = fileURLToPath(import.meta.url);
+function safeRealpath(p: string): string {
   try {
-    return realpathSync(own);
+    return realpathSync(p);
   } catch {
-    return own;
+    return p;
   }
+}
+
+/**
+ * The @voyagier/cli directory the script resolves to RIGHT NOW. pnpm (and
+ * some npm layouts) keep a stable `node_modules/@voyagier/cli` link that is
+ * retargeted to a new version-specific directory on update, so verification
+ * must follow the link again rather than re-read the directory it pointed to
+ * before the install.
+ */
+function currentPackageDir(scriptPath: string, env: NodeJS.ProcessEnv): string | null {
+  return detectInstall(safeRealpath(scriptPath), env).packageDir;
 }
 
 /** Pure core: never writes output or exits. */
@@ -303,7 +317,8 @@ export async function runUpdate(currentVersion: string, opts: UpdateOptions = {}
   const env = deps.env ?? process.env;
   const platform = deps.platform ?? process.platform;
   const checkedAt = (deps.now ?? (() => new Date()))().toISOString();
-  const info = detectInstall(deps.scriptPath ?? defaultScriptPath(), env);
+  const scriptPath = deps.scriptPath ?? fileURLToPath(import.meta.url);
+  const info = detectInstall(safeRealpath(scriptPath), env);
 
   const base = { kind: info.kind, package: info.package, current: currentVersion, latest: null as string | null, updated: false, checkedAt };
   const fail = (code: CliErrorCode, message: string, extra: Partial<UpdateResult> = {}): UpdateResult => ({
@@ -355,11 +370,12 @@ export async function runUpdate(currentVersion: string, opts: UpdateOptions = {}
     return fail(CliErrorCode.API_ERROR, `${run.display} exited with code ${result.code}${detail ? `\n${detail}` : ""}`, withCommand);
   }
 
-  const installed = readVersion(info.packageDir as string);
+  const verifyDir = currentPackageDir(scriptPath, env) ?? (info.packageDir as string);
+  const installed = readVersion(verifyDir);
   if (installed !== latest) {
     return fail(
       CliErrorCode.API_ERROR,
-      `${run.display} succeeded, but the copy on PATH (${info.packageDir}) still reports v${installed ?? "unknown"}: it is shadowed by another installation. Remove one of them, or update that one directly.`,
+      `${run.display} succeeded, but the copy on PATH (${verifyDir}) still reports v${installed ?? "unknown"}: it is shadowed by another installation. Remove one of them, or update that one directly.`,
       withCommand,
     );
   }

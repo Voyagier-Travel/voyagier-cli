@@ -166,6 +166,8 @@ describe("detectInstall", () => {
       ["/home/me/.bun/install/cache/@voyagier/cli@4.4.0/dist/index.js", "bunx", undefined],
       ["/home/me/.local/share/pnpm/global/5/node_modules/@voyagier/cli/dist/index.js", "pnpm", "pnpm add -g @voyagier/cli@latest"],
       ["/home/me/.yarn/global/node_modules/@voyagier/cli/dist/index.js", "yarn", "yarn global add @voyagier/cli@latest"],
+      ["/home/me/.config/yarn/global/node_modules/@voyagier/cli/dist/index.js", "yarn", "yarn global add @voyagier/cli@latest"],
+      ["C:\\Users\\me\\AppData\\Local\\Yarn\\Data\\global\\node_modules\\@voyagier\\cli\\dist\\index.js", "yarn", "yarn global add @voyagier/cli@latest"],
       ["/home/me/.bun/install/global/node_modules/@voyagier/cli/dist/index.js", "bun", "bun add -g @voyagier/cli@latest"],
       ["/home/me/.volta/tools/image/packages/@voyagier/cli/lib/node_modules/@voyagier/cli/dist/index.js", "volta", "volta install @voyagier/cli@latest"],
       ["C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@voyagier\\cli\\dist\\index.js", "npm", "npm install -g @voyagier/cli@latest"],
@@ -194,6 +196,17 @@ describe("detectInstall", () => {
     expect(detectInstall("/opt/pnpm-home/global/5/node_modules/@voyagier/cli/dist/index.js", { PNPM_HOME: "/opt/pnpm-home/" }).kind).toBe("pnpm");
   });
 
+  it("Yarn Classic's Linux global dir has a package.json beside node_modules and is still yarn, not local", () => {
+    const home = tempDir();
+    const globalDir = join(home, ".config", "yarn", "global");
+    const packageDir = join(globalDir, "node_modules", "@voyagier", "cli");
+    mkdirSync(join(packageDir, "dist"), { recursive: true });
+    writeFileSync(join(globalDir, "package.json"), "{}");
+    const scriptPath = join(packageDir, "dist", "index.js");
+    writeFileSync(scriptPath, "");
+    expect(detectInstall(scriptPath, {})).toMatchObject({ kind: "yarn", command: "yarn global add @voyagier/cli@latest" });
+  });
+
   it("classifies a project dependency as local (plain and alias) and npm link as git", () => {
     expect(detectInstall(localLayout().scriptPath, {})).toMatchObject({ kind: "local", package: "@voyagier/cli" });
     expect(detectInstall(localLayout({ alias: true }).scriptPath, {})).toMatchObject({ kind: "local", package: "voyagier" });
@@ -217,7 +230,8 @@ describe("resolveNpm", () => {
     const layout = globalLayout();
     const npm = fakeSpawn(npmScripts(layout, { root: "/somewhere/else/lib/node_modules" }));
     const r = await resolveNpm(detectInstall(layout.scriptPath, {}), npm.spawnImpl, {}, "linux");
-    expect(r).toEqual({ cmd: layout.ownNpm, args: ["install", "-g", "@voyagier/cli@latest"], shell: false, display: `${layout.ownNpm} install -g @voyagier/cli@latest` });
+    // --prefix is explicit: npm's own #!/usr/bin/env node would otherwise pick the PATH node and derive the other prefix.
+    expect(r).toEqual({ cmd: layout.ownNpm, args: ["install", "-g", "--prefix", layout.root, "@voyagier/cli@latest"], shell: false, display: `${layout.ownNpm} install -g --prefix ${layout.root} @voyagier/cli@latest` });
   });
 
   it("falls back to PATH's npm when npm root -g fails, and reports when no owning npm exists", async () => {
@@ -238,7 +252,7 @@ describe("resolveNpm", () => {
     writeFileSync(scriptPath, "");
     const npm = fakeSpawn({ "npm root -g": { stdout: "C:\\elsewhere\\node_modules\n" } });
     const r = await resolveNpm(detectInstall(scriptPath, {}), npm.spawnImpl, {}, "win32");
-    expect(r).toMatchObject({ unreachable: expect.stringContaining(join(root, "npm.cmd") + " install -g @voyagier/cli@latest") });
+    expect(r).toMatchObject({ unreachable: expect.stringContaining(join(root, "npm.cmd") + " install -g --prefix " + root + " @voyagier/cli@latest") });
   });
 });
 
@@ -270,8 +284,8 @@ describe("runUpdate", () => {
     const layout = globalLayout();
     const npm = fakeSpawn(npmScripts(layout, { root: "/other/lib/node_modules" }));
     const result = await runUpdate(CURRENT, {}, deps(layout.scriptPath, { fetchImpl: registryFetch().fetchImpl, spawnImpl: npm.spawnImpl }));
-    expect(npm.calls[1]).toMatchObject({ cmd: layout.ownNpm, args: ["install", "-g", "@voyagier/cli@latest"], opts: { shell: false } });
-    expect(result).toMatchObject({ ok: true, updated: true, command: `${layout.ownNpm} install -g @voyagier/cli@latest` });
+    expect(npm.calls[1]).toMatchObject({ cmd: layout.ownNpm, args: ["install", "-g", "--prefix", layout.root, "@voyagier/cli@latest"], opts: { shell: false } });
+    expect(result).toMatchObject({ ok: true, updated: true, command: `${layout.ownNpm} install -g --prefix ${layout.root} @voyagier/cli@latest` });
   });
 
   it("pnpm / yarn / bun / volta: runs that manager's command, no npm root probe", async () => {
@@ -284,6 +298,30 @@ describe("runUpdate", () => {
       await runUpdate(CURRENT, {}, deps(path, { fetchImpl: registryFetch().fetchImpl, spawnImpl: npm.spawnImpl }));
       expect(npm.calls).toEqual([{ cmd: command, args: [], opts: { shell: true, stdio: ["ignore", "pipe", "pipe"] } }]);
     }
+  });
+
+  it("pnpm global: the stable node_modules link is retargeted by the update, and verification follows it", async () => {
+    // ~/.local/share/pnpm/global/5/node_modules/@voyagier/cli -> .pnpm/@voyagier+cli@<ver>/node_modules/@voyagier/cli
+    const home = tempDir();
+    const globalDir = join(home, ".local", "share", "pnpm", "global", "5");
+    const store = (v: string) => join(globalDir, ".pnpm", `@voyagier+cli@${v}`, "node_modules", "@voyagier", "cli");
+    for (const v of [CURRENT, LATEST]) {
+      mkdirSync(join(store(v), "dist"), { recursive: true });
+      writeFileSync(join(store(v), "package.json"), JSON.stringify({ name: "@voyagier/cli", version: v }));
+      writeFileSync(join(store(v), "dist", "index.js"), "");
+    }
+    const link = join(globalDir, "node_modules", "@voyagier", "cli");
+    mkdirSync(join(globalDir, "node_modules", "@voyagier"), { recursive: true });
+    symlinkSync(store(CURRENT), link, "dir");
+    const scriptPath = join(link, "dist", "index.js"); // what process.argv[1] / import.meta.url point at
+    const retarget = () => {
+      rmSync(link);
+      symlinkSync(store(LATEST), link, "dir");
+    };
+    const npm = fakeSpawn({ default: { onSpawn: retarget } });
+    const result = await runUpdate(CURRENT, {}, deps(scriptPath, { fetchImpl: registryFetch().fetchImpl, spawnImpl: npm.spawnImpl }));
+    expect(npm.calls).toEqual([{ cmd: "pnpm add -g @voyagier/cli@latest", args: [], opts: { shell: true, stdio: ["ignore", "pipe", "pipe"] } }]);
+    expect(result).toMatchObject({ ok: true, kind: "pnpm", updated: true });
   });
 
   it("already latest: no spawn at all, exit 0", async () => {
