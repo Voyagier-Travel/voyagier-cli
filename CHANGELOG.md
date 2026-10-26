@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
-- `voyagier update` (alias `upgrade`): updates a global npm install to the latest release; `--check` reports without installing; `--json` for scripts.
+- `voyagier update` (alias `upgrade`): updates a global npm install to the latest release — both `npm install -g @voyagier/cli` and the `npm install -g voyagier` alias layouts — by running npm's JS entry through node (no shell, works on Windows), pinned to the prefix the binary lives in; `--check` reports without installing; `--json` for scripts. `update` and `upgrade` are local commands: they never contact the MCP server.
 
 ### Changed
 - `doctor` now points to `voyagier update` when a newer version exists.

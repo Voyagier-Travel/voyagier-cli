@@ -86,7 +86,7 @@ describe("resolveStartupTools", () => {
 
   it("skips the network for local commands, using a stale cache when present", async () => {
     const { client, calls } = scriptedClient("ok");
-    for (const argv of [["auth", "status"], ["doctor"], ["mcp"], ["telemetry", "status"], ["--version"]]) {
+    for (const argv of [["auth", "status"], ["doctor"], ["update"], ["upgrade", "--check"], ["mcp"], ["telemetry", "status"], ["--version"]]) {
       const res = await resolveStartupTools(argv, { createClient: () => client });
       expect(res.source).toBe("none");
       expect(res.tools).toEqual([]);
@@ -148,6 +148,8 @@ describe("invocation classification", () => {
     expect(isLocalInvocation(["auth", "login"])).toBe(true);
     expect(isLocalInvocation(["login"])).toBe(true);
     expect(isLocalInvocation(["--verbose", "doctor"])).toBe(true);
+    expect(isLocalInvocation(["update", "--check", "--json"])).toBe(true);
+    expect(isLocalInvocation(["upgrade"])).toBe(true);
     expect(isLocalInvocation(["plans_list"])).toBe(false);
     expect(isLocalInvocation(["--verbose", "plans_list"])).toBe(false);
     expect(isLocalInvocation(["--json", "plans", "list"])).toBe(false);

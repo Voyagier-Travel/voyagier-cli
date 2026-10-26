@@ -2,8 +2,9 @@ import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals
 import { Command } from "commander";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { CliErrorCode } from "../errors.js";
 import {
   detectInstallMode,
@@ -11,7 +12,9 @@ import {
   registerUpdateCommand,
   resolveNpm,
   runUpdate,
-  EACCES_MESSAGE,
+  eaccesMessage,
+  npmInvocation,
+  prefixFromPackageDir,
   NPX_MESSAGE,
   REGISTRY_LATEST_URL,
   SOURCE_MESSAGE,
@@ -61,6 +64,8 @@ interface ChildScript {
   onSpawn?: () => void;
   /** Emit `error` instead of running (spawn ENOENT etc.). */
   spawnError?: Error;
+  /** Simulate a child whose stderr was not piped (`child.stderr === null`). */
+  noStderrStream?: boolean;
 }
 
 class FakeChild extends EventEmitter implements SpawnedChild {
@@ -73,6 +78,7 @@ function fakeSpawn(script: ChildScript = {}) {
   const spawnImpl: SpawnImpl = (cmd, args, opts) => {
     calls.push({ cmd, args, opts });
     const child = new FakeChild();
+    if (script.noStderrStream) (child as { stderr: unknown }).stderr = null;
     setImmediate(() => {
       if (script.spawnError) {
         child.emit("error", script.spawnError);
@@ -80,7 +86,7 @@ function fakeSpawn(script: ChildScript = {}) {
       }
       script.onSpawn?.();
       if (script.stdout) child.stdout!.emit("data", Buffer.from(script.stdout));
-      if (script.stderr) child.stderr!.emit("data", Buffer.from(script.stderr));
+      if (script.stderr && child.stderr) child.stderr.emit("data", Buffer.from(script.stderr));
       child.emit("close", script.code ?? 0);
     });
     return child;
@@ -100,30 +106,46 @@ function tempDir(): string {
 interface GlobalLayout {
   root: string;
   prefix: string;
+  /** The @voyagier/cli dir the process runs from (nested under the alias when `alias` is set). */
   packageDir: string;
+  /** The package npm installed at the prefix (`voyagier` when `alias`, else `@voyagier/cli`). */
+  ownerDir: string;
   modulePath: string;
   execPath: string;
   npmPath: string;
+  /** npm's JS entry the symlinked `bin/npm` resolves to. */
+  npmCli: string;
   writeInstalledVersion: (version: string) => void;
 }
 
-/** `<root>/bin/node` + `<root>/bin/npm`, package at `<root>/lib/node_modules/@voyagier/cli`. */
-function globalLayout(opts: { siblingNpm?: boolean; installedVersion?: string } = {}): GlobalLayout {
+/**
+ * `<root>/bin/node` + `<root>/bin/npm` (a symlink to `lib/node_modules/npm/bin/npm-cli.js`,
+ * as npm ships it), package at `<root>/lib/node_modules/@voyagier/cli` — or, with `alias`,
+ * at `<root>/lib/node_modules/voyagier/node_modules/@voyagier/cli` (`npm install -g voyagier`).
+ */
+function globalLayout(opts: { siblingNpm?: boolean; installedVersion?: string; alias?: boolean } = {}): GlobalLayout {
   const root = tempDir();
   const bin = join(root, "bin");
   mkdirSync(bin, { recursive: true });
   const execPath = join(bin, "node");
   writeFileSync(execPath, "");
   const npmPath = join(bin, "npm");
-  if (opts.siblingNpm !== false) writeFileSync(npmPath, "");
-  const packageDir = join(root, "lib", "node_modules", "@voyagier", "cli");
+  const npmCli = join(root, "lib", "node_modules", "npm", "bin", "npm-cli.js");
+  if (opts.siblingNpm !== false) {
+    mkdirSync(dirname(npmCli), { recursive: true });
+    writeFileSync(npmCli, "");
+    symlinkSync(npmCli, npmPath);
+  }
+  const ownerDir = opts.alias ? join(root, "lib", "node_modules", "voyagier") : join(root, "lib", "node_modules", "@voyagier", "cli");
+  const packageDir = opts.alias ? join(ownerDir, "node_modules", "@voyagier", "cli") : ownerDir;
+  if (opts.alias) writeFileSync(join(mkdirSync(ownerDir, { recursive: true }) ?? ownerDir, "package.json"), JSON.stringify({ name: "voyagier", version: opts.installedVersion ?? CURRENT }));
   mkdirSync(join(packageDir, "dist"), { recursive: true });
   const writeInstalledVersion = (version: string) =>
     writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name: "@voyagier/cli", version }));
   writeInstalledVersion(opts.installedVersion ?? CURRENT);
   const modulePath = join(packageDir, "dist", "index.js");
   writeFileSync(modulePath, "");
-  return { root, prefix: root, packageDir, modulePath, execPath, npmPath, writeInstalledVersion };
+  return { root, prefix: root, packageDir, ownerDir, modulePath, execPath, npmPath, npmCli, writeInstalledVersion };
 }
 
 /** `npm link` layout: the package dir under node_modules is a symlink to a checkout. */
@@ -174,14 +196,14 @@ describe("packageDirFromModulePath / detectInstallMode", () => {
   });
 
   it("classifies a git checkout (dist not under node_modules) as source", () => {
-    expect(detectInstallMode("/home/me/code/voyagier-cli/dist/index.js")).toEqual({ mode: "source", packageDir: null });
+    expect(detectInstallMode("/home/me/code/voyagier-cli/dist/index.js")).toEqual({ mode: "source", packageDir: null, package: null, ownerDir: null });
   });
 
   it("classifies a symlinked package dir (npm link) as source and a real one as global", () => {
     const linked = linkedLayout();
-    expect(detectInstallMode(linked.modulePath)).toEqual({ mode: "source", packageDir: linked.packageDir });
+    expect(detectInstallMode(linked.modulePath)).toEqual({ mode: "source", packageDir: linked.packageDir, package: null, ownerDir: null });
     const real = globalLayout();
-    expect(detectInstallMode(real.modulePath)).toEqual({ mode: "global", packageDir: real.packageDir });
+    expect(detectInstallMode(real.modulePath)).toEqual({ mode: "global", packageDir: real.packageDir, package: "@voyagier/cli", ownerDir: real.packageDir });
   });
 });
 
@@ -203,6 +225,36 @@ describe("resolveNpm", () => {
   });
 });
 
+describe("npmInvocation", () => {
+  it("runs npm-cli.js with the node beside that npm (POSIX symlink layout)", () => {
+    const layout = globalLayout();
+    expect(npmInvocation(layout.npmPath, "/elsewhere/node", "linux")).toEqual({ cmd: layout.execPath, argsPrefix: [layout.npmCli], shell: false });
+  });
+
+  it("finds npm-cli.js beside npm.cmd on Windows and never needs a shell", () => {
+    const root = tempDir();
+    const npmCmd = join(root, "npm.cmd");
+    writeFileSync(npmCmd, "");
+    const cli = join(root, "node_modules", "npm", "bin", "npm-cli.js");
+    mkdirSync(dirname(cli), { recursive: true });
+    writeFileSync(cli, "");
+    expect(npmInvocation(npmCmd, "/elsewhere/node.exe", "win32")).toEqual({ cmd: "/elsewhere/node.exe", argsPrefix: [cli], shell: false });
+  });
+
+  it("falls back to npm.cmd through the shell only on Windows when no JS entry exists", () => {
+    expect(npmInvocation("npm.cmd", "/n/node.exe", "win32")).toEqual({ cmd: "npm.cmd", argsPrefix: [], shell: true });
+    expect(npmInvocation("npm", "/n/node", "linux")).toEqual({ cmd: "npm", argsPrefix: [], shell: false });
+  });
+});
+
+describe("prefixFromPackageDir", () => {
+  it("derives the global prefix for POSIX, Windows and alias layouts", () => {
+    expect(prefixFromPackageDir(["", "usr", "local", "lib", "node_modules", "@voyagier", "cli"].join(sep))).toBe(["", "usr", "local"].join(sep));
+    expect(prefixFromPackageDir(["", "usr", "local", "lib", "node_modules", "voyagier"].join(sep))).toBe(["", "usr", "local"].join(sep));
+    expect(prefixFromPackageDir(["C:", "npm", "node_modules", "@voyagier", "cli"].join(sep))).toBe(["C:", "npm"].join(sep));
+  });
+});
+
 // ── runUpdate ───────────────────────────────────────────────────────────────
 
 describe("runUpdate", () => {
@@ -216,7 +268,11 @@ describe("runUpdate", () => {
     expect(registry.calls[0].url).toBe(REGISTRY_LATEST_URL);
     expect(registry.calls[0].init?.signal).toBeInstanceOf(AbortSignal);
     expect(npm.calls).toEqual([
-      { cmd: layout.npmPath, args: ["install", "-g", "--prefix", layout.prefix, "@voyagier/cli@latest"], opts: { stdio: ["ignore", "pipe", "inherit"], env: { PATH: "/usr/bin" } } },
+      {
+        cmd: layout.execPath, // node beside the prefix's npm runs npm-cli.js: no shell, no .cmd wrapper
+        args: [layout.npmCli, "install", "-g", "--prefix", layout.prefix, "@voyagier/cli@latest"],
+        opts: { stdio: ["ignore", "pipe", "pipe"], env: { PATH: "/usr/bin" } },
+      },
     ]);
     expect(result).toMatchObject({
       ok: true,
@@ -247,9 +303,51 @@ describe("runUpdate", () => {
     const other = globalLayout();
     const npm = fakeSpawn({ onSpawn: () => layout.writeInstalledVersion(LATEST) });
     const result = await runUpdate(CURRENT, {}, { ...baseDeps(layout), execPath: other.execPath, fetchImpl: registryFetch().fetchImpl, spawnImpl: npm.spawnImpl });
-    expect(npm.calls[0].cmd).toBe(layout.npmPath);
-    expect(npm.calls[0].args).toEqual(["install", "-g", "--prefix", layout.prefix, "@voyagier/cli@latest"]);
+    expect(npm.calls[0].cmd).toBe(layout.execPath);
+    expect(npm.calls[0].args).toEqual([layout.npmCli, "install", "-g", "--prefix", layout.prefix, "@voyagier/cli@latest"]);
     expect(result).toMatchObject({ ok: true, updated: true, prefix: layout.prefix, npmSource: "prefix" });
+  });
+
+  it("alias layout (npm install -g voyagier): updates the outer alias at the real prefix and verifies the nested cli", async () => {
+    const layout = globalLayout({ alias: true });
+    expect(detectInstallMode(layout.modulePath)).toEqual({ mode: "global", packageDir: layout.packageDir, package: "voyagier", ownerDir: layout.ownerDir });
+    const npm = fakeSpawn({ onSpawn: () => layout.writeInstalledVersion(LATEST) });
+    const result = await runUpdate(CURRENT, {}, { ...baseDeps(layout), fetchImpl: registryFetch().fetchImpl, spawnImpl: npm.spawnImpl });
+    expect(npm.calls[0].args).toEqual([layout.npmCli, "install", "-g", "--prefix", layout.prefix, "voyagier@latest"]);
+    expect(result).toMatchObject({ ok: true, updated: true, package: "voyagier", prefix: layout.prefix, npmSource: "prefix" });
+    expect(result.lines[0]).toContain("voyagier (@voyagier/cli)");
+  });
+
+  it("alias layout: a nested cli left on the old version after the install is reported, not claimed as updated", async () => {
+    const layout = globalLayout({ alias: true });
+    const npm = fakeSpawn(); // npm "succeeds" but nothing changes on disk
+    const result = await runUpdate(CURRENT, {}, { ...baseDeps(layout), fetchImpl: registryFetch().fetchImpl, spawnImpl: npm.spawnImpl });
+    expect(result).toMatchObject({ ok: false, updated: false, package: "voyagier", exitCode: 1, error: { code: CliErrorCode.API_ERROR } });
+    expect(result.error?.message).toContain(`still reports v${CURRENT}`);
+  });
+
+  it("EACCES arrives on npm's stderr only: still classified as a permission failure", async () => {
+    const layout = globalLayout();
+    const npm = fakeSpawn({ code: 243, stderr: "npm ERR! code EACCES\nnpm ERR! Error: EACCES: permission denied\n" });
+    const result = await runUpdate(CURRENT, {}, { ...baseDeps(layout), fetchImpl: registryFetch().fetchImpl, spawnImpl: npm.spawnImpl });
+    expect(npm.calls[0].opts).toMatchObject({ stdio: ["ignore", "pipe", "pipe"] });
+    expect(result).toMatchObject({ ok: false, error: { code: CliErrorCode.PERMISSION_DENIED, message: eaccesMessage(layout.prefix) } });
+  });
+
+  it("a child without a stderr stream cannot hide the failure detail: stdout is still captured", async () => {
+    const layout = globalLayout();
+    const npm = fakeSpawn({ code: 1, stdout: "npm ERR! something else\n", noStderrStream: true });
+    const result = await runUpdate(CURRENT, {}, { ...baseDeps(layout), fetchImpl: registryFetch().fetchImpl, spawnImpl: npm.spawnImpl });
+    expect(result.error?.message).toContain("something else");
+  });
+
+  it("relays npm's stderr through onNpmStderr as it arrives", async () => {
+    const layout = globalLayout();
+    const relayed: string[] = [];
+    const npm = fakeSpawn({ stderr: "npm WARN deprecated foo\n", onSpawn: () => layout.writeInstalledVersion(LATEST) });
+    const result = await runUpdate(CURRENT, {}, { ...baseDeps(layout), fetchImpl: registryFetch().fetchImpl, spawnImpl: npm.spawnImpl, onNpmStderr: (c) => relayed.push(c) });
+    expect(result.updated).toBe(true);
+    expect(relayed.join("")).toBe("npm WARN deprecated foo\n");
   });
 
   it("global + already latest: no spawn, updated:false, exit 0", async () => {
@@ -349,7 +447,7 @@ describe("runUpdate", () => {
       prefix: layout.prefix,
       npmSource: "prefix",
       exitCode: 1,
-      error: { code: CliErrorCode.PERMISSION_DENIED, message: EACCES_MESSAGE },
+      error: { code: CliErrorCode.PERMISSION_DENIED, message: eaccesMessage(layout.prefix) },
     });
   });
 
@@ -399,7 +497,7 @@ describe("runUpdate", () => {
     expect(npm.calls).toHaveLength(1);
     expect(result).toMatchObject({ ok: false, mode: "global", latest: LATEST, updated: false, prefix: layout.prefix, exitCode: 1, error: { code: CliErrorCode.API_ERROR } });
     expect(result.error?.message).toBe(
-      `Installed v${LATEST} at ${layout.prefix} but the running binary resolves to ${layout.modulePath}; two npm prefixes may be in PATH`,
+      `Installed @voyagier/cli v${LATEST} at ${layout.prefix} but the running binary (${layout.modulePath}) still reports v${CURRENT}; two npm prefixes may be in PATH`,
     );
   });
 });
@@ -456,13 +554,14 @@ describe("voyagier update (command)", () => {
     expect(stderrWrites).toEqual([]);
     expect(stdoutWrites).toHaveLength(1);
     const doc = JSON.parse(stdoutWrites[0]) as Record<string, unknown>;
-    expect(Object.keys(doc).sort()).toEqual(["checkedAt", "current", "latest", "mode", "npmSource", "ok", "prefix", "updated"]);
+    expect(Object.keys(doc).sort()).toEqual(["checkedAt", "current", "latest", "mode", "npmSource", "ok", "package", "prefix", "updated"]);
     expect(doc).toEqual({
       ok: true,
       mode: "global",
       current: CURRENT,
       latest: LATEST,
       updated: true,
+      package: "@voyagier/cli",
       prefix: layout.prefix,
       npmSource: "prefix",
       checkedAt: "2026-10-26T12:00:00.000Z",
@@ -515,7 +614,7 @@ describe("voyagier update (command)", () => {
     const npm = fakeSpawn({ code: 243, stderr: "npm ERR! EACCES: permission denied\n" });
     await program(CURRENT, { ...baseDeps(layout), fetchImpl: registryFetch().fetchImpl, spawnImpl: npm.spawnImpl }).parseAsync(["node", "test", "update"]);
     expect(stdoutWrites).toEqual([]);
-    expect(stderrWrites.join("")).toContain(EACCES_MESSAGE);
+    expect(stderrWrites.join("")).toContain(eaccesMessage(layout.prefix));
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
