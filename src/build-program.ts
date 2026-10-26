@@ -5,6 +5,7 @@ import { registerAuthCommands } from "./commands/auth.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerAgentDocsCommand } from "./commands/agent-docs.js";
 import { registerDoctorCommand } from "./commands/doctor.js";
+import { registerUpdateCommand } from "./commands/update.js";
 import { registerMcpCommand } from "./commands/mcp.js";
 import { registerGeneratedCommands, type GeneratedCommandContext } from "./mcp-client/generated-commands.js";
 import type { McpToolDescriptor } from "./mcp-client/client.js";
@@ -76,7 +77,7 @@ export interface BuildProgramOptions {
 /**
  * Build the full Voyagier CLI command tree onto a fresh Command instance.
  *
- * Local commands (auth, doctor, mcp, agent-docs, telemetry) are fixed. Every
+ * Local commands (auth, doctor, update, mcp, agent-docs, telemetry) are fixed. Every
  * trip-planning command is generated from `tools`: the MCP server's
  * `tools/list`, one command per tool. Commands the 3.x CLI shipped and 4.0
  * removed are registered as hidden stubs that exit with the replacement.
@@ -115,6 +116,7 @@ Full reference: voyagier agent-docs`,
   // Local commands first: they never need the remote tool list.
   registerAuthCommands(program);
   registerDoctorCommand(program, version);
+  registerUpdateCommand(program, version);
   registerAgentDocsCommand(program, { version });
   registerTelemetryCommands(program);
   registerMcpCommand(program);
