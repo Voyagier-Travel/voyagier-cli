@@ -173,10 +173,34 @@ export function detectInstall(scriptPath: string, env: NodeJS.ProcessEnv = proce
   if (p.includes("/.yarn/global") || p.includes("/.config/yarn/global") || p.includes("/Yarn/Data/global")) return info("yarn");
   if (p.includes("/.bun/install/global")) return info("bun");
   if (p.includes("/.volta/") || p.includes("/Volta/")) return info("volta");
+  // pnpm virtual store: <X>/node_modules/.pnpm/<pkg>@<ver>/node_modules/@voyagier/cli in a project,
+  // <global>/.pnpm/… for a global dir. The owner is <X>, not the store entry.
+  const owner = pnpmOwnerDir(scriptPath);
+  if (owner !== null) return existsSync(join(owner, "package.json")) ? info("local") : info("pnpm");
   // A project dependency: the node_modules that holds the package sits beside a package.json.
   const projectDir = (globalRoot as string).slice(0, -"/node_modules".length);
   if (projectDir && existsSync(join(projectDir, "package.json"))) return info("local");
   return info("npm");
+}
+
+/**
+ * For a path inside a pnpm virtual store, the stable entry the package
+ * manager retargets on update: `<X>/node_modules/@voyagier/cli`. Null for
+ * every other layout (npm overwrites its directory in place).
+ */
+export function stablePackageEntry(packageDir: string): string | null {
+  const owner = pnpmOwnerDir(packageDir);
+  return owner === null ? null : join(owner, "node_modules", "@voyagier", "cli");
+}
+
+/** The directory whose node_modules a pnpm virtual-store path belongs to, or null when not a store path. */
+function pnpmOwnerDir(anyPath: string): string | null {
+  const p = anyPath.replace(/\\/g, "/");
+  const storeIdx = p.lastIndexOf("/.pnpm/");
+  if (storeIdx < 0) return null;
+  const base = p.slice(0, storeIdx);
+  const end = base.endsWith("/node_modules") ? storeIdx - "/node_modules".length : storeIdx;
+  return anyPath.slice(0, end);
 }
 
 function runCommand(
@@ -252,14 +276,15 @@ export async function resolveNpm(
   const prefix = platform !== "win32" && basename(above) === "lib" ? dirname(above) : above;
   const ownNpm = platform === "win32" ? join(prefix, "npm.cmd") : join(prefix, "bin", "npm");
   const args = ["install", "-g", "--prefix", prefix, `${info.package}@latest`];
-  const display = `${ownNpm} ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(" ")}`;
-  if (!existsSync(ownNpm)) {
-    return { unreachable: `This copy (${root}) is not managed by the npm on PATH (${reported}) and no npm was found at ${ownNpm}. Update it with the npm that installed it: ${display}` };
-  }
+  const q = (a: string) => (/\s/.test(a) ? JSON.stringify(a) : a);
+  // The prefix's own npm when it has one (a full node install); otherwise the npm on
+  // PATH pointed at the prefix (a custom --prefix dir holds no npm of its own).
+  const exe = existsSync(ownNpm) ? ownNpm : platform === "win32" ? "npm.cmd" : "npm";
+  const display = [exe, ...args].map(q).join(" ");
   if (platform === "win32") {
     return { unreachable: `This copy (${root}) is not managed by the npm on PATH (${reported}). Run: ${display}` };
   }
-  return { cmd: ownNpm, args, shell: false, display };
+  return { cmd: exe, args, shell: false, display };
 }
 
 async function fetchLatest(fetchImpl: typeof fetch): Promise<{ latest: string } | { error: string }> {
@@ -310,6 +335,18 @@ function currentPackageDir(scriptPath: string, env: NodeJS.ProcessEnv): string |
   return detectInstall(safeRealpath(scriptPath), env).packageDir;
 }
 
+/**
+ * The script as invoked. Node resolves symlinks before setting
+ * `import.meta.url`, so that already points inside a version-specific store
+ * dir for pnpm; `process.argv[1]` is the bin link or shim target as given,
+ * which is the stable path. It is used when it leads to this package.
+ */
+function defaultScriptPath(): string {
+  const argv1 = process.argv[1];
+  if (argv1 && safeRealpath(argv1).replace(/\\/g, "/").includes("/@voyagier/cli/")) return argv1;
+  return fileURLToPath(import.meta.url);
+}
+
 /** Pure core: never writes output or exits. */
 export async function runUpdate(currentVersion: string, opts: UpdateOptions = {}, deps: UpdateDeps = {}): Promise<UpdateResult> {
   const fetchImpl = deps.fetchImpl ?? fetch;
@@ -317,7 +354,7 @@ export async function runUpdate(currentVersion: string, opts: UpdateOptions = {}
   const env = deps.env ?? process.env;
   const platform = deps.platform ?? process.platform;
   const checkedAt = (deps.now ?? (() => new Date()))().toISOString();
-  const scriptPath = deps.scriptPath ?? fileURLToPath(import.meta.url);
+  const scriptPath = deps.scriptPath ?? defaultScriptPath();
   const info = detectInstall(safeRealpath(scriptPath), env);
 
   const base = { kind: info.kind, package: info.package, current: currentVersion, latest: null as string | null, updated: false, checkedAt };
@@ -370,7 +407,10 @@ export async function runUpdate(currentVersion: string, opts: UpdateOptions = {}
     return fail(CliErrorCode.API_ERROR, `${run.display} exited with code ${result.code}${detail ? `\n${detail}` : ""}`, withCommand);
   }
 
-  const verifyDir = currentPackageDir(scriptPath, env) ?? (info.packageDir as string);
+  // Read the version where the package manager put it: the stable pnpm entry (followed again),
+  // else the script re-resolved, else the directory we started from (npm updates in place).
+  const stable = stablePackageEntry(info.packageDir as string);
+  const verifyDir = (stable && existsSync(stable) ? safeRealpath(stable) : null) ?? currentPackageDir(scriptPath, env) ?? (info.packageDir as string);
   const installed = readVersion(verifyDir);
   if (installed !== latest) {
     return fail(
