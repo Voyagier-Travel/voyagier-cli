@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
-- `voyagier update` (alias `upgrade`): updates a global npm install to the latest release — both `npm install -g @voyagier/cli` and the `npm install -g voyagier` alias layouts — by running npm's JS entry through node (no shell, works on Windows), pinned to the prefix the binary lives in; `--check` reports without installing; `--json` for scripts. `update` and `upgrade` are local commands: they never contact the MCP server. A copy installed in a project's `node_modules` is refused with a pointer to `npm install @voyagier/cli@latest` in that project.
+- `voyagier update` (alias `upgrade`): updates this install to the latest release the way Gemini CLI and Vercel CLI do — detect which package manager installed the running copy (npm global, the `npm install -g voyagier` alias, pnpm, yarn, bun, volta) and run that manager's own command, then verify the copy on PATH moved. npx/pnpx/bunx runs, git checkouts and project-local installs get the right instruction instead. `--check` reports current vs latest for every install kind (exit 1 when outdated); `--json` for scripts. `update` and `upgrade` are local commands: they never contact the MCP server.
 
 ### Changed
 - `doctor` now points to `voyagier update` when a newer version exists.

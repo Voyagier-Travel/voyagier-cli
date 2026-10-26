@@ -1,81 +1,88 @@
 /**
  * `voyagier update` (alias `upgrade`).
  *
- * Brings a globally installed CLI to the latest npm release. The command
- * works out how this binary was installed from the path of the running dist
- * file and acts accordingly:
+ * Brings an installed CLI to the latest npm release the way other CLIs do
+ * (Gemini CLI, Vercel CLI, OpenClaw): work out WHICH PACKAGE MANAGER installed
+ * this copy from the real path of the running script, then run that manager's
+ * own canonical global-install command. No prefix is derived or passed: where
+ * the global root lives is the package manager's business. Afterwards the
+ * package.json this process was loaded from is re-read; if it did not move,
+ * the copy on PATH is shadowed by another install and the user is told the
+ * exact command to run.
  *
- *   - npx      — `/_npx/` in the path: zero-install runs are always current,
- *                nothing to do (exit 0).
- *   - global   — inside a real (non-symlinked) node_modules package dir. Two
- *                layouts exist: `npm install -g @voyagier/cli` (the package
- *                sits directly under the prefix) and the documented alias
- *                `npm install -g voyagier` (this package is nested under
- *                `voyagier/node_modules`). The alias pins the matching
- *                @voyagier/cli release, so updating the OUTER package is what
- *                moves the code the alias `bin.js` loads. Runs npm's JS entry
- *                through node (no shell, no `.cmd`, same on every OS), pinned
- *                to the prefix the binary lives in with `--prefix`, then
- *                verifies the package.json this process was loaded from.
- *   - local    — a project's `node_modules` (`npm install @voyagier/cli` then
- *                `npx voyagier update`): refuse before touching npm and point
- *                at `npm install @voyagier/cli@latest` in that project (exit 1).
- *   - source   — anything else (git checkout, `npm link`): refuse and point
- *                at `git pull && npm run build` (exit 1).
+ * Detection (first match wins):
+ *   npx / pnpx / bunx   zero-install caches: nothing to update
+ *   git                 not under node_modules, or an `npm link` symlink: git pull
+ *   pnpm / yarn / bun / volta   their global dirs: `pnpm add -g`, `yarn global add`, …
+ *   local               a project's node_modules (package.json beside it): edit the project
+ *   npm                 everything else: `npm install -g <pkg>@latest`
  *
- * Surface:
+ * The package is `voyagier` when the script was loaded through the alias
+ * (`npm install -g voyagier` nests @voyagier/cli under it), else `@voyagier/cli`.
+ *
+ * Two node toolchains on PATH: before running npm, `npm root -g` is consulted
+ * once. If this copy is not inside that root it belongs to another npm; on
+ * POSIX that npm (`<root>/../../bin/npm`) is run directly, on Windows the
+ * command is printed instead (a path is never passed through cmd.exe).
+ *
  *   voyagier update [--check] [--json]
  *
- * `--check` reports current/latest without installing: exit 0 when current
- * is at or ahead of latest, exit 1 when outdated (for scripts and agents).
- * `--json` writes exactly one JSON document to stdout and nothing to stderr;
- * npm's own output is captured (and relayed to stderr only in text mode).
+ * `--check` consults the registry for every install kind and exits 1 when
+ * outdated. `--json` writes one document to stdout and nothing to stderr.
  */
 import { Command } from "commander";
 import chalk from "chalk";
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
-import nodePath, { basename, dirname, join, sep } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gracefulExit } from "../exit.js";
 import { CliErrorCode } from "../errors.js";
 import { compareSemver } from "./doctor.js";
 
 export const PACKAGE_NAME = "@voyagier/cli";
-/** The convenience alias package (`npm install -g voyagier`); depends on the matching @voyagier/cli. */
 export const ALIAS_PACKAGE_NAME = "voyagier";
 export const REGISTRY_LATEST_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`;
 const REGISTRY_TIMEOUT_MS = 5000;
-/** Lines of npm output surfaced when an install fails for a reason other than EACCES. */
-const NPM_OUTPUT_TAIL_LINES = 20;
+const NPM_ROOT_TIMEOUT_MS = 15000;
+const OUTPUT_TAIL_LINES = 20;
 
-export type UpdateMode = "global" | "npx" | "local" | "source";
-export type NpmSource = "prefix" | "execPath" | "PATH";
 export type InstalledPackage = typeof PACKAGE_NAME | typeof ALIAS_PACKAGE_NAME;
+export type InstallKind = "npm" | "pnpm" | "yarn" | "bun" | "volta" | "npx" | "pnpx" | "bunx" | "local" | "git";
 
-/** Minimal child-process shape the command needs (tests pass an EventEmitter-based fake). */
+export interface InstallInfo {
+  kind: InstallKind;
+  package: InstalledPackage;
+  /** The @voyagier/cli directory this process runs from (null for git checkouts). */
+  packageDir: string | null;
+  /** The node_modules that holds the installed package (the alias's parent for the alias layout). */
+  globalRoot: string | null;
+  /** The manager command that updates this copy, when one exists. */
+  command?: string;
+  /** What to do instead, when it does not. */
+  hint?: string;
+}
+
+/** Minimal child-process shape (tests pass an EventEmitter-based fake). */
 export type SpawnedChild = Pick<ChildProcess, "on" | "stdout" | "stderr">;
 export interface SpawnOptions {
   stdio: ["ignore", "pipe", "pipe"];
   env: NodeJS.ProcessEnv;
-  /** Only set on Windows when npm's JS entry cannot be found and `npm.cmd` must go through cmd.exe. */
-  shell?: boolean;
+  /** True when `cmd` is a complete command line (a literal with no paths in it). */
+  shell: boolean;
 }
 export type SpawnImpl = (cmd: string, args: string[], opts: SpawnOptions) => SpawnedChild;
 
-/** Injectable collaborators (tests script the registry and the npm child). */
 export interface UpdateDeps {
   fetchImpl?: typeof fetch;
   spawnImpl?: SpawnImpl;
-  /** The node binary running this CLI (default: process.execPath). */
-  execPath?: string;
-  /** Resolved path of the running dist file (default: this module's own path). */
-  modulePath?: string;
+  /** Real path of the running script (default: this module's own, realpath'd). */
+  scriptPath?: string;
   env?: NodeJS.ProcessEnv;
-  now?: () => Date;
   platform?: NodeJS.Platform;
-  /** Receives npm's stderr as it arrives (text mode only; never set under --json). */
-  onNpmStderr?: (chunk: string) => void;
+  now?: () => Date;
+  /** Receives the package manager's stderr as it arrives (text mode only). */
+  onStderr?: (chunk: string) => void;
 }
 
 export interface UpdateOptions {
@@ -85,211 +92,170 @@ export interface UpdateOptions {
 
 export interface UpdateResult {
   ok: boolean;
-  mode: UpdateMode;
+  kind: InstallKind;
+  package: InstalledPackage;
   current: string;
   latest: string | null;
   updated: boolean;
-  /** Which global package the install targets: the alias when the binary was loaded through it. */
-  package?: InstalledPackage;
-  prefix?: string;
-  npmSource?: NpmSource;
+  /** The command that was run, or that the user should run. */
+  command?: string;
   checkedAt: string;
   error?: { code: CliErrorCode; message: string };
-  /** Process exit code for this outcome (not part of the JSON document). */
   exitCode: number;
-  /** Human-readable lines (not part of the JSON document). */
   lines: string[];
 }
 
-export const NPX_MESSAGE = `Zero-install runs always use the latest version: npx ${PACKAGE_NAME}@latest`;
-export const SOURCE_MESSAGE = "This CLI runs from a source checkout; update it with: git pull && npm run build";
-export function localMessage(projectDir: string): string {
-  return `This CLI is installed in a project at ${projectDir}, not globally; update it there with: npm install ${PACKAGE_NAME}@latest`;
-}
-export function eaccesMessage(prefix: string): string {
-  return (
-    `Permission denied writing to ${prefix}. Re-run with sudo, or install a copy you own: ` +
-    `npm install -g --prefix ~/.npm-global ${PACKAGE_NAME} and put ~/.npm-global/bin first on PATH`
-  );
-}
+const NOT_UPDATABLE: Record<"npx" | "pnpx" | "bunx" | "git" | "local", string> = {
+  npx: `Running via npx: every run already uses the latest release (npx ${PACKAGE_NAME}@latest)`,
+  pnpx: "Running via pnpx: every run already uses the latest release",
+  bunx: "Running via bunx: every run already uses the latest release",
+  git: "Running from a source checkout; update it with: git pull && npm run build",
+  local: `Installed in a project, not globally; update it there with: npm install ${PACKAGE_NAME}@latest`,
+};
 
-/**
- * The `@voyagier/cli` package directory that contains `modulePath`, or null
- * when it is not under node_modules. Walks parents with the native path
- * functions rather than splitting on separators, so a Windows UNC root
- * (`\\\\server\\share\\…`, e.g. redirected AppData) keeps both leading slashes.
- */
-export function packageDirFromModulePath(modulePath: string, path: Pick<typeof nodePath, "basename" | "dirname"> = nodePath): string | null {
-  let dir = path.dirname(modulePath);
-  for (;;) {
-    if (path.basename(dir) === "cli" && path.basename(path.dirname(dir)) === "@voyagier" && path.basename(path.dirname(path.dirname(dir))) === "node_modules") {
-      return dir;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
+function globalAddCommand(kind: "npm" | "pnpm" | "yarn" | "bun" | "volta", pkg: InstalledPackage): string {
+  const spec = `${pkg}@latest`;
+  switch (kind) {
+    case "npm":
+      return `npm install -g ${spec}`;
+    case "pnpm":
+      return `pnpm add -g ${spec}`;
+    case "yarn":
+      return `yarn global add ${spec}`;
+    case "bun":
+      return `bun add -g ${spec}`;
+    case "volta":
+      return `volta install ${spec}`;
   }
 }
 
-export interface InstallInfo {
-  mode: UpdateMode;
-  /** For `local`: the project directory that owns the node_modules. */
-  projectDir?: string;
-  /** The @voyagier/cli dir this process was loaded from (what gets verified after an install). */
-  packageDir: string | null;
-  /** The package npm installed at the prefix: @voyagier/cli itself, or the alias that depends on it. */
-  package: InstalledPackage | null;
-  /** That package's directory (what the prefix is derived from). */
-  ownerDir: string | null;
-}
-
-function isSymlink(path: string): boolean {
+function isSymlink(p: string): boolean {
   try {
-    return lstatSync(path).isSymbolicLink();
+    return lstatSync(p).isSymbolicLink();
   } catch {
-    return true; // unreadable → treat as not a clean global install
+    return false;
   }
 }
 
-/** The `node_modules` directory that directly holds `ownerDir` (scoped or not). */
-function nodeModulesOf(ownerDir: string): string | null {
-  let dir = ownerDir;
-  while (basename(dir) !== "node_modules") {
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
+/** Classify the install from the real path of the running script. Pure apart from two lstat/exists probes. */
+export function detectInstall(scriptPath: string, env: NodeJS.ProcessEnv = process.env): InstallInfo {
+  // Separators are normalised only for matching; slices are taken from the original string.
+  // All slicing is by index on the normalised string, so separators and UNC roots in the original are untouched.
+  const p = scriptPath.replace(/\\/g, "/");
+  const CLI = "/node_modules/@voyagier/cli";
+  const ALIAS = "/node_modules/voyagier";
+  const cliIdx = p.lastIndexOf(CLI + "/");
+  const packageDir = cliIdx >= 0 ? scriptPath.slice(0, cliIdx + CLI.length) : null;
+  const viaAlias = cliIdx >= 0 && p.slice(0, cliIdx).endsWith(ALIAS);
+  const pkg: InstalledPackage = viaAlias ? ALIAS_PACKAGE_NAME : PACKAGE_NAME;
+  // The node_modules that holds the installed package: strip "/voyagier" for the alias, "/@voyagier/cli" otherwise.
+  const globalRoot = cliIdx < 0 ? null : viaAlias ? scriptPath.slice(0, cliIdx - "/voyagier".length) : scriptPath.slice(0, cliIdx + "/node_modules".length);
+  const info = (kind: InstallKind): InstallInfo => {
+    if (kind in NOT_UPDATABLE) return { kind, package: pkg, packageDir, globalRoot, hint: NOT_UPDATABLE[kind as keyof typeof NOT_UPDATABLE] };
+    return { kind, package: pkg, packageDir, globalRoot, command: globalAddCommand(kind as "npm" | "pnpm" | "yarn" | "bun" | "volta", pkg) };
+  };
+
+  if (p.includes("/_npx/")) return info("npx");
+  if (p.includes("/.pnpm/_pnpx") || p.includes("/.cache/pnpm/dlx")) return info("pnpx");
+  if (p.includes("/.bun/install/cache/")) return info("bunx");
+  if (!packageDir || isSymlink(packageDir)) return info("git");
+  const pnpmHome = env.PNPM_HOME?.replace(/\\/g, "/");
+  if (
+    p.includes("/.pnpm/global") ||
+    p.includes("/.local/share/pnpm") ||
+    p.includes("/Library/pnpm/global/") ||
+    p.includes("/AppData/Local/pnpm/global/") ||
+    (pnpmHome && p.startsWith(pnpmHome.replace(/\/$/, "") + "/"))
+  ) {
+    return info("pnpm");
   }
-  return dir;
+  if (p.includes("/.yarn/global")) return info("yarn");
+  if (p.includes("/.bun/install/global")) return info("bun");
+  if (p.includes("/.volta/") || p.includes("/Volta/")) return info("volta");
+  // A project dependency: the node_modules that holds the package sits beside a package.json.
+  const projectDir = (globalRoot as string).slice(0, -"/node_modules".length);
+  if (projectDir && existsSync(join(projectDir, "package.json"))) return info("local");
+  return info("npm");
 }
 
-/**
- * A global prefix has no package.json beside its node_modules, and on POSIX
- * npm always lays it out as `<prefix>/lib/node_modules`. Anything else is a
- * project's dependency tree, which `npm install -g --prefix` would not touch.
- */
-function isProjectLocal(ownerDir: string, platform: NodeJS.Platform): { local: boolean; projectDir: string } {
-  const nodeModules = nodeModulesOf(ownerDir);
-  const above = nodeModules ? dirname(nodeModules) : dirname(ownerDir);
-  if (existsSync(join(above, "package.json"))) return { local: true, projectDir: above };
-  if (platform !== "win32" && basename(above) !== "lib") return { local: true, projectDir: above };
-  return { local: false, projectDir: above };
-}
-
-/** Classify how the running binary was installed. */
-export function detectInstallMode(modulePath: string, platform: NodeJS.Platform = process.platform): InstallInfo {
-  const none = { packageDir: null, package: null, ownerDir: null };
-  if (modulePath.includes("/_npx/") || modulePath.includes("\\_npx\\")) return { mode: "npx", ...none };
-  const packageDir = packageDirFromModulePath(modulePath);
-  if (!packageDir) return { mode: "source", ...none };
-  if (isSymlink(packageDir)) return { mode: "source", packageDir, package: null, ownerDir: null };
-
-  // Alias layout: <prefix>/lib/node_modules/voyagier/node_modules/@voyagier/cli
-  const nodeModules = dirname(dirname(packageDir));
-  const maybeAlias = dirname(nodeModules);
-  let pkg: InstalledPackage = PACKAGE_NAME;
-  let ownerDir = packageDir;
-  if (basename(maybeAlias) === ALIAS_PACKAGE_NAME && basename(dirname(maybeAlias)) === "node_modules") {
-    if (isSymlink(maybeAlias)) return { mode: "source", packageDir, package: null, ownerDir: null };
-    pkg = ALIAS_PACKAGE_NAME;
-    ownerDir = maybeAlias;
-  }
-  const { local, projectDir } = isProjectLocal(ownerDir, platform);
-  if (local) return { mode: "local", packageDir, package: pkg, ownerDir, projectDir };
-  return { mode: "global", packageDir, package: pkg, ownerDir };
-}
-
-/**
- * The global prefix npm installed `ownerDir` into:
- * `<prefix>/lib/node_modules/<pkg>` on POSIX, `<prefix>/node_modules/<pkg>` on Windows.
- */
-export function prefixFromPackageDir(ownerDir: string): string {
-  let dir = ownerDir;
-  while (basename(dir) !== "node_modules") {
-    const parent = dirname(dir);
-    if (parent === dir) return dirname(ownerDir);
-    dir = parent;
-  }
-  const above = dirname(dir);
-  return basename(above) === "lib" ? dirname(above) : above;
-}
-
-/**
- * The npm to run the install with. Preference order:
- *   1. `<prefix>/bin/npm` — the npm that owns the prefix this CLI is installed
- *      in. `#!/usr/bin/env node` means the running node may belong to a
- *      different install (two node toolchains on PATH), so the running node's
- *      npm is not a safe guess.
- *   2. the npm next to the running node (`process.execPath`).
- *   3. `npm` on PATH.
- * Whichever is chosen, the install is pinned to the prefix with `--prefix`.
- */
-export function resolveNpm(
-  execPath: string,
-  prefix: string | null = null,
-  platform: NodeJS.Platform = process.platform,
-): { npm: string; npmSource: NpmSource } {
-  const npmName = platform === "win32" ? "npm.cmd" : "npm";
-  if (prefix) {
-    const own = platform === "win32" ? join(prefix, npmName) : join(prefix, "bin", npmName);
-    if (existsSync(own)) return { npm: own, npmSource: "prefix" };
-  }
-  const sibling = join(dirname(execPath), npmName);
-  if (existsSync(sibling)) return { npm: sibling, npmSource: "execPath" };
-  return { npm: npmName, npmSource: "PATH" };
-}
-
-/** The exact npm argv used for the install; exported so specs and docs pin it. */
-export function npmInstallArgs(prefix: string, pkg: InstalledPackage): string[] {
-  return ["install", "-g", "--prefix", prefix, `${pkg}@latest`];
-}
-
-/**
- * How to invoke `npm`. Prefer npm's JavaScript entry (`npm-cli.js`) run by
- * node: no shell, no `.cmd` wrapper (which `spawn` refuses without a shell on
- * current Node), no quoting of prefixes with spaces. On POSIX `npm` is a
- * symlink to it; on Windows it sits in `node_modules/npm/bin` next to
- * `npm.cmd`. Only when neither is found does Windows fall back to `npm.cmd`
- * through the command interpreter.
- */
-export function npmInvocation(
-  npm: string,
-  execPath: string,
-  platform: NodeJS.Platform = process.platform,
-): { cmd: string; argsPrefix: string[]; shell: boolean } {
-  const candidates: string[] = [];
-  // A bare `npm` from PATH has no directory to look in; npm ships with node, so
-  // the running node's own install is the next best place to find npm-cli.js.
-  const nodeDir = dirname(execPath);
-  candidates.push(join(nodeDir, "node_modules", "npm", "bin", "npm-cli.js"));
-  candidates.push(join(nodeDir, "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"));
-  if (npm.includes(sep) || npm.includes("/")) {
+function runCommand(
+  spawnImpl: SpawnImpl,
+  cmd: string,
+  args: string[],
+  shell: boolean,
+  env: NodeJS.ProcessEnv,
+  onStderr?: (chunk: string) => void,
+): Promise<{ code: number; stdout: string; output: string }> {
+  return new Promise((resolve) => {
+    const out: string[] = [];
+    const all: string[] = [];
+    let settled = false;
+    const done = (code: number, extra?: string) => {
+      if (settled) return;
+      settled = true;
+      if (extra) all.push(extra);
+      resolve({ code, stdout: out.join(""), output: all.join("") });
+    };
+    let child: SpawnedChild;
     try {
-      const real = realpathSync(npm);
-      if (basename(real) === "npm-cli.js") candidates.push(real);
-    } catch {
-      /* not resolvable — try the sibling layout */
+      child = spawnImpl(cmd, args, { stdio: ["ignore", "pipe", "pipe"], env, shell });
+    } catch (err) {
+      done(-1, err instanceof Error ? err.message : String(err));
+      return;
     }
-    candidates.push(join(dirname(npm), "node_modules", "npm", "bin", "npm-cli.js"));
-    candidates.push(join(dirname(npm), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"));
-  }
-  // Prefer the entry that belongs to the chosen npm (pushed last) over the running node's.
-  const cli = [...candidates].reverse().find((c) => existsSync(c));
-  if (cli) {
-    // Run with the node that ships beside that npm when there is one, else ourselves.
-    const nodeName = platform === "win32" ? "node.exe" : "node";
-    const siblingNode = join(dirname(npm), nodeName);
-    return { cmd: existsSync(siblingNode) ? siblingNode : execPath, argsPrefix: [cli], shell: false };
-  }
-  return { cmd: npm, argsPrefix: [], shell: platform === "win32" };
+    child.stdout?.on("data", (c: Buffer | string) => {
+      out.push(String(c));
+      all.push(String(c));
+    });
+    child.stderr?.on("data", (c: Buffer | string) => {
+      all.push(String(c));
+      onStderr?.(String(c));
+    });
+    child.on("error", (err: Error) => done(-1, err.message));
+    child.on("close", (code: number | null) => done(code ?? -1));
+  });
 }
 
 /**
- * With `shell: true` Node joins the argv with spaces and hands the string to
- * cmd.exe unquoted, so a prefix like `C:\\Users\\Jane Doe\\AppData\\Roaming\\npm`
- * would be split. Quote any argument with whitespace for that one path.
+ * Which npm owns this copy. Asks the npm on PATH for its global root once
+ * (Vercel's check). Inside it → `npm`. Outside it → the npm that ships with
+ * this copy's prefix, run directly on POSIX; on Windows only reported, because
+ * a path is never handed to cmd.exe.
  */
-export function quoteForShell(args: string[]): string[] {
-  return args.map((a) => (/\s/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a));
+export async function resolveNpm(
+  info: InstallInfo,
+  spawnImpl: SpawnImpl,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): Promise<{ cmd: string; args: string[]; shell: boolean; display: string } | { unreachable: string }> {
+  const onPath = { cmd: info.command as string, args: [], shell: true, display: info.command as string };
+  const root = info.globalRoot as string;
+  const probe = await Promise.race([
+    runCommand(spawnImpl, "npm root -g", [], true, env),
+    new Promise<{ code: number; stdout: string; output: string }>((r) => setTimeout(() => r({ code: -1, stdout: "", output: "timeout" }), NPM_ROOT_TIMEOUT_MS).unref?.()),
+  ]);
+  const reported = probe.code === 0 ? probe.stdout.trim() : "";
+  if (!reported) return onPath; // no npm on PATH or it failed: let the real command speak
+  let same = false;
+  try {
+    same = realpathSync(reported) === realpathSync(root);
+  } catch {
+    same = reported === root;
+  }
+  if (same) return onPath;
+
+  const above = dirname(root);
+  const prefix = platform !== "win32" && basename(above) === "lib" ? dirname(above) : above;
+  const ownNpm = platform === "win32" ? join(prefix, "npm.cmd") : join(prefix, "bin", "npm");
+  const args = ["install", "-g", `${info.package}@latest`];
+  const display = `${ownNpm} ${args.join(" ")}`;
+  if (!existsSync(ownNpm)) {
+    return { unreachable: `This copy (${root}) is not managed by the npm on PATH (${reported}) and no npm was found at ${ownNpm}. Update it with the npm that installed it: ${display}` };
+  }
+  if (platform === "win32") {
+    return { unreachable: `This copy (${root}) is not managed by the npm on PATH (${reported}). Run: ${display}` };
+  }
+  return { cmd: ownNpm, args, shell: false, display };
 }
 
 async function fetchLatest(fetchImpl: typeof fetch): Promise<{ latest: string } | { error: string }> {
@@ -304,44 +270,7 @@ async function fetchLatest(fetchImpl: typeof fetch): Promise<{ latest: string } 
   }
 }
 
-function runNpmInstall(
-  spawnImpl: SpawnImpl,
-  cmd: string,
-  args: string[],
-  env: NodeJS.ProcessEnv,
-  shell: boolean,
-  onStderr?: (chunk: string) => void,
-): Promise<{ code: number; output: string }> {
-  return new Promise((resolve) => {
-    const chunks: string[] = [];
-    let settled = false;
-    const done = (code: number, extra?: string) => {
-      if (settled) return;
-      settled = true;
-      if (extra) chunks.push(extra);
-      resolve({ code, output: chunks.join("") });
-    };
-    let child: SpawnedChild;
-    try {
-      const opts: SpawnOptions = { stdio: ["ignore", "pipe", "pipe"], env };
-      if (shell) opts.shell = true;
-      child = spawnImpl(cmd, shell ? quoteForShell(args) : args, opts);
-    } catch (err) {
-      done(-1, err instanceof Error ? err.message : String(err));
-      return;
-    }
-    child.stdout?.on("data", (chunk: Buffer | string) => chunks.push(String(chunk)));
-    child.stderr?.on("data", (chunk: Buffer | string) => {
-      const text = String(chunk);
-      chunks.push(text);
-      onStderr?.(text);
-    });
-    child.on("error", (err: Error) => done(-1, err.message));
-    child.on("close", (code: number | null) => done(code ?? -1));
-  });
-}
-
-function readInstalledVersion(packageDir: string): string | null {
+function readVersion(packageDir: string): string | null {
   try {
     const pkg = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf-8")) as { version?: unknown };
     return typeof pkg.version === "string" ? pkg.version : null;
@@ -351,27 +280,32 @@ function readInstalledVersion(packageDir: string): string | null {
 }
 
 function tail(text: string, n: number): string {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  return lines.slice(-n).join("\n");
+  return text
+    .split(/\r?\n/)
+    .filter((l) => l.trim().length > 0)
+    .slice(-n)
+    .join("\n");
 }
 
-/**
- * Pure core: resolve mode, compare with the registry and (unless --check or
- * already current) run the install. Never writes output or exits; the
- * registered command turns the result into text/JSON and an exit code.
- */
+function defaultScriptPath(): string {
+  const own = fileURLToPath(import.meta.url);
+  try {
+    return realpathSync(own);
+  } catch {
+    return own;
+  }
+}
+
+/** Pure core: never writes output or exits. */
 export async function runUpdate(currentVersion: string, opts: UpdateOptions = {}, deps: UpdateDeps = {}): Promise<UpdateResult> {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const spawnImpl = deps.spawnImpl ?? (nodeSpawn as unknown as SpawnImpl);
-  const execPath = deps.execPath ?? process.execPath;
-  const modulePath = deps.modulePath ?? fileURLToPath(import.meta.url);
   const env = deps.env ?? process.env;
   const platform = deps.platform ?? process.platform;
   const checkedAt = (deps.now ?? (() => new Date()))().toISOString();
+  const info = detectInstall(deps.scriptPath ?? defaultScriptPath(), env);
 
-  const info = detectInstallMode(modulePath, platform);
-  const { mode } = info;
-  const base = { mode, current: currentVersion, latest: null as string | null, updated: false, checkedAt };
+  const base = { kind: info.kind, package: info.package, current: currentVersion, latest: null as string | null, updated: false, checkedAt };
   const fail = (code: CliErrorCode, message: string, extra: Partial<UpdateResult> = {}): UpdateResult => ({
     ...base,
     ...extra,
@@ -381,68 +315,57 @@ export async function runUpdate(currentVersion: string, opts: UpdateOptions = {}
     lines: [message],
   });
 
-  if (mode === "npx") {
-    return { ...base, ok: true, exitCode: 0, lines: [NPX_MESSAGE] };
-  }
-
-  // Installs that cannot be updated from here are refused before any network
-  // call, so a registry outage never hides the actionable instruction. `--check`
-  // still consults the registry for every mode.
-  if (!opts.check) {
-    if (mode === "source") return fail(CliErrorCode.VALIDATION, SOURCE_MESSAGE);
-    if (mode === "local") return fail(CliErrorCode.VALIDATION, localMessage(info.projectDir as string), { package: info.package as InstalledPackage });
+  // Copies that cannot be updated from here are answered before any network call.
+  if (!opts.check && info.hint) {
+    const zeroInstall = info.kind === "npx" || info.kind === "pnpx" || info.kind === "bunx";
+    return zeroInstall ? { ...base, ok: true, exitCode: 0, lines: [info.hint] } : fail(CliErrorCode.VALIDATION, info.hint);
   }
 
   const registry = await fetchLatest(fetchImpl);
-  if ("error" in registry) return fail(CliErrorCode.NETWORK, registry.error);
+  if ("error" in registry) return fail(CliErrorCode.NETWORK, registry.error, { command: info.command });
   const latest = registry.latest;
-  const outdated = compareSemver(currentVersion, latest) < 0;
-  const withLatest = { ...base, latest };
+  const cmp = compareSemver(currentVersion, latest);
+  const outdated = cmp < 0;
+  const withLatest = { ...base, latest, command: info.command };
 
   if (opts.check) {
     const line = outdated
-      ? `v${latest} available; running v${currentVersion}. Run: voyagier update`
-      : `Already on the latest version (v${currentVersion}${compareSemver(currentVersion, latest) > 0 ? `, ahead of npm latest v${latest}` : ""})`;
-    // `ok` mirrors the exit code (as doctor does): false means an update is available.
+      ? `v${latest} available; running v${currentVersion}. ${info.command ? "Run: voyagier update" : info.hint}`
+      : `Already on the latest version (v${currentVersion}${cmp > 0 ? `, ahead of npm latest v${latest}` : ""})`;
     return { ...withLatest, ok: !outdated, exitCode: outdated ? 1 : 0, lines: [line] };
   }
+  if (!outdated) return { ...withLatest, ok: true, exitCode: 0, lines: [`Already on the latest version (v${currentVersion})`] };
 
-  // mode === "global" (source/local returned above)
-  const packageDir = info.packageDir as string;
-  const pkg = info.package as InstalledPackage;
-  const prefix = prefixFromPackageDir(info.ownerDir as string);
-  const { npm, npmSource } = resolveNpm(execPath, prefix, platform);
-  const withInstall = { ...withLatest, package: pkg, prefix, npmSource };
+  let run: { cmd: string; args: string[]; shell: boolean; display: string };
+  if (info.kind === "npm") {
+    const resolved = await resolveNpm(info, spawnImpl, env, platform);
+    if ("unreachable" in resolved) return fail(CliErrorCode.VALIDATION, resolved.unreachable, { latest });
+    run = resolved;
+  } else {
+    run = { cmd: info.command as string, args: [], shell: true, display: info.command as string };
+  }
+  const withCommand = { ...withLatest, command: run.display };
 
-  if (!outdated) {
-    return { ...withInstall, ok: true, exitCode: 0, lines: [`Already on the latest version (v${currentVersion})`] };
+  const result = await runCommand(spawnImpl, run.cmd, run.args, run.shell, env, deps.onStderr);
+  if (result.code !== 0) {
+    if (/EACCES|EPERM/.test(result.output)) {
+      return fail(CliErrorCode.PERMISSION_DENIED, `Permission denied while running: ${run.display}. Re-run it with the permissions your install needs (for example with sudo).`, withCommand);
+    }
+    const detail = tail(result.output, OUTPUT_TAIL_LINES);
+    return fail(CliErrorCode.API_ERROR, `${run.display} exited with code ${result.code}${detail ? `\n${detail}` : ""}`, withCommand);
   }
 
-  const { cmd, argsPrefix, shell } = npmInvocation(npm, execPath, platform);
-  const args = [...argsPrefix, ...npmInstallArgs(prefix, pkg)];
-  const install = await runNpmInstall(spawnImpl, cmd, args, env, shell, deps.onNpmStderr);
-  if (install.code !== 0) {
-    if (/EACCES/.test(install.output)) return fail(CliErrorCode.PERMISSION_DENIED, eaccesMessage(prefix), withInstall);
-    const detail = tail(install.output, NPM_OUTPUT_TAIL_LINES);
-    return fail(CliErrorCode.API_ERROR, `npm install -g ${pkg}@latest exited with code ${install.code}${detail ? `\n${detail}` : ""}`, withInstall);
-  }
-
-  const installed = readInstalledVersion(packageDir);
+  const installed = readVersion(info.packageDir as string);
   if (installed !== latest) {
     return fail(
       CliErrorCode.API_ERROR,
-      `Installed ${pkg} v${latest} at ${prefix} but the running binary (${modulePath}) still reports v${installed ?? "unknown"}; two npm prefixes may be in PATH`,
-      withInstall,
+      `${run.display} succeeded, but the copy on PATH (${info.packageDir}) still reports v${installed ?? "unknown"}: it is shadowed by another installation. Remove one of them, or update that one directly.`,
+      withCommand,
     );
   }
-
-  const label = pkg === PACKAGE_NAME ? PACKAGE_NAME : `${ALIAS_PACKAGE_NAME} (${PACKAGE_NAME})`;
-  const lines = [`Updated ${label} v${currentVersion} → v${latest} (${prefix})`];
-  if (npmSource === "PATH") lines.push(`Used npm from PATH (no npm under ${prefix} or next to ${execPath})`);
-  return { ...withInstall, ok: true, updated: true, exitCode: 0, lines };
+  return { ...withCommand, ok: true, updated: true, exitCode: 0, lines: [`Updated ${info.package} v${currentVersion} → v${latest} (${run.display})`] };
 }
 
-/** Strip the fields that are not part of the --json contract. */
 export function toJsonDocument(result: UpdateResult): Record<string, unknown> {
   const { exitCode: _exitCode, lines: _lines, ...doc } = result;
   return doc;
@@ -452,24 +375,20 @@ export function registerUpdateCommand(program: Command, currentVersion: string, 
   program
     .command("update")
     .alias("upgrade")
-    .description(`Update a global npm install of ${PACKAGE_NAME} to the latest release`)
+    .description(`Update this install of ${PACKAGE_NAME} to the latest release`)
     .option("--check", "Report current/latest without installing (exit 1 when outdated)")
     .option("--json", "Output raw JSON")
     .action(async (opts: UpdateOptions) => {
-      // Text mode relays npm's progress/diagnostics as they happen; --json keeps stderr silent.
-      const onNpmStderr = opts.json ? undefined : (chunk: string) => process.stderr.write(chunk);
-      const result = await runUpdate(currentVersion, opts, { onNpmStderr, ...deps });
+      const onStderr = opts.json ? undefined : (chunk: string) => process.stderr.write(chunk);
+      const result = await runUpdate(currentVersion, opts, { onStderr, ...deps });
       if (opts.json) {
         process.stdout.write(JSON.stringify(toJsonDocument(result), null, 2) + "\n");
         await gracefulExit(result.exitCode);
         return;
       }
       const text = result.lines.join("\n") + "\n";
-      if (result.ok) {
-        process.stdout.write(result.updated ? chalk.green(text) : text);
-      } else {
-        process.stderr.write(chalk.red(text));
-      }
+      if (result.ok) process.stdout.write(result.updated ? chalk.green(text) : text);
+      else process.stderr.write(chalk.red(text));
       await gracefulExit(result.exitCode);
     });
 }
