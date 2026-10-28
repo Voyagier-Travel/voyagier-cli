@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [4.5.0] — 2026-10-26
+
+`voyagier update` brings an installed CLI to the latest release.
+
 ### Added
 - `voyagier update` (alias `upgrade`): updates this install to the latest release the way Gemini CLI and Vercel CLI do — detect which package manager installed the running copy (npm global, the `npm install -g voyagier` alias, pnpm, yarn, bun, volta) and run that manager's own command, then verify the copy on PATH moved. npx/pnpx/bunx runs, git checkouts and project-local installs get the right instruction instead. `--check` reports current vs latest for every install kind (exit 1 when outdated); `--json` for scripts. `update` and `upgrade` are local commands: they never contact the MCP server.
 
