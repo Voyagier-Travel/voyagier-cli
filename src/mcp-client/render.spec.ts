@@ -87,6 +87,38 @@ describe("renderPlanStatus", () => {
     expect(ready).not.toContain("not bookable");
   });
 
+  it("prints each blocker's and next action's gate, leadProblem, checkoutOnlyBlockerCount and the ref ids the server sends", () => {
+    // Shape of get_plan_status on nest main (shared passport rule): gate on blockers and next actions, leadProblem, candidateSelectionIds, airportRole.
+    const out = strip(
+      renderPlanStatus({
+        tripPlanId: "plan-2",
+        title: "Doe — Singapore",
+        readiness: "Blocked",
+        summary: { goalsTotal: 3, goalsDecided: 3, goalsBooked: 0, blockerCount: 3, checkoutOnlyBlockerCount: 2, alternateBranchCount: 0, bookableNow: false },
+        blockers: [
+          { kind: "TravellerData", gate: "Checkout", message: "Jane Doe needs a passport for an international itinerary", refs: { travellerId: "trv-1", goalId: "g-1" } },
+          { kind: "LeadTraveller", gate: "Checkout", message: "The lead traveller has no email or phone", leadProblem: "NoContact", refs: { travellerId: "trv-1", goalId: "g-2", selectionId: "s-7", standInLead: true } },
+          { kind: "OptionsFetchFailed", gate: "Planning", message: "Hotel options did not load", candidateSelectionIds: ["s-3", "s-4"], refs: { selectionId: "s-3" } },
+        ],
+        nextActions: [
+          { action: "SetSelectionInput", gate: "Planning", detail: "Set the departure airport", goalId: "g-1", itemId: "it-1", selectionId: "s-1", inputName: "airport", airportRole: "BOOKING_ORIGIN" },
+          { action: "UpdateTraveller", gate: "Checkout", detail: "Add passport", travellerIds: ["trv-1", "trv-2"] },
+          { action: "SelectOption", detail: "Pick a room", selectionId: "s-5", participantChoiceId: "pc-1" },
+        ],
+        travellers: [],
+        cart: { itemCount: 2, bookableCount: 1, total: 1500, currency: "USD" },
+        goals: [],
+      }),
+    );
+    expect(out).toContain("goals decided 3/3  ·  booked 0  ·  blockers 3  ·  checkout-only 2");
+    expect(out).toContain("• TravellerData (gate Checkout): Jane Doe needs a passport for an international itinerary\n        travellerId trv-1  goalId g-1");
+    expect(out).toContain("• LeadTraveller (gate Checkout): The lead traveller has no email or phone\n        travellerId trv-1  goalId g-2  selectionId s-7  standInLead  leadProblem NoContact");
+    expect(out).toContain("• OptionsFetchFailed (gate Planning): Hotel options did not load\n        selectionId s-3  candidateSelectionIds s-3,s-4");
+    expect(out).toContain("→ SetSelectionInput (gate Planning): Set the departure airport  (goalId g-1  itemId it-1  selectionId s-1  inputName airport  airportRole BOOKING_ORIGIN)");
+    expect(out).toContain("→ UpdateTraveller (gate Checkout): Add passport  (travellerIds trv-1,trv-2)");
+    expect(out).toContain("→ SelectOption: Pick a room  (selectionId s-5  participantChoiceId pc-1)");
+  });
+
   it("returns null for a shape without readiness", () => {
     expect(renderPlanStatus({ foo: 1 })).toBeNull();
     expect(renderToolPayload("get_plan_status", { nope: true })).toBeNull();
@@ -200,11 +232,10 @@ describe("renderSearchResult", () => {
     };
     const out = strip(renderSearchResult({ id: "srch-2", type: "Flight", status: "Ready", optionsSummary: { optionCount: 1, topOptions: [row] } }));
     expect(out).toContain("JFK→DXB 22:20–19:10 12h 50m nonstop EK 204  ·  DXB→JFK 08:30–14:25 14h 55m 1 stop EK 384 (op. FZ), EK 201  ·  $1,240.50");
-    // A search row carries the slot the fare was priced under, not the cabin per flight: the line says so instead of printing the slot.
-    expect(out).toContain(
-      "       cabin per flight not reported  ·  non-refundable  ·  changeable  ·  bags: carry-on 1 piece, 7 kg  ·  fare basis KLXESAU1/KLXESAU1/CH  ·  base $980.00 + taxes $260.50",
-    );
+    // The row carries neither fareByFlight nor legs with a cabin: the server said nothing about the cabin, so the line starts with the next condition — cabinClass (the pricing slot) is never printed in its place.
+    expect(out).toContain("       non-refundable  ·  changeable  ·  bags: carry-on 1 piece, 7 kg  ·  fare basis KLXESAU1/KLXESAU1/CH  ·  base $980.00 + taxes $260.50");
     expect(out).not.toContain("Economy");
+    expect(out).not.toContain("not reported");
     // Null checked baggage is "unknown", never printed as a number of bags.
     expect(out).not.toContain("checked");
     expect(out).toContain("option_id opt-9");
@@ -235,7 +266,7 @@ describe("renderSearchResult", () => {
     expect(partial).not.toContain("changeable");
   });
 
-  it("labels a fare by the cabin on each flight from its legs, and never by cabinClass or bookedCabin", () => {
+  it("prints the server's fareByFlight verbatim and its brand, and never cabinClass or bookedCabin", () => {
     const fareRow = (fields: Record<string, unknown>) =>
       strip(
         renderSearchResult({
@@ -245,40 +276,76 @@ describe("renderSearchResult", () => {
           optionsSummary: { optionCount: 1, topOptions: [{ index: 0, price: 2100, currency: "USD", refundable: false, ...fields }] },
         }),
       );
-    const bwiOrd = { origin: "BWI", destination: "ORD", carrier: "UA", flightNumber: 512, cabin: "economy", bookingCode: "K" };
-    const ordCdg = { origin: "ORD", destination: "CDG", carrier: "UA", flightNumber: 986, cabin: "business", bookingCode: "D" };
-    // A Fare & Cabin row carries its legs inside the `fare` block: one cabin per flight, in flight order.
-    const mixed = fareRow({ cabinClass: "economy", fare: { cabinClass: "economy", bookedCabin: null, legs: [bwiOrd, ordCdg] } });
-    expect(mixed).toContain("       BWI→ORD Economy · ORD→CDG Business  ·  non-refundable");
-    // The slot the fare was priced under is not the cabin flown and is not printed as one.
-    expect(mixed).not.toMatch(/\beconomy\b/);
-    // Same cabin on every flight: still one entry per flight, never collapsed to the deprecated bookedCabin.
-    expect(fareRow({ cabinClass: "premium-economy", fare: { cabinClass: "premium-economy", bookedCabin: "business", legs: [{ ...bwiOrd, cabin: "business" }, ordCdg] } })).toContain(
-      "       BWI→ORD Business · ORD→CDG Business  ·  non-refundable",
+    // Shape of a get_options / search_flights row after the fare-brand change: fareByFlight and brand are the server's words.
+    const row = {
+      cabinClass: "economy",
+      brand: null,
+      fareByFlight: "DXB→DOH Economy, Main Cabin · DOH→SIN Economy, Basic Economy",
+      bookedCabin: null,
+      fare: {
+        cabinClass: "economy",
+        bookedCabin: null,
+        brand: null,
+        legs: [
+          { origin: "DXB", destination: "DOH", carrier: "QR", flightNumber: 1003, cabin: "economy", bookingCode: "K", brand: "MAIN CABIN" },
+          { origin: "DOH", destination: "SIN", carrier: "QR", flightNumber: 944, cabin: "economy", bookingCode: "O", brand: "BASIC ECONOMY" },
+        ],
+      },
+    };
+    expect(fareRow(row)).toContain("       DXB→DOH Economy, Main Cabin · DOH→SIN Economy, Basic Economy  ·  non-refundable");
+    // One brand across every flight: the server sets brand and the line names it.
+    expect(fareRow({ ...row, brand: "MAIN CABIN", fareByFlight: "DXB→DOH Economy, Main Cabin · DOH→SIN Economy, Main Cabin" })).toContain(
+      "       DXB→DOH Economy, Main Cabin · DOH→SIN Economy, Main Cabin  ·  brand MAIN CABIN  ·  non-refundable",
     );
-    expect(fareRow({ fare: { legs: [{ ...bwiOrd, cabin: "premium-economy" }] } })).toContain("       BWI→ORD Premium economy  ·  non-refundable");
-    // Null legs: the per-flight cabin is unknown for that fare; the row name, cabinClass and bookedCabin are not relayed in its place.
-    for (const row of [
+    // A Fare & Cabin row's brand sits in its fare block.
+    expect(fareRow({ fare: { brand: "FLEX", legs: null } })).toContain("       brand FLEX  ·  non-refundable");
+    // No fareByFlight: the server's legs are listed one flight per entry, cabin and brand values as sent (no re-wording, no capitalisation).
+    const bwiOrd = { origin: "BWI", destination: "ORD", carrier: "UA", flightNumber: 512, cabin: "economy", bookingCode: "K", brand: "BASIC ECONOMY" };
+    const ordCdg = { origin: "ORD", destination: "CDG", carrier: "UA", flightNumber: 986, cabin: "business", bookingCode: "D" };
+    expect(fareRow({ cabinClass: "economy", fare: { cabinClass: "economy", bookedCabin: null, legs: [bwiOrd, ordCdg] } })).toContain(
+      "       BWI→ORD economy, BASIC ECONOMY · ORD→CDG business  ·  non-refundable",
+    );
+    expect(fareRow({ fare: { legs: [{ ...bwiOrd, cabin: "premium-economy", brand: null }] } })).toContain("       BWI→ORD premium-economy  ·  non-refundable");
+    // A leg without a cabin or brand keeps its place as the route; one without a route still names its cabin.
+    expect(fareRow({ fare: { legs: [{ origin: "BWI", destination: "ORD" }, { cabin: "first" }] } })).toContain("       BWI→ORD · first  ·  non-refundable");
+    // Nothing per flight from the server (null / missing / empty legs, no fareByFlight): nothing is printed — the slot, the row name and bookedCabin are never relayed as the cabin, and no sentence is written for the gap.
+    for (const noCabin of [
       { cabinClass: "economy", fare: { cabinClass: "economy", bookedCabin: "economy", legs: null } },
       { cabinClass: "business", fare: { cabinClass: "business", bookedCabin: null } },
       { cabinClass: "business", fare: { cabinClass: "business", legs: [] } },
-      // A search row carries only the slot: the cabin is per flight and the row does not have it.
       { cabinClass: "economy" },
       { cabinClass: "premium-economy", bookedCabin: "business" },
+      { fare: { legs: [{ origin: "BWI", destination: "ORD" }] } },
     ]) {
-      const out = fareRow(row);
-      expect(out).toContain("       cabin per flight not reported  ·  non-refundable");
-      expect(out).not.toMatch(/\b(economy|business)\b/i);
+      const out = fareRow(noCabin);
+      expect(out).toContain("       non-refundable");
+      expect(out).not.toMatch(/\b(economy|business)\b|not reported|BWI/i);
     }
-    // A leg without a cabin keeps its place as not reported (never dropped, so the other flights do not read as the whole fare); one without a route still names its cabin.
-    expect(fareRow({ fare: { legs: [{ origin: "BWI", destination: "ORD" }, { cabin: "first" }] } })).toContain(
-      "       BWI→ORD cabin not reported · First  ·  non-refundable",
-    );
-    // No leg carries a cabin: the whole line is not reported.
-    expect(fareRow({ fare: { legs: [{ origin: "BWI", destination: "ORD" }] } })).toContain("       cabin per flight not reported  ·  non-refundable");
-    // No cabin fields at all (a hotel or activity row): the conditions line starts with the next field.
+    // No fare fields at all (a hotel or activity row): the conditions line starts with the next field.
     expect(fareRow({})).toContain("       non-refundable");
-    expect(fareRow({})).not.toContain("cabin per flight");
+    expect(fareRow({})).not.toContain("brand");
+  });
+
+  it("prints the digest's price tier, fetch time, expiry and the server's pricingNote once, only when sent", () => {
+    const out = strip(
+      renderSearchResult({
+        id: "srch-5",
+        type: "Flight",
+        status: "Ready",
+        expiresAt: "2026-11-06T17:40:00.000Z",
+        optionsSummary: {
+          optionCount: 1,
+          pointOfSale: "US",
+          priceBasis: "supplier",
+          pricingNote: "Fares are shopped from a US point of sale in USD; the amount charged is the USD total, and local-market fares on airline sites may differ.",
+          topOptions: [{ index: 0, price: 300, currency: "USD" }],
+        },
+      }),
+    );
+    expect(out).toContain("\n  expires 2026-11-06T17:40:00.000Z\n");
+    expect(out).toContain("\n  Fares are shopped from a US point of sale in USD; the amount charged is the USD total, and local-market fares on airline sites may differ.\n");
+    const bare = strip(renderSearchResult({ id: "srch-6", status: "Ready", optionsSummary: { optionCount: 0, topOptions: [] } }));
+    expect(bare).not.toMatch(/expires|price tier|fetched/);
   });
 
   it("footer: matched/total counts, the airline facet, noMatchReason, a shell-quoted next-page command and the server's sentences", () => {
@@ -356,7 +423,11 @@ describe("renderSearchResult", () => {
   it("says when a search is still fetching and surfaces fetchError", () => {
     const out = strip(renderSearchResult({ id: "s", type: "Hotel", status: "Fetching", optionsSummary: { optionCount: 0, topOptions: [] } }));
     expect(out).toContain("status Fetching");
-    expect(out).toContain("0 options yet");
+    // A zero count is a count; the next step is the server's sentence, not one written here.
+    expect(out).toContain("  0 options");
+    expect(out).not.toMatch(/poll|yet/);
+    const withNext = strip(renderSearchResult({ id: "s", status: "Fetching", optionsSummary: { optionCount: 0, topOptions: [], nextStep: "Poll get_search_status until status is Ready." } }));
+    expect(withNext).toContain("next: Poll get_search_status until status is Ready.");
     const err = strip(renderSearchResult({ id: "s", status: "FetchError", fetchError: "Supplier timeout" }));
     expect(err).toContain("Supplier timeout");
   });
@@ -436,6 +507,27 @@ describe("renderSelectionOptions", () => {
     expect(out).toContain("searched: BWI→LIS 2026-11-20, return same day");
     expect(out).toContain("hint: same-day return");
   });
+
+  it("prints fetchStatus.priceTier and fetchedAt with the server's pricingNote, and nothing when they are absent", () => {
+    const out = strip(
+      renderSelectionOptions({
+        __typename: "TripPlanFlightSelection",
+        id: "sel-2",
+        fetchStatus: { status: "Ready", priceTier: "Pinned", fetchedAt: "2026-10-30T13:58:00.000Z" },
+        optionsSummary: {
+          optionCount: 1,
+          pointOfSale: "US",
+          priceBasis: "supplier",
+          pricingNote: "Fares are shopped from a US point of sale in USD; the amount charged is the USD total.",
+          topOptions: [{ index: 0, optionId: "opt-1", name: "Economy", price: 640, currency: "USD", bookable: true, fareByFlight: "BWI→LIS Economy, Basic Economy" }],
+        },
+      }),
+    );
+    expect(out).toContain("FlightSelection  ·  status Ready  ·  selection_id sel-2\n  price tier Pinned  ·  fetched 2026-10-30T13:58:00.000Z\n  Fares are shopped from a US point of sale in USD; the amount charged is the USD total.\n  [0]");
+    expect(out).toContain("       BWI→LIS Economy, Basic Economy");
+    const bare = strip(renderSelectionOptions({ id: "sel-3", fetchStatus: { status: "Fetching" }, optionsSummary: { optionCount: 0, topOptions: [] } }));
+    expect(bare).not.toMatch(/price tier|fetched|expires/);
+  });
 });
 
 describe("renderItinerary", () => {
@@ -457,7 +549,7 @@ describe("renderItinerary", () => {
   });
 
   it("says so when there are no events, and returns null for a non-itinerary shape", () => {
-    expect(strip(renderItinerary({ title: "Empty", tripPlanEvents: [] }))).toContain("No events yet");
+    expect(strip(renderItinerary({ title: "Empty", tripPlanEvents: [] }))).toContain("0 events");
     expect(renderItinerary({ title: "Empty" })).toBeNull();
   });
 });
@@ -485,25 +577,40 @@ describe("renderQuote", () => {
     expect(out).not.toMatch(/economy|business|requested/);
     expect(out).toContain("chargeable total $812.40  (81240 cents)");
     expect(out).toContain("TRAVELLER_DATA: Date of birth");
-    expect(out).toContain("voyagier book_plan --plan_id plan-9 --expect_total_cents 81240 --item_ids i-1");
+    expect(out).toContain("  acceptance → voyagier book_plan --plan_id plan-9 --expect_total_cents 81240 --item_ids i-1");
+    expect(out).not.toMatch(/exactly this price/);
   });
 
-  it("shows a flight line's cabin per flight under the line, and says when the server did not report it", () => {
+  it("prints each flight line's fareByFlight, brand, price tier, fetch time, refundable and checked bags as the server sent them", () => {
+    // Shape of get_plan_quote items on nest main (fare brand + price tier fields).
     const out = strip(
       renderQuote({
         items: [
           {
             selectionId: "s-1",
+            optionId: "o-1",
             name: "UA 512 / UA 986 BWI→CDG",
+            price: 4120,
             priceCents: 412000,
             currency: "USD",
+            estimatedTotal: null,
+            priceBasis: null,
+            source: "Air",
             bookable: true,
+            bookableReason: null,
             cabinClass: "economy",
-            bookedCabin: null,
             legs: [
-              { origin: "BWI", destination: "ORD", carrier: "UA", flightNumber: 512, cabin: "economy", bookingCode: "K" },
-              { origin: "ORD", destination: "CDG", carrier: "UA", flightNumber: 986, cabin: "business", bookingCode: "D" },
+              { origin: "BWI", destination: "ORD", carrier: "UA", flightNumber: 512, cabin: "economy", bookingCode: "K", brand: "BASIC ECONOMY" },
+              { origin: "ORD", destination: "CDG", carrier: "UA", flightNumber: 986, cabin: "business", bookingCode: "D", brand: "POLARIS" },
             ],
+            bookedCabin: null,
+            brand: null,
+            fareByFlight: "BWI→ORD Economy, Basic Economy · ORD→CDG Business, Polaris",
+            refundable: false,
+            checkedBags: "1 x 23 kg",
+            priceTier: "Pinned",
+            fetchedAt: "2026-10-30T14:02:11.000Z",
+            commission: null,
           },
           {
             selectionId: "s-2",
@@ -513,12 +620,17 @@ describe("renderQuote", () => {
             bookable: true,
             cabinClass: "premium-economy",
             bookedCabin: "business",
-            legs: [{ origin: "FRA", destination: "JFK", carrier: "LH", flightNumber: 400, cabin: "business", bookingCode: "D" }],
+            brand: "BUSINESS SAVER",
+            fareByFlight: "FRA→JFK Business, Business Saver",
+            legs: [{ origin: "FRA", destination: "JFK", carrier: "LH", flightNumber: 400, cabin: "business", bookingCode: "D", brand: "BUSINESS SAVER" }],
+            refundable: true,
+            priceTier: "List",
           },
-          { selectionId: "s-3", name: "Grand Hotel", priceCents: 129000, currency: "USD", bookable: true },
-          // A quote line whose legs are null (pruned or explicit) has no known cabin: never relabelled with the slot or the deprecated bookedCabin.
-          { selectionId: "s-4", name: "AF 7 JFK→CDG", priceCents: 150000, currency: "USD", bookable: true, cabinClass: "business", bookedCabin: "business", legs: null },
-          { selectionId: "s-5", name: "AF 8 CDG→JFK", priceCents: 150000, currency: "USD", bookable: true, cabinClass: "business" },
+          { selectionId: "s-3", name: "Grand Hotel", priceCents: 129000, currency: "USD", bookable: true, refundable: true },
+          // A line the server sent no fareByFlight for but legs with cabins: the legs are listed with the values as sent.
+          { selectionId: "s-4", name: "AF 7 JFK→CDG", priceCents: 150000, currency: "USD", bookable: true, cabinClass: "business", legs: [{ origin: "JFK", destination: "CDG", cabin: "business" }] },
+          // Null legs and no fareByFlight: the cabin is unknown; nothing is written in its place.
+          { selectionId: "s-5", name: "AF 8 CDG→JFK", priceCents: 150000, currency: "USD", bookable: true, cabinClass: "business", bookedCabin: "business", legs: null, fareByFlight: null },
         ],
         chargeableTotalCents: 939000,
         currency: "USD",
@@ -526,23 +638,65 @@ describe("renderQuote", () => {
     );
     const lines = out.split("\n");
     const ua = lines.findIndex((l) => l.includes("UA 512"));
-    expect(lines[ua + 1]).toBe("      BWI→ORD Economy · ORD→CDG Business");
-    expect(lines[ua + 2]).toBe("      selection_id s-1");
+    expect(lines[ua + 1]).toBe("      BWI→ORD Economy, Basic Economy · ORD→CDG Business, Polaris");
+    expect(lines[ua + 2]).toBe("      price tier Pinned  ·  fetched 2026-10-30T14:02:11.000Z  ·  non-refundable  ·  checked bags 1 x 23 kg");
+    expect(lines[ua + 3]).toBe("      selection_id s-1  option_id o-1");
     const lh = lines.findIndex((l) => l.includes("LH 400"));
-    expect(lines[lh + 1]).toBe("      FRA→JFK Business");
+    expect(lines[lh + 1]).toBe("      FRA→JFK Business, Business Saver");
+    expect(lines[lh + 2]).toBe("      brand BUSINESS SAVER  ·  price tier List  ·  refundable");
     const hotel = lines.findIndex((l) => l.includes("Grand Hotel"));
-    expect(lines[hotel + 1]).toBe("      selection_id s-3");
+    expect(lines[hotel + 1]).toBe("      refundable");
+    expect(lines[hotel + 2]).toBe("      selection_id s-3");
     const af7 = lines.findIndex((l) => l.includes("AF 7"));
-    expect(lines[af7 + 1]).toBe("      cabin per flight not reported");
+    expect(lines[af7 + 1]).toBe("      JFK→CDG business");
     const af8 = lines.findIndex((l) => l.includes("AF 8"));
-    expect(lines[af8 + 1]).toBe("      cabin per flight not reported");
-    expect(out).not.toMatch(/premium-economy|requested|mixed/);
+    expect(lines[af8 + 1]).toBe("      selection_id s-5");
+    expect(out).not.toMatch(/premium-economy|not reported|requested|mixed/);
+  });
+
+  it("prints the display-currency estimate, the server's pricingNote and each blocker's missing traveller ids", () => {
+    const out = strip(
+      renderToolPayload(
+        "get_plan_quote",
+        {
+          items: [{ selectionId: "s-1", name: "TP 203 BWI→LIS", price: 812.4, priceCents: 81240, currency: "USD", estimatedTotal: 748.21, bookable: true }],
+          chargeableTotalCents: 81240,
+          displaySubtotal: 812.4,
+          currency: "USD",
+          pointOfSale: "US",
+          priceBasis: "supplier",
+          pricingNote: "Shopped from a US point of sale in USD; the amount charged is the USD total, and local-market fares on airline or hotel sites may differ.",
+          estimate: { currency: "EUR", rate: 0.921, rateSource: "ecb", asOf: "2026-10-30T00:00:00.000Z" },
+          estimatedTotal: 748.21,
+          generatedAt: "2026-10-30T14:05:00.000Z",
+          acceptance: null,
+          acceptanceUnavailableReason: "Jane Doe is missing dateOfBirth",
+          checkoutBlockers: [
+            { kind: "TRAVELLER_DATA", label: "Date of birth", goalId: "g-1", selectionId: null, missingTravellerIds: ["trv-1", "trv-2"] },
+            { kind: "LEAD_TRAVELLER", label: "Pick a lead traveller", goalId: null, selectionId: null, missingTravellerIds: [] },
+          ],
+        },
+        "plan-9",
+      ),
+    );
+    const lines = out.split("\n");
+    const tp = lines.findIndex((l) => l.includes("TP 203"));
+    expect(lines[tp + 1]).toBe("      estimate 748.21 EUR");
+    expect(out).toContain("  chargeable total $812.40  (81240 cents)\n  estimate 748.21 EUR  (rate as of 2026-10-30T00:00:00.000Z)\n  Shopped from a US point of sale in USD; the amount charged is the USD total, and local-market fares on airline or hotel sites may differ.");
+    expect(out).toContain("    • TRAVELLER_DATA: Date of birth\n        traveller_ids trv-1, trv-2\n    • LEAD_TRAVELLER: Pick a lead traveller\n");
+    expect(out).toContain("acceptance unavailable: Jane Doe is missing dateOfBirth");
+    expect(out).not.toContain("book_plan");
+  });
+
+  it("shell-quotes the plan id and item ids in the acceptance line", () => {
+    const out = strip(renderToolPayload("get_plan_quote", { chargeableTotalCents: 100, currency: "USD", acceptance: { expectTotalCents: 100, itemIds: ["i-1", "i;rm -rf x"] } }, "plan;x"));
+    expect(out).toContain("acceptance → voyagier book_plan --plan_id 'plan;x' --expect_total_cents 100 --item_ids i-1 'i;rm -rf x'");
   });
 
   it("handles a pruned payload with nothing carted", () => {
     const out = strip(renderQuote({ chargeableTotalCents: 0, currency: "USD", acceptanceUnavailableReason: "no bookable items in the cart" }));
-    expect(out).toContain("No items in the cart yet.");
-    expect(out).toContain("No gated booking possible: no bookable items in the cart");
+    expect(out).toContain("0 items");
+    expect(out).toContain("acceptance unavailable: no bookable items in the cart");
     expect(renderQuote({ something: "else" })).toBeNull();
   });
 });
@@ -571,14 +725,14 @@ describe("renderToolPayload", () => {
     expect(strip(renderToolPayload("get_options", { id: "sel-1", fetchStatus: { status: "Ready" }, optionsSummary: { optionCount: 0, topOptions: [] } }))).toContain(
       "status Ready  ·  selection_id sel-1",
     );
-    expect(strip(renderToolPayload("get_plan_itinerary", { title: "Lisbon", tripPlanEvents: [] }))).toContain("No events yet");
-    expect(strip(renderToolPayload("get_plan_quote", { chargeableTotalCents: 0, currency: "USD", acceptanceUnavailableReason: "empty" }, "plan-9"))).toContain("No items in the cart yet.");
+    expect(strip(renderToolPayload("get_plan_itinerary", { title: "Lisbon", tripPlanEvents: [] }))).toContain("0 events");
+    expect(strip(renderToolPayload("get_plan_quote", { chargeableTotalCents: 0, currency: "USD", acceptanceUnavailableReason: "empty" }, "plan-9"))).toContain("0 items");
   });
 
   it("reads the payload as sent: a single-key object is the payload, never a wrapper to open", () => {
     // The server returns the bare result; a one-field object such as { items: [] }
     // or { tripPlanEvents: [] } is that result, not an envelope around one.
-    expect(strip(renderToolPayload("get_plan_itinerary", { tripPlanEvents: [] }))).toContain("No events yet");
+    expect(strip(renderToolPayload("get_plan_itinerary", { tripPlanEvents: [] }))).toContain("0 events");
     expect(renderToolPayload("get_plan_status", { tripPlanStatus: PLAN_STATUS })).toBeNull();
     expect(renderToolPayload("get_plan_quote", { tripPlanQuote: { chargeableTotalCents: 0 } })).toBeNull();
     expect(renderToolPayload("get_search_status", { searchFlights: SEARCH })).toBeNull();

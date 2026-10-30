@@ -160,61 +160,50 @@ function renderLegs(legs: unknown): string {
   return out.join(", ");
 }
 
-/** Wire value for a cabin to display text: `premium-economy` → `Premium economy`. */
-function cabinWord(v: string): string {
-  const s = v.replace(/[-_]+/g, " ").trim();
-  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+/**
+ * The cabin and brand per flight for a flight fare, in the server's words:
+ * `fareByFlight` verbatim when the row carries it ("DXB→DOH Economy, Main
+ * Cabin · DOH→SIN Economy, Basic Economy"). When it is absent the server's
+ * `legs` (on the row, or inside its `fare` block) are listed one flight per
+ * entry with the cabin and brand values exactly as sent. Null when the row
+ * carries neither: the server said nothing about the cabin, so nothing is
+ * printed — `cabinClass` (the pricing slot) and the deprecated `bookedCabin`
+ * are never read in its place.
+ */
+function fareByFlight(rec: Rec): string | null {
+  const verbatim = str(rec.fareByFlight);
+  if (verbatim) return verbatim;
+  const fare = isRec(rec.fare) ? rec.fare : null;
+  const legs = arr(Array.isArray(rec.legs) ? rec.legs : fare?.legs).filter(isRec);
+  if (!legs.some((leg) => str(leg.cabin) || str(leg.brand))) return null;
+  return legs
+    .map((leg) => {
+      const route = [str(leg.origin), str(leg.destination)].filter(Boolean).join("→");
+      const conditions = [str(leg.cabin), str(leg.brand)].filter(Boolean).join(", ");
+      return [route, conditions].filter(Boolean).join(" ");
+    })
+    .filter(Boolean)
+    .join(" · ");
 }
 
-/** The sentence printed for a flight fare whose per-flight cabins the server did not report. */
-const CABIN_NOT_REPORTED = "cabin per flight not reported";
-
-/**
- * The cabin a fare flies, per flight, from its `legs` — one entry per operated
- * flight in flight order, each with the cabin booked on that flight. A fare
- * has no single cabin: a BWI→CDG fare can fly BWI→ORD in economy and ORD→CDG
- * in business, so the label names every flight ("BWI→ORD Economy · ORD→CDG
- * Business"). The legs are read from the row itself (quote lines) or from its
- * nested `fare` block (Fare & Cabin rows).
- *
- * `cabinClass` is only the slot the fare was priced under (or, on a supplier
- * primary fare, the lowest cabin across its legs) and `bookedCabin` is a
- * deprecated one-cabin summary; neither is the cabin flown, so neither is
- * printed. When a flight fare carries no legs (null, or omitted) the cabin per
- * flight is unknown and the label says so instead of falling back to a field
- * that would be read as the cabin. Null for a row that is not a flight fare
- * (no legs, no slot, no fare block).
- */
-function fareCabinLabel(rec: Rec): string | null {
+/** The fare's brand as the server sent it (row-level, else the `fare` block's). */
+function fareBrand(rec: Rec): string | null {
   const fare = isRec(rec.fare) ? rec.fare : null;
-  const legs = Array.isArray(rec.legs) ? rec.legs : fare && Array.isArray(fare.legs) ? fare.legs : null;
-  const legRecs = arr(legs).filter(isRec);
-  // A leg without a cabin keeps its place as "not reported": dropping it would
-  // make the remaining flights read as the whole fare's cabin.
-  if (legRecs.some((leg) => str(leg.cabin) !== null)) {
-    return legRecs
-      .map((leg) => {
-        const cabin = str(leg.cabin);
-        const word = cabin ? cabinWord(cabin) : "cabin not reported";
-        const route = [str(leg.origin), str(leg.destination)].filter(Boolean).join("→");
-        return route ? `${route} ${word}` : word;
-      })
-      .join(" · ");
-  }
-  const isFlightFare = "legs" in rec || str(rec.cabinClass) !== null || str(rec.bookedCabin) !== null || (fare !== null && ("legs" in fare || str(fare.cabinClass) !== null));
-  return isFlightFare ? CABIN_NOT_REPORTED : null;
+  return str(rec.brand) ?? (fare ? str(fare.brand) : null);
 }
 
 /**
  * The fare conditions a flight row carries for the fare its price buys:
- * cabin, refundable / changeable, baggage, fare basis codes, base fare and
- * taxes. Every field is optional; a row with none of them renders nothing.
+ * cabin and brand per flight, brand, refundable / changeable, baggage, fare
+ * basis codes, base fare and taxes. Every field is optional; a row with none of them renders nothing.
  * Null `baggage.checked` is "unknown", not "no bags", so it is left out.
  */
 function renderFareConditions(opt: Rec): string {
   const bits: string[] = [];
-  const cabin = fareCabinLabel(opt);
-  if (cabin) bits.push(cabin);
+  const perFlight = fareByFlight(opt);
+  if (perFlight) bits.push(perFlight);
+  const brand = fareBrand(opt);
+  if (brand) bits.push(`brand ${brand}`);
   const refundable = bool(opt.refundable);
   if (refundable != null) bits.push(refundable ? "refundable" : "non-refundable");
   const changeable = bool(opt.changeable);
@@ -236,6 +225,29 @@ function renderFareConditions(opt: Rec): string {
   else if (baseFare) bits.push(`base fare ${baseFare}`);
   else if (taxes) bits.push(`taxes ${taxes}`);
   return bits.join("  ·  ");
+}
+
+/**
+ * The pricing facts a digest declares once, in the server's values: the
+ * price tier and fetch time (`fetchStatus.priceTier` / `fetchedAt`), the
+ * search record's `expiresAt`, and `optionsSummary.pricingNote` — the one
+ * sentence the server wrote to relay with any price. Only fields the payload
+ * carries are printed.
+ */
+function renderPricingLines(payload: Rec, summary: Rec | null): string[] {
+  const lines: string[] = [];
+  const fetchStatus = isRec(payload.fetchStatus) ? payload.fetchStatus : null;
+  const bits: string[] = [];
+  const priceTier = fetchStatus ? str(fetchStatus.priceTier) : null;
+  if (priceTier) bits.push(`price tier ${priceTier}`);
+  const fetchedAt = fetchStatus ? str(fetchStatus.fetchedAt) : null;
+  if (fetchedAt) bits.push(`fetched ${fetchedAt}`);
+  const expiresAt = str(payload.expiresAt);
+  if (expiresAt) bits.push(`expires ${expiresAt}`);
+  if (bits.length) lines.push(chalk.dim(`  ${bits.join("  ·  ")}`));
+  const pricingNote = summary ? str(summary.pricingNote) : null;
+  if (pricingNote) lines.push(chalk.dim(`  ${pricingNote}`));
+  return lines;
 }
 
 /**
@@ -298,9 +310,12 @@ export function renderSearchResult(payload: unknown): string | null {
   if (head.length) lines.push(head.join("  ·  "));
   const fetchError = str(payload.fetchError);
   if (fetchError) lines.push(chalk.red(`  ${fetchError}`));
+  lines.push(...renderPricingLines(payload, summary));
   const count = summary ? num(summary.optionCount) : null;
   if (summary && count != null) {
-    lines.push(count === 0 ? chalk.dim("  0 options yet — if status is Fetching, poll get_search_status / get_options") : "");
+    // A zero count is stated as a count; what to do next is the server's
+    // nextStep sentence in the footer, never a sentence written here.
+    lines.push(count === 0 ? chalk.dim("  0 options") : "");
     // A summary that carries matchedCount is server-paged: topOptions is one
     // page of an opaque-cursor list, so "N more" cannot be computed from the
     // rows on hand. The footer states the matched total and the next page.
@@ -332,6 +347,7 @@ export function renderSelectionOptions(payload: unknown): string | null {
     if (q?.summary) lines.push(chalk.dim(`  searched: ${String(q.summary)}`));
     if (q?.degenerateHint) lines.push(chalk.yellow(`  hint: ${String(q.degenerateHint)}`));
   }
+  lines.push(...renderPricingLines(payload, summary));
   if (summary) lines.push(...renderTopOptions(summary));
   return lines.join("\n");
 }
@@ -362,6 +378,7 @@ export function renderPlanStatus(payload: unknown): string | null {
     }
     if (num(summary.goalsBooked) != null) bits.push(`booked ${summary.goalsBooked}`);
     if (num(summary.blockerCount) != null) bits.push(`blockers ${summary.blockerCount}`);
+    if (num(summary.checkoutOnlyBlockerCount) != null) bits.push(`checkout-only ${summary.checkoutOnlyBlockerCount}`);
     if (summary.bookableNow === true) bits.push(chalk.green("bookable now"));
     if (bits.length) lines.push(`  ${bits.join("  ·  ")}`);
   }
@@ -387,12 +404,17 @@ export function renderPlanStatus(payload: unknown): string | null {
   if (blockers.length) {
     lines.push("", chalk.bold("  Blockers"));
     for (const b of blockers) {
+      // gate and leadProblem are the server's enum values, printed as sent.
+      const gate = str(b.gate) ? chalk.dim(` (gate ${b.gate})`) : "";
       const unverified = b.unverified === true ? chalk.dim(" (unverified)") : "";
-      lines.push(`    ${chalk.red("•")} ${str(b.kind) ?? ""}${unverified}: ${str(b.message) ?? ""}`);
+      lines.push(`    ${chalk.red("•")} ${str(b.kind) ?? ""}${gate}${unverified}: ${str(b.message) ?? ""}`);
       const refs = isRec(b.refs) ? b.refs : {};
       const refBits = Object.entries(refs)
-        .filter(([, v]) => str(v))
-        .map(([k, v]) => `${k} ${v}`);
+        .filter(([, v]) => str(v) || v === true)
+        .map(([k, v]) => (v === true ? k : `${k} ${v}`));
+      if (str(b.leadProblem)) refBits.push(`leadProblem ${b.leadProblem}`);
+      const candidates = arr(b.candidateSelectionIds).map(String).filter(Boolean);
+      if (candidates.length) refBits.push(`candidateSelectionIds ${candidates.join(",")}`);
       if (refBits.length) lines.push(chalk.dim(`        ${refBits.join("  ")}`));
     }
   }
@@ -416,11 +438,14 @@ export function renderPlanStatus(payload: unknown): string | null {
   if (next.length) {
     lines.push("", chalk.bold("  Next actions"));
     for (const a of next) {
-      const refs = ["goalId", "selectionId", "inputName"]
+      const refBits = ["goalId", "itemId", "selectionId", "participantChoiceId", "inputName", "airportRole"]
         .filter((k) => str(a[k]))
-        .map((k) => `${k} ${a[k]}`)
-        .join("  ");
-      lines.push(`    ${chalk.cyan("→")} ${str(a.action) ?? ""}${str(a.detail) ? `: ${a.detail}` : ""}${refs ? chalk.dim(`  (${refs})`) : ""}`);
+        .map((k) => `${k} ${a[k]}`);
+      const travellerIds = arr(a.travellerIds).map(String).filter(Boolean);
+      if (travellerIds.length) refBits.push(`travellerIds ${travellerIds.join(",")}`);
+      const refs = refBits.join("  ");
+      const gate = str(a.gate) ? chalk.dim(` (gate ${a.gate})`) : "";
+      lines.push(`    ${chalk.cyan("→")} ${str(a.action) ?? ""}${gate}${str(a.detail) ? `: ${a.detail}` : ""}${refs ? chalk.dim(`  (${refs})`) : ""}`);
     }
   }
   return lines.join("\n");
@@ -436,7 +461,7 @@ export function renderItinerary(payload: unknown): string | null {
   const range = [str(payload.startDate), str(payload.endDate)].filter(Boolean).join(" → ");
   lines.push(`${chalk.bold(str(payload.title) ?? "Itinerary")}${range ? chalk.dim(`  ${range}`) : ""}`);
   if (!events.length) {
-    lines.push(chalk.dim("  No events yet — select flights, hotels or activities first."));
+    lines.push(chalk.dim("  0 events"));
     return lines.join("\n");
   }
   let lastDay = "";
@@ -465,25 +490,50 @@ export function renderQuote(payload: unknown): string | null {
   // The server prunes empty fields, so `items` is absent when nothing is carted.
   if (!isRec(payload) || !("chargeableTotalCents" in payload || "items" in payload || "checkoutBlockers" in payload)) return null;
   const lines: string[] = [chalk.bold("Quote")];
+  const estimate = isRec(payload.estimate) ? payload.estimate : null;
+  const estimateCurrency = estimate ? str(estimate.currency) : null;
   const items = arr(payload.items).filter(isRec);
-  if (!items.length) lines.push(chalk.dim("  No items in the cart yet."));
+  if (!items.length) lines.push(chalk.dim("  0 items"));
   for (const it of items) {
     const bookable = it.bookable === true ? chalk.green("bookable") : chalk.yellow(`not bookable${str(it.bookableReason) ? `: ${it.bookableReason}` : ""}`);
     const p = num(it.priceCents) != null ? priceCents(it.priceCents, it.currency) : price(it.price, it.currency);
     lines.push(`  • ${str(it.name) ?? "item"}  ${chalk.green(p)}  ${bookable}`);
-    // Flight lines: the cabin the client flies on each flight, read before
-    // the total is relayed. A line with no legs is said to be unreported,
-    // never relabelled with the slot the fare was priced under.
-    const cabin = fareCabinLabel(it);
-    if (cabin) lines.push(chalk.dim(`      ${cabin}`));
+    // Flight lines: the cabin and brand on each flight in the server's words
+    // (fareByFlight), then the line's conditions — brand, price tier and
+    // fetch time, refundable, checked bags — each printed only when sent.
+    const perFlight = fareByFlight(it);
+    if (perFlight) lines.push(chalk.dim(`      ${perFlight}`));
+    const conditions: string[] = [];
+    const brand = fareBrand(it);
+    if (brand) conditions.push(`brand ${brand}`);
+    const priceTier = str(it.priceTier);
+    if (priceTier) conditions.push(`price tier ${priceTier}`);
+    const fetchedAt = str(it.fetchedAt);
+    if (fetchedAt) conditions.push(`fetched ${fetchedAt}`);
+    const refundable = bool(it.refundable);
+    if (refundable != null) conditions.push(refundable ? "refundable" : "non-refundable");
+    const checkedBags = str(it.checkedBags);
+    if (checkedBags) conditions.push(`checked bags ${checkedBags}`);
+    if (conditions.length) lines.push(chalk.dim(`      ${conditions.join("  ·  ")}`));
+    // display_currency estimate: display only, never the charge.
+    const lineEstimate = price(it.estimatedTotal, estimateCurrency);
+    if (lineEstimate) lines.push(chalk.dim(`      estimate ${lineEstimate}`));
     if (str(it.selectionId)) lines.push(chalk.dim(`      selection_id ${it.selectionId}${str(it.optionId) ? `  option_id ${it.optionId}` : ""}`));
   }
   const total = priceCents(payload.chargeableTotalCents, payload.currency);
   if (total) lines.push("", `  chargeable total ${chalk.bold.green(total)}${num(payload.chargeableTotalCents) != null ? chalk.dim(`  (${payload.chargeableTotalCents} cents)`) : ""}`);
+  const totalEstimate = price(payload.estimatedTotal, estimateCurrency);
+  if (totalEstimate) lines.push(chalk.dim(`  estimate ${totalEstimate}${estimate && str(estimate.asOf) ? `  (rate as of ${estimate.asOf})` : ""}`));
+  const pricingNote = str(payload.pricingNote);
+  if (pricingNote) lines.push(chalk.dim(`  ${pricingNote}`));
   const blockers = arr(payload.checkoutBlockers).filter(isRec);
   if (blockers.length) {
     lines.push("", chalk.bold("  Checkout blockers"));
-    for (const b of blockers) lines.push(`    ${chalk.red("•")} ${str(b.kind) ?? ""}${str(b.label) ? `: ${b.label}` : ""}`);
+    for (const b of blockers) {
+      lines.push(`    ${chalk.red("•")} ${str(b.kind) ?? ""}${str(b.label) ? `: ${b.label}` : ""}`);
+      const missing = arr(b.missingTravellerIds).map(String).filter(Boolean);
+      if (missing.length) lines.push(chalk.dim(`        traveller_ids ${missing.join(", ")}`));
+    }
   }
   const acceptance = isRec(payload.acceptance) ? payload.acceptance : null;
   if (acceptance && num(acceptance.expectTotalCents) != null) {
@@ -491,11 +541,10 @@ export function renderQuote(payload: unknown): string | null {
     const planId = str(payload.tripPlanId) ?? str(payload.planId);
     lines.push(
       "",
-      chalk.bold("  To book at exactly this price:"),
-      `    voyagier book_plan --plan_id ${planId ?? "<plan_id>"} --expect_total_cents ${acceptance.expectTotalCents}${ids.length ? ` --item_ids ${ids.join(" ")}` : ""}`,
+      `  acceptance → voyagier book_plan --plan_id ${planId ? shellQuote(planId) : "<plan_id>"} --expect_total_cents ${acceptance.expectTotalCents}${ids.length ? ` --item_ids ${ids.map(shellQuote).join(" ")}` : ""}`,
     );
   } else if (str(payload.acceptanceUnavailableReason)) {
-    lines.push("", chalk.yellow(`  No gated booking possible: ${payload.acceptanceUnavailableReason}`));
+    lines.push("", chalk.yellow(`  acceptance unavailable: ${payload.acceptanceUnavailableReason}`));
   }
   return lines.join("\n");
 }
