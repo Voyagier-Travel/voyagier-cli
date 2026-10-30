@@ -20,6 +20,9 @@ The same tools are what claude.ai, Claude Desktop and any other MCP client see. 
 - **Self-check.** `voyagier doctor --json` verifies credentials, connects to the MCP server, counts its tools, refreshes the local tool cache, and calls `whoami` when the server publishes it.
 - **Reading search results.** Only rows that book as themselves — a Fare & Cabin fare, a hotel room rate, an activity option, or an imported or custom item — carry `bookable` + `bookableReason` on `optionsSummary.topOptions`, the same pair `get_plan_quote` lines carry. Every other row carries no bookable key at all: a `search_flights` / `search_hotels` / `search_activities` result row, and a flight journey, hotel, room or activity row on a plan whose pick creates the child choice that holds the leaf (a journey → the Fare & Cabin row; a room → the rate row; an activity → its activity-option row). A list without bookable keys is a list to choose from, never a verdict; the human view prints a leaf's verdict with the server's reason and nothing on the other rows. The path from a result to a booking is in the tool descriptions (`search_flights`, `search_hotels`, `search_activities`, `get_options` — `voyagier <tool> --help`): `promote_search` with the `listing_id` → the pick that creates the leaf → `get_plan_quote` → `book_plan`; a search record past its `expiresAt` is re-run, not promoted. `get_plan_status` keeps `summary.bookableNow` and `cart.bookableCount`; `get_plan_choices` rows keep `isBookable`; `update_option --is_bookable` sets the flag on a manual option. The human view of `search_flights`, `search_hotels`, `search_activities`, `get_search_status` and `promote_search` ends with a footer from `optionsSummary`: `matchedCount` of `optionCount` when a filter is active, the carrier counts (`airlines`), `noMatchReason` when a filter matched nothing, the next page as a copy-pasteable `voyagier get_search_status --search_id <id> --cursor <nextCursor>` line when `nextCursor` is present, and the server's `nextStep` / `howToRefine` sentences. A flight row prints its lead-fare conditions on a second line when the server sends them (cabin per flight, refundable / changeable, baggage, fare basis, base fare + taxes) and each segment's legs as marketing carrier + flight number with the operating carrier when it differs (`EK 384 (op. FZ)`). `--json` output is the payload as sent.
 - **Cabin is per flight.** A flight fare has no single cabin: the supplier prices each operated flight in its own cabin, so one fare can fly `BWI→ORD` in economy and `ORD→CDG` in business. The human view of a Fare & Cabin row (`get_options`, from `fare.legs`) and of a flight quote line (`get_plan_quote`, from `legs`) prints every flight's cabin in flight order — `BWI→ORD Economy · ORD→CDG Business` — and that is the line to relay to a client. The Fare & Cabin row itself is named by the cabins it flies (`Business`; `Economy + Business` when the cabin changes between flights). `cabinClass` is only the slot the fare was priced under (or, on a supplier primary fare, the lowest cabin across its legs) and `bookedCabin` is deprecated; neither is the cabin flown, and the human view never prints either as the cabin. When `legs` is null the cabin per flight is unknown for that fare and the line reads `cabin per flight not reported` — say so, do not read the row name or `cabinClass` in its place. A `search_flights` result row carries only the slot, so its conditions line reads the same way; the per-flight cabins appear once the journey is picked and its Fare & Cabin row is read with `get_options`.
+- **Fare brand is per flight too (`--json`).** The supplier names the fare brand it sells on each flight (`MAIN CABIN`, `BASIC ECONOMY`, …), and the server passes it through verbatim in three places on a flight row (`search_flights`, `get_search_status`, `promote_search`, `get_options`) and a flight quote line (`get_plan_quote`): `legs[].brand` (the brand on that flight; absent when the supplier reported none for it), `fareByFlight` (one string with cabin and brand per flight in flight order — `DXB→DOH Economy, Main Cabin · DOH→SIN Economy, Basic Economy` — the line to relay to a client), and top-level `brand`, present **only when every flight that reports a brand reports the same one**. Absent `brand` means the reported brands differ or the supplier sent none, not that the fare has no brand: read `fareByFlight` or `legs[].brand`, and when those are absent too say nothing about the brand. A flight with no `legs[].brand` is unknown, not the top-level brand. Like the cabin, the brand is a property of the fare the price buys, so it appears only on rows and lines that carry fare conditions.
+- **Dates are inclusive.** Every date window a tool takes (`list_plans --start_date / --end_date`, `list_plan_events --from / --to`, a Day comment's `--day_date / --end_day_date`) is `YYYY-MM-DD` with both ends included: `--end_date 2026-11-01` includes a trip that ends on 1 November. The CLI passes the strings through; the server does the comparison.
+- **Payment is a Stripe checkout.** `book_plan` does not charge: it opens a Stripe checkout session for exactly the pinned `--item_ids` while the quoted subtotal still equals `--expect_total_cents`, and returns the checkout URL for the payer. `get_plan_quote`'s `chargeableTotalCents` is the pre-fee subtotal that gate compares against; the processing fee is shown on the checkout page, not in the quote. Payment is the approval: whoever pays that URL approved the purchase. Relay the quote as the subtotal, give the payer the URL, and read `get_booking` / `list_bookings` (`payment`, `sentMemberships`, `loyaltyWarnings`) once the checkout is paid. A `book_plan` that returned a URL succeeded — do not call it again to "confirm"; pass `--idempotency_key` when a retry after a network error is possible.
 
 ---
 
@@ -31,6 +34,9 @@ voyagier doctor --json
 
 # The server's guidance for agents, then these notes
 voyagier agent-docs
+
+# Who the token is, which surface it plans on, and the full routing rules for that role
+voyagier whoami --json
 
 # A tool's contract: description, then one flag per input with type and required-ness
 voyagier search_hotels --help
@@ -45,6 +51,8 @@ voyagier get_tool_details --name set_hotel_dates --json
 ```
 
 Read a tool's `--help` before calling it, and follow the server's `instructions` for the order of operations. When a tool's description says to poll another tool, poll that tool.
+
+**Start a session with `whoami`.** `voyagier whoami --json` identifies the account (role flags, name, email, `profile.homeLocation` when the profile has one) and carries two fields the `instructions` header does not: `role` (the surface this account plans on) and `guidance` — the full cross-tool routing rules for that role. Read `.guidance` once (`voyagier whoami --json | jq -r .guidance`) and keep it for the session; `agent-docs` prints only the shared `instructions` header. `whoami` reads nothing about any plan.
 
 **Use ids in full.** Option, selection, goal and plan ids are the whole uuid a tool returned. Never paste supplier text (hotel names, fare descriptions) into a flag; use the id.
 
@@ -97,7 +105,7 @@ Argument-parse failures (unknown flag, missing required flag, invalid value) hon
 | `API_ERROR` | The tool returned an error result; `message` is the tool's own text | read `message`; `details.tool` names the tool |
 | `NETWORK` | The MCP server could not be reached | check connectivity; `voyagier doctor --json` |
 | `COMMAND_REMOVED` | A 3.x command that no longer exists; `message` names the replacement tool | run the named tool |
-| `STATE_CORRUPT` | A local state file is unreadable | delete the file under `~/.voyagier/` |
+| `STATE_CORRUPT` | `mcp install` found an MCP client config file it could not parse | fix or move that config file, then rerun |
 
 Server-side outcomes such as a price change or a blocked booking arrive as `API_ERROR` with the server's message; when the server sends a structured code, it is carried in `details.serverCode` (or promoted to `code` when it is one of the codes above).
 
@@ -108,7 +116,7 @@ The MCP endpoint is rate limited per token: **180 requests per minute** is the c
 ### State files (`~/.voyagier/`)
 
 - `credentials.json` — PAT + API URL (managed by `voyagier auth`)
-- `tools-cache.json` — the server's `tools/list` and `instructions`, refreshed when older than 24 hours, by `voyagier doctor`, and when you run a command the cache does not know. Delete it to force a refresh.
+- `tools-cache.json` — the server's `tools/list` and `instructions`, refreshed when older than one hour, by `voyagier doctor`, and when you run a command the cache does not know. Delete it to force a refresh.
 
 Override the directory with `VOYAGIER_CONFIG_DIR`.
 
@@ -136,7 +144,7 @@ voyagier doctor --json
 # Returns: { ok: boolean, data: { checks: [...], overall: "PASS" | "WARN" | "FAIL" } }
 # `ok` is true unless `overall === "FAIL"`. Process exits 1 on FAIL.
 ```
-Each `checks[]` entry is `{ name, status: "PASS" | "WARN" | "FAIL", message, details? }`. Checks: `auth` (credentials present), `mcp` (initialize + tools/list; `details.toolCount`, `details.tools[]`, `details.surfaceHash`, `details.previousSurfaceHash`, `details.listedAt`; refreshes the tool cache), `whoami` (identity, when the server publishes the tool), `state-files`, `version` (npm latest, soft-fail). Run it first whenever you encounter an unfamiliar error, and after a server release to pick up new tools.
+Each `checks[]` entry is `{ name, status: "PASS" | "WARN" | "FAIL", message, details? }`. Checks: `auth` (credentials present), `mcp` (initialize + tools/list; `details.toolCount`, `details.tools[]`, `details.surfaceHash`, `details.previousSurfaceHash`, `details.listedAt`; refreshes the tool cache), `whoami` (identity, when the server publishes the tool), `version` (npm latest, soft-fail). Run it first whenever you encounter an unfamiliar error, and after a server release to pick up new tools.
 
 **Tool-surface hash.** `surfaceHash` is a stable digest of the server's tool names and input schemas (wording excluded). Store it; when it differs from your last run, the calling contract changed — re-read `voyagier <tool> --help` for the tools you use. `voyagier --verbose <tool> …` prints the same hash on stderr for every run.
 
@@ -190,5 +198,5 @@ Tool names are verb-first (`get_plan_status`, `list_plans`, `create_plan`); the 
 ## Known Quirks (CLI-side)
 
 - **Boolean flags take an optional value.** `--force` is true; `--force false` is false. Put boolean flags last, or give them an explicit value, when the next token could be mistaken for a value.
-- **The tool cache can lag a server release by up to 24 hours.** `voyagier doctor` refreshes it; so does running a tool name the cache does not know.
+- **The tool cache can lag a server release by up to one hour.** `voyagier doctor` refreshes it; so does running a tool name the cache does not know.
 - **`agent-docs` needs the cache or a token for the server section.** The server's `instructions` are read from `tools-cache.json` when fresh and fetched otherwise; without credentials the command prints these notes and says the server section is unavailable.

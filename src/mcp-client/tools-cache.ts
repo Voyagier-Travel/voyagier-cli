@@ -15,7 +15,7 @@ import type { McpToolDescriptor } from "./client.js";
 
 export const TOOLS_CACHE_FILE = "tools-cache.json";
 /** Cache freshness window. Doctor refreshes; a cache miss refreshes. */
-export const TOOLS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+export const TOOLS_CACHE_TTL_MS = 60 * 60 * 1000;
 
 export interface ToolsCache {
   /** Endpoint the tools were listed from. */

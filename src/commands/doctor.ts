@@ -11,8 +11,7 @@
  *                     surface picks up new server tools)
  *   3. whoami       — the `whoami` tool, when the server publishes it,
  *                     confirms the token resolves to an identity
- *   4. state-files  — <CONFIG_DIR>/last-*.json are valid + not stale
- *   5. version      — CLI vs latest npm release (best-effort, soft-fail)
+ *   4. version      — CLI vs latest npm release (best-effort, soft-fail)
  *
  * Exit code: 0 if all PASS or WARN; 1 if any FAIL.
  *
@@ -21,10 +20,8 @@
  */
 import { Command } from "commander";
 import chalk from "chalk";
-import { readFileSync, existsSync, statSync, readdirSync } from "fs";
-import { join } from "path";
 import { gracefulExit } from "../exit.js";
-import { CONFIG_DIR, credentialsExist, getApiUrl, getConfiguredApiUrl } from "../config.js";
+import { credentialsExist, getApiUrl, getConfiguredApiUrl } from "../config.js";
 import { sanitizeExternalText } from "../utils.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
@@ -56,16 +53,6 @@ export interface DoctorDeps {
   fetchImpl?: typeof fetch;
   now?: () => number;
 }
-
-/**
- * State directory under inspection. Override via env (`VOYAGIER_STATE_DIR`) for
- * doctor-specific tests; otherwise follows CONFIG_DIR (which itself honors
- * `VOYAGIER_CONFIG_DIR`). In normal use, this is `~/.voyagier/`.
- */
-function stateDir(): string {
-  return process.env.VOYAGIER_STATE_DIR ?? CONFIG_DIR;
-}
-const STATE_STALE_MS = 24 * 60 * 60 * 1000; // 24h
 
 /**
  * Compute the overall status from individual checks.
@@ -189,75 +176,6 @@ async function checkWhoami(client: McpClient | null, tools: McpToolDescriptor[])
     }
     return { name: "whoami", status: "WARN", message: `whoami could not complete: ${message}` };
   }
-}
-
-/**
- * Verify state files: parseable JSON, not stale beyond 24h.
- */
-function checkStateFiles(): DoctorCheck {
-  const STATE_DIR = stateDir();
-  if (!existsSync(STATE_DIR)) {
-    return {
-      name: "state-files",
-      status: "PASS",
-      message: "No state directory yet (clean install)",
-    };
-  }
-
-  const files = readdirSync(STATE_DIR).filter((f) => f.startsWith("last-") && f.endsWith(".json"));
-  if (files.length === 0) {
-    return {
-      name: "state-files",
-      status: "PASS",
-      message: "No cached state",
-    };
-  }
-
-  const issues: string[] = [];
-  const stale: string[] = [];
-  for (const f of files) {
-    const path = join(STATE_DIR, f);
-    try {
-      const content = readFileSync(path, "utf-8");
-      const parsed = JSON.parse(content) as { timestamp?: string | number };
-      // Prefer the embedded `timestamp` written by the 3.x state layer (ISO
-      // strings; older payloads may omit it). Fall back to mtime.
-      let baseMs: number | null = null;
-      if (typeof parsed.timestamp === "string") {
-        const ms = new Date(parsed.timestamp).getTime();
-        if (Number.isFinite(ms)) baseMs = ms;
-      } else if (typeof parsed.timestamp === "number" && Number.isFinite(parsed.timestamp)) {
-        baseMs = parsed.timestamp;
-      }
-      if (baseMs === null) baseMs = statSync(path).mtimeMs;
-      const age = Date.now() - baseMs;
-      if (age > STATE_STALE_MS) stale.push(f);
-    } catch {
-      issues.push(f);
-    }
-  }
-
-  if (issues.length > 0) {
-    return {
-      name: "state-files",
-      status: "WARN",
-      message: `${issues.length} corrupt state file(s); consider clearing ~/.voyagier/`,
-      details: { corrupt: issues },
-    };
-  }
-  if (stale.length > 0) {
-    return {
-      name: "state-files",
-      status: "WARN",
-      message: `${stale.length} cached file(s) older than 24h`,
-      details: { stale },
-    };
-  }
-  return {
-    name: "state-files",
-    status: "PASS",
-    message: `${files.length} cached file(s), all valid`,
-  };
 }
 
 /**
@@ -420,18 +338,17 @@ export async function runDoctor(currentVersion: string, deps: DoctorDeps = {}): 
     mcp = probe.check;
     whoami = await checkWhoami(probe.client, probe.tools);
   }
-  const stateFiles = checkStateFiles();
   const version = await checkVersion(currentVersion, deps.fetchImpl ?? fetch);
 
   const apiUrlConfig = checkApiUrlConfig();
-  const checks = [auth, mcp, whoami, stateFiles, version, ...(apiUrlConfig ? [apiUrlConfig] : [])];
+  const checks = [auth, mcp, whoami, version, ...(apiUrlConfig ? [apiUrlConfig] : [])];
   return { checks, overall: rollUpStatus(checks) };
 }
 
 export function registerDoctorCommand(program: Command, currentVersion: string, deps: DoctorDeps = {}): void {
   program
     .command("doctor")
-    .description("Self-check: credentials, MCP server connection + tool list, identity, state, version")
+    .description("Self-check: credentials, MCP server connection + tool list, identity, version")
     .option("--json", "Output raw JSON")
     .action(async (opts) => {
       const effectiveDeps: DoctorDeps = {
