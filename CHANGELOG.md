@@ -11,6 +11,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - **Checked-in registry snapshot (`src/mcp/fixtures/remote-tools.json`) refreshed to the current server registry (87 tools).** The server merged the three per-event guide tools (`add_guide_event`, `update_guide_event`, `delete_guide_event`) into `edit_plan_events` (batched `--add` / `--update` / `--delete`) and added `list_plan_events`; `list_plans` gains `--start_date` / `--end_date`. Generated commands pick this up from the live `tools/list` at startup; the snapshot only keeps the offline specs and docs in step. No CLI behaviour changes.
+- **Tool cache TTL is one hour (was 24).** Once `~/.voyagier/tools-cache.json` is older than an hour, the next tool command refetches `tools/list` before running, so a tool the server publishes reaches the generated commands within the hour of use; `doctor` and an unknown command name still refresh it at once. `voyagier --help` alone keeps printing the cached list (it never fetches), as before.
+- **`doctor` drops the `state-files` check** and the `VOYAGIER_STATE_DIR` override: the `last-*.json` files it inspected were removed in 4.0.0 and nothing writes them. `--json` `data.checks[]` is now `auth`, `mcp`, `whoami`, `version` (plus `api-url` when it applies).
+- **3.x `places` stubs name the server's place tools.** `places list` → `list_plan_places`, `places get` → `get_place`, `places highlight` / `unhighlight` → `update_place`; `places attach` stays unmapped (no tool attaches a place to a plan) with a note on how place records come to exist. The 4.0.0 migration table is regenerated from the same source.
+- **AGENT.md:** getting started calls `voyagier whoami --json` and reads its `guidance` (the full routing rules for the account's role); a note on fare brand — the per-flight `brand` on `segments[].legs[]` (search rows), `fare.legs[]` (Fare & Cabin rows) and `legs[]` (quote lines), `fareByFlight`, and top-level `brand` only when every reporting flight agrees; date windows are inclusive at both ends; `book_plan` opens a Stripe checkout for the pre-fee `chargeableTotalCents` and the processing fee is shown on the checkout page. README's error-code list matches AGENT.md's table.
+
+### Removed
+
+- Internal `cents()` / `money()` helpers in `src/format.ts` (no callers since the 3.x price gate moved to the server's `book_plan --expect_total_cents`).
 
 ## [4.5.0] — 2026-10-26
 
@@ -176,11 +184,11 @@ Generated from `src/removed-commands.ts` — the same table drives the runtime r
 | `voyagier listings recent` | — |  |
 | `voyagier listings add-to-selection` | `voyagier promote_search` | Pass --listing_ids. |
 | `voyagier places search` | — |  |
-| `voyagier places get` | — |  |
-| `voyagier places attach` | — |  |
-| `voyagier places list` | — |  |
-| `voyagier places highlight` | — |  |
-| `voyagier places unhighlight` | — |  |
+| `voyagier places get` | `voyagier get_place` |  |
+| `voyagier places attach` | — | Places are created by the options that point at them (update_place --option_id creates a hotel's or restaurant's place record on demand); add_place_media and add_plan_media only add photos. |
+| `voyagier places list` | `voyagier list_plan_places` |  |
+| `voyagier places highlight` | `voyagier update_place` | Edit the place's name, description, address or data blob. |
+| `voyagier places unhighlight` | `voyagier update_place` | As above. |
 | `voyagier places remove` | — |  |
 | `voyagier traveller-groups list` | — |  |
 | `voyagier traveller-groups get` | — |  |

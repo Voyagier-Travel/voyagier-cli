@@ -1,8 +1,5 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { Command } from "commander";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
 import { McpClient } from "../mcp-client/client.js";
 import { clearToolsCache, readToolsCache, toolsSurfaceHash, writeToolsCache } from "../mcp-client/tools-cache.js";
 import { compareSemver, registerDoctorCommand, rollUpStatus, runDoctor, type DoctorReport } from "./doctor.js";
@@ -47,21 +44,6 @@ function check(report: DoctorReport, name: string) {
   return report.checks.find((c) => c.name === name)!;
 }
 
-const stateDirsCreated: string[] = [];
-function setStateDir(dir: string): string {
-  process.env.VOYAGIER_STATE_DIR = dir;
-  stateDirsCreated.push(dir);
-  return dir;
-}
-function makeStateDir(payloads: Record<string, unknown>): string {
-  const dir = mkdtempSync(join(tmpdir(), "vd-"));
-  mkdirSync(dir, { recursive: true });
-  for (const [name, content] of Object.entries(payloads)) {
-    writeFileSync(join(dir, name), typeof content === "string" ? content : JSON.stringify(content));
-  }
-  return setStateDir(dir);
-}
-
 describe("rollUpStatus", () => {
   it("returns PASS when all checks pass", () => {
     expect(rollUpStatus([{ name: "a", status: "PASS", message: "" }])).toBe("PASS");
@@ -79,15 +61,10 @@ describe("runDoctor", () => {
   beforeEach(() => {
     process.env.VOYAGIER_MCP_URL = URL;
     clearToolsCache();
-    setStateDir(mkdtempSync(join(tmpdir(), "vd-empty-")));
   });
   afterEach(() => {
     process.env = { ...savedEnv };
     clearToolsCache();
-    for (const dir of stateDirsCreated) {
-      try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
-    }
-    stateDirsCreated.length = 0;
   });
 
   it("PASSes auth + mcp (tool count, surface hash, refreshed cache) and skips whoami when the server lacks the tool", async () => {
@@ -202,42 +179,6 @@ describe("runDoctor", () => {
     });
   });
 
-  describe("state-files", () => {
-    const deps = () => ({ createClient: () => scriptedClient("ok"), credentialsExist: () => true, fetchImpl: registryFetch() });
-
-    it("reports PASS when no state dir exists (clean install)", async () => {
-      process.env.VOYAGIER_STATE_DIR = join(tmpdir(), "vd-nonexistent-" + Date.now());
-      const r = await runDoctor("1.8.1", deps());
-      expect(check(r, "state-files")).toMatchObject({ status: "PASS", message: expect.stringContaining("clean install") });
-    });
-
-    it("reports PASS when state dir is empty", async () => {
-      makeStateDir({});
-      expect(check(await runDoctor("1.8.1", deps()), "state-files").status).toBe("PASS");
-    });
-
-    it("reports PASS for fresh JSON with embedded ISO timestamp", async () => {
-      makeStateDir({ "last-search.json": { timestamp: new Date().toISOString(), data: {} } });
-      expect(check(await runDoctor("1.8.1", deps()), "state-files").status).toBe("PASS");
-    });
-
-    it("reports WARN when embedded timestamp is older than 24h (even if file mtime is fresh)", async () => {
-      makeStateDir({ "last-search.json": { timestamp: new Date(Date.now() - 48 * 3600_000).toISOString(), data: {} } });
-      const r = await runDoctor("1.8.1", deps());
-      expect(check(r, "state-files")).toMatchObject({ status: "WARN", message: expect.stringMatching(/older than 24h/) });
-      expect(r.overall).toBe("WARN");
-    });
-
-    it("reports WARN when a state file is corrupt JSON", async () => {
-      makeStateDir({ "last-search.json": "{ this is not json" });
-      expect(check(await runDoctor("1.8.1", deps()), "state-files")).toMatchObject({ status: "WARN", details: { corrupt: ["last-search.json"] } });
-    });
-
-    it("falls back to mtime when payload omits timestamp (legacy file)", async () => {
-      makeStateDir({ "last-search.json": { data: { foo: "bar" } } });
-      expect(check(await runDoctor("1.8.1", deps()), "state-files").status).toBe("PASS");
-    });
-  });
 });
 
 describe("voyagier doctor (command)", () => {
@@ -249,7 +190,6 @@ describe("voyagier doctor (command)", () => {
   beforeEach(() => {
     process.env.VOYAGIER_MCP_URL = URL;
     clearToolsCache();
-    setStateDir(mkdtempSync(join(tmpdir(), "vd-empty-")));
     out = [];
     stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((chunk) => {
       out.push(String(chunk));
@@ -266,10 +206,6 @@ describe("voyagier doctor (command)", () => {
     stdoutSpy.mockRestore();
     logSpy.mockRestore();
     exitSpy.mockRestore();
-    for (const dir of stateDirsCreated) {
-      try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
-    }
-    stateDirsCreated.length = 0;
   });
 
   it("--json emits { ok, data } and exits 0 on PASS/WARN", async () => {
@@ -282,7 +218,7 @@ describe("voyagier doctor (command)", () => {
     expect(Object.keys(payload).sort()).toEqual(["data", "ok"]);
     expect(Object.keys(payload.data).sort()).toEqual(["checks", "overall"]);
     expect(payload.ok).toBe(true);
-    expect(payload.data.checks.map((c) => c.name)).toEqual(["auth", "mcp", "whoami", "state-files", "version"]);
+    expect(payload.data.checks.map((c) => c.name)).toEqual(["auth", "mcp", "whoami", "version"]);
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
