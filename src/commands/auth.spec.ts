@@ -2,37 +2,27 @@ import { jest, describe, it, expect, beforeAll, beforeEach, afterEach } from "@j
 import { Command } from "commander";
 import { CliError, CliErrorCode } from "../errors.js";
 // config.js is NOT mocked — it writes to the sandboxed VOYAGIER_CONFIG_DIR set by
-// test/setup-env.ts, so we exercise the real credential/profile persistence and
-// assert on it via the same config API auth.ts uses.
-import {
-  saveCredentials,
-  saveUserContext,
-  clearCredentials,
-  credentialsExist,
-  getUserContext,
-  getApiUrl,
-  loadCredentials,
-} from "../config.js";
+// test/setup-env.ts, so we exercise the real credential persistence and assert
+// on it via the same config API auth.ts uses.
+import { saveCredentials, clearCredentials, credentialsExist, loadCredentials } from "../config.js";
+import { makeMockRemote, jsonResponse, type Sent } from "../../test/mock-remote.js";
+import type { McpToolDescriptor } from "../mcp-client/client.js";
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
-const mockGraphql = jest.fn();
 const mockOpenBrowser = jest.fn();
 
-jest.unstable_mockModule("../api.js", () => ({
-  graphql: mockGraphql,
-}));
-
 jest.unstable_mockModule("../utils.js", () => ({
-  // openBrowser is stubbed so no browser launches; maskLoyaltyValue keeps its
-  // real behaviour so the masked-output assertions exercise the shipping logic.
+  // openBrowser is stubbed so no browser launches; sanitizeExternalText keeps
+  // its real behaviour so the control-character assertions exercise it.
   openBrowser: mockOpenBrowser,
-  maskLoyaltyValue: (value: string) => (value.length > 4 ? `••••${value.slice(-4)}` : "••••"),
+  sanitizeExternalText: (value: string) => value.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ""),
+  sanitizeExternalData: (value: unknown) => value,
 }));
 
 // readline/promises drives the interactive prompt flows. The fake createInterface
-// hands back a question() that pops scripted answers, so we can walk the whole
-// login/setup prompt sequence without a real TTY.
+// hands back a question() that pops scripted answers, so we can walk the login
+// prompt sequence without a real TTY.
 let scriptedAnswers: string[] = [];
 const mockClose = jest.fn();
 const mockQuestion = jest.fn(async () => scriptedAnswers.shift() ?? "");
@@ -42,32 +32,53 @@ jest.unstable_mockModule("readline/promises", () => ({
 
 // ── Dynamic import ───────────────────────────────────────────────────────────
 
-let registerAuthCommands: (program: Command) => void;
+type AuthModule = typeof import("./auth.js");
+let authModule: AuthModule;
 
 beforeAll(async () => {
-  ({ registerAuthCommands } = await import("./auth.js"));
+  authModule = await import("./auth.js");
 });
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
 const TEST_TOKEN = "voy_pat_test123";
 
-function meResponse(overrides: Record<string, unknown> = {}) {
+const WHOAMI_TOOL: McpToolDescriptor = { name: "whoami", description: "Who am I", inputSchema: { type: "object", properties: {} } };
+const TRAVELLER_TOOLS: McpToolDescriptor[] = [
+  { name: "update_traveller", description: "Update a traveller", inputSchema: { type: "object", properties: {} } },
+  { name: "add_traveller_document", description: "Add a document", inputSchema: { type: "object", properties: {} } },
+  { name: "list_travellers", description: "List", inputSchema: { type: "object", properties: {} } },
+];
+
+function whoamiPayload(overrides: Record<string, unknown> = {}) {
   return {
-    me: {
-      id: "u-1",
-      firstName: "Ada",
-      lastName: "Lovelace",
-      email: "ada@voyagier.com",
-      name: "Ada Lovelace",
-      dateOfBirth: "1990-12-10",
-      gender: "female",
-      passport: null,
-      frequentFlyerPrograms: [],
-      profile: { location: "Beacon Hill", city: { name: "Boston" }, country: { name: "USA" } },
-      ...overrides,
-    },
+    id: "u-1",
+    email: "ada@voyagier.com",
+    name: "Ada Lovelace",
+    firstName: "Ada",
+    lastName: "Lovelace",
+    isAdmin: false,
+    isTravelAdvisor: true,
+    isTripPlanner: false,
+    canMintPats: true,
+    profile: { homeLocation: { name: "Boston", addressRegion: "MA", addressCountry: "US" } },
+    role: "advisor",
+    guidance: "rules…",
+    ...overrides,
   };
+}
+
+function textResult(payload: unknown) {
+  return { content: [{ type: "text", text: JSON.stringify(payload) }] };
+}
+
+/** A scripted remote: whoami answers with `payload`; `tools` is the published list. */
+function remote(opts: { payload?: unknown; tools?: McpToolDescriptor[]; intercept?: (sent: Sent, index: number) => Response | undefined } = {}) {
+  return makeMockRemote({
+    tools: opts.tools ?? [WHOAMI_TOOL],
+    onCall: (name) => (name === "whoami" ? textResult(opts.payload ?? whoamiPayload()) : textResult({})),
+    intercept: opts.intercept,
+  });
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -79,10 +90,10 @@ let stderrSpy: jest.SpiedFunction<(buf: string | Uint8Array) => boolean>;
 const originalTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
 const originalCI = process.env.CI;
 
-function buildProgram(): Command {
+function buildProgram(deps: Parameters<AuthModule["registerAuthCommands"]>[1] = {}): Command {
   const p = new Command();
   p.exitOverride();
-  registerAuthCommands(p);
+  authModule.registerAuthCommands(p, deps);
   return p;
 }
 
@@ -122,7 +133,6 @@ function mockStdin(data: string): () => void {
 }
 
 beforeEach(() => {
-  mockGraphql.mockReset();
   mockOpenBrowser.mockReset();
   mockQuestion.mockClear();
   mockClose.mockClear();
@@ -148,32 +158,92 @@ afterEach(() => {
   else process.env.CI = originalCI;
 });
 
+// ── identityFromWhoami / formatIdentity ─────────────────────────────────────
+
+describe("identityFromWhoami", () => {
+  it("picks email, name, role flags, home base and role out of the whoami payload", () => {
+    const id = authModule.identityFromWhoami(whoamiPayload({ isTripPlanner: true }));
+    expect(id).toEqual({
+      email: "ada@voyagier.com",
+      name: "Ada Lovelace",
+      roles: ["travel advisor", "trip planner"],
+      role: "advisor",
+      homeBase: "Boston, MA, US",
+      tokenName: undefined,
+    });
+  });
+
+  it("falls back to firstName + lastName, leaves home base undefined when the profile has none", () => {
+    const id = authModule.identityFromWhoami(whoamiPayload({ name: undefined, profile: { homeLocation: null } }));
+    expect(id.name).toBe("Ada Lovelace");
+    expect(id.homeBase).toBeUndefined();
+    expect(id.roles).toEqual(["travel advisor"]);
+  });
+
+  it("reads the token's audit label when the server reports it (tokenName or token.name)", () => {
+    expect(authModule.identityFromWhoami(whoamiPayload({ tokenName: "cli-laptop" })).tokenName).toBe("cli-laptop");
+    expect(authModule.identityFromWhoami(whoamiPayload({ token: { name: "ci-runner" } })).tokenName).toBe("ci-runner");
+  });
+
+  it("never throws on a non-object payload", () => {
+    expect(authModule.identityFromWhoami(null)).toEqual({ email: undefined, name: undefined, roles: [], role: undefined, homeBase: undefined, tokenName: undefined });
+    expect(authModule.identityFromWhoami(["x"]).roles).toEqual([]);
+    expect(authModule.identityFromWhoami("text").email).toBeUndefined();
+  });
+});
+
+describe("formatIdentity", () => {
+  it("prints user, roles, home base and the audit label", () => {
+    const text = authModule.formatIdentity(authModule.identityFromWhoami(whoamiPayload({ tokenName: "cli-laptop" }))).join("\n");
+    expect(text).toMatch(/User:\s+Ada Lovelace \(ada@voyagier\.com\)/);
+    expect(text).toMatch(/Roles:\s+travel advisor · plans as advisor/);
+    expect(text).toMatch(/Home base:\s+Boston, MA, US/);
+    expect(text).toMatch(/Audit label:\s+cli-laptop/);
+  });
+
+  it("points at the web profile when no home base is set, and explains the audit label when the server omits it", () => {
+    const text = authModule.formatIdentity(authModule.identityFromWhoami(whoamiPayload({ profile: {}, isTravelAdvisor: false }))).join("\n");
+    expect(text).toMatch(/Roles:\s+traveller/);
+    expect(text).toMatch(/Home base:\s+not set — set it at https:\/\/travel\.voyagier\.com\/me\/settings/);
+    expect(text).toMatch(/Audit label:\s+the name you gave this token at https:\/\/travel\.voyagier\.com\/me\/settings\/tokens/);
+  });
+});
+
+// ── travellerDataHint ────────────────────────────────────────────────────────
+
+describe("travellerDataHint", () => {
+  it("names the traveller tools that the live tool list publishes", () => {
+    const hint = authModule.travellerDataHint(TRAVELLER_TOOLS);
+    expect(hint).toContain("https://travel.voyagier.com/me/settings");
+    expect(hint).toContain("voyagier update_traveller --help");
+    expect(hint).toContain("voyagier add_traveller_document --help");
+    expect(hint).not.toContain("list_travellers");
+  });
+
+  it("names only the tools that exist, and only the web profile when the list is unavailable", () => {
+    expect(authModule.travellerDataHint([TRAVELLER_TOOLS[1]])).not.toContain("update_traveller");
+    expect(authModule.travellerDataHint([TRAVELLER_TOOLS[1]])).toContain("add_traveller_document");
+    const noList = authModule.travellerDataHint(null);
+    expect(noList).toContain("https://travel.voyagier.com/me/settings");
+    expect(noList).not.toContain("voyagier ");
+  });
+});
+
 // ── set-token ────────────────────────────────────────────────────────────────
 
 describe("auth set-token", () => {
-  it("saves the token + custom URL to the sandboxed config", async () => {
-    await buildProgram().parseAsync(["node", "v", "auth", "set-token", TEST_TOKEN, "--url", "https://dev.voyagier.com/api"]);
-    expect(credentialsExist()).toBe(true);
-    expect(getApiUrl()).toBe("https://dev.voyagier.com/api");
-    expect(out()).toMatch(/Token saved/);
-  });
-
-  it("prints the NORMALIZED URL after saving a URL that needed correcting", async () => {
-    const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-    try {
-      await buildProgram().parseAsync(["node", "v", "auth", "set-token", TEST_TOKEN, "--url", "https://mcp.voyagier.com/api/mcp"]);
-    } finally {
-      stderrSpy.mockRestore();
-    }
-    expect(getApiUrl()).toBe("https://mcp.voyagier.com/api");
-    // The success line must not claim the un-normalized value was stored.
-    expect(out()).toMatch(/API URL: https:\/\/mcp\.voyagier\.com\/api\b/);
-    expect(out()).not.toMatch(/api\/mcp/);
-  });
-
-  it("defaults the URL to the prod API when --url is omitted", async () => {
+  it("saves the token to the sandboxed config and stores nothing else", async () => {
     await buildProgram().parseAsync(["node", "v", "auth", "set-token", TEST_TOKEN]);
-    expect(getApiUrl()).toBe("https://travel.voyagier.com/api");
+    expect(credentialsExist()).toBe(true);
+    expect(loadCredentials()).toEqual({ token: TEST_TOKEN });
+    expect(out()).toMatch(/Token saved/);
+    expect(out()).toMatch(/voyagier auth status/);
+  });
+
+  it("no longer takes --url", async () => {
+    await expect(
+      buildProgram().parseAsync(["node", "v", "auth", "set-token", TEST_TOKEN, "--url", "https://dev.voyagier.com/api"]),
+    ).rejects.toMatchObject({ code: "commander.unknownOption" });
   });
 
   it("set-token -: reads the token from stdin, trims it, and saves it (M4)", async () => {
@@ -181,15 +251,12 @@ describe("auth set-token", () => {
     // saved token matches what was piped.
     const restore = mockStdin("  voy_pat_piped123\n");
     try {
-      await buildProgram().parseAsync([
-        "node", "v", "auth", "set-token", "-", "--url", "https://dev.voyagier.com/api",
-      ]);
+      await buildProgram().parseAsync(["node", "v", "auth", "set-token", "-"]);
     } finally {
       restore();
     }
     expect(credentialsExist()).toBe(true);
     expect(loadCredentials()?.token).toBe("voy_pat_piped123");
-    expect(getApiUrl()).toBe("https://dev.voyagier.com/api");
   });
 
   it("set-token -: rejects empty/whitespace-only stdin with a VALIDATION error (M4)", async () => {
@@ -224,115 +291,136 @@ describe("auth logout", () => {
 // ── status ────────────────────────────────────────────────────────────────
 
 describe("auth status", () => {
-  it("reports not-authenticated when no credentials exist", async () => {
-    await buildProgram().parseAsync(["node", "v", "auth", "status"]);
+  it("reports not-authenticated when no credentials exist, without touching the network", async () => {
+    const { client, sent } = remote();
+    await buildProgram({ createClient: () => client }).parseAsync(["node", "v", "auth", "status"]);
     expect(out()).toMatch(/Not authenticated/);
-    expect(mockGraphql).not.toHaveBeenCalled();
+    expect(sent).toHaveLength(0);
   });
 
-  it("shows a masked token, connected user, and cached profile", async () => {
-    saveCredentials(TEST_TOKEN, "https://dev.voyagier.com/api");
-    saveUserContext({
-      id: "u-1",
-      name: "Ada Lovelace",
-      email: "ada@voyagier.com",
-      homeAirports: ["BOS", "PVD"],
-      preferredCabin: "business",
-      location: "Beacon Hill",
-      city: "Boston",
-      country: "USA",
-      passport: { last4: "6789", issueCountry: "US", nationalityCountry: "US", expirationDate: "2030-05" },
-      frequentFlyerPrograms: [{ airlineCode: "DL", membershipNumber: "1234567890" }],
-    });
-    mockGraphql.mockResolvedValueOnce({ me: { email: "ada@voyagier.com", name: "Ada Lovelace" } });
+  it("shows a masked token, the MCP URL and the whoami identity", async () => {
+    saveCredentials(TEST_TOKEN);
+    const { client, sent } = remote({ payload: whoamiPayload({ isTripPlanner: true, tokenName: "cli-laptop" }) });
 
-    await buildProgram().parseAsync(["node", "v", "auth", "status"]);
+    await buildProgram({ createClient: () => client }).parseAsync(["node", "v", "auth", "status"]);
     const text = out();
-    expect(text).toMatch(/Ada Lovelace \(ada@voyagier\.com\)/);
-    expect(text).toMatch(/GraphQL: connected/);
-    expect(text).toMatch(/BOS \(primary\)/);
-    expect(text).toMatch(/Business/);
-    expect(text).toMatch(/••••6789/);
-    // Frequent-flyer membership numbers are masked to last-4 in terminal output.
-    expect(text).toMatch(/DL ••••7890/);
-    expect(text).not.toContain("1234567890");
+    expect(text).toMatch(/MCP URL:\s+https:\/\/mcp\.voyagier\.com\/api\/mcp/);
+    expect(text).toMatch(/User:\s+Ada Lovelace \(ada@voyagier\.com\)/);
+    expect(text).toMatch(/Roles:\s+travel advisor, trip planner/);
+    expect(text).toMatch(/Home base:\s+Boston, MA, US/);
+    expect(text).toMatch(/Audit label:\s+cli-laptop/);
+    expect(text).toMatch(/MCP: connected/);
     // Token is masked, never printed in full.
     expect(text).not.toContain(TEST_TOKEN);
+    // Identity came from the whoami tool, not a GraphQL query.
+    const call = sent.find((s) => s.body.method === "tools/call");
+    expect(call?.body.params).toEqual({ name: "whoami", arguments: {} });
+    // Nothing about the identity is cached on disk.
+    expect(loadCredentials()).toEqual({ token: TEST_TOKEN });
   });
 
-  it("reports an auth failure when the me query is rejected 401", async () => {
+  it("strips control characters from server-supplied identity text", async () => {
     saveCredentials(TEST_TOKEN);
-    mockGraphql.mockRejectedValueOnce(new Error("Request failed: 401"));
-    await buildProgram().parseAsync(["node", "v", "auth", "status"]);
-    expect(out()).toMatch(/GraphQL: authentication failed/);
+    const { client } = remote({ payload: whoamiPayload({ name: "Ada\u001b[31m Lovelace", profile: { homeLocation: { name: "Bos\u0007ton" } } }) });
+    await buildProgram({ createClient: () => client }).parseAsync(["node", "v", "auth", "status"]);
+    expect(out()).not.toContain("\u001b");
+    expect(out()).not.toContain("\u0007");
+    expect(out()).toMatch(/Home base:\s+Boston/);
   });
 
-  it("surfaces a non-auth GraphQL error message", async () => {
+  it("reports a rejected token when the server answers 401", async () => {
     saveCredentials(TEST_TOKEN);
-    mockGraphql.mockRejectedValueOnce(new Error("boom network"));
-    await buildProgram().parseAsync(["node", "v", "auth", "status"]);
-    expect(out()).toMatch(/GraphQL: boom network/);
+    const { client } = remote({ intercept: () => jsonResponse({ error: "unauthorized" }, { status: 401 }) });
+    await buildProgram({ createClient: () => client }).parseAsync(["node", "v", "auth", "status"]);
+    expect(out()).toMatch(/MCP: token rejected by https:\/\/mcp\.voyagier\.com\/api\/mcp/);
+    expect(out()).toMatch(/voyagier auth login/);
   });
 
-  it("notes when no profile is cached", async () => {
+  it("surfaces a non-auth MCP error message", async () => {
     saveCredentials(TEST_TOKEN);
-    mockGraphql.mockResolvedValueOnce({ me: { email: "ada@voyagier.com" } });
-    await buildProgram().parseAsync(["node", "v", "auth", "status"]);
-    expect(out()).toMatch(/No profile cached/);
+    const { client } = remote({
+      intercept: (sent) =>
+        sent.body.method === "tools/call"
+          ? jsonResponse({ jsonrpc: "2.0", id: sent.body.id, error: { code: -32603, message: "boom upstream" } })
+          : undefined,
+    });
+    await buildProgram({ createClient: () => client }).parseAsync(["node", "v", "auth", "status"]);
+    expect(out()).toMatch(/MCP: .*boom upstream/);
+  });
+
+  it("reports an insecure VOYAGIER_MCP_URL instead of sending the token", async () => {
+    saveCredentials(TEST_TOKEN);
+    const prev = process.env.VOYAGIER_MCP_URL;
+    process.env.VOYAGIER_MCP_URL = "http://evil.example.com/mcp";
+    const { client, sent } = remote();
+    try {
+      await buildProgram({ createClient: () => client }).parseAsync(["node", "v", "auth", "status"]);
+    } finally {
+      if (prev === undefined) delete process.env.VOYAGIER_MCP_URL;
+      else process.env.VOYAGIER_MCP_URL = prev;
+    }
+    expect(out()).toMatch(/MCP URL: .*Insecure URL/);
+    expect(sent).toHaveLength(0);
   });
 });
 
 // ── login ────────────────────────────────────────────────────────────────
 
 describe("auth login", () => {
-  it("non-interactive: prints PAT instructions and does not save", async () => {
+  it("non-interactive: prints PAT instructions (with the audit-label note) and does not save", async () => {
     setInteractive(false);
-    await buildProgram().parseAsync(["node", "v", "auth", "login", "--url", "https://dev.voyagier.com/api"]);
+    await buildProgram().parseAsync(["node", "v", "auth", "login"]);
     expect(out()).toMatch(/Generate a Personal Access Token/);
-    expect(out()).toMatch(/dev\.voyagier\.com\/me\/settings\/tokens/);
+    expect(out()).toMatch(/https:\/\/travel\.voyagier\.com\/me\/settings\/tokens/);
+    expect(out()).toMatch(/audit label/);
+    expect(out()).toMatch(/voyagier auth set-token -/);
     expect(credentialsExist()).toBe(false);
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
-  it("non-interactive: an endpoint or MCP --url is normalized before the settings page is derived", async () => {
+  it("non-interactive: --web-url changes the web origin the tokens page is derived from", async () => {
     setInteractive(false);
-    for (const url of ["https://dev.voyagier.com/api/graphql", "https://dev.voyagier.com/api/mcp", "https://dev.voyagier.com"]) {
-      logs.length = 0;
-      await buildProgram().parseAsync(["node", "v", "auth", "login", "--url", url]);
-      expect(out()).toMatch(/https:\/\/dev\.voyagier\.com\/me\/settings\/tokens/);
-      expect(out()).not.toMatch(/graphql\/me|mcp\/me/);
-    }
+    await buildProgram().parseAsync(["node", "v", "auth", "login", "--web-url", "https://dev.voyagier.com/some/path"]);
+    expect(out()).toMatch(/https:\/\/dev\.voyagier\.com\/me\/settings\/tokens/);
+    expect(out()).not.toMatch(/some\/path/);
   });
 
-  it("interactive: opens the browser, saves the pasted token, verifies + auto-sets profile", async () => {
+  it("rejects a non-http(s) --web-url", async () => {
+    await expect(buildProgram().parseAsync(["node", "v", "auth", "login", "--web-url", "file:///etc/passwd"])).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+    await expect(buildProgram().parseAsync(["node", "v", "auth", "login", "--web-url", "not a url"])).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
+  });
+
+  it("interactive: opens the browser, saves the pasted token, verifies it via whoami and prints the identity", async () => {
     setInteractive(true);
     scriptedAnswers = [TEST_TOKEN];
-    mockGraphql.mockResolvedValueOnce(meResponse());
+    const { client, sent } = remote();
 
-    await buildProgram().parseAsync(["node", "v", "auth", "login", "--url", "https://dev.voyagier.com/api"]);
+    await buildProgram({ createClient: () => client }).parseAsync(["node", "v", "auth", "login"]);
 
-    expect(mockOpenBrowser).toHaveBeenCalledWith("https://dev.voyagier.com/me/settings/tokens");
+    expect(mockOpenBrowser).toHaveBeenCalledWith("https://travel.voyagier.com/me/settings/tokens");
     expect(credentialsExist()).toBe(true);
-    // fetchAndBuildContext auto-detected BOS from the Boston profile city.
-    expect(getUserContext()?.homeAirports).toEqual(["BOS"]);
-    expect(out()).toMatch(/Logged in as/);
-    expect(out()).toMatch(/Home airport auto-detected/);
+    expect(loadCredentials()).toEqual({ token: TEST_TOKEN });
+    expect(out()).toMatch(/Logged in as .*Ada Lovelace.* \(ada@voyagier\.com\)/);
+    expect(out()).toMatch(/Home base:\s+Boston, MA, US/);
+    expect(out()).not.toMatch(/airport/i);
+    expect(sent.find((s) => s.body.method === "tools/call")?.body.params).toEqual({ name: "whoami", arguments: {} });
   });
 
   it("interactive: cancels cleanly on an empty token", async () => {
     setInteractive(true);
     scriptedAnswers = [""];
-    await buildProgram().parseAsync(["node", "v", "auth", "login"]);
+    const { client, sent } = remote();
+    await buildProgram({ createClient: () => client }).parseAsync(["node", "v", "auth", "login"]);
     expect(out()).toMatch(/Cancelled/);
     expect(credentialsExist()).toBe(false);
-    expect(mockGraphql).not.toHaveBeenCalled();
+    expect(sent).toHaveLength(0);
   });
 
   it("interactive: saves the token but warns when verification fails", async () => {
     setInteractive(true);
     scriptedAnswers = [TEST_TOKEN];
-    mockGraphql.mockRejectedValueOnce(new Error("verify failed"));
-    await buildProgram().parseAsync(["node", "v", "auth", "login"]);
+    const { client } = remote({ intercept: () => jsonResponse({ error: "unauthorized" }, { status: 401 }) });
+    await buildProgram({ createClient: () => client }).parseAsync(["node", "v", "auth", "login"]);
     expect(credentialsExist()).toBe(true);
     expect(out()).toMatch(/Token saved/);
     expect(out()).toMatch(/Could not verify/);
@@ -342,215 +430,38 @@ describe("auth login", () => {
 // ── setup ────────────────────────────────────────────────────────────────
 
 describe("auth setup", () => {
-  it("refuses when not authenticated", async () => {
-    await buildProgram().parseAsync(["node", "v", "auth", "setup"]);
-    expect(out()).toMatch(/Not authenticated/);
-    expect(mockGraphql).not.toHaveBeenCalled();
+  it("points at the web profile and the traveller tools the server publishes", async () => {
+    saveCredentials(TEST_TOKEN);
+    const { client } = remote({ tools: [WHOAMI_TOOL, ...TRAVELLER_TOOLS] });
+    await buildProgram({ createClient: () => client }).parseAsync(["node", "v", "auth", "setup"]);
+    expect(logs).toHaveLength(1);
+    expect(out()).toContain("https://travel.voyagier.com/me/settings");
+    expect(out()).toContain("voyagier update_traveller --help");
+    expect(out()).toContain("voyagier add_traveller_document --help");
+    // Nothing is collected or stored locally.
+    expect(mockQuestion).not.toHaveBeenCalled();
+    expect(loadCredentials()).toEqual({ token: TEST_TOKEN });
   });
 
-  it("wraps a profile-fetch failure as an API_ERROR", async () => {
+  it("prints only the web profile when not authenticated or when the tool list cannot be fetched", async () => {
+    const { client: idle, sent } = remote();
+    await buildProgram({ createClient: () => idle }).parseAsync(["node", "v", "auth", "setup"]);
+    expect(sent).toHaveLength(0);
+    expect(out()).toContain("https://travel.voyagier.com/me/settings");
+    expect(out()).not.toContain("voyagier update_traveller");
+
+    logs.length = 0;
     saveCredentials(TEST_TOKEN);
-    mockGraphql.mockRejectedValueOnce(new Error("profile fetch boom"));
-    await expect(
-      buildProgram().parseAsync(["node", "v", "auth", "setup"]),
-    ).rejects.toMatchObject({ code: CliErrorCode.API_ERROR });
+    const { client: failing } = remote({ intercept: () => jsonResponse({ error: "down" }, { status: 503 }) });
+    await buildProgram({ createClient: () => failing }).parseAsync(["node", "v", "auth", "setup"]);
+    expect(out()).toContain("https://travel.voyagier.com/me/settings");
+    expect(out()).not.toContain("voyagier update_traveller");
   });
 
-  it("non-interactive with --airports and --cabin flags persists them", async () => {
+  it("no longer takes the traveller-profile flags", async () => {
     saveCredentials(TEST_TOKEN);
-    mockGraphql.mockResolvedValueOnce(meResponse());
-    await buildProgram().parseAsync([
-      "node", "v", "auth", "setup",
-      "--airports", "bwi, dca",
-      "--cabin", "business",
-      "--skip-passport", "--skip-ff",
-    ]);
-    const ctx = getUserContext();
-    expect(ctx?.homeAirports).toEqual(["BWI", "DCA"]);
-    expect(ctx?.preferredCabin).toBe("business");
-    expect(out()).toMatch(/Setup complete/);
-  });
-
-  it("non-interactive rejects invalid --airports codes", async () => {
-    saveCredentials(TEST_TOKEN);
-    mockGraphql.mockResolvedValueOnce(meResponse());
-    await expect(
-      buildProgram().parseAsync([
-        "node", "v", "auth", "setup",
-        "--airports", "BWI,XX",
-      ]),
-    ).rejects.toMatchObject({ code: CliErrorCode.VALIDATION });
-  });
-
-  it("non-interactive warns on an invalid --cabin but continues", async () => {
-    saveCredentials(TEST_TOKEN);
-    mockGraphql.mockResolvedValueOnce(meResponse());
-    await buildProgram().parseAsync([
-      "node", "v", "auth", "setup",
-      "--airports", "BOS",
-      "--cabin", "spaceship",
-      "--skip-passport", "--skip-ff",
-    ]);
-    // Falls back to the existing/default cabin (economy) rather than the bad value.
-    expect(getUserContext()?.preferredCabin).toBe("economy");
-    expect(out()).toMatch(/Invalid cabin "spaceship"/);
-  });
-
-  it("non-interactive imports passport + frequent-flyer data already on the profile", async () => {
-    saveCredentials(TEST_TOKEN);
-    mockGraphql.mockResolvedValueOnce(
-      meResponse({
-        passport: { last4: "4321", issueCountry: "GB", nationalityCountry: "GB", expirationDate: "2031-01" },
-        frequentFlyerPrograms: [{ airlineCode: "BA", membershipNumber: "9998887" }],
-      }),
-    );
-    await buildProgram().parseAsync(["node", "v", "auth", "setup", "--airports", "BOS"]);
-    const ctx = getUserContext();
-    expect(ctx?.passport?.last4).toBe("4321");
-    // Frequent-flyer numbers are imported and stored in full (used to credit miles).
-    expect(ctx?.frequentFlyerPrograms).toEqual([{ airlineCode: "BA", membershipNumber: "9998887" }]);
-    expect(out()).toMatch(/Imported from profile/);
-  });
-
-  it("non-interactive with no flags falls back to hints + economy default", async () => {
-    saveCredentials(TEST_TOKEN);
-    // City not in the CITY_AIRPORTS map → no auto-detect → non-interactive hint path.
-    mockGraphql.mockResolvedValueOnce(
-      meResponse({ profile: { location: "Nowhere", city: { name: "Atlantis" }, country: { name: "??" } } }),
-    );
-    await buildProgram().parseAsync(["node", "v", "auth", "setup"]);
-    expect(out()).toMatch(/Non-interactive mode. Use: voyagier auth setup --airports/);
-    expect(getUserContext()?.preferredCabin).toBe("economy");
-    expect(out()).toMatch(/Skipped \(non-interactive\)/);
-  });
-
-  it("interactive: walks airports/cabin/passport/FF/hotel, syncs, and stores only the masked passport", async () => {
-    saveCredentials(TEST_TOKEN);
-    setInteractive(true);
-    // Call #1: profile fetch. Call #2: updateMyUser — returns the masked
-    // passport shape + full FF list (the only things ever persisted for those).
-    mockGraphql
-      .mockResolvedValueOnce(meResponse())
-      .mockResolvedValueOnce({
-        updateMyUser: {
-          passport: { last4: "4567", issueCountry: "US", nationalityCountry: "US", expirationDate: "2030-05" },
-          frequentFlyerPrograms: [{ airlineCode: "DL", membershipNumber: "1234567890" }],
-        },
-      });
-    // airports (invalid XX dropped), cabin=3(Business), passport number (muted,
-    // 6–9 alnum), issue=US, nationality(default), expiration, one FF + Enter,
-    // one hotel + Enter.
-    scriptedAnswers = [
-      "BWI, XX, DCA", "3",
-      "X1234567", "US", "", "2030-05",
-      "DL 1234567890", "",
-      "HI 12345678", "",
-    ];
-
-    await buildProgram().parseAsync(["node", "v", "auth", "setup"]);
-
-    const ctx = getUserContext();
-    expect(ctx?.homeAirports).toEqual(["BWI", "DCA"]); // XX dropped as invalid
-    expect(ctx?.preferredCabin).toBe("business");
-    // Only the masked shape from the mutation response is stored.
-    expect(ctx?.passport).toEqual({
-      last4: "4567",
-      issueCountry: "US",
-      nationalityCountry: "US",
-      expirationDate: "2030-05",
-    });
-    // FF stored in full (from the response); hotel loyalty stored in full locally.
-    expect(ctx?.frequentFlyerPrograms).toEqual([{ airlineCode: "DL", membershipNumber: "1234567890" }]);
-    expect(ctx?.hotelLoyaltyPrograms).toEqual([{ chainCode: "HI", membershipNumber: "12345678" }]);
-
-    // updateMyUser (call #2) carries the FULL passport number + FF; hotel loyalty is never sent.
-    expect(mockGraphql).toHaveBeenCalledTimes(2);
-    const [, vars] = mockGraphql.mock.calls[1] as [string, any];
-    expect(vars.input.passport).toEqual({
-      passportNumber: "X1234567",
-      issueCountry: "US",
-      nationalityCountry: "US",
-      expirationDate: "2030-05",
-    });
-    expect(vars.input.frequentFlyerPrograms).toEqual([{ airlineCode: "DL", membershipNumber: "1234567890" }]);
-    expect(vars.input).not.toHaveProperty("hotelLoyaltyPrograms");
-
-    // The full passport number must never reach stdout or credentials.json.
-    expect(out()).not.toContain("X1234567");
-    expect(JSON.stringify(loadCredentials())).not.toContain("X1234567");
-    // Loyalty numbers are masked to last-4 in terminal output (but stored/synced in full).
-    expect(out()).toMatch(/DL ••••7890/);
-    expect(out()).not.toContain("1234567890");
-    expect(out()).not.toContain("12345678");
-    expect(out()).toMatch(/Setup complete/);
-  });
-
-  it("interactive: a profile-sync failure never echoes the raw upstream error", async () => {
-    saveCredentials(TEST_TOKEN);
-    setInteractive(true);
-    // Call #1: profile fetch (no FF on file). Call #2: updateMyUser rejects with
-    // an error whose text mimics a leaked request variable (the passport number).
-    mockGraphql
-      .mockResolvedValueOnce(meResponse())
-      .mockRejectedValueOnce(new Error('Bad request: passportNumber="X1234567" rejected'));
-    // airports=Enter (keep BOS), cabin=Enter, passport=Enter (skip),
-    // one FF + Enter (so there is something to sync), hotel=Enter.
-    scriptedAnswers = ["", "", "", "DL 1234567890", "", ""];
-
-    await buildProgram().parseAsync(["node", "v", "auth", "setup"]);
-
-    const text = out();
-    // Generic, reassuring message — never the raw GraphQL error or its variables.
-    expect(text).toMatch(/Profile sync failed/);
-    expect(text).not.toContain("X1234567");
-    expect(text).not.toContain("Bad request");
-    expect(text).not.toContain("rejected");
-    // The sync was attempted (profile fetch + updateMyUser).
-    expect(mockGraphql).toHaveBeenCalledTimes(2);
-  });
-
-  it("interactive: invalid passport re-prompts with an explanation, then skips without syncing", async () => {
-    saveCredentials(TEST_TOKEN);
-    setInteractive(true);
-    mockGraphql.mockResolvedValueOnce(meResponse());
-    // airports=Enter (keep BOS), cabin=Enter (economy), passport "12" then "abc"
-    // (both invalid → skip), FF "X 1"/"oneword" rejected then Enter, hotel Enter.
-    scriptedAnswers = ["", "", "12", "abc", "X 1", "oneword", "", ""];
-
-    await buildProgram().parseAsync(["node", "v", "auth", "setup"]);
-
-    const ctx = getUserContext();
-    expect(ctx?.homeAirports).toEqual(["BOS"]);
-    expect(ctx?.preferredCabin).toBe("economy");
-    expect(ctx?.passport).toBeUndefined(); // invalid → not saved
-    expect(ctx?.frequentFlyerPrograms).toBeUndefined();
-    // Explains the format and re-prompts (never a silent skip).
-    expect(out()).toMatch(/6–9 letters or digits/);
-    expect(out()).toMatch(/Invalid airline code "X"/);
-    // Nothing new entered → no updateMyUser sync.
-    expect(mockGraphql).toHaveBeenCalledTimes(1);
-  });
-
-  it("interactive: Enter keeps an on-file passport without revealing it and without a sync call", async () => {
-    saveCredentials(TEST_TOKEN);
-    setInteractive(true);
-    mockGraphql.mockResolvedValueOnce(
-      meResponse({
-        passport: { last4: "6789", issueCountry: "US", nationalityCountry: "US", expirationDate: "2031-05" },
-        frequentFlyerPrograms: [{ airlineCode: "DL", membershipNumber: "1234567890" }],
-      }),
-    );
-    // airports=Enter (keep BOS), cabin=Enter, passport=Enter (keep), hotel=Enter.
-    scriptedAnswers = ["", "", "", ""];
-
-    await buildProgram().parseAsync(["node", "v", "auth", "setup"]);
-
-    const ctx = getUserContext();
-    expect(ctx?.passport?.last4).toBe("6789");
-    expect(ctx?.frequentFlyerPrograms).toEqual([{ airlineCode: "DL", membershipNumber: "1234567890" }]);
-    expect(out()).toMatch(/Keeping the passport on file/);
-    expect(out()).toMatch(/••••6789/);
-    // Nothing changed → no updateMyUser call.
-    expect(mockGraphql).toHaveBeenCalledTimes(1);
+    for (const flag of ["--airports", "--cabin", "--skip-passport", "--skip-ff"]) {
+      await expect(buildProgram().parseAsync(["node", "v", "auth", "setup", flag, "x"])).rejects.toMatchObject({ code: "commander.unknownOption" });
+    }
   });
 });

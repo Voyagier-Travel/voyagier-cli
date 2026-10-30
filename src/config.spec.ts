@@ -1,7 +1,7 @@
-import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
+import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync, chmodSync } from "fs";
 import { join } from "path";
-import { loadCredentials, saveCredentials, clearCredentials, credentialsExist, getToken, getApiUrl, CONFIG_DIR, saveUserContext, getUserContext, getHomeAirports, getPreferredCabin, assertSecureApiUrl, resetEnvUrlWarningForTests, normalizeApiUrl, resetNormalizedUrlWarningForTests, getConfiguredApiUrl } from "./config.js";
+import { loadCredentials, saveCredentials, clearCredentials, credentialsExist, getToken, CONFIG_DIR, assertSecureApiUrl } from "./config.js";
 import { CliError, CliErrorCode } from "./errors.js";
 
 const credFile = join(CONFIG_DIR, "credentials.json");
@@ -19,7 +19,6 @@ describe("config", () => {
     // Clear for clean test
     if (existsSync(credFile)) unlinkSync(credFile);
     delete process.env.VOYAGIER_TOKEN;
-    delete process.env.VOYAGIER_API_URL;
   });
 
   afterEach(() => {
@@ -31,7 +30,6 @@ describe("config", () => {
       unlinkSync(credFile);
     }
     delete process.env.VOYAGIER_TOKEN;
-    delete process.env.VOYAGIER_API_URL;
   });
 
   describe("credentialsExist", () => {
@@ -40,7 +38,7 @@ describe("config", () => {
     });
 
     it("should return true after saving credentials", () => {
-      saveCredentials("test-token", "https://api.example.com");
+      saveCredentials("test-token");
       expect(credentialsExist()).toBe(true);
     });
 
@@ -51,41 +49,39 @@ describe("config", () => {
   });
 
   describe("saveCredentials / loadCredentials", () => {
-    it("should save and load token + apiUrl", () => {
-      saveCredentials("my-token", "https://api.voyagier.com/api");
-      const creds = loadCredentials();
-      expect(creds).toEqual({
-        token: "my-token",
-        apiUrl: "https://api.voyagier.com/api",
-      });
+    it("saves and loads the token, and nothing else", () => {
+      saveCredentials("my-token");
+      expect(loadCredentials()).toEqual({ token: "my-token" });
+      // The file holds exactly one key: no URL, no cached profile.
+      expect(JSON.parse(readFileSync(credFile, "utf-8"))).toEqual({ token: "my-token" });
     });
 
     it("should set file permissions to 0600", () => {
-      saveCredentials("tok", "https://example.com");
+      saveCredentials("tok");
       const { mode } = statSync(credFile);
       expect(mode & 0o777).toBe(0o600);
     });
 
     it("corrects a pre-existing loose-perm (0644) credentials file to 0600 (L2)", () => {
-      // Simulate a credentials.json left world-readable by an older version or a
-      // hand-edit. saveCredentials must chmod it back to owner-only.
+      // Simulate a credentials.json left world-readable by a hand-edit.
+      // saveCredentials must chmod it back to owner-only.
       mkdirSync(CONFIG_DIR, { recursive: true });
       writeFileSync(credFile, "{}", { mode: 0o644 });
       chmodSync(credFile, 0o644); // defeat umask so the pre-state is truly 0644
       expect(statSync(credFile).mode & 0o777).toBe(0o644);
 
-      saveCredentials("tok", "https://example.com");
+      saveCredentials("tok");
       expect(statSync(credFile).mode & 0o777).toBe(0o600);
     });
 
     it("corrects a pre-existing loose-perm (0755) config dir to 0700 (L1)", () => {
       // `mode` on mkdirSync only applies at creation — a dir left group/world
-      // readable by an older version must be tightened on the next save.
+      // readable must be tightened on the next save.
       mkdirSync(CONFIG_DIR, { recursive: true });
       chmodSync(CONFIG_DIR, 0o755); // defeat umask so the pre-state is truly 0755
       expect(statSync(CONFIG_DIR).mode & 0o777).toBe(0o755);
 
-      saveCredentials("tok", "https://example.com");
+      saveCredentials("tok");
       expect(statSync(CONFIG_DIR).mode & 0o777).toBe(0o700);
     });
 
@@ -93,48 +89,30 @@ describe("config", () => {
       expect(loadCredentials()).toBeNull();
     });
 
+    it("returns null for a file without a token", () => {
+      mkdirSync(CONFIG_DIR, { recursive: true });
+      writeFileSync(credFile, JSON.stringify({ apiUrl: "https://example.com" }), { mode: 0o600 });
+      expect(loadCredentials()).toBeNull();
+      writeFileSync(credFile, "not json", { mode: 0o600 });
+      expect(loadCredentials()).toBeNull();
+    });
+
+    it("reads only the token from a file that carries extra keys", () => {
+      mkdirSync(CONFIG_DIR, { recursive: true });
+      writeFileSync(credFile, JSON.stringify({ token: "t", apiUrl: "https://x", user: { name: "n" } }), { mode: 0o600 });
+      expect(loadCredentials()).toEqual({ token: "t" });
+    });
+
     it("should prefer VOYAGIER_TOKEN env var over file", () => {
-      saveCredentials("file-token", "https://file.com");
+      saveCredentials("file-token");
       process.env.VOYAGIER_TOKEN = "env-token";
-      const creds = loadCredentials();
-      expect(creds?.token).toBe("env-token");
-    });
-
-    it("should use VOYAGIER_API_URL with VOYAGIER_TOKEN", () => {
-      process.env.VOYAGIER_TOKEN = "env-tok";
-      process.env.VOYAGIER_API_URL = "https://env-api.com";
-      const creds = loadCredentials();
-      expect(creds?.apiUrl).toBe("https://env-api.com");
-    });
-
-    it("ignores VOYAGIER_API_URL without VOYAGIER_TOKEN and warns once on stderr", () => {
-      // Explicit reset makes this order-independent: Jest can't isolate ESM
-      // module registries, so the warn-once flag persists across tests in
-      // this file — reset it instead of relying on test position.
-      resetEnvUrlWarningForTests();
-      saveCredentials("file-token", "https://file.example.com/api");
-      process.env.VOYAGIER_API_URL = "https://env-api.com";
-      const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-      try {
-        const creds = loadCredentials();
-        // File creds (and their saved URL) win — the env URL must not redirect them.
-        expect(creds?.token).toBe("file-token");
-        expect(creds?.apiUrl).toBe("https://file.example.com/api");
-        const warned = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
-        expect(warned).toContain("VOYAGIER_API_URL is ignored unless VOYAGIER_TOKEN");
-        // Warn-once: a second load stays quiet.
-        stderrSpy.mockClear();
-        loadCredentials();
-        expect(stderrSpy).not.toHaveBeenCalled();
-      } finally {
-        stderrSpy.mockRestore();
-      }
+      expect(loadCredentials()).toEqual({ token: "env-token" });
     });
   });
 
   describe("clearCredentials", () => {
     it("should remove the credentials file", () => {
-      saveCredentials("tok", "https://example.com");
+      saveCredentials("tok");
       expect(existsSync(credFile)).toBe(true);
       clearCredentials();
       expect(existsSync(credFile)).toBe(false);
@@ -145,7 +123,7 @@ describe("config", () => {
     });
 
     it("should cause credentialsExist to return false", () => {
-      saveCredentials("tok", "https://example.com");
+      saveCredentials("tok");
       clearCredentials();
       expect(credentialsExist()).toBe(false);
     });
@@ -153,12 +131,12 @@ describe("config", () => {
 
   describe("getToken", () => {
     it("should return token from saved credentials", () => {
-      saveCredentials("saved-token", "https://api.voyagier.com");
+      saveCredentials("saved-token");
       expect(getToken()).toBe("saved-token");
     });
 
     it("should prefer VOYAGIER_TOKEN env var", () => {
-      saveCredentials("file-token", "https://api.voyagier.com");
+      saveCredentials("file-token");
       process.env.VOYAGIER_TOKEN = "env-token";
       expect(getToken()).toBe("env-token");
     });
@@ -175,173 +153,13 @@ describe("config", () => {
     });
   });
 
-  describe("getApiUrl", () => {
-    it("should return saved apiUrl", () => {
-      saveCredentials("tok", "https://custom-api.voyagier.com/api");
-      expect(getApiUrl()).toBe("https://custom-api.voyagier.com/api");
-    });
-
-    it("should prefer env vars when VOYAGIER_TOKEN is set", () => {
-      process.env.VOYAGIER_TOKEN = "env-tok";
-      process.env.VOYAGIER_API_URL = "https://env-override.com/api";
-      expect(getApiUrl()).toBe("https://env-override.com/api");
-    });
-
-    it("normalizes a misconfigured env URL (MCP endpoint) to the API base and warns once", () => {
-      resetNormalizedUrlWarningForTests();
-      process.env.VOYAGIER_TOKEN = "env-tok";
-      process.env.VOYAGIER_API_URL = "https://mcp.voyagier.com/api/mcp";
-      const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-      try {
-        expect(getApiUrl()).toBe("https://mcp.voyagier.com/api");
-        // The raw configured value stays visible for doctor.
-        expect(getConfiguredApiUrl()).toBe("https://mcp.voyagier.com/api/mcp");
-        const warned = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
-        expect(warned).toContain('normalized to "https://mcp.voyagier.com/api"');
-        // Raw value is JSON-quoted so control characters cannot mangle the line.
-        expect(warned).toContain('"https://mcp.voyagier.com/api/mcp"');
-        stderrSpy.mockClear();
-        getApiUrl();
-        expect(stderrSpy).not.toHaveBeenCalled();
-      } finally {
-        stderrSpy.mockRestore();
-      }
-    });
-
-    it("normalizes a misconfigured URL on save so credentials.json holds the API base, and returns it", () => {
-      const stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
-      try {
-        expect(saveCredentials("tok", "https://travel.voyagier.com/api/graphql")).toBe("https://travel.voyagier.com/api");
-        expect(JSON.parse(readFileSync(credFile, "utf-8")).apiUrl).toBe("https://travel.voyagier.com/api");
-        expect(getApiUrl()).toBe("https://travel.voyagier.com/api");
-      } finally {
-        stderrSpy.mockRestore();
-      }
-    });
-
-    it("should fall back to default when no credentials", () => {
-      const url = getApiUrl();
-      expect(url).toBe("https://travel.voyagier.com/api");
-    });
-  });
-
-  describe("saveUserContext / getUserContext", () => {
-    it("saves and retrieves user context", () => {
-      saveCredentials("tok_test", "https://test.com");
-      const user = {
-        id: "u1",
-        name: "Test User",
-        email: "test@test.com",
-        homeAirports: ["BWI", "DCA"],
-        preferredCabin: "business" as const,
-      };
-      saveUserContext(user);
-      const ctx = getUserContext();
-      expect(ctx).not.toBeNull();
-      expect(ctx!.name).toBe("Test User");
-      expect(ctx!.homeAirports).toEqual(["BWI", "DCA"]);
-      expect(ctx!.preferredCabin).toBe("business");
-    });
-
-    it("returns null when no user context saved", () => {
-      saveCredentials("tok_test", "https://test.com");
-      expect(getUserContext()).toBeNull();
-    });
-
-    it("throws when not authenticated", () => {
-      expect(() => saveUserContext({
-        id: "u1", name: "X", email: "x@x.com", homeAirports: [],
-      })).toThrow("Not authenticated");
-    });
-
-    it("preserves user context when saveCredentials is called", () => {
-      saveCredentials("tok_old", "https://test.com");
-      saveUserContext({
-        id: "u1", name: "Test", email: "t@t.com", homeAirports: ["JFK"],
-      });
-      // Re-save credentials (simulating set-token)
-      saveCredentials("tok_new", "https://test2.com");
-      const ctx = getUserContext();
-      expect(ctx).not.toBeNull();
-      expect(ctx!.homeAirports).toEqual(["JFK"]);
-    });
-
-    it("does not persist env token to disk via saveUserContext", () => {
-      // Write file credentials first
-      saveCredentials("tok_file", "https://test.com");
-      // Set env override
-      process.env.VOYAGIER_TOKEN = "tok_env";
-      // Save user context — should use file token, not env
-      saveUserContext({
-        id: "u1", name: "Test", email: "t@t.com", homeAirports: ["BWI"],
-      });
-      delete process.env.VOYAGIER_TOKEN;
-      // Read back — token should still be file token
-      const creds = loadCredentials();
-      expect(creds!.token).toBe("tok_file");
-    });
-  });
-
-  describe("getHomeAirports", () => {
-    it("returns empty array when no context", () => {
-      expect(getHomeAirports()).toEqual([]);
-    });
-
-    it("returns airports from saved context", () => {
-      saveCredentials("tok", "https://test.com");
-      saveUserContext({
-        id: "u1", name: "T", email: "t@t.com", homeAirports: ["BWI", "IAD", "DCA"],
-      });
-      expect(getHomeAirports()).toEqual(["BWI", "IAD", "DCA"]);
-    });
-  });
-
-  describe("getPreferredCabin", () => {
-    it("returns null when no context", () => {
-      expect(getPreferredCabin()).toBeNull();
-    });
-
-    it("returns cabin from saved context", () => {
-      saveCredentials("tok", "https://test.com");
-      saveUserContext({
-        id: "u1", name: "T", email: "t@t.com", homeAirports: [],
-        preferredCabin: "first",
-      });
-      expect(getPreferredCabin()).toBe("first");
-    });
-  });
-
-  describe("normalizeApiUrl", () => {
-    it.each([
-      ["https://travel.voyagier.com/api", "https://travel.voyagier.com/api"],
-      ["https://travel.voyagier.com/api/", "https://travel.voyagier.com/api"],
-      ["https://travel.voyagier.com", "https://travel.voyagier.com/api"],
-      ["https://travel.voyagier.com/", "https://travel.voyagier.com/api"],
-      ["https://travel.voyagier.com/api/graphql", "https://travel.voyagier.com/api"],
-      ["https://mcp.voyagier.com/api/mcp", "https://mcp.voyagier.com/api"],
-      ["https://mcp.voyagier.com/api/mcp/", "https://mcp.voyagier.com/api"],
-      // Duplicate slashes never survive suffix stripping (review finding).
-      ["https://travel.voyagier.com/api//graphql", "https://travel.voyagier.com/api"],
-      ["https://travel.voyagier.com//api/mcp//", "https://travel.voyagier.com/api"],
-      ["http://localhost:3001", "http://localhost:3001/api"],
-      ["http://localhost:3001/api", "http://localhost:3001/api"],
-      ["https://dev.voyagier.com/api", "https://dev.voyagier.com/api"],
-      // Unrelated paths are left alone.
-      ["https://example.com/v2/other", "https://example.com/v2/other"],
-      // Unparseable input passes through for assertSecureApiUrl to reject.
-      ["not-a-url", "not-a-url"],
-    ])("%s → %s", (input, expected) => {
-      expect(normalizeApiUrl(input)).toBe(expected);
-    });
-  });
-
   describe("assertSecureApiUrl", () => {
     it("accepts an https:// URL", () => {
-      expect(() => assertSecureApiUrl("https://travel.voyagier.com/api")).not.toThrow();
+      expect(() => assertSecureApiUrl("https://mcp.voyagier.com/api/mcp")).not.toThrow();
     });
 
     it("accepts http://localhost (loopback dev exemption)", () => {
-      expect(() => assertSecureApiUrl("http://localhost:3000/api")).not.toThrow();
+      expect(() => assertSecureApiUrl("http://localhost:3000/api/mcp")).not.toThrow();
     });
 
     it("accepts http://127.0.0.1 (loopback dev exemption)", () => {
@@ -355,7 +173,7 @@ describe("config", () => {
       } catch (err) {
         expect(err).toBeInstanceOf(CliError);
         expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
-        expect((err as CliError).message).toMatch(/Insecure API URL/);
+        expect((err as CliError).message).toMatch(/Insecure URL/);
       }
     });
 
@@ -376,23 +194,8 @@ describe("config", () => {
       } catch (err) {
         expect(err).toBeInstanceOf(CliError);
         expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
-        expect((err as CliError).message).toMatch(/Invalid API URL/);
-      }
-    });
-
-    it("is enforced on the read path: a cleartext VOYAGIER_API_URL makes getApiUrl throw", () => {
-      // A token + insecure URL supplied via env must never be consumed — the
-      // token would otherwise be sent as a Bearer header over cleartext http://.
-      process.env.VOYAGIER_TOKEN = "env-tok";
-      process.env.VOYAGIER_API_URL = "http://evil.example.com/api";
-      try {
-        getApiUrl();
-        fail("Expected CliError to be thrown");
-      } catch (err) {
-        expect(err).toBeInstanceOf(CliError);
-        expect((err as CliError).code).toBe(CliErrorCode.VALIDATION);
+        expect((err as CliError).message).toMatch(/Invalid URL/);
       }
     });
   });
-
 });

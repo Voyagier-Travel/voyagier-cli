@@ -5,16 +5,6 @@ import { CliError, CliErrorCode } from "./errors.js";
 export { formatPrice, cents, money } from "./format.js";
 
 /**
- * Mask a potentially sensitive loyalty value for terminal output: member
- * numbers are write-only everywhere else (server returns code + last4 only),
- * so human-readable renders and error messages must not echo the full value to
- * terminals or agent transcripts. Storage and API sync keep the full value.
- */
-export function maskLoyaltyValue(value: string): string {
-  return value.length > 4 ? `••••${value.slice(-4)}` : "••••";
-}
-
-/**
  * Open a URL in the user's default browser. Throws CliError(VALIDATION) for
  * malformed or non-http(s) URLs; launch/spawn failures are still silent.
  *
@@ -79,7 +69,7 @@ export function sanitizeExternalText(value: string): string {
 /**
  * Recursively sanitize every string in an API response (objects, arrays,
  * nested). Non-string primitives pass through untouched. Applied once at the
- * graphql() boundary so every command and output mode is covered.
+ * MCP result boundary so every command and output mode is covered.
  */
 export function sanitizeExternalData<T>(data: T): T {
   if (typeof data === "string") {

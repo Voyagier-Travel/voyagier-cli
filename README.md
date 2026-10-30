@@ -78,7 +78,7 @@ voyagier get_tool_details --name set_hotel_dates --json
 | `voyagier <tool_name>` | One command per MCP tool, for example `list_plans`, `search_destinations`, `create_plan`, `search_flights`, `promote_search`, `get_options`, `select_option`, `get_plan_status`, `get_plan_quote`, `book_plan`. `voyagier --help` lists the server's current set; `search_tools` and `get_tool_details` find and describe tools from inside the CLI |
 | `voyagier doctor` | Self-check: credentials, MCP server connection + tool list, identity, state, version |
 | `voyagier update` | Update a global npm install to the latest release (alias `upgrade`; `--check` reports without installing, `--json` for scripts) |
-| `voyagier auth` | Manage the Personal Access Token (`login`, `set-token`, `status`, `logout`, `setup`) |
+| `voyagier auth` | Manage the Personal Access Token (`login`, `set-token`, `status`, `logout`). `status` reads your identity, roles and home base from the server's `whoami` tool; traveller details (passport, frequent-flyer, hotel loyalty) are managed on your web profile or with the `update_traveller` / `add_traveller_document` tools (`auth setup` prints the pointer) |
 | `voyagier mcp install <client>` | Point an MCP client (Claude Code, Cursor, Claude Desktop) at the Voyagier MCP server |
 | `voyagier mcp` | Run a stdio MCP server that proxies the hosted Voyagier MCP server |
 | `voyagier agent-docs` | Print the server's agent guidance, then the CLI usage notes (AGENT.md) |
@@ -141,8 +141,7 @@ It has no tool table of its own. `tools/list` and `tools/call` are forwarded to 
 |----------|-------------|
 | `VOYAGIER_TOKEN` | Personal access token (overrides the saved one) |
 | `VOYAGIER_MCP_URL` | MCP endpoint every tool command, the stdio proxy and the extension call (default: `https://mcp.voyagier.com/api/mcp`). Must be `https://`; plain `http://` is accepted only for `localhost` / `127.0.0.1` / `::1` during local development |
-| `VOYAGIER_API_URL` | GraphQL base URL used by `voyagier auth setup` profile updates (default: `https://travel.voyagier.com/api`); honored together with `VOYAGIER_TOKEN` |
-| `VOYAGIER_CONFIG_DIR` | Directory for credentials and the tool cache (default: `~/.voyagier`) |
+| `VOYAGIER_CONFIG_DIR` | Directory for the token and the tool cache (default: `~/.voyagier`) |
 
 ## How It Works
 
@@ -161,7 +160,7 @@ Once your account is granted API access, mint a personal access token at [travel
 
 Non-admin tokens expire (90 days max, 30 by default) — mint a fresh one when yours lapses.
 
-> **Tip:** prefer `voyagier login` (interactive prompt) over `voyagier auth set-token <token>` — it keeps your token out of shell history. For scripts, pipe the token via stdin (`echo "$VOYAGIER_PAT" | voyagier auth set-token -`) or use the `VOYAGIER_TOKEN` env var.
+> **Tip:** prefer `voyagier login` (interactive prompt) over `voyagier auth set-token <token>` — it keeps your token out of shell history. For scripts, pipe the token via stdin (`echo "$VOYAGIER_PAT" | voyagier auth set-token -`) or use the `VOYAGIER_TOKEN` env var. Name each token for the machine that uses it (e.g. `cli-laptop`): that name is the audit label on every call it makes.
 
 ## Claude Desktop Extension (MCPB)
 

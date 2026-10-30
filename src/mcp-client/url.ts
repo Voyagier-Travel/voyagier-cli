@@ -5,9 +5,8 @@ export const DEFAULT_MCP_URL = "https://mcp.voyagier.com/api/mcp";
 
 /**
  * Resolve the MCP endpoint: `VOYAGIER_MCP_URL` when set, else the hosted
- * server. The override must be https, or http only on a loopback host — the
- * same rule `VOYAGIER_API_URL` follows, because the PAT travels as a Bearer
- * header on every request.
+ * server. The override must be https, or http only on a loopback host,
+ * because the PAT travels as a Bearer header on every request.
  *
  * @throws CliError(VALIDATION) for an unparseable or insecure override.
  */

@@ -114,7 +114,7 @@ Full reference: voyagier agent-docs`,
     );
 
   // Local commands first: they never need the remote tool list.
-  registerAuthCommands(program);
+  registerAuthCommands(program, { version });
   registerDoctorCommand(program, version);
   registerUpdateCommand(program, version);
   registerAgentDocsCommand(program, { version });
