@@ -107,7 +107,7 @@ The MCP endpoint is rate limited per token: **180 requests per minute** is the c
 
 ### State files (`~/.voyagier/`)
 
-- `credentials.json` — PAT + API URL (managed by `voyagier auth`)
+- `credentials.json` — the PAT, nothing else (managed by `voyagier auth`). Identity, roles and home base come from the server's `whoami` tool on demand; traveller details are never stored locally.
 - `tools-cache.json` — the server's `tools/list` and `instructions`, refreshed when older than 24 hours, by `voyagier doctor`, and when you run a command the cache does not know. Delete it to force a refresh.
 
 Override the directory with `VOYAGIER_CONFIG_DIR`.
@@ -124,11 +124,14 @@ The list is the server's. Run `voyagier --help` for the current set and `voyagie
 ```bash
 voyagier login                     # browser-based flow (keeps the token out of shell history)
 echo "$VOYAGIER_PAT" | voyagier auth set-token -   # scripting: token via stdin
-voyagier auth status               # human-readable auth status
+voyagier auth status               # masked token, MCP URL, then whoami: user, roles, home base, audit label
+voyagier auth setup                # where traveller details live: the web profile, update_traveller, add_traveller_document
 voyagier auth logout
 ```
 
-Env vars: `VOYAGIER_TOKEN` (token; overrides the saved one), `VOYAGIER_MCP_URL` (MCP endpoint; default `https://mcp.voyagier.com/api/mcp`; must be https, or http on localhost for local development), `VOYAGIER_API_URL` (GraphQL base used only by `auth setup`; honored together with `VOYAGIER_TOKEN`), `VOYAGIER_CONFIG_DIR` (state directory; default `~/.voyagier`).
+`auth status` and `auth login` verify the token with the server's `whoami` tool and print its answer (email, name, role flags, `profile.homeLocation`); the CLI keeps no copy. Traveller details — home base, passport, frequent-flyer and hotel loyalty numbers — are edited on the web profile (`https://travel.voyagier.com/me/settings`) or with the server's `update_traveller` / `add_traveller_document` tools; `auth setup` prints that pointer, naming the tools the live tool list publishes.
+
+Env vars: `VOYAGIER_TOKEN` (token; overrides the saved one), `VOYAGIER_MCP_URL` (MCP endpoint; default `https://mcp.voyagier.com/api/mcp`; must be https, or http on localhost for local development), `VOYAGIER_CONFIG_DIR` (state directory; default `~/.voyagier`).
 
 ### Doctor (local)
 ```bash

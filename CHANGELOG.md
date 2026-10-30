@@ -8,6 +8,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### 5.0.0 (breaking)
+
+#### Removed — BREAKING
+
+- **The local traveller profile is gone.** `voyagier auth setup` no longer collects home airports (`--airports`), preferred cabin (`--cabin`), passport, frequent-flyer or hotel loyalty numbers, and `credentials.json` holds the token only — no cached profile, no API URL. Nothing in the CLI read that data (no command ever defaulted `--from` to a home airport), and the server owns all of it: the home base on the web profile (`whoami` reports it as `profile.homeLocation` and the server uses it as the default booking origin), passports and loyalty numbers on the plan's travellers via `update_traveller` / `add_traveller_document`. `auth setup` now prints that pointer, naming the traveller tools the live tool list publishes.
+- **The direct GraphQL client is gone** (`src/api.ts`, `src/queries.ts`): every request the CLI makes is an MCP call. With it go `VOYAGIER_API_URL`, the `--url` option of `auth set-token` and `auth login`, the URL normalization and its one-time warning, and the `doctor` `api-url` check. `VOYAGIER_MCP_URL` is the one endpoint setting.
+- Existing installs: run `voyagier login` (or `auth set-token -`) once after upgrading; the old `credentials.json` fields are ignored.
+
+#### Changed — BREAKING
+
+- **`auth status` and `auth login` read the identity from the server's `whoami` tool** instead of a GraphQL `me` query: user (name and email), roles (travel advisor / trip planner / admin and the `role` the account plans as), home base (`profile.homeLocation`), and the token's audit label (the name given to the token when it was minted; printed when the server reports it, otherwise explained). `status` prints the MCP URL instead of the API URL and `MCP: connected` instead of `GraphQL: connected`. `login` takes `--web-url <origin>` (default `https://travel.voyagier.com`) for the tokens page and tells you to name the token for the machine, since that name is what the server's audit log records.
+
 ### Changed
 
 - **Checked-in registry snapshot (`src/mcp/fixtures/remote-tools.json`) refreshed to the current server registry (87 tools).** The server merged the three per-event guide tools (`add_guide_event`, `update_guide_event`, `delete_guide_event`) into `edit_plan_events` (batched `--add` / `--update` / `--delete`) and added `list_plan_events`; `list_plans` gains `--start_date` / `--end_date`. Generated commands pick this up from the live `tools/list` at startup; the snapshot only keeps the offline specs and docs in step. No CLI behaviour changes.

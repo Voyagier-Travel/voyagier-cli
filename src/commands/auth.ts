@@ -1,147 +1,123 @@
+/**
+ * `voyagier auth` — the Personal Access Token and nothing else.
+ *
+ * The CLI keeps one secret locally (the PAT). Everything about the account —
+ * email, name, roles, home base — is read from the MCP server's `whoami` tool
+ * on demand; traveller details (passport, frequent-flyer and hotel loyalty
+ * numbers) live on the server and are edited on the web profile or through
+ * the traveller tools the server publishes (`update_traveller`,
+ * `add_traveller_document`). Nothing of that is cached on disk.
+ *
+ * Surface:
+ *   voyagier auth login [--web-url <origin>]
+ *   voyagier auth set-token <token|->
+ *   voyagier auth status
+ *   voyagier auth setup
+ *   voyagier auth logout
+ */
 import { Command } from "commander";
 import chalk from "chalk";
 import { createInterface } from "readline/promises";
 import { stdin, stdout } from "process";
-import { openBrowser, maskLoyaltyValue } from "../utils.js";
-
-import { saveCredentials, getToken, getApiUrl, clearCredentials, credentialsExist, saveUserContext, getUserContext, normalizeApiUrl } from "../config.js";
-import type { UserContext } from "../config.js";
-import { graphql } from "../api.js";
-import { UPDATE_MY_USER } from "../queries.js";
+import { openBrowser, sanitizeExternalData, sanitizeExternalText } from "../utils.js";
+import { saveCredentials, getToken, clearCredentials, credentialsExist } from "../config.js";
 import { CliError, CliErrorCode, authFailedMessage } from "../errors.js";
+import type { McpClient, McpToolDescriptor, McpToolResult } from "../mcp-client/client.js";
+import { createDefaultClient, parseToolContent } from "../mcp-client/generated-commands.js";
+import { getMcpUrl } from "../mcp-client/url.js";
 
-// City → common airport suggestions
-const CITY_AIRPORTS: Record<string, string[]> = {
-  "Baltimore": ["BWI"],
-  "Washington": ["DCA", "IAD"],
-  "New York": ["JFK", "EWR", "LGA"],
-  "Los Angeles": ["LAX"],
-  "Chicago": ["ORD", "MDW"],
-  "San Francisco": ["SFO", "OAK", "SJC"],
-  "Dallas": ["DFW", "DAL"],
-  "Houston": ["IAH", "HOU"],
-  "Atlanta": ["ATL"],
-  "Miami": ["MIA", "FLL"],
-  "Boston": ["BOS"],
-  "Denver": ["DEN"],
-  "Seattle": ["SEA"],
-  "Phoenix": ["PHX"],
-  "Detroit": ["DTW"],
-  "Minneapolis": ["MSP"],
-  "Orlando": ["MCO"],
-  "Philadelphia": ["PHL"],
-  "Charlotte": ["CLT"],
-  "Nashville": ["BNA"],
-  "Austin": ["AUS"],
-  "Portland": ["PDX"],
-  "San Diego": ["SAN"],
-  "Tampa": ["TPA"],
-  "Salt Lake City": ["SLC"],
-  "St. Louis": ["STL"],
-  "Pittsburgh": ["PIT"],
-  "Cleveland": ["CLE"],
-  "Indianapolis": ["IND"],
-  "Cincinnati": ["CVG"],
-  "Kansas City": ["MCI"],
-  "Raleigh": ["RDU"],
-  "San Juan": ["SJU"],
-  "Honolulu": ["HNL"],
-};
+/** The web app where tokens are minted and the profile is edited. */
+export const DEFAULT_WEB_URL = "https://travel.voyagier.com";
 
-const CABIN_OPTIONS = ["economy", "premium_economy", "business", "first"] as const;
-const CABIN_LABELS: Record<string, string> = {
-  economy: "Economy",
-  premium_economy: "Premium Economy",
-  business: "Business",
-  first: "First",
-};
+/** Server tools that edit traveller details; named in `auth setup` when the live tool list has them. */
+export const TRAVELLER_TOOL_NAMES: readonly string[] = ["update_traveller", "add_traveller_document"];
 
-function validateIataCode(code: string): boolean {
-  return /^[A-Z]{3}$/.test(code);
+/** Injectable collaborators (tests pass a client with a scripted fetch). */
+export interface AuthDeps {
+  createClient?: () => McpClient;
+  /** CLI version, sent as clientInfo.version on the remote handshake. */
+  version?: string;
+}
+
+/** The fields of a `whoami` payload the CLI prints. Everything else is ignored. */
+export interface Identity {
+  email?: string;
+  name?: string;
+  roles: string[];
+  role?: string;
+  homeBase?: string;
+  /** The token's audit label when the server reports it. */
+  tokenName?: string;
+}
+
+function str(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? sanitizeExternalText(value.trim()) : undefined;
+}
+
+/** Pick the identity fields out of a parsed `whoami` payload. Never throws. */
+export function identityFromWhoami(payload: unknown): Identity {
+  const rec = payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
+  const roles: string[] = [];
+  if (rec.isTravelAdvisor === true) roles.push("travel advisor");
+  if (rec.isTripPlanner === true) roles.push("trip planner");
+  if (rec.isAdmin === true) roles.push("admin");
+
+  const profile = rec.profile && typeof rec.profile === "object" ? (rec.profile as Record<string, unknown>) : {};
+  const home = profile.homeLocation && typeof profile.homeLocation === "object" ? (profile.homeLocation as Record<string, unknown>) : {};
+  const homeBase = [str(home.name), str(home.addressRegion), str(home.addressCountry)].filter((s): s is string => !!s).join(", ") || undefined;
+
+  const token = rec.token && typeof rec.token === "object" ? (rec.token as Record<string, unknown>) : {};
+  const tokenName = str(rec.tokenName) ?? str(token.name);
+
+  const first = str(rec.firstName);
+  const last = str(rec.lastName);
+  const name = str(rec.name) ?? ([first, last].filter(Boolean).join(" ") || undefined);
+
+  return { email: str(rec.email), name, roles, role: str(rec.role), homeBase, tokenName };
+}
+
+/** Human lines for an identity. Column-aligned for `auth status`. */
+export function formatIdentity(id: Identity, webUrl: string = DEFAULT_WEB_URL): string[] {
+  const who = id.name && id.email ? `${id.name} (${id.email})` : id.email ?? id.name ?? "unknown";
+  const lines = [`  User:        ${chalk.green(who)}`];
+  const roles = id.roles.length ? id.roles.join(", ") : "traveller";
+  lines.push(`  Roles:       ${roles}${id.role ? chalk.dim(` · plans as ${id.role}`) : ""}`);
+  lines.push(
+    id.homeBase
+      ? `  Home base:   ${id.homeBase}`
+      : `  Home base:   ${chalk.dim(`not set — set it at ${webUrl}/me/settings`)}`,
+  );
+  lines.push(
+    id.tokenName
+      ? `  Audit label: ${id.tokenName}`
+      : `  Audit label: ${chalk.dim(`the name you gave this token at ${webUrl}/me/settings/tokens (recorded on every call)`)}`,
+  );
+  return lines;
 }
 
 /**
- * Render the masked passport shape the API returns (a full passport number can
- * never round-trip — only the last 4 digits plus metadata are ever read back).
- * The same one-line format is used on file, on confirmation, and in the summary.
+ * The payload of a `whoami` result. Prefer `structuredContent` when the server
+ * sends it (the text block may then be a human summary rather than JSON), and
+ * fall back to the parsed text content otherwise. Same precedence as `runTool`.
  */
-function formatPassport(p: { last4: string; issueCountry?: string; expirationDate?: string }): string {
-  const bits = [`••••${p.last4}`];
-  if (p.issueCountry) bits.push(p.issueCountry);
-  if (p.expirationDate) bits.push(`exp ${p.expirationDate}`);
-  return bits.join(" · ");
+export function whoamiPayload(result: McpToolResult): unknown {
+  return result.structuredContent !== undefined ? sanitizeExternalData(result.structuredContent) : parseToolContent(result);
 }
 
-async function prompt(rl: ReturnType<typeof createInterface>, question: string): Promise<string> {
-  const answer = await rl.question(question);
-  return answer.trim();
-}
-
-/**
- * Prompt with the typed characters suppressed (standard password-prompt
- * technique: temporarily route the readline interface's output through a muted
- * writer so keystrokes are never echoed to the terminal). Used for the passport
- * number, which is sent to the profile but must never be displayed. Falls back
- * to a plain question when the interface exposes no writable output (e.g. tests).
- */
-async function promptMuted(rl: ReturnType<typeof createInterface>, question: string): Promise<string> {
-  const iface = rl as unknown as {
-    _writeToOutput?: (s: string) => void;
-    output?: { write: (s: string) => void };
-  };
-  const origWriteToOutput = iface._writeToOutput;
-  const canMute = typeof origWriteToOutput === "function" && !!iface.output;
-  let muted = false;
-  if (canMute) {
-    iface._writeToOutput = (stringToWrite: string) => {
-      // Echo the prompt itself (written before muting begins), then swallow
-      // every keystroke so the number never reaches the terminal.
-      if (!muted) iface.output!.write(stringToWrite);
-    };
-  }
-  try {
-    const pending = rl.question(question);
-    // The prompt is written synchronously by question(); mute what follows.
-    muted = true;
-    let answer = "";
-    try {
-      answer = await pending;
-    } catch {
-      // EOF (Ctrl-D) or an aborted line reads as an empty answer (skip),
-      // never a crash mid-setup.
-      answer = "";
-    }
-    return answer.trim();
-  } finally {
-    if (canMute) {
-      iface._writeToOutput = origWriteToOutput;
-      // The Enter keystroke was muted too — move to the next line ourselves.
-      iface.output!.write("\n");
-    }
-  }
+/** Call `whoami` and parse it. Errors propagate as the client's CliErrors. */
+export async function fetchIdentity(client: McpClient): Promise<Identity> {
+  const result = await client.toolsCall("whoami", {});
+  return identityFromWhoami(whoamiPayload(result));
 }
 
 /**
- * Read a passport number under a muted prompt, validating it as 6–9 uppercase
- * letters/digits. On invalid input it explains the format and re-prompts once
- * (never a silent skip). Returns the validated number, or null when the user
- * presses Enter or the retry also fails.
+ * The one-line pointer that replaces the old local traveller profile: the
+ * web profile, plus whichever traveller tools the live tool list publishes.
  */
-async function readPassportNumber(
-  rl: ReturnType<typeof createInterface>,
-  promptText: string,
-): Promise<string | null> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const raw = (await promptMuted(rl, promptText)).toUpperCase();
-    if (!raw) return null;
-    if (/^[A-Z0-9]{6,9}$/.test(raw)) return raw;
-    if (attempt === 0) {
-      console.log(chalk.yellow("     ⚠ A passport number is 6–9 letters or digits. Let's try that again."));
-    } else {
-      console.log(chalk.yellow("     ⚠ That still isn't a valid passport number."));
-    }
-  }
-  return null;
+export function travellerDataHint(tools: readonly McpToolDescriptor[] | null, webUrl: string = DEFAULT_WEB_URL): string {
+  const names = tools ? TRAVELLER_TOOL_NAMES.filter((n) => tools.some((t) => t.name === n)) : [];
+  const viaTools = names.length ? ` — or from here: ${names.map((n) => `voyagier ${n} --help`).join(" · ")}` : "";
+  return `Traveller details (home base, passport, frequent-flyer and hotel loyalty numbers) live on your Voyagier profile: ${webUrl}/me/settings${viaTools}`;
 }
 
 /** Read all of stdin as UTF-8 (used by `set-token -`). */
@@ -153,150 +129,27 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf-8");
 }
 
-interface MeResponse {
-  me: {
-    id: string;
-    firstName: string;
-    lastName: string;
-    email: string;
-    name?: string;
-    dateOfBirth?: string | null;
-    gender?: string | null;
-    passport?: { last4: string; issueCountry: string; nationalityCountry: string; expirationDate: string } | null;
-    frequentFlyerPrograms?: Array<{ airlineCode: string; membershipNumber: string }>;
-    profile?: {
-      location?: string;
-      city?: { name: string } | null;
-      country?: { name: string } | null;
-    };
-  };
+function webOrigin(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new CliError(CliErrorCode.VALIDATION, `Invalid --web-url "${raw}". Expected an absolute https:// URL (e.g. ${DEFAULT_WEB_URL}).`);
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new CliError(CliErrorCode.VALIDATION, `Invalid --web-url "${raw}". Only http(s) URLs are opened in the browser.`);
+  }
+  return parsed.origin;
 }
 
-const ME_QUERY = `{ me { id firstName lastName email name dateOfBirth gender passport { last4 issueCountry nationalityCountry expirationDate } frequentFlyerPrograms { airlineCode membershipNumber } profile { location city { name } country { name } } } }`;
-
-interface UpdateMyUserResponse {
-  updateMyUser: {
-    // Masked read shape — a full passport number can never round-trip.
-    passport?: { last4: string; issueCountry: string; nationalityCountry: string; expirationDate: string } | null;
-    // Full frequent-flyer list (user-level read is NOT masked).
-    frequentFlyerPrograms?: Array<{ airlineCode: string; membershipNumber: string }> | null;
-  };
-}
-
-/**
- * Fetch the full user profile and build a UserContext with smart defaults.
- * Shared by both `auth login` and `auth setup`.
- */
-async function fetchAndBuildContext(): Promise<{ ctx: UserContext; me: MeResponse["me"] }> {
-  const data = await graphql<MeResponse>(ME_QUERY);
-  const me = data.me;
-
-  // Preserve existing preferences if user already ran setup
-  const existingCtx = getUserContext();
-
-  const rawName = me.name ?? `${me.firstName ?? ""} ${me.lastName ?? ""}`.trim();
-  const displayName = rawName || me.email;
-  const location = me.profile?.location;
-  const city = me.profile?.city?.name;
-  const country = me.profile?.country?.name;
-
-  // Auto-detect home airports from city (preserve existing if already configured)
-  const detectedAirports = existingCtx?.homeAirports?.length
-    ? existingCtx.homeAirports
-    : (city ? (CITY_AIRPORTS[city] ?? []) : []);
-
-  const ctx: UserContext = {
-    id: me.id,
-    name: displayName,
-    firstName: me.firstName,
-    lastName: me.lastName,
-    email: me.email,
-    dateOfBirth: me.dateOfBirth ?? undefined,
-    gender: me.gender ?? undefined,
-    location: location ?? undefined,
-    city: city ?? undefined,
-    country: country ?? undefined,
-    homeAirports: detectedAirports,
-    preferredCabin: existingCtx?.preferredCabin ?? "economy",
-  };
-
-  // Import passport if on profile (the API only ever returns the masked shape).
-  if (me.passport) {
-    ctx.passport = me.passport;
-  }
-
-  // Import frequent flyer programs if on profile. The user-level read returns
-  // full membership numbers, which we store and display as provided.
-  if (me.frequentFlyerPrograms && me.frequentFlyerPrograms.length > 0) {
-    ctx.frequentFlyerPrograms = me.frequentFlyerPrograms.map((ff) => ({
-      airlineCode: ff.airlineCode,
-      membershipNumber: ff.membershipNumber,
-    }));
-  }
-
-  // Hotel loyalty lives only in the local profile — carry any existing
-  // defaults forward across re-runs.
-  if (existingCtx?.hotelLoyaltyPrograms && existingCtx.hotelLoyaltyPrograms.length > 0) {
-    ctx.hotelLoyaltyPrograms = existingCtx.hotelLoyaltyPrograms;
-  }
-
-  return { ctx, me };
-}
-
-/**
- * Print a summary of the saved profile context.
- */
-function printProfileSummary(ctx: UserContext, me: MeResponse["me"]): void {
-  const parts: string[] = [];
-
-  // Location + airports
-  const locParts = [ctx.location, ctx.city, ctx.country].filter(Boolean);
-  if (locParts.length > 0) {
-    const airportStr = ctx.homeAirports.length > 0 ? ` (${ctx.homeAirports.join(", ")})` : "";
-    parts.push(`  📍 ${locParts.join(" · ")}${airportStr}`);
-  } else if (ctx.homeAirports.length > 0) {
-    parts.push(`  ✈️  Home: ${ctx.homeAirports.join(", ")}`);
-  }
-
-  // Cabin
-  if (ctx.preferredCabin) {
-    parts.push(`  💺 ${CABIN_LABELS[ctx.preferredCabin] ?? ctx.preferredCabin}`);
-  }
-
-  // Traveller data
-  const travellerParts: string[] = [];
-  if (me.dateOfBirth) travellerParts.push(`DOB: ${me.dateOfBirth}`);
-  if (me.gender) travellerParts.push(me.gender);
-  if (me.passport) travellerParts.push(`Passport: ••••${me.passport.last4}`);
-  if (travellerParts.length > 0) {
-    parts.push(`  👤 ${travellerParts.join(" · ")}`);
-  }
-
-  // Frequent flyer (membership numbers masked to last-4 for display)
-  if (me.frequentFlyerPrograms && me.frequentFlyerPrograms.length > 0) {
-    const ffs = me.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskLoyaltyValue(ff.membershipNumber)}`).join(", ");
-    parts.push(`  ✈️  ${ffs}`);
-  }
-
-  // Hotel loyalty (local profile default, masked to last-4 for display)
-  if (ctx.hotelLoyaltyPrograms && ctx.hotelLoyaltyPrograms.length > 0) {
-    const hls = ctx.hotelLoyaltyPrograms.map(hl => `${hl.chainCode} ${maskLoyaltyValue(hl.membershipNumber)}`).join(", ");
-    parts.push(`  🏨 ${hls}`);
-  }
-
-  if (parts.length > 0) {
-    console.log(parts.join("\n"));
-  }
-}
-
-export function registerAuthCommands(program: Command): void {
+export function registerAuthCommands(program: Command, deps: AuthDeps = {}): void {
   const auth = program.command("auth").description("Manage authentication");
+  const makeClient = (): McpClient => (deps.createClient ?? (() => createDefaultClient(deps.version ?? "0.0.0")))();
 
   auth
     .command("set-token <token>")
     .description("Save a personal access token (use '-' to read the token from stdin, keeping it out of shell history)")
-    .option("--url <apiUrl>", "API base URL", "https://travel.voyagier.com/api")
-    .action(async (token: string, opts) => {
+    .action(async (token: string) => {
       // M4: `set-token -` reads the token from stdin (trimmed) so scripts can
       // pipe it in without it landing in argv (shell history / `ps`).
       let tokenValue = token;
@@ -309,102 +162,74 @@ export function registerAuthCommands(program: Command): void {
           );
         }
       }
-      const savedUrl = saveCredentials(tokenValue, opts.url);
+      saveCredentials(tokenValue);
       console.log(chalk.green("✓ Token saved."));
-      console.log(chalk.dim(`  API URL: ${savedUrl}`));
-      console.log(chalk.dim("  Next: voyagier auth setup"));
+      console.log(chalk.dim("  Next: voyagier auth status"));
     });
 
   auth
     .command("status")
-    .description("Check authentication status and profile")
+    .description("Check authentication status and identity (via the MCP whoami tool)")
     .action(async () => {
       if (!credentialsExist()) {
         console.log(chalk.red(authFailedMessage("Not authenticated.")));
         return;
       }
 
-      const apiUrl = getApiUrl();
       const token = getToken();
       const masked = token.length > 12 ? token.slice(0, 8) + "••••" + token.slice(-4) : "••••";
 
       console.log(chalk.bold("\nVoyagier CLI Status\n"));
-      console.log(`  Token:   ${chalk.dim(masked)}`);
-      console.log(`  API URL: ${chalk.dim(apiUrl)}`);
+      console.log(`  Token:       ${chalk.dim(masked)}`);
+
+      let url: string;
+      try {
+        url = getMcpUrl();
+      } catch (err) {
+        console.log(`\n  ${chalk.red("✗")} MCP URL: ${err instanceof Error ? err.message : String(err)}\n`);
+        return;
+      }
+      console.log(`  MCP URL:     ${chalk.dim(url)}`);
 
       try {
-        const data = await graphql<{ me: { email: string; name?: string } }>(
-          `{ me { email name } }`
-        );
-        const user = data.me;
-        const displayName = user.name ? `${user.name} (${user.email})` : user.email;
-        console.log(`  User:    ${chalk.green(displayName)}`);
-        console.log(`\n  ${chalk.green("✓")} GraphQL: connected`);
+        const identity = await fetchIdentity(makeClient());
+        console.log();
+        for (const line of formatIdentity(identity)) console.log(line);
+        console.log(`\n  ${chalk.green("✓")} MCP: connected\n`);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (message.includes("401") || message.includes("Authentication")) {
-          console.log(`\n  ${chalk.red("✗")} GraphQL: authentication failed`);
+        if (err instanceof CliError && err.code === CliErrorCode.AUTH_FAILED) {
+          console.log(`\n  ${chalk.red("✗")} MCP: token rejected by ${url}. Run: voyagier auth login\n`);
         } else {
-          console.log(`\n  ${chalk.red("✗")} GraphQL: ${message}`);
+          const message = sanitizeExternalText(err instanceof Error ? err.message : String(err));
+          console.log(`\n  ${chalk.red("✗")} MCP: ${message}\n`);
         }
       }
-
-      // Show cached profile
-      const ctx = getUserContext();
-      if (ctx) {
-        console.log(chalk.bold("\n  Profile (cached)\n"));
-        if (ctx.location) console.log(`  📍 Location:   ${ctx.location}${ctx.city ? ` · ${ctx.city}` : ""}${ctx.country ? ` · ${ctx.country}` : ""}`);
-        if (ctx.homeAirports.length > 0) {
-          const airports = ctx.homeAirports.map((a, i) => i === 0 ? `${a} (primary)` : a).join(", ");
-          console.log(`  ✈️  Airports:   ${airports}`);
-        }
-        if (ctx.preferredCabin) console.log(`  💺 Cabin:      ${CABIN_LABELS[ctx.preferredCabin] ?? ctx.preferredCabin}`);
-        if (ctx.passport) {
-          console.log(`  🛂 Passport:   ••••${ctx.passport.last4} (${ctx.passport.issueCountry}, exp ${ctx.passport.expirationDate})`);
-        }
-        if (ctx.frequentFlyerPrograms && ctx.frequentFlyerPrograms.length > 0) {
-          const ffs = ctx.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskLoyaltyValue(ff.membershipNumber)}`).join(", ");
-          console.log(`  ✈️  FF:         ${ffs}`);
-        }
-        if (ctx.hotelLoyaltyPrograms && ctx.hotelLoyaltyPrograms.length > 0) {
-          const hls = ctx.hotelLoyaltyPrograms.map(hl => `${hl.chainCode} ${maskLoyaltyValue(hl.membershipNumber)}`).join(", ");
-          console.log(`  🏨 Hotel:      ${hls}`);
-        }
-      } else {
-        console.log(chalk.dim("\n  No profile cached. Run: voyagier auth setup"));
-      }
-
-      console.log();
     });
+
   auth
     .command("login")
     .description("Log in to Voyagier")
-    .option("--url <apiUrl>", "API base URL", "https://travel.voyagier.com/api")
+    .option("--web-url <origin>", "Voyagier web app where tokens are minted", DEFAULT_WEB_URL)
     .action(async (opts) => {
-      // Normalize first: a bare origin, an endpoint URL (.../api/graphql) or
-      // the hosted MCP URL (.../api/mcp) must resolve to the API base before
-      // the settings page is derived from it, and before it is persisted.
-      const apiUrl = normalizeApiUrl(opts.url as string);
+      const webUrl = webOrigin(opts.webUrl as string);
+      const settingsUrl = `${webUrl}/me/settings/tokens`;
       const isInteractive = process.stdin.isTTY === true && !process.env.CI;
 
       console.log(chalk.bold("\nVoyagier CLI Login\n"));
 
-      // Derive web URL from API URL (strip /api suffix)
-      const webUrl = apiUrl.replace(/\/api\/?$/, "");
-
       if (!isInteractive) {
         // Non-interactive: just show instructions
         console.log("  Generate a Personal Access Token at:\n");
-        console.log(chalk.cyan(`    ${webUrl}/me/settings/tokens\n`));
+        console.log(chalk.cyan(`    ${settingsUrl}\n`));
+        console.log(chalk.dim("  Name the token for this machine (e.g. cli-laptop): that name is the audit label on every call it makes.\n"));
         console.log("  Then run:\n");
-        console.log(chalk.cyan("    voyagier auth set-token <your-token>\n"));
+        console.log(chalk.cyan('    echo "$VOYAGIER_PAT" | voyagier auth set-token -\n'));
         return;
       }
 
       // Interactive: open browser + prompt for token
-      const settingsUrl = `${webUrl}/me/settings/tokens`;
       console.log(`  1. Go to ${chalk.cyan(settingsUrl)}`);
-      console.log(`  2. Generate a Personal Access Token`);
+      console.log(`  2. Generate a Personal Access Token ${chalk.dim("(name it for this machine, e.g. cli-laptop — that name is its audit label)")}`);
       console.log(`  3. Paste it below\n`);
       openBrowser(settingsUrl);
 
@@ -416,24 +241,14 @@ export function registerAuthCommands(program: Command): void {
           return;
         }
 
-        saveCredentials(token, apiUrl);
+        saveCredentials(token);
 
-        // Verify + auto-setup profile
         try {
-          const { ctx, me } = await fetchAndBuildContext();
-          saveUserContext(ctx);
-
-          const displayName = ctx.name || me.email;
-          console.log(chalk.green(`\n  ✓ Logged in as ${chalk.bold(displayName)} (${me.email})\n`));
-
-          printProfileSummary(ctx, me);
-
-          // Show what was auto-detected
-          if (ctx.homeAirports.length > 0) {
-            console.log(chalk.dim(`\n  Home airport auto-detected from your profile. Change with: voyagier auth setup --airports DCA,IAD`));
-          }
-
-          console.log(chalk.dim(`\n  Ready! Try: voyagier search flights --to EDI --date 2026-05-29\n`));
+          const identity = await fetchIdentity(makeClient());
+          const who = identity.name ?? identity.email ?? "you";
+          console.log(chalk.green(`\n  ✓ Logged in as ${chalk.bold(who)}${identity.email && identity.name ? ` (${identity.email})` : ""}\n`));
+          for (const line of formatIdentity(identity, webUrl)) console.log(line);
+          console.log(chalk.dim(`\n  Ready! Try: voyagier doctor · voyagier agent-docs · voyagier whoami --json\n`));
         } catch {
           console.log(chalk.green("\n  ✓ Token saved.\n"));
           console.log(chalk.yellow("  ⚠ Could not verify — token may be invalid. Check: voyagier auth status\n"));
@@ -442,7 +257,6 @@ export function registerAuthCommands(program: Command): void {
         rl.close();
       }
     });
-
 
   auth
     .command("logout")
@@ -454,327 +268,16 @@ export function registerAuthCommands(program: Command): void {
 
   auth
     .command("setup")
-    .description("Configure your traveller profile (airports, cabin, passport, frequent flyer, hotel loyalty)")
-    .option("--airports <codes>", "Home airport(s), comma-separated (e.g. BWI,DCA,IAD)")
-    .option("--cabin <class>", "Preferred cabin: economy, premium_economy, business, first")
-    .option("--skip-passport", "Skip passport setup")
-    .option("--skip-ff", "Skip frequent flyer setup")
-    .action(async (opts) => {
-      if (!credentialsExist()) {
-        console.log(chalk.red(authFailedMessage("Not authenticated.")));
-        return;
+    .description("Where traveller details are managed (the CLI keeps only your token)")
+    .action(async () => {
+      let tools: McpToolDescriptor[] | null = null;
+      if (credentialsExist()) {
+        try {
+          tools = await makeClient().toolsList();
+        } catch {
+          tools = null;
+        }
       }
-
-      console.log(chalk.bold("\n  Voyagier CLI Setup"));
-      console.log(chalk.dim("  ──────────────────\n"));
-
-      // Fetch user profile and build context with smart defaults
-      let me: MeResponse["me"];
-      let userCtx: UserContext;
-      try {
-        const result = await fetchAndBuildContext();
-        me = result.me;
-        userCtx = result.ctx;
-      } catch (err) {
-        if (err instanceof CliError) throw err;
-        const message = err instanceof Error ? err.message : String(err);
-        throw new CliError(CliErrorCode.API_ERROR, `Failed to fetch profile: ${message}`);
-      }
-
-      const displayName = userCtx.name;
-      console.log(`  ${chalk.green("✓")} Connected as ${chalk.bold(displayName)} (${me.email})\n`);
-
-      const location = userCtx.location;
-      const city = userCtx.city;
-      const country = userCtx.country;
-
-      if (location || city || country) {
-        console.log(`  📍 ${chalk.bold("Location")}`);
-        const parts = [location, city, country].filter(Boolean);
-        console.log(`     ${parts.join(" · ")}\n`);
-      }
-
-      // Show imported traveller data from web profile
-      if (me.dateOfBirth || me.gender) {
-        console.log(`  👤 ${chalk.bold("Traveller Info")} ${chalk.dim("(from your profile)")}`);
-        if (me.dateOfBirth) console.log(`     DOB: ${me.dateOfBirth}`);
-        if (me.gender) console.log(`     Gender: ${me.gender}`);
-        console.log();
-      }
-
-      const isInteractive = process.stdin.isTTY === true && !process.env.CI;
-      let rl: ReturnType<typeof createInterface> | null = null;
-      if (isInteractive) {
-        rl = createInterface({ input: stdin, output: stdout });
-      }
-
-      try {
-        // ── Home Airports ──
-        console.log(`  ✈️  ${chalk.bold("Home Airports")}`);
-        if (opts.airports) {
-          // Non-interactive
-          const codes = (opts.airports as string).split(",").map((c: string) => c.trim().toUpperCase()).filter(Boolean);
-          const invalid = codes.filter((c: string) => !validateIataCode(c));
-          if (invalid.length > 0) {
-            throw new CliError(CliErrorCode.VALIDATION, `Invalid airport code(s): ${invalid.join(", ")} (must be 3 letters)`);
-          }
-          userCtx.homeAirports = codes;
-        } else {
-          // Show auto-detected or suggest based on city
-          const autoDetected = userCtx.homeAirports.length > 0 ? userCtx.homeAirports : [];
-          const suggestion = city ? CITY_AIRPORTS[city] : undefined;
-          if (autoDetected.length > 0) {
-            console.log(chalk.dim(`     Auto-detected from your profile: ${autoDetected.join(", ")}`));
-          } else if (suggestion) {
-            console.log(chalk.dim(`     Your city is ${city}. Common airports: ${suggestion.join(", ")}`));
-          }
-          if (rl) {
-            const defaultStr = autoDetected.length > 0 ? autoDetected.join(",") : "";
-            const promptText = defaultStr
-              ? `     Home airport(s) [${defaultStr}]: `
-              : "     Enter your home airport(s), comma-separated (e.g. BWI,DCA): ";
-            const airportInput = await prompt(rl, promptText);
-            if (airportInput) {
-              const codes = airportInput.split(",").map(c => c.trim().toUpperCase()).filter(Boolean);
-              const invalid = codes.filter(c => !validateIataCode(c));
-              if (invalid.length > 0) {
-                console.log(chalk.yellow(`     ⚠ Skipping invalid code(s): ${invalid.join(", ")}`));
-              }
-              userCtx.homeAirports = codes.filter(c => validateIataCode(c));
-            }
-            // If user pressed Enter with no input, keep the auto-detected value
-          } else {
-            if (autoDetected.length === 0) {
-              console.log(chalk.dim("     Non-interactive mode. Use: voyagier auth setup --airports BWI,DCA"));
-            }
-          }
-        }
-        if (userCtx.homeAirports.length > 0) {
-          const display = userCtx.homeAirports.map((a, i) => i === 0 ? `${a} (primary)` : a).join(", ");
-          console.log(chalk.green(`     ✓ ${display}`));
-          console.log(chalk.dim(`     Flight searches will default to ${userCtx.homeAirports[0]} when --from is omitted.\n`));
-        } else {
-          console.log(chalk.dim("     Skipped. You can set this later with: voyagier auth setup --airports BWI,DCA\n"));
-        }
-
-        // ── Preferred Cabin ──
-        console.log(`  💺 ${chalk.bold("Preferred Cabin")}`);
-        if (opts.cabin) {
-          const cabin = (opts.cabin as string).toLowerCase();
-          if (CABIN_OPTIONS.includes(cabin as typeof CABIN_OPTIONS[number])) {
-            userCtx.preferredCabin = cabin as typeof CABIN_OPTIONS[number];
-          } else {
-            console.log(chalk.yellow(`     ⚠ Invalid cabin "${cabin}". Valid: ${CABIN_OPTIONS.join(", ")}`));
-          }
-        } else if (rl) {
-          console.log(chalk.dim("     1. Economy  2. Premium Economy  3. Business  4. First"));
-          const cabinInput = await prompt(rl, "     Select (1-4, or press Enter for Economy): ");
-          const idx = parseInt(cabinInput, 10);
-          if (idx >= 1 && idx <= 4) {
-            userCtx.preferredCabin = CABIN_OPTIONS[idx - 1];
-          } else {
-            userCtx.preferredCabin = "economy";
-          }
-        } else if (!opts.cabin) {
-          userCtx.preferredCabin = "economy";
-          console.log(chalk.dim("     Defaulting to Economy. Use: voyagier auth setup --cabin business"));
-        }
-        if (userCtx.preferredCabin) {
-          console.log(chalk.green(`     ✓ ${CABIN_LABELS[userCtx.preferredCabin]}\n`));
-        }
-
-        // Collected below and synced to the profile in a single updateMyUser
-        // call at the end. Passport: captured in full ONCE, sent, and only the
-        // API-returned masked shape is ever stored. Frequent flyer: sent in
-        // full, stored from the response (also in full).
-        let passportToSync:
-          | { passportNumber: string; issueCountry: string; nationalityCountry: string; expirationDate?: string }
-          | undefined;
-        let ffToSync: Array<{ airlineCode: string; membershipNumber: string }> | undefined;
-
-        // ── Passport ──
-        if (!opts.skipPassport) {
-          console.log(`  🛂 ${chalk.bold("Passport")}`);
-          const onFile = me.passport;
-          if (onFile) {
-            console.log(chalk.dim(`     On file: ${formatPassport(onFile)}`));
-          }
-          if (rl) {
-            const promptText = onFile
-              ? "     Enter to keep, or type a new number to replace (never displayed): "
-              : "     Passport number (sent securely to your profile, never displayed — or Enter to skip): ";
-            const number = await readPassportNumber(rl, promptText);
-            if (number) {
-              const defIssue = onFile?.issueCountry ?? "US";
-              const defNat = onFile?.nationalityCountry;
-              const defExp = onFile?.expirationDate;
-              const issueCountry = ((await prompt(rl, `     Issue country (e.g. US) [${defIssue}]: `)) || defIssue).toUpperCase();
-              const nationality = ((await prompt(rl, `     Nationality (e.g. US)${defNat ? ` [${defNat}]` : ""}: `)) || defNat || issueCountry).toUpperCase();
-              const expiration = (await prompt(rl, `     Expiration (YYYY-MM)${defExp ? ` [${defExp}]` : ""}: `)) || defExp || "";
-              passportToSync = { passportNumber: number, issueCountry, nationalityCountry: nationality };
-              if (expiration) passportToSync.expirationDate = expiration;
-              // Confirm with the masked shape only (last 4 of the entered
-              // number); the full number is sent to the profile, never stored
-              // or displayed.
-              console.log(chalk.green(`     ✓ ${formatPassport({ last4: number.slice(-4), issueCountry, expirationDate: expiration || undefined })}\n`));
-            } else if (onFile) {
-              userCtx.passport = onFile;
-              console.log(chalk.dim("     Keeping the passport on file.\n"));
-            } else {
-              console.log(chalk.dim("     Skipped.\n"));
-            }
-          } else if (onFile) {
-            userCtx.passport = onFile;
-            console.log(chalk.green("     ✓ Imported from profile\n"));
-          } else {
-            console.log(chalk.dim("     Skipped (non-interactive).\n"));
-          }
-        }
-
-        // ── Frequent Flyer Programs ──
-        if (!opts.skipFf) {
-          console.log(`  ✈️  ${chalk.bold("Frequent Flyer Programs")}`);
-          if (me.frequentFlyerPrograms && me.frequentFlyerPrograms.length > 0) {
-            // Already on the profile; membership numbers are masked for display.
-            const display = me.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskLoyaltyValue(ff.membershipNumber)}`).join(", ");
-            console.log(chalk.dim(`     On file: ${display}`));
-            console.log(chalk.green("     ✓ Imported from profile\n"));
-          } else if (rl) {
-            const programs: Array<{ airlineCode: string; membershipNumber: string }> = [];
-            let adding = true;
-            while (adding) {
-              const ffInput = await prompt(rl, programs.length === 0
-                ? "     Add a program (e.g. DL 1234567890, or Enter to skip): "
-                : "     Add another (or Enter to finish): ");
-              if (!ffInput) {
-                adding = false;
-              } else {
-                const parts = ffInput.split(/\s+/);
-                if (parts.length >= 2) {
-                  const airline = parts[0].toUpperCase();
-                  const number = parts.slice(1).join("");
-                  if (/^[A-Z0-9]{2}$/.test(airline)) {
-                    programs.push({ airlineCode: airline, membershipNumber: number });
-                    console.log(chalk.green(`     ✓ ${airline} ${maskLoyaltyValue(number)}`));
-                  } else {
-                    console.log(chalk.yellow(`     ⚠ Invalid airline code "${airline}" (expected 2 characters)`));
-                  }
-                } else {
-                  console.log(chalk.yellow("     ⚠ Format: AIRLINE NUMBER (e.g. DL 1234567890)"));
-                }
-              }
-            }
-            if (programs.length > 0) {
-              // Sent to the profile at the end; the stored value comes from the
-              // mutation response (server-side FF programs are copied onto
-              // travellers at booking time, so this is what credits miles).
-              ffToSync = programs;
-            }
-            console.log();
-          } else {
-            console.log(chalk.dim("     Skipped (non-interactive).\n"));
-          }
-        }
-
-        // ── Hotel Loyalty ──
-        // No server-side user field exists for hotel loyalty, so it is stored
-        // locally as a profile default and auto-applied to your own traveller.
-        console.log(`  🏨 ${chalk.bold("Hotel Loyalty")}`);
-        const existingHotel = userCtx.hotelLoyaltyPrograms ?? [];
-        if (existingHotel.length > 0) {
-          const display = existingHotel.map(hl => `${hl.chainCode} ${maskLoyaltyValue(hl.membershipNumber)}`).join(", ");
-          console.log(chalk.dim(`     On file: ${display}`));
-        }
-        if (rl) {
-          const programs: Array<{ chainCode: string; membershipNumber: string }> = [];
-          let adding = true;
-          while (adding) {
-            const hlInput = await prompt(rl, programs.length === 0
-              ? "     Add a program (e.g. HI 12345678, or Enter to skip): "
-              : "     Add another (or Enter to finish): ");
-            if (!hlInput) {
-              adding = false;
-            } else {
-              const parts = hlInput.split(/\s+/);
-              if (parts.length >= 2) {
-                const chain = parts[0].toUpperCase();
-                const number = parts.slice(1).join("");
-                if (!/^[A-Z]{2}$/.test(chain)) {
-                  console.log(chalk.yellow(`     ⚠ Invalid chain code "${chain}" (expected 2 letters)`));
-                } else if (!/^\d+$/.test(number)) {
-                  console.log(chalk.yellow("     ⚠ Member number must be digits only (the chain code is added at booking time)"));
-                } else {
-                  programs.push({ chainCode: chain, membershipNumber: number });
-                  console.log(chalk.green(`     ✓ ${chain} ${maskLoyaltyValue(number)}`));
-                }
-              } else {
-                console.log(chalk.yellow("     ⚠ Format: CHAIN NUMBER (e.g. HI 12345678)"));
-              }
-            }
-          }
-          if (programs.length > 0) {
-            // Local-only; a fresh set replaces any existing default.
-            userCtx.hotelLoyaltyPrograms = programs;
-          }
-          console.log();
-        } else if (existingHotel.length === 0) {
-          console.log(chalk.dim("     Skipped (non-interactive).\n"));
-        } else {
-          console.log();
-        }
-
-        // ── Sync to profile ──
-        // A single updateMyUser call carrying whatever new passport / FF data
-        // was entered; skipped entirely when there is nothing new. Hotel
-        // loyalty is never sent — there is no user-level field for it.
-        if (passportToSync || ffToSync) {
-          const updateInput: Record<string, unknown> = {};
-          if (passportToSync) updateInput.passport = passportToSync;
-          if (ffToSync) updateInput.frequentFlyerPrograms = ffToSync;
-          try {
-            const data = await graphql<UpdateMyUserResponse>(UPDATE_MY_USER, { input: updateInput });
-            const updated = data.updateMyUser;
-            // Persist only what the API returns: the masked passport shape and
-            // the full frequent-flyer list.
-            if (passportToSync) userCtx.passport = updated.passport ?? undefined;
-            if (ffToSync && updated.frequentFlyerPrograms) {
-              userCtx.frequentFlyerPrograms = updated.frequentFlyerPrograms.map(ff => ({
-                airlineCode: ff.airlineCode,
-                membershipNumber: ff.membershipNumber,
-              }));
-            }
-          } catch {
-            // Never echo the raw upstream error: its variables can include the
-            // full passport / membership numbers we just tried to sync.
-            console.log(chalk.red("     ✗ Profile sync failed — your local setup is saved."));
-            console.log(chalk.dim("     Run `voyagier auth setup` again later or check `voyagier doctor`.\n"));
-          }
-        }
-
-        // Save
-        saveUserContext(userCtx);
-
-        // Summary
-        console.log(chalk.dim("  ──────────────────"));
-        console.log(`\n  ${chalk.green("✓")} ${chalk.bold("Setup complete!")}\n`);
-        if (userCtx.homeAirports.length > 0) {
-          const display = userCtx.homeAirports.map((a, i) => i === 0 ? `${a} (primary)` : a).join(", ");
-          console.log(`     Home:      ${display}`);
-        }
-        if (userCtx.preferredCabin) console.log(`     Cabin:     ${CABIN_LABELS[userCtx.preferredCabin]}`);
-        if (userCtx.passport) console.log(`     Passport:  ${formatPassport(userCtx.passport)}`);
-        if (userCtx.frequentFlyerPrograms && userCtx.frequentFlyerPrograms.length > 0) {
-          const ffs = userCtx.frequentFlyerPrograms.map(ff => `${ff.airlineCode} ${maskLoyaltyValue(ff.membershipNumber)}`).join(", ");
-          console.log(`     FF:        ${ffs}`);
-        }
-        if (userCtx.hotelLoyaltyPrograms && userCtx.hotelLoyaltyPrograms.length > 0) {
-          const hls = userCtx.hotelLoyaltyPrograms.map(hl => `${hl.chainCode} ${maskLoyaltyValue(hl.membershipNumber)}`).join(", ");
-          console.log(`     Hotel:     ${hls}`);
-        }
-        console.log(chalk.dim(`\n     Search flights: voyagier search flights --to SJU --date 2026-05-14\n`));
-
-      } finally {
-        rl?.close();
-      }
+      console.log(travellerDataHint(tools));
     });
 }
