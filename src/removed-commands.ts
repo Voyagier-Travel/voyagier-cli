@@ -99,7 +99,7 @@ export const REMOVED_COMMANDS: readonly RemovedCommand[] = [
   { command: "listings add-to-selection", tools: ["promote_search"], note: "Pass --listing_ids." },
   { command: "places search", tools: [] },
   { command: "places get", tools: ["get_place"] },
-  { command: "places attach", tools: ["add_place_media", "add_plan_media"], note: "add_place_media attaches a photo to a place; add_plan_media adds one to the plan gallery." },
+  { command: "places attach", tools: [], note: "Places are created by the options that point at them (update_place --option_id creates a hotel's or restaurant's place record on demand); add_place_media and add_plan_media only add photos." },
   { command: "places list", tools: ["list_plan_places"] },
   { command: "places highlight", tools: ["update_place"], note: "Edit the place's name, description, address or data blob." },
   { command: "places unhighlight", tools: ["update_place"], note: "As above." },

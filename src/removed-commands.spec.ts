@@ -97,7 +97,9 @@ describe("removed-commands table", () => {
     expect(findRemovedCommand(["places", "get"])!.tools).toEqual(["get_place"]);
     expect(findRemovedCommand(["places", "highlight"])!.tools).toEqual(["update_place"]);
     expect(findRemovedCommand(["places", "unhighlight"])!.tools).toEqual(["update_place"]);
-    expect(findRemovedCommand(["places", "attach"])!.tools).toEqual(["add_place_media", "add_plan_media"]);
+    // No tool attaches a place to a plan; the note names the related tools without mapping to them.
+    expect(findRemovedCommand(["places", "attach"])!.tools).toEqual([]);
+    expect(removedCommandMessage(findRemovedCommand(["places", "attach"])!, LIVE)).toContain("There is no MCP tool for it.");
     const msg = removedCommandMessage(findRemovedCommand(["places", "list"])!, LIVE);
     expect(msg).toContain("Use: voyagier list_plan_places [flags]");
     expect(msg).not.toContain("There is no MCP tool for it.");
