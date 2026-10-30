@@ -72,11 +72,19 @@ function textResult(payload: unknown) {
   return { content: [{ type: "text", text: JSON.stringify(payload) }] };
 }
 
+/** A whoami result the way a server with an outputSchema sends it: a human text block plus `structuredContent`. */
+function structuredResult(payload: unknown) {
+  return { content: [{ type: "text", text: "You are signed in." }], structuredContent: payload };
+}
+
 /** A scripted remote: whoami answers with `payload`; `tools` is the published list. */
-function remote(opts: { payload?: unknown; tools?: McpToolDescriptor[]; intercept?: (sent: Sent, index: number) => Response | undefined } = {}) {
+function remote(
+  opts: { payload?: unknown; tools?: McpToolDescriptor[]; structured?: boolean; intercept?: (sent: Sent, index: number) => Response | undefined } = {},
+) {
+  const whoami = () => (opts.structured ? structuredResult(opts.payload ?? whoamiPayload()) : textResult(opts.payload ?? whoamiPayload()));
   return makeMockRemote({
     tools: opts.tools ?? [WHOAMI_TOOL],
-    onCall: (name) => (name === "whoami" ? textResult(opts.payload ?? whoamiPayload()) : textResult({})),
+    onCall: (name) => (name === "whoami" ? whoami() : textResult({})),
     intercept: opts.intercept,
   });
 }
@@ -183,6 +191,15 @@ describe("identityFromWhoami", () => {
   it("reads the token's audit label when the server reports it (tokenName or token.name)", () => {
     expect(authModule.identityFromWhoami(whoamiPayload({ tokenName: "cli-laptop" })).tokenName).toBe("cli-laptop");
     expect(authModule.identityFromWhoami(whoamiPayload({ token: { name: "ci-runner" } })).tokenName).toBe("ci-runner");
+  });
+
+  it("whoamiPayload prefers structuredContent over the text block, and falls back to parsed text", () => {
+    const { whoamiPayload: pick } = authModule;
+    const payload = whoamiPayload();
+    expect(pick({ content: [{ type: "text", text: "You are signed in." }], structuredContent: payload })).toEqual(payload);
+    // structuredContent wins even when the text block is JSON for someone else.
+    expect(pick({ content: [{ type: "text", text: JSON.stringify(whoamiPayload({ email: "other@x.com" })) }], structuredContent: payload })).toEqual(payload);
+    expect(pick({ content: [{ type: "text", text: JSON.stringify(payload) }] })).toEqual(payload);
   });
 
   it("never throws on a non-object payload", () => {
@@ -317,6 +334,18 @@ describe("auth status", () => {
     expect(call?.body.params).toEqual({ name: "whoami", arguments: {} });
     // Nothing about the identity is cached on disk.
     expect(loadCredentials()).toEqual({ token: TEST_TOKEN });
+  });
+
+  it("reads the identity from structuredContent when the server sends a text summary plus structured fields", async () => {
+    saveCredentials(TEST_TOKEN);
+    const { client } = remote({ structured: true, payload: whoamiPayload({ isTripPlanner: true, tokenName: "cli-laptop" }) });
+    await buildProgram({ createClient: () => client }).parseAsync(["node", "v", "auth", "status"]);
+    const text = out();
+    expect(text).toMatch(/User:\s+Ada Lovelace \(ada@voyagier\.com\)/);
+    expect(text).toMatch(/Roles:\s+travel advisor, trip planner/);
+    expect(text).toMatch(/Home base:\s+Boston, MA, US/);
+    expect(text).toMatch(/Audit label:\s+cli-laptop/);
+    expect(text).not.toMatch(/User:\s+unknown/);
   });
 
   it("strips control characters from server-supplied identity text", async () => {

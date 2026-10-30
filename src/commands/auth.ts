@@ -19,10 +19,10 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { createInterface } from "readline/promises";
 import { stdin, stdout } from "process";
-import { openBrowser, sanitizeExternalText } from "../utils.js";
+import { openBrowser, sanitizeExternalData, sanitizeExternalText } from "../utils.js";
 import { saveCredentials, getToken, clearCredentials, credentialsExist } from "../config.js";
 import { CliError, CliErrorCode, authFailedMessage } from "../errors.js";
-import type { McpClient, McpToolDescriptor } from "../mcp-client/client.js";
+import type { McpClient, McpToolDescriptor, McpToolResult } from "../mcp-client/client.js";
 import { createDefaultClient, parseToolContent } from "../mcp-client/generated-commands.js";
 import { getMcpUrl } from "../mcp-client/url.js";
 
@@ -95,10 +95,19 @@ export function formatIdentity(id: Identity, webUrl: string = DEFAULT_WEB_URL): 
   return lines;
 }
 
+/**
+ * The payload of a `whoami` result. Prefer `structuredContent` when the server
+ * sends it (the text block may then be a human summary rather than JSON), and
+ * fall back to the parsed text content otherwise. Same precedence as `runTool`.
+ */
+export function whoamiPayload(result: McpToolResult): unknown {
+  return result.structuredContent !== undefined ? sanitizeExternalData(result.structuredContent) : parseToolContent(result);
+}
+
 /** Call `whoami` and parse it. Errors propagate as the client's CliErrors. */
 export async function fetchIdentity(client: McpClient): Promise<Identity> {
   const result = await client.toolsCall("whoami", {});
-  return identityFromWhoami(parseToolContent(result));
+  return identityFromWhoami(whoamiPayload(result));
 }
 
 /**
