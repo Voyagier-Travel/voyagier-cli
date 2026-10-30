@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+
+- **Checked-in registry snapshot (`src/mcp/fixtures/remote-tools.json`) refreshed to the current server registry (87 tools).** The server merged the three per-event guide tools (`add_guide_event`, `update_guide_event`, `delete_guide_event`) into `edit_plan_events` (batched `--add` / `--update` / `--delete`) and added `list_plan_events`; `list_plans` gains `--start_date` / `--end_date`. Generated commands pick this up from the live `tools/list` at startup; the snapshot only keeps the offline specs and docs in step. No CLI behaviour changes.
+
 ## [4.5.0] — 2026-10-26
 
 `voyagier update` brings an installed CLI to the latest release.

@@ -111,9 +111,12 @@ describe("flagSpecsFromSchema", () => {
     const update = Object.fromEntries(flagSpecsFromSchema(tool("update_plan").inputSchema).map((s) => [s.param, s]));
     expect(update.cover_media_id).toMatchObject({ kind: "string", nullable: true, required: false });
     expect(update.description).toMatchObject({ kind: "string", nullable: true, required: false });
-    const event = Object.fromEntries(flagSpecsFromSchema(tool("update_guide_event").inputSchema).map((s) => [s.param, s]));
-    expect(event.local_time).toMatchObject({ kind: "string", nullable: true });
-    expect(event.duration_minutes).toMatchObject({ kind: "integer", nullable: true });
+    // anyOf [X, null] forms: an enum member and an object member.
+    const clientTraveller = Object.fromEntries(flagSpecsFromSchema(tool("update_client_traveller").inputSchema).map((s) => [s.param, s]));
+    expect(clientTraveller.type).toMatchObject({ kind: "enum", nullable: true, enumValues: ["Adult", "Youth", "Child", "Infant"] });
+    expect(clientTraveller.email).toMatchObject({ kind: "string", nullable: true });
+    const traveller = Object.fromEntries(flagSpecsFromSchema(tool("update_traveller").inputSchema).map((s) => [s.param, s]));
+    expect(traveller.passport).toMatchObject({ kind: "json", jsonShape: "object", nullable: true });
 
     // A required nullable property means "always say, and null is a valid
     // answer". The sentinel stays unambiguous: the flag must be given, and
@@ -316,11 +319,12 @@ describe("parsing flags into tool arguments", () => {
   it("sends JSON null for the literal `null` on nullable flags, from the fixture schemas", async () => {
     expect(await parseArgs("update_plan", ["--plan_id", "p", "--cover_media_id", "null"])).toEqual({ plan_id: "p", cover_media_id: null });
     expect(await parseArgs("update_plan", ["--plan_id", "p", "--cover_media_id", "m1", "--description", "null"])).toEqual({ plan_id: "p", cover_media_id: "m1", description: null });
-    // anyOf string|null is a plain string flag, not a JSON literal.
-    expect(await parseArgs("update_guide_event", ["--event_id", "e", "--local_time", "09:30"])).toEqual({ event_id: "e", local_time: "09:30" });
-    expect(await parseArgs("update_guide_event", ["--event_id", "e", "--local_time", "null", "--duration_minutes", "null"])).toEqual({ event_id: "e", local_time: null, duration_minutes: null });
-    expect(await parseArgs("update_guide_event", ["--event_id", "e", "--duration_minutes", "12"])).toEqual({ event_id: "e", duration_minutes: 12 });
-    await expect(parseArgs("update_guide_event", ["--event_id", "e", "--duration_minutes", "x"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    // anyOf enum|null is a plain choice flag, not a JSON literal.
+    expect(await parseArgs("update_client_traveller", ["--client_traveller_id", "t", "--type", "Adult"])).toEqual({ client_traveller_id: "t", type: "Adult" });
+    expect(await parseArgs("update_client_traveller", ["--client_traveller_id", "t", "--type", "null", "--email", "null"])).toEqual({ client_traveller_id: "t", type: null, email: null });
+    await expect(parseArgs("update_client_traveller", ["--client_traveller_id", "t", "--type", "Robot"])).rejects.toMatchObject({ code: "commander.invalidArgument" });
+    // anyOf object|null keeps the JSON parse and takes null.
+    expect(await parseArgs("update_traveller", ["--traveller_id", "t", "--passport", "null"])).toEqual({ traveller_id: "t", passport: null });
   });
 
   it("keeps `null` a literal value on non-nullable flags, and case-sensitive on nullable ones", async () => {
