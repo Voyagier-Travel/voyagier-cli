@@ -12,6 +12,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Checked-in registry snapshot (`src/mcp/fixtures/remote-tools.json`) refreshed to the current server registry (87 tools).** The server merged the three per-event guide tools (`add_guide_event`, `update_guide_event`, `delete_guide_event`) into `edit_plan_events` (batched `--add` / `--update` / `--delete`) and added `list_plan_events`; `list_plans` gains `--start_date` / `--end_date`. Generated commands pick this up from the live `tools/list` at startup; the snapshot only keeps the offline specs and docs in step. No CLI behaviour changes.
 
+- **Checked-in registry snapshot (`src/mcp/fixtures/remote-tools.json`) refreshed to the server registry on nest-api `feature/VOY-2624` (90 tools).** New tools: `search_restaurants` (Google Places restaurants around a destination or map point) and `search_attractions` (Viator attractions at a destination), both promotable onto a plan with `promote_search`, plus `set_goal_travellers`, already on the server's `main` but missing from the snapshot. `search_hotels` gains `--commissionable_only` and `--property_types`; `add_goal` and `promote_search` gain `--date` (the goal's day on the itinerary). Descriptions follow the server, including `search_hotels --commissionable_only` now keeping a property that sells any commissionable rate. Generated commands pick these up from the live `tools/list` at startup; the snapshot only keeps the offline specs and docs in step. No CLI behaviour changes.
+
 ## [4.5.0] — 2026-10-26
 
 `voyagier update` brings an installed CLI to the latest release.
