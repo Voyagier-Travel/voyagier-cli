@@ -8,6 +8,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### 5.0.0 (breaking)
+
+#### Removed — BREAKING
+
+- **The local traveller profile is gone.** `voyagier auth setup` no longer collects home airports (`--airports`), preferred cabin (`--cabin`), passport, frequent-flyer or hotel loyalty numbers, and `credentials.json` holds the token only — no cached profile, no API URL. Nothing in the CLI read that data (no command ever defaulted `--from` to a home airport), and the server owns all of it: the home base on the web profile (`whoami` reports it as `profile.homeLocation` and the server uses it as the default booking origin), passports and loyalty numbers on the plan's travellers via `update_traveller` / `add_traveller_document`. `auth setup` now prints that pointer, naming the traveller tools the live tool list publishes.
+- **The direct GraphQL client is gone** (`src/api.ts`, `src/queries.ts`): every request the CLI makes is an MCP call. With it go `VOYAGIER_API_URL`, the `--url` option of `auth set-token` and `auth login`, the URL normalization and its one-time warning, and the `doctor` `api-url` check. `VOYAGIER_MCP_URL` is the one endpoint setting.
+- Existing installs: run `voyagier login` (or `auth set-token -`) once after upgrading; the old `credentials.json` fields are ignored.
+
+#### Changed — BREAKING
+
+- **`auth status` and `auth login` read the identity from the server's `whoami` tool** instead of a GraphQL `me` query: user (name and email), roles (travel advisor / trip planner / admin and the `role` the account plans as), home base (`profile.homeLocation`), and the token's audit label (the name given to the token when it was minted; printed when the server reports it, otherwise explained). `status` prints the MCP URL instead of the API URL and `MCP: connected` instead of `GraphQL: connected`. `login` takes `--web-url <origin>` (default `https://travel.voyagier.com`) for the tokens page and tells you to name the token for the machine, since that name is what the server's audit log records.
+
 ### Changed
 
 - **Human output prints the server's fare, pricing and status fields verbatim.** Flight rows and `get_plan_quote` lines print the server's `fareByFlight` ("DXB→DOH Economy, Main Cabin · DOH→SIN Economy, Basic Economy") and `brand` as sent; the CLI no longer builds its own cabin label from `legs[]` (legs are listed, values as sent, only when `fareByFlight` is absent) and no longer writes "cabin per flight not reported". `get_plan_quote` lines add `priceTier` · `fetchedAt`, `refundable`, `checkedBags` and the `display_currency` `estimatedTotal`; the quote prints its `estimatedTotal`, `pricingNote` and each checkout blocker's `missingTravellerIds`. Options digests (`search_*`, `get_search_status`, `promote_search`, `get_options`) add one line with `fetchStatus.priceTier` · `fetchedAt` · `expiresAt` and the `pricingNote`. `get_plan_status` prints every blocker's and next action's `gate`, `leadProblem`, `candidateSelectionIds`, `summary.checkoutOnlyBlockerCount` and the `itemId` / `participantChoiceId` / `airportRole` / `travellerIds` a next action names. CLI-written hint sentences ("0 options yet — poll…", "No events yet — select…", "No items in the cart yet.", "To book at exactly this price:", "No gated booking possible:") are replaced by neutral labels; the server's `nextStep` / `howToRefine` / blocker text is the guidance. `--json` is unchanged.

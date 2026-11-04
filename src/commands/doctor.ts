@@ -21,7 +21,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { gracefulExit } from "../exit.js";
-import { credentialsExist, getApiUrl, getConfiguredApiUrl } from "../config.js";
+import { credentialsExist } from "../config.js";
 import { sanitizeExternalText } from "../utils.js";
 import { jsonOutput } from "../output.js";
 import { CliError, CliErrorCode } from "../errors.js";
@@ -288,33 +288,6 @@ function statusIcon(s: CheckStatus): string {
 }
 
 /** Run every check and roll them up. Exported for tests and for the MCP proxy. */
-/**
- * Report when the configured GraphQL API URL (env or credentials file) had to
- * be normalized to the API base — e.g. the hosted MCP URL pasted where the API
- * URL belongs. `auth` still authenticates through that URL, so a value that
- * needs correcting at read time is worth surfacing even though requests work.
- */
-export function checkApiUrlConfig(): DoctorCheck | null {
-  let configured: string;
-  let effective: string;
-  try {
-    configured = getConfiguredApiUrl();
-    effective = getApiUrl();
-  } catch {
-    // Insecure/unparseable URL — the auth check surfaces that.
-    return null;
-  }
-  if (configured === effective) return null;
-  return {
-    name: "api-url",
-    status: "WARN",
-    message: `Configured API URL ${JSON.stringify(sanitizeExternalText(configured))} was normalized to ${JSON.stringify(effective)}`,
-    details: {
-      fix: "Set the GraphQL API base (e.g. https://travel.voyagier.com/api) via VOYAGIER_API_URL or: voyagier auth set-token - --url <url>. The hosted MCP URL belongs in VOYAGIER_MCP_URL, not here.",
-    },
-  };
-}
-
 export async function runDoctor(currentVersion: string, deps: DoctorDeps = {}): Promise<DoctorReport> {
   const auth = checkAuth(deps);
   let url: string | null = null;
@@ -340,8 +313,7 @@ export async function runDoctor(currentVersion: string, deps: DoctorDeps = {}): 
   }
   const version = await checkVersion(currentVersion, deps.fetchImpl ?? fetch);
 
-  const apiUrlConfig = checkApiUrlConfig();
-  const checks = [auth, mcp, whoami, version, ...(apiUrlConfig ? [apiUrlConfig] : [])];
+  const checks = [auth, mcp, whoami, version];
   return { checks, overall: rollUpStatus(checks) };
 }
 
