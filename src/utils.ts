@@ -2,7 +2,7 @@ import { spawn } from "child_process";
 import { CliError, CliErrorCode } from "./errors.js";
 
 // Re-exported from the leaf module so call sites can keep importing from utils.
-export { formatPrice, cents, money } from "./format.js";
+export { formatPrice } from "./format.js";
 
 /**
  * Mask a potentially sensitive loyalty value for terminal output: member

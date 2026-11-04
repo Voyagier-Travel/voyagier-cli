@@ -92,6 +92,19 @@ describe("removed-commands table", () => {
     expect(none).toContain("There is no MCP tool for it.");
   });
 
+  it("points the 3.x places commands at the server's place tools", () => {
+    expect(findRemovedCommand(["places", "list"])!.tools).toEqual(["list_plan_places"]);
+    expect(findRemovedCommand(["places", "get"])!.tools).toEqual(["get_place"]);
+    expect(findRemovedCommand(["places", "highlight"])!.tools).toEqual(["update_place"]);
+    expect(findRemovedCommand(["places", "unhighlight"])!.tools).toEqual(["update_place"]);
+    // No tool attaches a place to a plan; the note names the related tools without mapping to them.
+    expect(findRemovedCommand(["places", "attach"])!.tools).toEqual([]);
+    expect(removedCommandMessage(findRemovedCommand(["places", "attach"])!, LIVE)).toContain("There is no MCP tool for it.");
+    const msg = removedCommandMessage(findRemovedCommand(["places", "list"])!, LIVE);
+    expect(msg).toContain("Use: voyagier list_plan_places [flags]");
+    expect(msg).not.toContain("There is no MCP tool for it.");
+  });
+
   it("lists the top-level words once", () => {
     const names = removedTopLevelNames();
     expect(new Set(names).size).toBe(names.length);
