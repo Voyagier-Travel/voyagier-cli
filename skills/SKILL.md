@@ -50,7 +50,7 @@ Read it once per session before non-trivial work. Everything below is a summary 
 
 ## The model (30 seconds)
 
-A trip plan is a **goal graph**. `create_plan` scaffolds the plan + goals (flights, hotel, dates, destination, travellers); you explore inventory with `search_*`, put a result on a plan goal with `promote_search`, and pick with `select_option`. `get_plan_status` tells you what's left; `get_plan_quote` is the checkout truth; `book_plan` closes with a price-gated checkout. Trip-level state (dates, destination, airports) changes only through `set_plan_dates`, `set_destination`, `set_airport` and `create_plan` — searches never write to a plan.
+A trip plan is a **goal graph**. `create_plan` scaffolds the plan + goals (flights, hotel, dates, destination, travellers); you explore inventory with `search_*`, put a result on a plan goal with `promote_search`, and pick with `select_option`. `get_plan_status` tells you what's left; `get_plan_quote` is the checkout truth; `book_plan` closes with a price-gated checkout. Trip-level state (dates, destination, airports) changes only through `set_plan_dates`, `set_destination`, `set_airport` and `create_plan` — searches never write to a plan. Known flights and stays go on in one call: `create_plan --flights … --stays …` for a new plan, `add_flight` / `add_hotel` on an existing one; `set_flight_date` moves one leg to another day.
 
 **Always pass `--json`** on tool commands.
 
@@ -77,7 +77,7 @@ voyagier create_plan --title "Lisbon" --travel_destination_id <DEST_ID> \
   --travellers '[{"first_name":"Jane","last_name":"Doe","type":"Adult"}]' --json
 
 # 3. Explore (no plan is touched) → poll while status is Fetching → promote onto the plan's goal
-voyagier search_flights --from BWI --to LIS --date 2026-11-20 --return 2026-11-27 --json
+voyagier search_flights --origin BWI --destination LIS --departure_date 2026-11-20 --return_date 2026-11-27 --json
 voyagier get_search_status --search_id <SEARCH_ID> --json
 voyagier promote_search --plan_id <PLAN_ID> --search_id <SEARCH_ID> --goal_id <GOAL_ID> --json
 

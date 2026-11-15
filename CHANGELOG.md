@@ -8,6 +8,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+
+- **Checked-in registry snapshot (`src/mcp/fixtures/remote-tools.json`) refreshed to the server registry (94 tools).** New tools:
+  - `add_flight` and `add_hotel` put one or more flights or hotel stays on an existing plan in one call, with every airport, date and room count set.
+  - `set_flight_date` moves one flight leg to another day.
+  - `restore_plan` brings back an archived plan.
+
+  New parameters:
+  - `create_plan` gains `--flights` / `--stays` (the same shapes `add_flight` / `add_hotel` take, replacing the template's flights or accommodation), `--separate_flight_bookings` and `--destination_id`.
+  - `set_destination` gains `--destination` (freeform) and `--travel_destination_id`.
+  - `add_goal` gains `--destination_id`.
+  - `add_travellers` gains `--save_travellers_to_client`.
+  - `search_hotels` gains `--room_count`.
+  - `set_room_count` gains `--rooms` (who shares which room).
+  - `book_plan` gains `--expect_deposit_credit_cents` (a guard on credit already paid).
+  - `update_client_traveller` gains `--phone`.
+  - `list_plans` gains `--query`, `--timing`, `--archived`, `--client_ids`, `--destinations`, `--sort_by` and `--sort_direction`.
+  - `list_clients` gains `--client_types` and `--statuses`.
+
+  `search_flights` takes `--origin` / `--destination` / `--departure_date` / `--return_date`. The old `--from` / `--to` / `--date` / `--return` are still published as deprecated aliases of the same values, so existing scripts keep working; neither spelling is marked required in the schema because the server checks for one of them after resolving aliases. README and skill examples use the new names. Generated commands pick all of this up from the live `tools/list`; the snapshot only keeps the offline specs and docs in step. No CLI behaviour changes.
+
 ## [5.0.0] — 2026-11-04
 
 The CLI keeps only your token; identity comes from the server's `whoami`, and human output prints the server's fare, pricing and status fields as sent.

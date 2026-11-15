@@ -42,7 +42,7 @@ voyagier create_plan --client_id <CLIENT_ID> --title "Doe — Lisbon" \
   --travellers '[{"first_name":"Jane","last_name":"Doe","type":"Adult"}]' --json
 
 # 3) Explore flights (no plan is touched), poll, then promote the result onto the plan's goal
-voyagier search_flights --from BWI --to LIS --date 2026-11-20 --return 2026-11-27
+voyagier search_flights --origin BWI --destination LIS --departure_date 2026-11-20 --return_date 2026-11-27
 voyagier get_search_status --search_id <SEARCH_ID>
 voyagier promote_search --plan_id <PLAN_ID> --search_id <SEARCH_ID> --goal_id <GOAL_ID> --json
 
