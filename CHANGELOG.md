@@ -27,7 +27,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - `list_plans` gains `--query`, `--timing`, `--archived`, `--client_ids`, `--destinations`, `--sort_by` and `--sort_direction`.
   - `list_clients` gains `--client_types` and `--statuses`.
 
-  `search_flights` takes `--origin` / `--destination` / `--departure_date` / `--return_date`. The old `--from` / `--to` / `--date` / `--return` are still published as deprecated aliases of the same values, so existing scripts keep working; neither spelling is marked required in the schema because the server checks for one of them after resolving aliases. README and skill examples use the new names. Generated commands pick all of this up from the live `tools/list`; the snapshot only keeps the offline specs and docs in step. No CLI behaviour changes.
+  `search_flights` takes `--origin` / `--destination` / `--departure_date` / `--return_date`. The old `--from` / `--to` / `--date` / `--return` are still published as deprecated aliases of the same values, so existing scripts keep working; neither spelling is marked required in the schema because the server checks for one of them after resolving aliases. README and skill examples use the new names.
+- **Checkout guidance counts payments already received.** With a deposit on file the client owes `get_plan_quote`'s `balanceDueCents` (subtotal plus fee, minus `paymentsReceived`), not the subtotal plus the fee: the server's `book_plan` description now says so and names `--expect_deposit_credit_cents`, and AGENT.md's payment note and the skill's checkout step and quirks follow. Generated commands pick all of this up from the live `tools/list`; the snapshot only keeps the offline specs and docs in step. No CLI behaviour changes.
 
 ## [5.0.0] — 2026-11-04
 

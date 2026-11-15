@@ -92,8 +92,10 @@ voyagier get_plan_status --plan_id <PLAN_ID> --json
 
 # 6. Close: quote (chargeable truth), then a price-GATED checkout
 voyagier get_plan_quote --plan_id <PLAN_ID> --json
-# .acceptance = { expectTotalCents, itemIds } — pass both verbatim:
-voyagier book_plan --plan_id <PLAN_ID> --expect_total_cents <CENTS> --item_ids <ID> <ID> --json
+# .acceptance = { expectTotalCents, itemIds, expectDepositCreditCents } — pass them verbatim.
+# The client owes .balanceDueCents (subtotal + fee − any deposit already paid): confirm that figure.
+voyagier book_plan --plan_id <PLAN_ID> --expect_total_cents <CENTS> --item_ids <ID> <ID> \
+  --expect_deposit_credit_cents <CREDIT_CENTS> --json
 ```
 
 ## Reading output
@@ -111,6 +113,7 @@ voyagier book_plan --plan_id <PLAN_ID> --expect_total_cents <CENTS> --item_ids <
 - **Searches are async** — `Fetching` means poll (`get_search_status` for standalone searches, `get_options` for plan selections). Back off between polls; the endpoint is rate limited.
 - **Prices are party totals** — never multiply by traveller count; hotel prices are stay totals, not nightly.
 - **Processing fee** is added at checkout, not in the quote total.
+- **Payments already received come off at checkout** — with a deposit on file the client owes `get_plan_quote`'s `balanceDueCents` (subtotal + fee − `paymentsReceived`), not subtotal + fee; pass `acceptance.expectDepositCreditCents` to `book_plan --expect_deposit_credit_cents`.
 - **The air fare is locked at checkout, not at selection** — a successful `select_option` does not hold the price.
 - **Search results expire** — re-run the search on `Expired`.
 - **3.x commands are gone** (`plan-trip`, `search flights`, `select`, `plans …`). Running one prints the replacement tool and exits 1.
