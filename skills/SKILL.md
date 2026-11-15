@@ -112,7 +112,7 @@ voyagier book_plan --plan_id <PLAN_ID> --expect_total_cents <CENTS> --item_ids <
 - **Never retry a successful `book_plan`** — a retry mints a second payable link.
 - **Searches are async** — `Fetching` means poll (`get_search_status` for standalone searches, `get_options` for plan selections). Back off between polls; the endpoint is rate limited.
 - **Prices are party totals** — never multiply by traveller count; hotel prices are stay totals, not nightly.
-- **Processing fee** is added at checkout, not in the quote total.
+- **Processing fee** is excluded from `chargeableTotalCents` (the price-gate subtotal) and added at checkout; the quote reports it as `processingFeeCents`.
 - **Payments already received come off at checkout** — with a deposit on file the client owes `get_plan_quote`'s `balanceDueCents` (subtotal + fee − `paymentsReceived`), not subtotal + fee; pass `acceptance.expectDepositCreditCents` to `book_plan --expect_deposit_credit_cents`.
 - **The air fare is locked at checkout, not at selection** — a successful `select_option` does not hold the price.
 - **Search results expire** — re-run the search on `Expired`.

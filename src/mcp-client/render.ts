@@ -522,6 +522,18 @@ export function renderQuote(payload: unknown): string | null {
   }
   const total = priceCents(payload.chargeableTotalCents, payload.currency);
   if (total) lines.push("", `  chargeable total ${chalk.bold.green(total)}${num(payload.chargeableTotalCents) != null ? chalk.dim(`  (${payload.chargeableTotalCents} cents)`) : ""}`);
+  // The bill after the subtotal, in the server's figures: the processing fee
+  // (excluded from chargeableTotalCents, added at checkout), money already
+  // paid that checkout applies, and what the payer owes.
+  const fee = num(payload.processingFeeCents) != null ? priceCents(payload.processingFeeCents, payload.currency) : null;
+  if (fee) lines.push(`  processing fee ${fee}${chalk.dim(`  (${payload.processingFeeCents} cents)`)}`);
+  for (const paid of arr(payload.paymentsReceived).filter(isRec)) {
+    const amount = num(paid.amountCents) != null ? priceCents(paid.amountCents, payload.currency) : null;
+    if (!amount) continue;
+    lines.push(`  ${str(paid.label) ?? "payment received"} −${amount}${str(paid.paidAt) ? chalk.dim(`  (paid ${paid.paidAt})`) : ""}`);
+  }
+  const balanceDue = num(payload.balanceDueCents) != null ? priceCents(payload.balanceDueCents, payload.currency) : null;
+  if (balanceDue) lines.push(`  balance due ${chalk.bold.green(balanceDue)}${chalk.dim(`  (${payload.balanceDueCents} cents)`)}`);
   const totalEstimate = price(payload.estimatedTotal, estimateCurrency);
   if (totalEstimate) lines.push(chalk.dim(`  estimate ${totalEstimate}${estimate && str(estimate.asOf) ? `  (rate as of ${estimate.asOf})` : ""}`));
   const pricingNote = str(payload.pricingNote);
@@ -539,9 +551,10 @@ export function renderQuote(payload: unknown): string | null {
   if (acceptance && num(acceptance.expectTotalCents) != null) {
     const ids = arr(acceptance.itemIds).map(String);
     const planId = str(payload.tripPlanId) ?? str(payload.planId);
+    const credit = num(acceptance.expectDepositCreditCents);
     lines.push(
       "",
-      `  acceptance → voyagier book_plan --plan_id ${planId ? shellQuote(planId) : "<plan_id>"} --expect_total_cents ${acceptance.expectTotalCents}${ids.length ? ` --item_ids ${ids.map(shellQuote).join(" ")}` : ""}`,
+      `  acceptance → voyagier book_plan --plan_id ${planId ? shellQuote(planId) : "<plan_id>"} --expect_total_cents ${acceptance.expectTotalCents}${ids.length ? ` --item_ids ${ids.map(shellQuote).join(" ")}` : ""}${credit ? ` --expect_deposit_credit_cents ${credit}` : ""}`,
     );
   } else if (str(payload.acceptanceUnavailableReason)) {
     lines.push("", chalk.yellow(`  acceptance unavailable: ${payload.acceptanceUnavailableReason}`));
