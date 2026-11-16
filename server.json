@@ -8,13 +8,13 @@
     "url": "https://github.com/Voyagier-Travel/voyagier-cli",
     "source": "github"
   },
-  "version": "5.0.0",
+  "version": "5.1.0",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@voyagier/cli",
-      "version": "5.0.0",
+      "version": "5.1.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
