@@ -38,7 +38,7 @@ voyagier create_client --name "Doe Family" --client_type Individual --email "doe
 # 2) Resolve the destination, then scaffold the plan with its party
 voyagier search_destinations --query "Lisbon" --json
 voyagier create_plan --client_id <CLIENT_ID> --title "Doe — Lisbon" \
-  --travel_destination_id <DESTINATION_ID> --start_date 2026-11-20 --end_date 2026-11-27 \
+  --destination_id <DESTINATION_ID> --start_date 2026-11-20 --end_date 2026-11-27 \
   --travellers '[{"first_name":"Jane","last_name":"Doe","type":"Adult"}]' --json
 
 # 3) Explore flights (no plan is touched), poll, then promote the result onto the plan's goal

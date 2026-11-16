@@ -68,11 +68,11 @@ voyagier create_client --name "Doe Family" --client_type Individual --email "doe
 # 2. Resolve the destination, then scaffold the plan with its party
 voyagier search_destinations --query "Lisbon" --json
 # advisors: pass the client
-voyagier create_plan --client_id <CLIENT_ID> --title "Doe — Lisbon" --travel_destination_id <DEST_ID> \
+voyagier create_plan --client_id <CLIENT_ID> --title "Doe — Lisbon" --destination_id <DEST_ID> \
   --start_date 2026-11-20 --end_date 2026-11-27 \
   --travellers '[{"first_name":"Jane","last_name":"Doe","type":"Adult"}]' --json
 # trip planners: omit --client_id (the plan is your own trip)
-voyagier create_plan --title "Lisbon" --travel_destination_id <DEST_ID> \
+voyagier create_plan --title "Lisbon" --destination_id <DEST_ID> \
   --start_date 2026-11-20 --end_date 2026-11-27 \
   --travellers '[{"first_name":"Jane","last_name":"Doe","type":"Adult"}]' --json
 
