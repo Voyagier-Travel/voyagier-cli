@@ -581,6 +581,44 @@ describe("renderQuote", () => {
     expect(out).not.toMatch(/exactly this price/);
   });
 
+  it("prints the processing fee, each payment received and the balance due, and passes the deposit credit to book_plan", () => {
+    // A deposit already paid comes off at checkout: the payer owes balanceDueCents.
+    const out = strip(
+      renderQuote({
+        tripPlanId: "plan-9",
+        items: [{ name: "Grand Hotel", priceCents: 100000, currency: "USD", bookable: true }],
+        chargeableTotalCents: 100000,
+        processingFeeCents: 3000,
+        paymentsReceived: [{ kind: "BookingIntentDeposit", label: "Deposit", amountCents: 25000, paidAt: "2026-11-01T12:00:00.000Z" }],
+        balanceDueCents: 78000,
+        currency: "USD",
+        acceptance: { expectTotalCents: 100000, itemIds: ["i-1"], expectDepositCreditCents: 25000 },
+      }) ?? "",
+    );
+    expect(out).toContain(
+      "  chargeable total $1,000.00  (100000 cents)\n" +
+        "  processing fee $30.00  (3000 cents)\n" +
+        "  Deposit −$250.00  (paid 2026-11-01T12:00:00.000Z)\n" +
+        "  balance due $780.00  (78000 cents)",
+    );
+    expect(out).toContain("--expect_total_cents 100000 --item_ids i-1 --expect_deposit_credit_cents 25000");
+  });
+
+  it("leaves the deposit flag off the book_plan command when no payment was received", () => {
+    const out = strip(
+      renderQuote({
+        chargeableTotalCents: 5000,
+        processingFeeCents: 150,
+        balanceDueCents: 5150,
+        currency: "USD",
+        acceptance: { expectTotalCents: 5000, itemIds: ["i-1"], expectDepositCreditCents: 0 },
+      }) ?? "",
+    );
+    expect(out).toContain("  balance due $51.50  (5150 cents)");
+    expect(out).not.toContain("expect_deposit_credit_cents");
+    expect(out).not.toMatch(/−/);
+  });
+
   it("prints each flight line's fareByFlight, brand, price tier, fetch time, refundable and checked bags as the server sent them", () => {
     // Shape of get_plan_quote items on nest main (fare brand + price tier fields).
     const out = strip(

@@ -50,7 +50,7 @@ Read it once per session before non-trivial work. Everything below is a summary 
 
 ## The model (30 seconds)
 
-A trip plan is a **goal graph**. `create_plan` scaffolds the plan + goals (flights, hotel, dates, destination, travellers); you explore inventory with `search_*`, put a result on a plan goal with `promote_search`, and pick with `select_option`. `get_plan_status` tells you what's left; `get_plan_quote` is the checkout truth; `book_plan` closes with a price-gated checkout. Trip-level state (dates, destination, airports) changes only through `set_plan_dates`, `set_destination`, `set_airport` and `create_plan` — searches never write to a plan.
+A trip plan is a **goal graph**. `create_plan` scaffolds the plan + goals (flights, hotel, dates, destination, travellers); you explore inventory with `search_*`, put a result on a plan goal with `promote_search`, and pick with `select_option`. `get_plan_status` tells you what's left; `get_plan_quote` is the checkout truth; `book_plan` closes with a price-gated checkout. Trip-level state (dates, destination, airports) changes only through `set_plan_dates`, `set_destination`, `set_airport` and `create_plan` — searches never write to a plan. Known flights and stays go on in one call: `create_plan --flights … --stays …` for a new plan, `add_flight` / `add_hotel` on an existing one; `set_flight_date` moves one leg to another day.
 
 **Always pass `--json`** on tool commands.
 
@@ -68,16 +68,16 @@ voyagier create_client --name "Doe Family" --client_type Individual --email "doe
 # 2. Resolve the destination, then scaffold the plan with its party
 voyagier search_destinations --query "Lisbon" --json
 # advisors: pass the client
-voyagier create_plan --client_id <CLIENT_ID> --title "Doe — Lisbon" --travel_destination_id <DEST_ID> \
+voyagier create_plan --client_id <CLIENT_ID> --title "Doe — Lisbon" --destination_id <DEST_ID> \
   --start_date 2026-11-20 --end_date 2026-11-27 \
   --travellers '[{"first_name":"Jane","last_name":"Doe","type":"Adult"}]' --json
 # trip planners: omit --client_id (the plan is your own trip)
-voyagier create_plan --title "Lisbon" --travel_destination_id <DEST_ID> \
+voyagier create_plan --title "Lisbon" --destination_id <DEST_ID> \
   --start_date 2026-11-20 --end_date 2026-11-27 \
   --travellers '[{"first_name":"Jane","last_name":"Doe","type":"Adult"}]' --json
 
 # 3. Explore (no plan is touched) → poll while status is Fetching → promote onto the plan's goal
-voyagier search_flights --from BWI --to LIS --date 2026-11-20 --return 2026-11-27 --json
+voyagier search_flights --origin BWI --destination LIS --departure_date 2026-11-20 --return_date 2026-11-27 --json
 voyagier get_search_status --search_id <SEARCH_ID> --json
 voyagier promote_search --plan_id <PLAN_ID> --search_id <SEARCH_ID> --goal_id <GOAL_ID> --json
 
@@ -92,8 +92,10 @@ voyagier get_plan_status --plan_id <PLAN_ID> --json
 
 # 6. Close: quote (chargeable truth), then a price-GATED checkout
 voyagier get_plan_quote --plan_id <PLAN_ID> --json
-# .acceptance = { expectTotalCents, itemIds } — pass both verbatim:
-voyagier book_plan --plan_id <PLAN_ID> --expect_total_cents <CENTS> --item_ids <ID> <ID> --json
+# .acceptance = { expectTotalCents, itemIds, expectDepositCreditCents } — pass them verbatim.
+# The client owes .balanceDueCents (subtotal + fee − any deposit already paid): confirm that figure.
+voyagier book_plan --plan_id <PLAN_ID> --expect_total_cents <CENTS> --item_ids <ID> <ID> \
+  --expect_deposit_credit_cents <CREDIT_CENTS> --json
 ```
 
 ## Reading output
@@ -110,7 +112,8 @@ voyagier book_plan --plan_id <PLAN_ID> --expect_total_cents <CENTS> --item_ids <
 - **Never retry a successful `book_plan`** — a retry mints a second payable link.
 - **Searches are async** — `Fetching` means poll (`get_search_status` for standalone searches, `get_options` for plan selections). Back off between polls; the endpoint is rate limited.
 - **Prices are party totals** — never multiply by traveller count; hotel prices are stay totals, not nightly.
-- **Processing fee** is added at checkout, not in the quote total.
+- **Processing fee** is excluded from `chargeableTotalCents` (the price-gate subtotal) and added at checkout; the quote reports it as `processingFeeCents`.
+- **Payments already received come off at checkout** — with a deposit on file the client owes `get_plan_quote`'s `balanceDueCents` (subtotal + fee − `paymentsReceived`), not subtotal + fee; pass `acceptance.expectDepositCreditCents` to `book_plan --expect_deposit_credit_cents`.
 - **The air fare is locked at checkout, not at selection** — a successful `select_option` does not hold the price.
 - **Search results expire** — re-run the search on `Expired`.
 - **3.x commands are gone** (`plan-trip`, `search flights`, `select`, `plans …`). Running one prints the replacement tool and exits 1.
