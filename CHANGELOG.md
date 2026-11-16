@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [5.1.0] — 2026-11-16
+
+The registry snapshot now matches the server's 94 tools, including the one-call `add_flight` / `add_hotel` / `set_flight_date` / `restore_plan`. `get_plan_quote` prints the processing fee, payments received and balance due. Renamed parameters keep their old names as deprecated aliases.
+
 ### Changed
 
 - **Checked-in registry snapshot (`src/mcp/fixtures/remote-tools.json`) refreshed to the server registry (94 tools).** New tools:
