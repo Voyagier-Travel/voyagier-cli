@@ -54,6 +54,24 @@ A trip plan is a **goal graph**. `create_plan` scaffolds the plan + goals (fligh
 
 **Always pass `--json`** on tool commands.
 
+## Your own Travel Wallet
+
+The token owner's **Travel Wallet** holds the user and the people they personally travel with. It is not an advisor's client roster and not a trip plan. "Save it to my profile / my wallet / my passport / my family" means the wallet tools:
+
+```bash
+voyagier list_wallet_travellers --json              # you first (isSelf), then the people you travel with; numbers masked to the last 4
+voyagier add_wallet_document --wallet_traveller_id <ID> --type KnownTraveller \
+  --known_traveller_program TsaPrecheck --number <KTN> --json
+voyagier add_wallet_document --wallet_traveller_id <ID> --type FrequentFlyer --airline_code UA --number <NUMBER> --json
+voyagier update_wallet_document --document_id <DOC_ID> --tier "Premier Gold" --json
+voyagier add_wallet_traveller --first_name Jane --last_name Doe --date_of_birth 2015-04-02 --json
+```
+
+- **One membership per programme.** A second frequent-flyer or hotel number for the same programme returns `DOCUMENT_ALREADY_EXISTS` with the existing `documentId` and writes nothing; update that document instead.
+- **Edits reach shared advisors.** `update_wallet_traveller` / `update_wallet_document` refresh every advisor the traveller or document is shared with; `delete_wallet_document` removes the copies sharing created; a document an advisor already had on file before you shared stays with them, unlinked (booked trips keep their booking).
+- **Sharing is not a tool.** Choosing which advisor sees a traveller or document happens in the web app (`https://travel.voyagier.com/me/settings/travel-wallet`).
+- **A plan's traveller is different:** `add_traveller_document` / `update_traveller` write a traveller on a trip plan. For someone on an advisor's client roster the document lands on that roster, so every plan for the client uses it. Neither ever writes your wallet.
+
 ## Core Workflow
 
 ```bash
@@ -121,5 +139,6 @@ voyagier book_plan --plan_id <PLAN_ID> --expect_total_cents <CENTS> --item_ids <
 ## Security
 
 - Never output PAT tokens in command output.
-- Confirm with the user before `book_plan` and `share_plan` (real charges / real client access).
+- Confirm with the user before `book_plan` and `share_plan` (real charges / real client access), and before `delete_wallet_document` on a shared document (advisors lose their copy).
+- Document numbers come back as the last 4 only; never echo a full passport, KTN or membership number back into output or logs.
 - Credentials stored at `~/.voyagier/credentials.json` (mode 0600); the tool cache at `~/.voyagier/tools-cache.json`.
