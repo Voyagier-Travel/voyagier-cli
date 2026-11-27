@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+
+- **Your own Travel Wallet** (VOY-2798). The server now publishes six tools that act only on the token owner's wallet: you and the people you personally travel with. They are `list_wallet_travellers`, `add_wallet_traveller`, `update_wallet_traveller`, `add_wallet_document`, `update_wallet_document` and `delete_wallet_document`. Numbers come back as the last 4 only. Sharing with an advisor stays in the web app.
+
+### Changed
+
+- **Checked-in registry snapshot (`src/mcp/fixtures/remote-tools.json`) refreshed to the server registry (105 tools).** New besides the wallet tools: `search_rides`, `set_ride_transport_event`, `get_ride_transport_events`, `remove_ride_transport_event` and `set_booking_cancelled`.
+- **`voyagier auth setup` points your own details at the Travel Wallet.** It used to name `update_traveller` / `add_traveller_document`, which write a traveller on one trip plan, as the way to edit profile details. It now names `list_wallet_travellers` / `add_wallet_document` for your own details and labels the plan tools as one trip only.
+- `AGENT.md` and the skill explain the wallet tools and how they differ from a plan's traveller.
+
 ## [5.1.0] — 2026-11-16
 
 The registry snapshot now matches the server's 94 tools, including the one-call `add_flight` / `add_hotel` / `set_flight_date` / `restore_plan`. `get_plan_quote` prints the processing fee, payments received and balance due. Renamed parameters keep their old names as deprecated aliases.

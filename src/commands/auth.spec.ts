@@ -50,6 +50,12 @@ const TRAVELLER_TOOLS: McpToolDescriptor[] = [
   { name: "list_travellers", description: "List", inputSchema: { type: "object", properties: {} } },
 ];
 
+const WALLET_TOOLS: McpToolDescriptor[] = [
+  { name: "list_wallet_travellers", description: "List my wallet", inputSchema: { type: "object", properties: {} } },
+  { name: "add_wallet_document", description: "Add to my wallet", inputSchema: { type: "object", properties: {} } },
+  { name: "delete_wallet_document", description: "Delete", inputSchema: { type: "object", properties: {} } },
+];
+
 function whoamiPayload(overrides: Record<string, unknown> = {}) {
   return {
     id: "u-1",
@@ -235,6 +241,18 @@ describe("travellerDataHint", () => {
     expect(hint).toContain("voyagier update_traveller --help");
     expect(hint).toContain("voyagier add_traveller_document --help");
     expect(hint).not.toContain("list_travellers");
+  });
+
+  // VOY-2798: "save it to my profile" went to a plan traveller because this hint named only the plan tools.
+  it("sends the user's own details to the Travel Wallet tools, and labels the plan tools as one trip only", () => {
+    const hint = authModule.travellerDataHint([...WALLET_TOOLS, ...TRAVELLER_TOOLS]);
+    const [walletLine, , tripLine] = hint.split("\n");
+    expect(walletLine).toContain("Travel Wallet: https://travel.voyagier.com/me/settings/travel-wallet");
+    expect(walletLine).toContain("voyagier list_wallet_travellers --help · voyagier add_wallet_document --help");
+    expect(walletLine).not.toContain("add_traveller_document");
+    expect(tripLine).toMatch(/one trip plan only \(not your profile\)/);
+    expect(tripLine).toContain("voyagier add_traveller_document --help");
+    expect(hint).not.toContain("delete_wallet_document");
   });
 
   it("names only the tools that exist, and only the web profile when the list is unavailable", () => {

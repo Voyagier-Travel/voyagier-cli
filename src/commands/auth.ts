@@ -3,10 +3,12 @@
  *
  * The CLI keeps one secret locally (the PAT). Everything about the account —
  * email, name, roles, home base — is read from the MCP server's `whoami` tool
- * on demand; traveller details (passport, frequent-flyer and hotel loyalty
- * numbers) live on the server and are edited on the web profile or through
- * the traveller tools the server publishes (`update_traveller`,
- * `add_traveller_document`). Nothing of that is cached on disk.
+ * on demand; the user's own traveller details (passport, Known Traveler,
+ * frequent-flyer and hotel loyalty numbers, the people they travel with) live
+ * in their Travel Wallet on the server, edited on the web or through the
+ * wallet tools the server publishes (`list_wallet_travellers`,
+ * `add_wallet_document`). A plan's traveller is a different record
+ * (`update_traveller`, `add_traveller_document`). Nothing is cached on disk.
  *
  * Surface:
  *   voyagier auth login [--web-url <origin>]
@@ -29,7 +31,10 @@ import { getMcpUrl } from "../mcp-client/url.js";
 /** The web app where tokens are minted and the profile is edited. */
 export const DEFAULT_WEB_URL = "https://travel.voyagier.com";
 
-/** Server tools that edit traveller details; named in `auth setup` when the live tool list has them. */
+/** Server tools for the user's OWN Travel Wallet; named in `auth setup` when the live tool list has them. */
+export const WALLET_TOOL_NAMES: readonly string[] = ["list_wallet_travellers", "add_wallet_document"];
+
+/** Server tools for a traveller on ONE trip plan (not the user's profile); named when published. */
 export const TRAVELLER_TOOL_NAMES: readonly string[] = ["update_traveller", "add_traveller_document"];
 
 /** Injectable collaborators (tests pass a client with a scripted fetch). */
@@ -114,10 +119,23 @@ export async function fetchIdentity(client: McpClient): Promise<Identity> {
  * The one-line pointer that replaces the old local traveller profile: the
  * web profile, plus whichever traveller tools the live tool list publishes.
  */
+/**
+ * Where traveller details live. "Save it to my profile" means the Travel
+ * Wallet, never a plan's traveller (VOY-2798: an agent wrote a user's own
+ * Secure Flight details to a plan traveller because this pointed there).
+ */
 export function travellerDataHint(tools: readonly McpToolDescriptor[] | null, webUrl: string = DEFAULT_WEB_URL): string {
-  const names = tools ? TRAVELLER_TOOL_NAMES.filter((n) => tools.some((t) => t.name === n)) : [];
-  const viaTools = names.length ? ` — or from here: ${names.map((n) => `voyagier ${n} --help`).join(" · ")}` : "";
-  return `Traveller details (home base, passport, frequent-flyer and hotel loyalty numbers) live on your Voyagier profile: ${webUrl}/me/settings${viaTools}`;
+  const published = (names: readonly string[]) => (tools ? names.filter((n) => tools.some((t) => t.name === n)) : []);
+  const commands = (names: string[]) => names.map((n) => `voyagier ${n} --help`).join(" · ");
+  const wallet = published(WALLET_TOOL_NAMES);
+  const trip = published(TRAVELLER_TOOL_NAMES);
+  const lines = [
+    `Your own traveller details (passport, Known Traveler, frequent-flyer and hotel loyalty numbers, the people you travel with) live in your Travel Wallet: ${webUrl}/me/settings/travel-wallet` +
+      (wallet.length ? ` — or from here: ${commands(wallet)}` : ""),
+    `Home base and account details: ${webUrl}/me/settings`,
+  ];
+  if (trip.length) lines.push(`A traveller on one trip plan only (not your profile): ${commands(trip)}`);
+  return lines.join("\n");
 }
 
 /** Read all of stdin as UTF-8 (used by `set-token -`). */
