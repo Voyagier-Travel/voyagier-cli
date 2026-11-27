@@ -68,7 +68,7 @@ voyagier add_wallet_traveller --first_name Jane --last_name Doe --date_of_birth 
 ```
 
 - **One membership per programme.** A second frequent-flyer or hotel number for the same programme returns `DOCUMENT_ALREADY_EXISTS` with the existing `documentId` and writes nothing; update that document instead.
-- **Edits reach shared advisors.** `update_wallet_traveller` / `update_wallet_document` refresh every advisor the traveller or document is shared with; `delete_wallet_document` removes every advisor copy too (booked trips keep their booking).
+- **Edits reach shared advisors.** `update_wallet_traveller` / `update_wallet_document` refresh every advisor the traveller or document is shared with; `delete_wallet_document` removes the copies sharing created; a document an advisor already had on file before you shared stays with them, unlinked (booked trips keep their booking).
 - **Sharing is not a tool.** Choosing which advisor sees a traveller or document happens in the web app (`https://travel.voyagier.com/me/settings/travel-wallet`).
 - **A plan's traveller is different:** `add_traveller_document` / `update_traveller` write a traveller on a trip plan. For someone on an advisor's client roster the document lands on that roster, so every plan for the client uses it. Neither ever writes your wallet.
 
