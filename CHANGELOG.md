@@ -15,7 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - **Checked-in registry snapshot (`src/mcp/fixtures/remote-tools.json`) refreshed to the server registry (105 tools).** New besides the wallet tools: `search_rides`, `set_ride_transport_event`, `get_ride_transport_events`, `remove_ride_transport_event` and `set_booking_cancelled`.
-- **`voyagier auth setup` points your own details at the Travel Wallet.** It used to name `update_traveller` / `add_traveller_document`, which write a traveller on one trip plan, as the way to edit profile details. It now names `list_wallet_travellers` / `add_wallet_document` for your own details and labels the plan tools as one trip only.
+- **`voyagier auth setup` points your own details at the Travel Wallet.** It used to name `update_traveller` / `add_traveller_document`, which write a plan's traveller (and an advisor's client roster), as the way to edit profile details. It now names `list_wallet_travellers` / `add_wallet_document` for your own details, and labels the plan tools as plan and client-roster tools, separate from your wallet.
 - `AGENT.md` and the skill explain the wallet tools and how they differ from a plan's traveller.
 
 ## [5.1.0] — 2026-11-16

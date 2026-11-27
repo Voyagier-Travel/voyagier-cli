@@ -244,13 +244,14 @@ describe("travellerDataHint", () => {
   });
 
   // VOY-2798: "save it to my profile" went to a plan traveller because this hint named only the plan tools.
-  it("sends the user's own details to the Travel Wallet tools, and labels the plan tools as one trip only", () => {
+  it("sends the user's own details to the Travel Wallet tools, and labels the plan tools as plan and client-roster tools", () => {
     const hint = authModule.travellerDataHint([...WALLET_TOOLS, ...TRAVELLER_TOOLS]);
     const [walletLine, , tripLine] = hint.split("\n");
     expect(walletLine).toContain("Travel Wallet: https://travel.voyagier.com/me/settings/travel-wallet");
     expect(walletLine).toContain("voyagier list_wallet_travellers --help · voyagier add_wallet_document --help");
     expect(walletLine).not.toContain("add_traveller_document");
-    expect(tripLine).toMatch(/one trip plan only \(not your profile\)/);
+    expect(tripLine).toMatch(/a trip plan, or an advisor's client roster \(not your profile\)/);
+    expect(tripLine).not.toMatch(/only/);
     expect(tripLine).toContain("voyagier add_traveller_document --help");
     expect(hint).not.toContain("delete_wallet_document");
   });

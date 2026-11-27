@@ -7,8 +7,8 @@
  * frequent-flyer and hotel loyalty numbers, the people they travel with) live
  * in their Travel Wallet on the server, edited on the web or through the
  * wallet tools the server publishes (`list_wallet_travellers`,
- * `add_wallet_document`). A plan's traveller is a different record
- * (`update_traveller`, `add_traveller_document`). Nothing is cached on disk.
+ * `add_wallet_document`). A plan's traveller, and an advisor's client roster,
+ * are different records (`update_traveller`, `add_traveller_document`). Nothing is cached on disk.
  *
  * Surface:
  *   voyagier auth login [--web-url <origin>]
@@ -34,7 +34,7 @@ export const DEFAULT_WEB_URL = "https://travel.voyagier.com";
 /** Server tools for the user's OWN Travel Wallet; named in `auth setup` when the live tool list has them. */
 export const WALLET_TOOL_NAMES: readonly string[] = ["list_wallet_travellers", "add_wallet_document"];
 
-/** Server tools for a traveller on ONE trip plan (not the user's profile); named when published. */
+/** Server tools for a plan's traveller and, through it, an advisor's client roster (never the user's profile). */
 export const TRAVELLER_TOOL_NAMES: readonly string[] = ["update_traveller", "add_traveller_document"];
 
 /** Injectable collaborators (tests pass a client with a scripted fetch). */
@@ -134,7 +134,7 @@ export function travellerDataHint(tools: readonly McpToolDescriptor[] | null, we
       (wallet.length ? ` — or from here: ${commands(wallet)}` : ""),
     `Home base and account details: ${webUrl}/me/settings`,
   ];
-  if (trip.length) lines.push(`A traveller on one trip plan only (not your profile): ${commands(trip)}`);
+  if (trip.length) lines.push(`A traveller on a trip plan, or an advisor's client roster (not your profile): ${commands(trip)}`);
   return lines.join("\n");
 }
 
